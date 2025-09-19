@@ -1,7 +1,6 @@
 use chrono::{DateTime, Datelike, Local};
 use once_cell::sync::Lazy;
 use std::collections::HashSet;
-use std::fmt::Arguments;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::{
@@ -35,6 +34,7 @@ fn find_logger() -> &'static Mutex<File> {
     &FIND_LOG_FILE
 }
 static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+static FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 fn localtime() -> &'static Mutex<DateTime<Local>> {
     static LOCALTIME: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
     &LOCALTIME
@@ -80,25 +80,25 @@ impl ProcessPriority {
     }
 }
 
-pub fn log_process_find(process_name: &str) {
-    let lower_name = process_name.to_lowercase();
+pub fn log_process_find(msg: &str) {
+    let msg = msg.to_lowercase();
     let time_prefix = (*localtime().lock().unwrap()).format("%H:%M:%S").to_string();
     let mut set = FINDS_SET.lock().unwrap();
-    if set.insert(lower_name.clone()) {
+    if set.insert(msg.clone()) {
         if *use_console().lock().unwrap() {
-            println!("[{}]find {}", time_prefix, process_name);
+            println!("[{}]{}", time_prefix, msg);
         } else {
-            let _ = writeln!(find_logger().lock().unwrap(), "[{}]find {}", time_prefix, process_name);
+            let _ = writeln!(find_logger().lock().unwrap(), "[{}]{}", time_prefix, msg);
         }
     }
 }
 
 macro_rules! log {
     ($($arg:tt)*) => {
-        log_message(format_args!($($arg)*));
+        log_message(format!($($arg)*).as_str());
     };
 }
-fn log_message(args: Arguments) {
+fn log_message(args: &str) {
     let time_prefix = (*localtime().lock().unwrap()).format("%H:%M:%S").to_string();
     if *use_console().lock().unwrap() {
         println!("[{}]{}", time_prefix, args);
@@ -149,6 +149,7 @@ fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> {
 
 fn set_priority_and_affinity(pid: u32, config: &ProcessConfig) {
     unsafe {
+        let mut fail_access: bool = false;
         if let Ok(h_proc) = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, bool::from(FALSE), pid) {
             if !h_proc.is_invalid() {
                 match config.priority.as_win_const() {
@@ -168,24 +169,43 @@ fn set_priority_and_affinity(pid: u32, config: &ProcessConfig) {
                             log!("{}", msg);
                         }
                     }
+                } else {
+                    FAIL_SET.lock().unwrap().insert(pid.to_string());
                 }
                 let _ = CloseHandle(h_proc);
+            } else {
+                fail_access |= FAIL_SET.lock().unwrap().insert(pid.to_string());
             }
+        } else {
+            fail_access |= FAIL_SET.lock().unwrap().insert(pid.to_string());
+        }
+        if fail_access {
+            log_process_find(format!("Failed accessing {:>5}-{}", pid, config.name).as_str());
         }
     }
 }
 
-fn is_affinity_unset(pid: u32) -> bool {
+fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
     unsafe {
+        let mut fail_access: bool = false;
         if let Ok(h_proc) = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, bool::from(FALSE), pid) {
             if !h_proc.is_invalid() {
                 let mut current_mask: usize = 0;
                 let mut system_mask: usize = 0;
                 if GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask).is_ok() {
                     return current_mask == system_mask;
+                } else {
+                    fail_access |= FAIL_SET.lock().unwrap().insert(pid.to_string());
                 }
                 let _ = CloseHandle(h_proc);
+            } else {
+                fail_access |= FAIL_SET.lock().unwrap().insert(pid.to_string());
             }
+        } else {
+            fail_access |= FAIL_SET.lock().unwrap().insert(pid.to_string());
+        }
+        if fail_access {
+            log_process_find(format!("Failed accessing {:>5}-{}", pid, process_name).as_str());
         }
         false
     }
@@ -408,24 +428,26 @@ fn main() -> windows::core::Result<()> {
             if Process32FirstW(snapshot, &mut pe32).is_ok() {
                 'out_loop: loop {
                     let process_name = String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]).to_lowercase();
-                    for config in &configs {
-                        if process_name == config.name {
-                            set_priority_and_affinity(pe32.th32ProcessID, &config);
-                            if !Process32NextW(snapshot, &mut pe32).is_ok() {
-                                break 'out_loop;
+                    if !FAIL_SET.lock().unwrap().contains(&process_name) {
+                        for config in &configs {
+                            if process_name == config.name {
+                                set_priority_and_affinity(pe32.th32ProcessID, &config);
+                                if !Process32NextW(snapshot, &mut pe32).is_ok() {
+                                    break 'out_loop;
+                                }
+                                continue 'out_loop;
                             }
-                            continue 'out_loop;
                         }
-                    }
-                    if find_mode {
-                        if blacklist.contains(&process_name) {
-                            if !Process32NextW(snapshot, &mut pe32).is_ok() {
-                                break;
+                        if find_mode {
+                            if blacklist.contains(&process_name) {
+                                if !Process32NextW(snapshot, &mut pe32).is_ok() {
+                                    break;
+                                }
+                                continue;
                             }
-                            continue;
-                        }
-                        if is_affinity_unset(pe32.th32ProcessID) {
-                            log_process_find(process_name.as_str());
+                            if is_affinity_unset(pe32.th32ProcessID, process_name.as_str()) {
+                                log_process_find(format!("find {}", process_name).as_str());
+                            }
                         }
                     }
                     if !Process32NextW(snapshot, &mut pe32).is_ok() {

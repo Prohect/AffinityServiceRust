@@ -21,7 +21,7 @@ This is a Windows service written in Rust that allows you to manage the **proces
 
 ### Running
 
-Before running, make sure u have a config file for it, u may use -convert command on this program to transform one from processlasso's config or download the example config from this project and ###edit it youself### since different cpu has different conditions.
+Before running, make sure u have a config file for it, u may use -convert command on this program to transform one from processlasso's config or download the example config from this project and edit it youself since different cpu has different conditions.
 To run the service,simply double click it(it requires no args and could run with its builtin default values) if you already have config for this program, or make a .bat or open a command prompt and execute `AffinityServiceRust.exe` with desired arguments.
 However, it a good idea to set a schduled task for this program to run automatically since windows will drops its chance to get cpu if you or its console dont send anything to it, 
 under that condition u may find in log file OMG this program sleeps half an hour during which the newly created processes are not managed by it.

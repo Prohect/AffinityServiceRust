@@ -294,6 +294,7 @@ fn read_utf16le_file(path: &str) -> io::Result<String> {
 fn parse_args(
     args: &[String],
     interval_ms: &mut u64,
+    help_mode: &mut bool,
     convert_mode: &mut bool,
     find_mode: &mut bool,
     config_file_name: &mut String,
@@ -305,8 +306,7 @@ fn parse_args(
     while i < args.len() {
         match args[i].as_str() {
             "-help" | "--help" | "-?" | "/?" | "?" => {
-                print_help();
-                return Ok(());
+                *help_mode = true;
             }
             "-console" => {
                 *use_console().lock().unwrap() = true;
@@ -363,6 +363,7 @@ fn print_help() {
 fn main() -> windows::core::Result<()> {
     let args: Vec<String> = env::args().collect();
     let mut interval_ms = 5000;
+    let mut help_mode = false;
     let mut convert_mode = false;
     let mut find_mode = false;
     let mut config_file_name = "config.ini".to_string();
@@ -372,6 +373,7 @@ fn main() -> windows::core::Result<()> {
     parse_args(
         &args,
         &mut interval_ms,
+        &mut help_mode,
         &mut convert_mode,
         &mut find_mode,
         &mut config_file_name,
@@ -379,6 +381,10 @@ fn main() -> windows::core::Result<()> {
         &mut in_file_name,
         &mut out_file_name,
     )?;
+    if help_mode {
+        print_help();
+        return Ok(());
+    }
     if convert_mode {
         convert(in_file_name, out_file_name);
         return Ok(());

@@ -1,5 +1,6 @@
 use chrono::{DateTime, Datelike, Local};
 use once_cell::sync::Lazy;
+use std::collections::HashSet;
 use std::fmt::Arguments;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -15,22 +16,25 @@ use windows::Win32::{
     Foundation::*,
     System::{Diagnostics::ToolHelp::*, Threading::*},
 };
-
-fn logger() -> &'static Mutex<File> {
-    static LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path()).unwrap()));
-    &LOG_FILE
-}
-fn get_log_path() -> PathBuf {
-    let now = Local::now();
-    let year = now.year();
-    let month = now.month();
-    let day = now.day();
+fn get_log_path(suffix: &str) -> PathBuf {
+    let year = (*localtime().lock().unwrap()).year();
+    let month = (*localtime().lock().unwrap()).month();
+    let day = (*localtime().lock().unwrap()).day();
     let log_dir = PathBuf::from("logs");
     if !log_dir.exists() {
         let _ = fs::create_dir_all(&log_dir);
     }
-    log_dir.join(format!("{:04}{:02}{:02}.log", year, month, day))
+    log_dir.join(format!("{:04}{:02}{:02}{}.log", year, month, day, suffix))
 }
+fn logger() -> &'static Mutex<File> {
+    static LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path("")).unwrap()));
+    &LOG_FILE
+}
+fn find_logger() -> &'static Mutex<File> {
+    static FIND_LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path(".find")).unwrap()));
+    &FIND_LOG_FILE
+}
+static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 fn localtime() -> &'static Mutex<DateTime<Local>> {
     static LOCALTIME: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
     &LOCALTIME
@@ -39,7 +43,6 @@ fn use_console() -> &'static Mutex<bool> {
     static CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
     &CONSOLE
 }
-
 #[derive(Debug, Clone)]
 struct ProcessConfig {
     name: String,
@@ -77,6 +80,19 @@ impl ProcessPriority {
     }
 }
 
+pub fn log_process_find(process_name: &str) {
+    let lower_name = process_name.to_lowercase();
+    let time_prefix = (*localtime().lock().unwrap()).format("%H:%M:%S").to_string();
+    let mut set = FINDS_SET.lock().unwrap();
+    if set.insert(lower_name.clone()) {
+        if *use_console().lock().unwrap() {
+            println!("[{}]find {}", time_prefix, process_name);
+        } else {
+            let _ = writeln!(find_logger().lock().unwrap(), "[{}]find {}", time_prefix, process_name);
+        }
+    }
+}
+
 macro_rules! log {
     ($($arg:tt)*) => {
         log_message(format_args!($($arg)*));
@@ -84,7 +100,6 @@ macro_rules! log {
 }
 fn log_message(args: Arguments) {
     let time_prefix = (*localtime().lock().unwrap()).format("%H:%M:%S").to_string();
-    println!("[{}]{}", time_prefix, args);
     if *use_console().lock().unwrap() {
         println!("[{}]{}", time_prefix, args);
     } else {
@@ -404,7 +419,7 @@ fn main() -> windows::core::Result<()> {
                             continue;
                         }
                         if is_affinity_unset(pe32.th32ProcessID) {
-                            log!("find PID {} : {}", pe32.th32ProcessID, process_name);
+                            log_process_find(process_name.as_str());
                         }
                     }
                     if !Process32NextW(snapshot, &mut pe32).is_ok() {

@@ -31,7 +31,7 @@ To run the service, open a command prompt and execute the `AffinityServiceRust.e
     ```
   * **Convert a Process Lasso configuration file:**
     ```bash
-    AffinityServiceRust.exe -convert -in "ProcessLasso.config" -out "my_new_config.ini"
+    AffinityServiceRust.exe -convert -in prolasso.ini -out my_new_config.ini
     ```
   * **Find and log processes with default affinity:**
     ```bash

@@ -180,6 +180,7 @@ fn error_from_code(code: u32) -> String {
 fn set_priority_and_affinity(pid: u32, config: &ProcessConfig) {
     unsafe {
         match OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) {
+            /* this error instance don't contain any information inside, it not the one returned from winAPI, don't receive it */
             Err(_) => {
                 let code = GetLastError().0;
                 log_to_find(&format!("set_priority_and_affinity: [OPEN_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));

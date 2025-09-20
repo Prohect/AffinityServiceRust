@@ -1,23 +1,27 @@
 use chrono::{DateTime, Datelike, Local};
 use once_cell::sync::Lazy;
-use std::collections::HashSet;
-use std::path::PathBuf;
-use std::sync::Mutex;
 use std::{
-    env, fs,
-    fs::{File, OpenOptions},
+    collections::HashSet,
+    env,
+    fs::{self, File, OpenOptions},
     io::{self, BufRead, Write},
-    path::Path,
+    path::{Path, PathBuf},
+    sync::Mutex,
     thread,
     time::Duration,
 };
-use windows::Win32::Foundation::{HANDLE, LUID};
-use windows::Win32::Security::{AdjustTokenPrivileges, LookupPrivilegeValueW, SE_DEBUG_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY};
-use windows::Win32::System::Threading::GetCurrentProcess;
 use windows::Win32::{
-    Foundation::*,
-    System::{Diagnostics::ToolHelp::*, Threading::*},
+    Foundation::{CloseHandle, FALSE, GetLastError, HANDLE, LUID},
+    Security::{AdjustTokenPrivileges, LookupPrivilegeValueW, SE_DEBUG_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY},
+    System::{
+        Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
+        Threading::{
+            ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetProcessAffinityMask, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS, OpenProcess,
+            OpenProcessToken, PROCESS_CREATION_FLAGS, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION, REALTIME_PRIORITY_CLASS, SetPriorityClass, SetProcessAffinityMask,
+        },
+    },
 };
+
 fn get_log_path(suffix: &str) -> PathBuf {
     let year = (*localtime().lock().unwrap()).year();
     let month = (*localtime().lock().unwrap()).month();
@@ -178,7 +182,7 @@ fn error_from_code(code: u32) -> String {
 
 fn set_priority_and_affinity(pid: u32, config: &ProcessConfig) {
     unsafe {
-        let open_result = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, bool::from(FALSE), pid);
+        let open_result = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid);
         if open_result.is_err() {
             let code = GetLastError().0;
             log_to_find(&format!("set_priority_and_affinity: [OPEN_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));

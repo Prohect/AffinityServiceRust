@@ -206,22 +206,6 @@ fn set_priority_and_affinity(pid: u32, config: &ProcessConfig) {
                     let mut current_mask: usize = 0;
                     let mut system_mask: usize = 0;
                     match GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask) {
-                        Ok(_) => match config.affinity_mask {
-                            0 => {}
-                            mask if mask != current_mask => match SetProcessAffinityMask(h_proc, mask) {
-                                Ok(_) => {
-                                    log!("{:>5}-{} -> {:#X}", pid, config.name, mask);
-                                }
-                                Err(_) => {
-                                    let code = GetLastError().0;
-                                    log_to_find(&format!("set_priority_and_affinity: [SET_AFFINITY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
-                                    if code == 5 {
-                                        FAIL_SET.lock().unwrap().insert(config.name.clone());
-                                    }
-                                }
-                            },
-                            _ => {}
-                        },
                         Err(_) => {
                             let code = GetLastError().0;
                             log_to_find(&format!(
@@ -234,6 +218,22 @@ fn set_priority_and_affinity(pid: u32, config: &ProcessConfig) {
                                 FAIL_SET.lock().unwrap().insert(config.name.clone());
                             }
                         }
+                        Ok(_) => match config.affinity_mask {
+                            0 => {}
+                            mask if mask != current_mask => match SetProcessAffinityMask(h_proc, mask) {
+                                Err(_) => {
+                                    let code = GetLastError().0;
+                                    log_to_find(&format!("set_priority_and_affinity: [SET_AFFINITY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
+                                    if code == 5 {
+                                        FAIL_SET.lock().unwrap().insert(config.name.clone());
+                                    }
+                                }
+                                Ok(_) => {
+                                    log!("{:>5}-{} -> {:#X}", pid, config.name, mask);
+                                }
+                            },
+                            _ => {}
+                        },
                     }
 
                     let _ = CloseHandle(h_proc);

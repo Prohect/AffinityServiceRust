@@ -454,26 +454,33 @@ fn print_help() {
 fn enable_debug_privilege() {
     unsafe {
         let mut token: HANDLE = HANDLE::default();
-        let open_result = OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token);
-        if open_result.is_err() {
-            log!("enable_debug_privilege: self OpenProcessToken failed");
-        } else {
-            let mut l_uid = LUID::default();
-            let lookup_result = LookupPrivilegeValueW(None, SE_DEBUG_NAME, &mut l_uid);
-            if lookup_result.is_err() {
-                log!("enable_debug_privilege: LookupPrivilegeValueW failed");
-            } else {
-                let tp = TOKEN_PRIVILEGES {
-                    PrivilegeCount: 1,
-                    Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
-                        Luid: l_uid,
-                        Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
-                    }],
-                };
-                let adjust_result = AdjustTokenPrivileges(token, false, Some(&tp as *const _), 0, None, None);
-                if adjust_result.is_err() {
-                    log!("enable_debug_privilege: AdjustTokenPrivileges failed");
+        match OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token) {
+            Err(_) => {
+                log!("enable_debug_privilege: self OpenProcessToken failed");
+            }
+            Ok(_) => {
+                let mut l_uid = LUID::default();
+                match LookupPrivilegeValueW(None, SE_DEBUG_NAME, &mut l_uid) {
+                    Err(_) => {
+                        log!("enable_debug_privilege: LookupPrivilegeValueW failed");
+                    }
+                    Ok(_) => {
+                        let tp = TOKEN_PRIVILEGES {
+                            PrivilegeCount: 1,
+                            Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
+                                Luid: l_uid,
+                                Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
+                            }],
+                        };
+                        match AdjustTokenPrivileges(token, false, Some(&tp as *const _), 0, None, None) {
+                            Err(_) => {
+                                log!("enable_debug_privilege: AdjustTokenPrivileges failed");
+                            }
+                            Ok(_) => {}
+                        }
+                    }
                 }
+                let _ = CloseHandle(token);
             }
         }
     }

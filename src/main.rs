@@ -565,6 +565,7 @@ fn main() -> windows::core::Result<()> {
             let _ = CloseHandle(snapshot);
         }
         let _ = find_logger().lock().unwrap().flush();
+        let _ = logger().lock().unwrap().flush();
         thread::sleep(Duration::from_millis(interval_ms));
         *LOCALTIME_BUFFER.lock().unwrap() = Local::now();
     }

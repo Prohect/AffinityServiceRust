@@ -183,9 +183,6 @@ fn set_priority_and_affinity(pid: u32, config: &ProcessConfig) {
             Err(_) => {
                 let code = GetLastError().0;
                 log_to_find(&format!("set_priority_and_affinity: [OPEN_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
-                if code == 5 {
-                    FAIL_SET.lock().unwrap().insert(config.name.clone());
-                }
             }
             Ok(h_proc) => {
                 if h_proc.is_invalid() {
@@ -197,9 +194,6 @@ fn set_priority_and_affinity(pid: u32, config: &ProcessConfig) {
                         } else {
                             let code = GetLastError().0;
                             log_to_find(&format!("set_priority_and_affinity: [SET_PRIORITY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
-                            if code == 5 {
-                                FAIL_SET.lock().unwrap().insert(config.name.clone());
-                            }
                         }
                     }
 
@@ -214,9 +208,6 @@ fn set_priority_and_affinity(pid: u32, config: &ProcessConfig) {
                                 pid,
                                 config.name
                             ));
-                            if code == 5 {
-                                FAIL_SET.lock().unwrap().insert(config.name.clone());
-                            }
                         }
                         Ok(_) => match config.affinity_mask {
                             0 => {}
@@ -224,9 +215,6 @@ fn set_priority_and_affinity(pid: u32, config: &ProcessConfig) {
                                 Err(_) => {
                                     let code = GetLastError().0;
                                     log_to_find(&format!("set_priority_and_affinity: [SET_AFFINITY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
-                                    if code == 5 {
-                                        FAIL_SET.lock().unwrap().insert(config.name.clone());
-                                    }
                                 }
                                 Ok(_) => {
                                     log!("{:>5}-{} -> {:#X}", pid, config.name, mask);

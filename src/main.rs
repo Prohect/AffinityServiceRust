@@ -11,7 +11,7 @@ use std::{
     time::Duration,
 };
 use windows::Win32::{
-    Foundation::{CloseHandle, FALSE, GetLastError, HANDLE, LUID},
+    Foundation::{CloseHandle, GetLastError, HANDLE, LUID},
     Security::{AdjustTokenPrivileges, LookupPrivilegeValueW, SE_DEBUG_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY},
     System::{
         Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
@@ -23,9 +23,9 @@ use windows::Win32::{
 };
 
 fn get_log_path(suffix: &str) -> PathBuf {
-    let year = (*localtime().lock().unwrap()).year();
-    let month = (*localtime().lock().unwrap()).month();
-    let day = (*localtime().lock().unwrap()).day();
+    let year = LOCALTIME.lock().unwrap().year();
+    let month = LOCALTIME.lock().unwrap().month();
+    let day = LOCALTIME.lock().unwrap().day();
     let log_dir = PathBuf::from("logs");
     if !log_dir.exists() {
         let _ = fs::create_dir_all(&log_dir);
@@ -42,10 +42,7 @@ fn find_logger() -> &'static Mutex<File> {
 }
 static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 static FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
-fn localtime() -> &'static Mutex<DateTime<Local>> {
-    static LOCALTIME: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
-    &LOCALTIME
-}
+static LOCALTIME: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
 fn use_console() -> &'static Mutex<bool> {
     static CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
     &CONSOLE
@@ -89,7 +86,7 @@ impl ProcessPriority {
 
 pub fn log_to_find(msg: &str) {
     let msg = msg.to_lowercase();
-    let time_prefix = (*localtime().lock().unwrap()).format("%H:%M:%S").to_string();
+    let time_prefix = LOCALTIME.lock().unwrap().format("%H:%M:%S").to_string();
     if *use_console().lock().unwrap() {
         println!("[{}]{}", time_prefix, msg);
     } else {
@@ -110,7 +107,7 @@ macro_rules! log {
     };
 }
 fn log_message(args: &str) {
-    let time_prefix = (*localtime().lock().unwrap()).format("%H:%M:%S").to_string();
+    let time_prefix = LOCALTIME.lock().unwrap().format("%H:%M:%S").to_string();
     if *use_console().lock().unwrap() {
         println!("[{}]{}", time_prefix, args);
     } else {
@@ -182,58 +179,65 @@ fn error_from_code(code: u32) -> String {
 
 fn set_priority_and_affinity(pid: u32, config: &ProcessConfig) {
     unsafe {
-        let open_result = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid);
-        if open_result.is_err() {
-            let code = GetLastError().0;
-            log_to_find(&format!("set_priority_and_affinity: [OPEN_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
-            if code == 5 {
-                FAIL_SET.lock().unwrap().insert(config.name.clone());
-            }
-        } else {
-            let h_proc = open_result.unwrap();
-            if h_proc.is_invalid() {
-                log_to_find(&format!("set_priority_and_affinity: [INVALID_HANDLE] {:>5}-{}", pid, config.name));
-            } else {
-                if let Some(priority_flag) = config.priority.as_win_const() {
-                    if SetPriorityClass(h_proc, priority_flag).is_ok() {
-                        log!("{:>5}-{} -> {}", pid, config.name, config.priority.as_str());
-                    } else {
-                        let code = GetLastError().0;
-                        log_to_find(&format!("set_priority_and_affinity: [SET_PRIORITY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
-                        if code == 5 {
-                            FAIL_SET.lock().unwrap().insert(config.name.clone());
-                        }
-                    }
+        match OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) {
+            Err(_) => {
+                let code = GetLastError().0;
+                log_to_find(&format!("set_priority_and_affinity: [OPEN_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
+                if code == 5 {
+                    FAIL_SET.lock().unwrap().insert(config.name.clone());
                 }
-
-                let mut current_mask: usize = 0;
-                let mut system_mask: usize = 0;
-                if GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask).is_ok() {
-                    if config.affinity_mask != 0 && current_mask != config.affinity_mask {
-                        if SetProcessAffinityMask(h_proc, config.affinity_mask).is_ok() {
-                            log!("{:>5}-{} -> {:#X}", pid, config.name, config.affinity_mask);
+            }
+            Ok(h_proc) => {
+                if h_proc.is_invalid() {
+                    log_to_find(&format!("set_priority_and_affinity: [INVALID_HANDLE] {:>5}-{}", pid, config.name));
+                } else {
+                    if let Some(priority_flag) = config.priority.as_win_const() {
+                        if SetPriorityClass(h_proc, priority_flag).is_ok() {
+                            log!("{:>5}-{} -> {}", pid, config.name, config.priority.as_str());
                         } else {
                             let code = GetLastError().0;
-                            log_to_find(&format!("set_priority_and_affinity: [SET_AFFINITY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
+                            log_to_find(&format!("set_priority_and_affinity: [SET_PRIORITY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
                             if code == 5 {
                                 FAIL_SET.lock().unwrap().insert(config.name.clone());
                             }
                         }
                     }
-                } else {
-                    let code = GetLastError().0;
-                    log_to_find(&format!(
-                        "set_priority_and_affinity: [AFFINITY_QUERY_FAILED][{}] {:>5}-{}",
-                        error_from_code(code),
-                        pid,
-                        config.name
-                    ));
-                    if code == 5 {
-                        FAIL_SET.lock().unwrap().insert(config.name.clone());
-                    }
-                }
 
-                let _ = CloseHandle(h_proc);
+                    let mut current_mask: usize = 0;
+                    let mut system_mask: usize = 0;
+                    match GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask) {
+                        Ok(_) => match config.affinity_mask {
+                            0 => {}
+                            mask if mask != current_mask => match SetProcessAffinityMask(h_proc, mask) {
+                                Ok(_) => {
+                                    log!("{:>5}-{} -> {:#X}", pid, config.name, mask);
+                                }
+                                Err(_) => {
+                                    let code = GetLastError().0;
+                                    log_to_find(&format!("set_priority_and_affinity: [SET_AFFINITY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
+                                    if code == 5 {
+                                        FAIL_SET.lock().unwrap().insert(config.name.clone());
+                                    }
+                                }
+                            },
+                            _ => {}
+                        },
+                        Err(_) => {
+                            let code = GetLastError().0;
+                            log_to_find(&format!(
+                                "set_priority_and_affinity: [AFFINITY_QUERY_FAILED][{}] {:>5}-{}",
+                                error_from_code(code),
+                                pid,
+                                config.name
+                            ));
+                            if code == 5 {
+                                FAIL_SET.lock().unwrap().insert(config.name.clone());
+                            }
+                        }
+                    }
+
+                    let _ = CloseHandle(h_proc);
+                }
             }
         }
     }
@@ -243,30 +247,34 @@ fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
     unsafe {
         let mut result = false;
 
-        let open_result = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, bool::from(FALSE), pid);
-        if open_result.is_err() {
-            let code = GetLastError().0;
-            log_to_find(&format!("is_affinity_unset: [OPEN_FAILED][{}] {:>5}-{}", error_from_code(code), pid, process_name));
-            if code == 5 {
-                FAIL_SET.lock().unwrap().insert(process_name.to_string());
-            }
-        } else {
-            let h_proc = open_result.unwrap();
-            if h_proc.is_invalid() {
-                log_to_find(&format!("is_affinity_unset: [INVALID_HANDLE] {:>5}-{}", pid, process_name));
-            } else {
-                let mut current_mask: usize = 0;
-                let mut system_mask: usize = 0;
-                if GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask).is_ok() {
-                    result = current_mask == system_mask;
-                } else {
-                    let code = GetLastError().0;
-                    log_to_find(&format!("is_affinity_unset: [AFFINITY_QUERY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, process_name));
-                    if code == 5 {
-                        FAIL_SET.lock().unwrap().insert(process_name.to_string());
-                    }
+        match OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) {
+            Err(_) => {
+                let code = GetLastError().0;
+                log_to_find(&format!("is_affinity_unset: [OPEN_FAILED][{}] {:>5}-{}", error_from_code(code), pid, process_name));
+                if code == 5 {
+                    FAIL_SET.lock().unwrap().insert(process_name.to_string());
                 }
-                let _ = CloseHandle(h_proc);
+            }
+            Ok(h_proc) => {
+                if h_proc.is_invalid() {
+                    log_to_find(&format!("is_affinity_unset: [INVALID_HANDLE] {:>5}-{}", pid, process_name));
+                } else {
+                    let mut current_mask: usize = 0;
+                    let mut system_mask: usize = 0;
+                    match GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask) {
+                        Err(_) => {
+                            let code = GetLastError().0;
+                            log_to_find(&format!("is_affinity_unset: [AFFINITY_QUERY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, process_name));
+                            if code == 5 {
+                                FAIL_SET.lock().unwrap().insert(process_name.to_string());
+                            }
+                        }
+                        Ok(_) => {
+                            result = current_mask == system_mask;
+                        }
+                    }
+                    let _ = CloseHandle(h_proc);
+                }
             }
         }
 
@@ -550,6 +558,6 @@ fn main() -> windows::core::Result<()> {
             let _ = CloseHandle(snapshot);
         }
         thread::sleep(Duration::from_millis(interval_ms));
-        *localtime().lock().unwrap() = Local::now();
+        *LOCALTIME.lock().unwrap() = Local::now();
     }
 }

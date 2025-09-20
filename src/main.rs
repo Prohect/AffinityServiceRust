@@ -23,9 +23,9 @@ use windows::Win32::{
 };
 
 fn get_log_path(suffix: &str) -> PathBuf {
-    let year = LOCALTIME.lock().unwrap().year();
-    let month = LOCALTIME.lock().unwrap().month();
-    let day = LOCALTIME.lock().unwrap().day();
+    let year = LOCALTIME_BUFFER.lock().unwrap().year();
+    let month = LOCALTIME_BUFFER.lock().unwrap().month();
+    let day = LOCALTIME_BUFFER.lock().unwrap().day();
     let log_dir = PathBuf::from("logs");
     if !log_dir.exists() {
         let _ = fs::create_dir_all(&log_dir);
@@ -42,7 +42,7 @@ fn find_logger() -> &'static Mutex<File> {
 }
 static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 static FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
-static LOCALTIME: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
+static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
 fn use_console() -> &'static Mutex<bool> {
     static CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
     &CONSOLE
@@ -86,7 +86,7 @@ impl ProcessPriority {
 
 pub fn log_to_find(msg: &str) {
     let msg = msg.to_lowercase();
-    let time_prefix = LOCALTIME.lock().unwrap().format("%H:%M:%S").to_string();
+    let time_prefix = LOCALTIME_BUFFER.lock().unwrap().format("%H:%M:%S").to_string();
     if *use_console().lock().unwrap() {
         println!("[{}]{}", time_prefix, msg);
     } else {
@@ -107,7 +107,7 @@ macro_rules! log {
     };
 }
 fn log_message(args: &str) {
-    let time_prefix = LOCALTIME.lock().unwrap().format("%H:%M:%S").to_string();
+    let time_prefix = LOCALTIME_BUFFER.lock().unwrap().format("%H:%M:%S").to_string();
     if *use_console().lock().unwrap() {
         println!("[{}]{}", time_prefix, args);
     } else {
@@ -564,7 +564,8 @@ fn main() -> windows::core::Result<()> {
             }
             let _ = CloseHandle(snapshot);
         }
+        let _ = find_logger().lock().unwrap().flush();
         thread::sleep(Duration::from_millis(interval_ms));
-        *LOCALTIME.lock().unwrap() = Local::now();
+        *LOCALTIME_BUFFER.lock().unwrap() = Local::now();
     }
 }

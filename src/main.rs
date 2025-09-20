@@ -11,6 +11,9 @@ use std::{
     thread,
     time::Duration,
 };
+use windows::Win32::Foundation::{HANDLE, LUID};
+use windows::Win32::Security::{AdjustTokenPrivileges, LookupPrivilegeValueW, SE_DEBUG_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY};
+use windows::Win32::System::Threading::GetCurrentProcess;
 use windows::Win32::{
     Foundation::*,
     System::{Diagnostics::ToolHelp::*, Threading::*},
@@ -80,16 +83,20 @@ impl ProcessPriority {
     }
 }
 
-pub fn log_process_find(msg: &str) {
+pub fn log_to_find(msg: &str) {
     let msg = msg.to_lowercase();
     let time_prefix = (*localtime().lock().unwrap()).format("%H:%M:%S").to_string();
-    let mut set = FINDS_SET.lock().unwrap();
-    if set.insert(msg.clone()) {
-        if *use_console().lock().unwrap() {
-            println!("[{}]{}", time_prefix, msg);
-        } else {
-            let _ = writeln!(find_logger().lock().unwrap(), "[{}]{}", time_prefix, msg);
-        }
+    if *use_console().lock().unwrap() {
+        println!("[{}]{}", time_prefix, msg);
+    } else {
+        let _ = writeln!(find_logger().lock().unwrap(), "[{}]{}", time_prefix, msg);
+    }
+}
+
+pub fn log_process_find(process_name: &str) {
+    let process_name = process_name.to_lowercase();
+    if FINDS_SET.lock().unwrap().insert(process_name.clone()) {
+        log_to_find(&format!("find {}", process_name))
     }
 }
 
@@ -149,65 +156,68 @@ fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> {
 
 fn set_priority_and_affinity(pid: u32, config: &ProcessConfig) {
     unsafe {
-        let mut fail_access: bool = false;
-        if let Ok(h_proc) = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, bool::from(FALSE), pid) {
-            if !h_proc.is_invalid() {
-                match config.priority.as_win_const() {
-                    Some(priority_flag) => {
-                        if SetPriorityClass(h_proc, priority_flag).is_ok() {
-                            log!("{:>5}-{} -> {}", pid, config.name, config.priority.as_str());
-                        };
+        let open_result = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, bool::from(FALSE), pid);
+        if open_result.is_err() {
+            log_to_find(&format!("set_priority_and_affinity: OpenProcess failed {:>5}-{}", pid, config.name));
+        } else {
+            let h_proc = open_result.unwrap();
+            if h_proc.is_invalid() {
+                log_to_find(&format!("set_priority_and_affinity: Invalid handle {:>5}-{}", pid, config.name));
+            } else {
+                if let Some(priority_flag) = config.priority.as_win_const() {
+                    if SetPriorityClass(h_proc, priority_flag).is_ok() {
+                        log!("{:>5}-{} -> {}", pid, config.name, config.priority.as_str());
+                    } else {
+                        log_to_find(&format!("set_priority_and_affinity: SetPriorityClass failed {:>5}-{}", pid, config.name));
                     }
-                    None => (),
                 }
+
                 let mut current_mask: usize = 0;
                 let mut system_mask: usize = 0;
                 if GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask).is_ok() {
+                    FAIL_SET.lock().unwrap().remove(config.name.as_str());
                     if config.affinity_mask != 0 && current_mask != config.affinity_mask {
                         if SetProcessAffinityMask(h_proc, config.affinity_mask).is_ok() {
-                            let msg = format!("{:>5}-{} -> {:#X}", pid, config.name, config.affinity_mask);
-                            log!("{}", msg);
+                            log!("{:>5}-{} -> {:#X}", pid, config.name, config.affinity_mask);
+                        } else {
+                            log_to_find(&format!("set_priority_and_affinity: SetAffinity failed {:>5}-{}", pid, config.name));
                         }
                     }
                 } else {
-                    FAIL_SET.lock().unwrap().insert(pid.to_string());
+                    log_to_find(&format!("set_priority_and_affinity: Affinity query failed {:>5}-{}", pid, config.name));
                 }
+
                 let _ = CloseHandle(h_proc);
-            } else {
-                fail_access |= FAIL_SET.lock().unwrap().insert(pid.to_string());
             }
-        } else {
-            fail_access |= FAIL_SET.lock().unwrap().insert(pid.to_string());
-        }
-        if fail_access {
-            log_process_find(format!("Failed accessing {:>5}-{}", pid, config.name).as_str());
         }
     }
 }
 
 fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
     unsafe {
-        let mut fail_access: bool = false;
-        if let Ok(h_proc) = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, bool::from(FALSE), pid) {
-            if !h_proc.is_invalid() {
+        let mut result = false;
+
+        let open_result = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, bool::from(FALSE), pid);
+        if open_result.is_err() {
+            log_to_find(&format!("is_affinity_unset: OpenProcess failed {:>5}-{}", pid, process_name));
+        } else {
+            let h_proc = open_result.unwrap();
+            if h_proc.is_invalid() {
+                log_to_find(&format!("is_affinity_unset: Invalid handle {:>5}-{}", pid, process_name));
+            } else {
                 let mut current_mask: usize = 0;
                 let mut system_mask: usize = 0;
                 if GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask).is_ok() {
-                    return current_mask == system_mask;
+                    FAIL_SET.lock().unwrap().remove(process_name);
+                    result = current_mask == system_mask;
                 } else {
-                    fail_access |= FAIL_SET.lock().unwrap().insert(pid.to_string());
+                    log_to_find(&format!("is_affinity_unset: Affinity query failed {:>5}-{}", pid, process_name));
                 }
                 let _ = CloseHandle(h_proc);
-            } else {
-                fail_access |= FAIL_SET.lock().unwrap().insert(pid.to_string());
             }
-        } else {
-            fail_access |= FAIL_SET.lock().unwrap().insert(pid.to_string());
         }
-        if fail_access {
-            log_process_find(format!("Failed accessing {:>5}-{}", pid, process_name).as_str());
-        }
-        false
+
+        result
     }
 }
 
@@ -380,6 +390,34 @@ fn print_help() {
     println!();
 }
 
+fn enable_debug_privilege() {
+    unsafe {
+        let mut token: HANDLE = HANDLE::default();
+        let open_result = OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token);
+        if open_result.is_err() {
+            log!("enable_debug_privilege: self OpenProcessToken failed");
+        } else {
+            let mut l_uid = LUID::default();
+            let lookup_result = LookupPrivilegeValueW(None, SE_DEBUG_NAME, &mut l_uid);
+            if lookup_result.is_err() {
+                log!("enable_debug_privilege: LookupPrivilegeValueW failed");
+            } else {
+                let tp = TOKEN_PRIVILEGES {
+                    PrivilegeCount: 1,
+                    Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
+                        Luid: l_uid,
+                        Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
+                    }],
+                };
+                let adjust_result = AdjustTokenPrivileges(token, false, Some(&tp as *const _), 0, None, None);
+                if adjust_result.is_err() {
+                    log!("enable_debug_privilege: AdjustTokenPrivileges failed");
+                }
+            }
+        }
+    }
+}
+
 fn main() -> windows::core::Result<()> {
     let args: Vec<String> = env::args().collect();
     let mut interval_ms = 5000;
@@ -409,6 +447,7 @@ fn main() -> windows::core::Result<()> {
         convert(in_file_name, out_file_name);
         return Ok(());
     }
+    enable_debug_privilege();
     log!("Affinity Service started");
     log!("time interval: {}", interval_ms);
     let configs = read_config(&config_file_name).unwrap_or_else(|_| {
@@ -446,7 +485,7 @@ fn main() -> windows::core::Result<()> {
                                 continue;
                             }
                             if is_affinity_unset(pe32.th32ProcessID, process_name.as_str()) {
-                                log_process_find(format!("find {}", process_name).as_str());
+                                log_process_find(&process_name);
                             }
                         }
                     }

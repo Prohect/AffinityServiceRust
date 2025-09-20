@@ -1,3 +1,4 @@
+
 ----
 
 # Affinity Service Rust
@@ -38,6 +39,7 @@ However, it is a good idea to set a scheduled task for this program to run autom
     ```bash
     AffinityServiceRust.exe -convert -in prolasso.ini -out my_new_config.ini
     ```
+    **Note:** `-convert` will perform the conversion and then exit the program.
 
   * **Find and log processes with default affinity:**
     ```bash
@@ -48,9 +50,9 @@ However, it is a good idea to set a scheduled task for this program to run autom
 
     **How to use this to improve your config:**
     1. Run the above command and let it log for a while.
-    2. Open the log file and look for entries like:
+    2. Open the YYYYmmDDfind.log file and look for entries like:
        ```
-       [12:36:53]find: [default_affinity] 11932-git.exe
+       [12:14:12]find mpcmdrun.exe
        ```
     3. If you see a process you want to manage, add a line to `config.ini`:
        ```
@@ -58,18 +60,23 @@ However, it is a good idea to set a scheduled task for this program to run autom
        ```
        This example sets `git.exe` to below normal priority and restricts it to cores 0–3.
     4. Repeat until your config covers all relevant processes.
-    5. rerun this programme
+    5. rerun this programme to reload the config and blacklist(if run with -blacklist <file>)
 
     **Note:** The `-blacklist` file is used to exclude known system processes or anything you don't want to manage. Each line should be a process name like:
     ```txt
     explorer.exe
     ```
 
+    **Important:** `-find` mode **does not** stop the program from applying settings from your config — both will run together without conflict. This means you can monitor for unmanaged processes while still enforcing your configured priorities and affinities.
+
   * **Print help information:**
     ```bash
     AffinityServiceRust.exe -help
     ```
-    `"-?", "?", "--help" all do the same thing as above.`
+    **Note:** `-help` will print usage information and then exit the program.  
+    `"-?", "?", "--help"` all do the same thing as above.
+
+---
 
 ## Configuration
 
@@ -102,6 +109,8 @@ This is a simple text file with a list of process names, one per line, that you 
 # Do not log these processes
 explorer.exe
 ```
+
+---
 
 ## Contributing
 

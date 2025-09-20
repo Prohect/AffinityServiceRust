@@ -154,37 +154,79 @@ fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> {
         .collect())
 }
 
+fn error_from_code(code: u32) -> String {
+    match code {
+        0 => "SUCCESS".to_string(),
+        2 => "FILE_NOT_FOUND".to_string(),
+        5 => "ACCESS_DENIED".to_string(),
+        6 => "INVALID_HANDLE".to_string(),
+        8 => "NOT_ENOUGH_MEMORY".to_string(),
+        87 => "INVALID_PARAMETER".to_string(),
+        122 => "INSUFFICIENT_BUFFER".to_string(),
+        126 => "MOD_NOT_FOUND".to_string(),
+        127 => "PROC_NOT_FOUND".to_string(),
+        1314 => "PRIVILEGE_NOT_HELD".to_string(),
+        1450 => "NO_SYSTEM_RESOURCES".to_string(),
+        1460 => "TIMEOUT".to_string(),
+        998 => "NOACCESS".to_string(),
+        1008 => "INVALID_HANDLE_STATE".to_string(),
+        1060 => "SERVICE_DOES_NOT_EXIST".to_string(),
+        193 => "BAD_EXE_FORMAT".to_string(),
+        _ => ("code=".to_string()) + &code.to_string(),
+    }
+}
+
 fn set_priority_and_affinity(pid: u32, config: &ProcessConfig) {
     unsafe {
         let open_result = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, bool::from(FALSE), pid);
         if open_result.is_err() {
-            log_to_find(&format!("set_priority_and_affinity: OpenProcess failed {:>5}-{}", pid, config.name));
+            let code = GetLastError().0;
+            log_to_find(&format!("set_priority_and_affinity: [OPEN_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
+            if code == 5 {
+                FAIL_SET.lock().unwrap().insert(config.name.clone());
+            }
         } else {
             let h_proc = open_result.unwrap();
             if h_proc.is_invalid() {
-                log_to_find(&format!("set_priority_and_affinity: Invalid handle {:>5}-{}", pid, config.name));
+                log_to_find(&format!("set_priority_and_affinity: [INVALID_HANDLE] {:>5}-{}", pid, config.name));
             } else {
                 if let Some(priority_flag) = config.priority.as_win_const() {
                     if SetPriorityClass(h_proc, priority_flag).is_ok() {
                         log!("{:>5}-{} -> {}", pid, config.name, config.priority.as_str());
                     } else {
-                        log_to_find(&format!("set_priority_and_affinity: SetPriorityClass failed {:>5}-{}", pid, config.name));
+                        let code = GetLastError().0;
+                        log_to_find(&format!("set_priority_and_affinity: [SET_PRIORITY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
+                        if code == 5 {
+                            FAIL_SET.lock().unwrap().insert(config.name.clone());
+                        }
                     }
                 }
 
                 let mut current_mask: usize = 0;
                 let mut system_mask: usize = 0;
                 if GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask).is_ok() {
-                    FAIL_SET.lock().unwrap().remove(config.name.as_str());
                     if config.affinity_mask != 0 && current_mask != config.affinity_mask {
                         if SetProcessAffinityMask(h_proc, config.affinity_mask).is_ok() {
                             log!("{:>5}-{} -> {:#X}", pid, config.name, config.affinity_mask);
                         } else {
-                            log_to_find(&format!("set_priority_and_affinity: SetAffinity failed {:>5}-{}", pid, config.name));
+                            let code = GetLastError().0;
+                            log_to_find(&format!("set_priority_and_affinity: [SET_AFFINITY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
+                            if code == 5 {
+                                FAIL_SET.lock().unwrap().insert(config.name.clone());
+                            }
                         }
                     }
                 } else {
-                    log_to_find(&format!("set_priority_and_affinity: Affinity query failed {:>5}-{}", pid, config.name));
+                    let code = GetLastError().0;
+                    log_to_find(&format!(
+                        "set_priority_and_affinity: [AFFINITY_QUERY_FAILED][{}] {:>5}-{}",
+                        error_from_code(code),
+                        pid,
+                        config.name
+                    ));
+                    if code == 5 {
+                        FAIL_SET.lock().unwrap().insert(config.name.clone());
+                    }
                 }
 
                 let _ = CloseHandle(h_proc);
@@ -199,19 +241,26 @@ fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
 
         let open_result = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, bool::from(FALSE), pid);
         if open_result.is_err() {
-            log_to_find(&format!("is_affinity_unset: OpenProcess failed {:>5}-{}", pid, process_name));
+            let code = GetLastError().0;
+            log_to_find(&format!("is_affinity_unset: [OPEN_FAILED][{}] {:>5}-{}", error_from_code(code), pid, process_name));
+            if code == 5 {
+                FAIL_SET.lock().unwrap().insert(process_name.to_string());
+            }
         } else {
             let h_proc = open_result.unwrap();
             if h_proc.is_invalid() {
-                log_to_find(&format!("is_affinity_unset: Invalid handle {:>5}-{}", pid, process_name));
+                log_to_find(&format!("is_affinity_unset: [INVALID_HANDLE] {:>5}-{}", pid, process_name));
             } else {
                 let mut current_mask: usize = 0;
                 let mut system_mask: usize = 0;
                 if GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask).is_ok() {
-                    FAIL_SET.lock().unwrap().remove(process_name);
                     result = current_mask == system_mask;
                 } else {
-                    log_to_find(&format!("is_affinity_unset: Affinity query failed {:>5}-{}", pid, process_name));
+                    let code = GetLastError().0;
+                    log_to_find(&format!("is_affinity_unset: [AFFINITY_QUERY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, process_name));
+                    if code == 5 {
+                        FAIL_SET.lock().unwrap().insert(process_name.to_string());
+                    }
                 }
                 let _ = CloseHandle(h_proc);
             }

@@ -1,4 +1,4 @@
----
+----
 
 # Affinity Service Rust
 
@@ -107,4 +107,4 @@ explorer.exe
 
 Feel free to open an issue or submit a pull request if you find a bug or have an idea for an improvement.
 
----
+----

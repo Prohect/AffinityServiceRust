@@ -10,6 +10,7 @@ use std::{
     thread,
     time::Duration,
 };
+use windows::Win32::System::Threading::GetPriorityClass;
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE, LUID},
     Security::{AdjustTokenPrivileges, LookupPrivilegeValueW, SE_DEBUG_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY},
@@ -85,7 +86,6 @@ impl ProcessPriority {
 }
 
 pub fn log_to_find(msg: &str) {
-    let msg = msg.to_lowercase();
     let time_prefix = LOCALTIME_BUFFER.lock().unwrap().format("%H:%M:%S").to_string();
     if *use_console().lock().unwrap() {
         println!("[{}]{}", time_prefix, msg);
@@ -95,8 +95,7 @@ pub fn log_to_find(msg: &str) {
 }
 
 pub fn log_process_find(process_name: &str) {
-    let process_name = process_name.to_lowercase();
-    if FINDS_SET.lock().unwrap().insert(process_name.clone()) {
+    if FINDS_SET.lock().unwrap().insert(process_name.to_string().clone()) {
         log_to_find(&format!("find {}", process_name))
     }
 }
@@ -180,7 +179,7 @@ fn error_from_code(code: u32) -> String {
 fn set_priority_and_affinity(pid: u32, config: &ProcessConfig) {
     unsafe {
         match OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) {
-            /* this error instance don't contain any information inside, it not the one returned from winAPI, don't receive it */
+            /* this error instance don't contain any information inside, it not the one returned from winAPI, no need to receive it */
             Err(_) => {
                 let code = GetLastError().0;
                 log_to_find(&format!("set_priority_and_affinity: [OPEN_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
@@ -190,11 +189,13 @@ fn set_priority_and_affinity(pid: u32, config: &ProcessConfig) {
                     log_to_find(&format!("set_priority_and_affinity: [INVALID_HANDLE] {:>5}-{}", pid, config.name));
                 } else {
                     if let Some(priority_flag) = config.priority.as_win_const() {
-                        if SetPriorityClass(h_proc, priority_flag).is_ok() {
-                            log!("{:>5}-{} -> {}", pid, config.name, config.priority.as_str());
-                        } else {
-                            let code = GetLastError().0;
-                            log_to_find(&format!("set_priority_and_affinity: [SET_PRIORITY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
+                        if GetPriorityClass(h_proc) != priority_flag.0 {
+                            if SetPriorityClass(h_proc, priority_flag).is_ok() {
+                                log!("{:>5}-{} -> {}", pid, config.name, config.priority.as_str());
+                            } else {
+                                let code = GetLastError().0;
+                                log_to_find(&format!("set_priority_and_affinity: [SET_PRIORITY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
+                            }
                         }
                     }
 

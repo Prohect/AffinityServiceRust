@@ -1,4 +1,4 @@
------
+---
 
 # Affinity Service Rust
 
@@ -17,14 +17,13 @@ This is a Windows service written in Rust that allows you to manage the **proces
 ### Prerequisites
 
   * **Windows:** This service is built using the Windows API and is designed to run on Windows.
-  * **Rust:** You need to have Rust and Cargo or a IDE with them installed if u r a devloper who wants to edit and compile it by yourself.
+  * **Rust:** You need to have Rust and Cargo or an IDE with them installed if you are a developer who wants to edit and compile it yourself.
 
 ### Running
 
-Before running, make sure u have a config file for it, u may use -convert command on this program to transform one from processlasso's config or download the example config from this project and **edit it youself** since different cpu has different conditions.
-To run the service,simply double click it(it requires no args and could run with its builtin default values) if you already have config for this program, or make a .bat or open a command prompt and execute `AffinityServiceRust.exe` with desired arguments.
-However, it a good idea to set a schduled task for this program to run automatically since windows will drops its chance to get cpu if you or its console dont send anything to it, 
-under that condition u may find in log file OMG this program sleeps half an hour during which the newly created processes are not managed by it.
+Before running, make sure you have a config file for it. You may use the `-convert` command on this program to transform one from Process Lasso's config or download the example config from this project and **edit it yourself** since different CPUs have different conditions.  
+To run the service, simply double-click it (it requires no args and can run with its built-in default values) if you already have a config for this program, or make a `.bat` or open a command prompt and execute `AffinityServiceRust.exe` with desired arguments.  
+However, it is a good idea to set a scheduled task for this program to run automatically since Windows will drop its chance to get CPU if you or its console don't send anything to it. Under that condition, you may find in the log file that this program sleeps for half an hour during which newly created processes are not managed by it.
 
 #### Example Commands
 
@@ -32,21 +31,45 @@ under that condition u may find in log file OMG this program sleeps half an hour
     ```bash
     AffinityServiceRust.exe -config my_custom_config.txt -console
     ```
-    `the config is "config.ini" by default, u dont have to set it`
-    `the program logs stuff to a log file by default, unless u run it with "-console"`
+    `The config is "config.ini" by default, you don't have to set it.`  
+    `The program logs to a log file by default, unless you run it with "-console".`
+
   * **Convert a Process Lasso configuration file:**
     ```bash
     AffinityServiceRust.exe -convert -in prolasso.ini -out my_new_config.ini
     ```
+
   * **Find and log processes with default affinity:**
     ```bash
     AffinityServiceRust.exe -find -blacklist no_change.txt -interval 16000
     ```
+    This command scans all running processes and logs those that are **not listed in your config file** and are currently using the **default system affinity mask** (i.e., all cores).  
+    It's useful for discovering processes that could benefit from custom affinity or priority settings.
+
+    **How to use this to improve your config:**
+    1. Run the above command and let it log for a while.
+    2. Open the log file and look for entries like:
+       ```
+       [12:36:53]find: [default_affinity] 11932-git.exe
+       ```
+    3. If you see a process you want to manage, add a line to `config.ini`:
+       ```
+       git.exe,below normal,0x0F
+       ```
+       This example sets `git.exe` to below normal priority and restricts it to cores 0–3.
+    4. Repeat until your config covers all relevant processes.
+    5. rerun this programme
+
+    **Note:** The `-blacklist` file is used to exclude known system processes or anything you don't want to manage. Each line should be a process name like:
+    ```txt
+    explorer.exe
+    ```
+
   * **Print help information:**
     ```bash
     AffinityServiceRust.exe -help
     ```
-    `"-?", "?", "--help". All of them do same thing as above`
+    `"-?", "?", "--help" all do the same thing as above.`
 
 ## Configuration
 
@@ -59,11 +82,10 @@ process_name,priority,affinity_mask
 ```
 
   * `process_name`: The name of the process executable (e.g., `game.exe`).
-  * `priority`: The desired process priority. Possible values are: `none`, `idle`, `below normal`, `normal`, `above normal`, `high`, `real time`.`none` means the program wont take care of it
-  * `affinity_mask`: A hexadecimal value representing the CPU affinity mask (e.g., `0xFFFE`). Any value equals `0` means the program wont take care of it. 
+  * `priority`: The desired process priority. Possible values are: `none`, `idle`, `below normal`, `normal`, `above normal`, `high`, `real time`. `none` means the program won't take care of it.
+  * `affinity_mask`: A hexadecimal value representing the CPU affinity mask (e.g., `0xFFFE`). Any value equal to `0` means the program won't take care of it.
 
 **Example `config.ini`:**
-
 ```ini
 # This is an example configuration file
 discord.exe,below normal,0
@@ -76,7 +98,6 @@ video_editor.exe,high,0xAA
 This is a simple text file with a list of process names, one per line, that you want to exclude from the `-find` mode's logging.
 
 **Example `blacklist.txt`:**
-
 ```txt
 # Do not log these processes
 explorer.exe
@@ -85,3 +106,5 @@ explorer.exe
 ## Contributing
 
 Feel free to open an issue or submit a pull request if you find a bug or have an idea for an improvement.
+
+---

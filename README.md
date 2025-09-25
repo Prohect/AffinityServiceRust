@@ -29,7 +29,7 @@ AffinityServiceRust.exe
 # Run with console output (see real-time logs)
 AffinityServiceRust.exe -console
 
-# Run without UAC prompts (limited privileges)
+# Run without UAC prompts (may limited by privileges if not run as admin)
 AffinityServiceRust.exe -console -noUAC
 
 # Use custom config file

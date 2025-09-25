@@ -90,7 +90,7 @@ Use `-helpall` to see all available options including conversion and debugging f
 # Gaming - high priority, specific cores, normal IO
 game.exe,high,0x0F,normal
 
-# Background apps - low priority, efficiency cores, low IO  
+# Background apps - low priority, efficiency cores, low IO
 discord.exe,below normal,0xF000,low
 steam.exe,below normal,0xF000,very low
 
@@ -120,11 +120,11 @@ system_process.exe,none,0,none
 
 ### Using Repository Configuration Files
 
-**📁 Pre-configured Files Available:**
+** Pre-configured Files Available:**
 The [GitHub repository](https://github.com/Prohect/AffinityServiceRust) includes ready-to-use configuration files:
 
 - **`config.ini`** - Pre-configured settings for 200+ common applications including:
-  - Games (Steam, Epic, individual game executables)  
+  - Games (Steam, Epic, individual game executables)
   - Development tools (VS Code, IDEs, compilers)
   - Creative apps (Adobe suite, video editors)
   - System utilities (browsers, Discord, etc.)
@@ -132,18 +132,18 @@ The [GitHub repository](https://github.com/Prohect/AffinityServiceRust) includes
 
 - **`blacklist.ini`** - Excludes system processes from `-find` mode discovery
 
-**🚀 Quick Setup Steps:**
+** Quick Setup Steps:**
 1. Download `config.ini` and `blacklist.ini` from the repository
 2. Edit the affinity masks in `config.ini` to match your CPU cores:
-   - **Intel 8P+12E** (like 14700KF): Use `0xFE` for P-cores, `0xFFF00` for E-cores  
+   - **Intel 8P+12E** (like Ultra7): Use `0xFF` for P-cores, `0xFFF00` for E-cores
    - **Intel 6P+8E**: Use `0x3F` for P-cores, `0x3FC0` for E-cores
    - **AMD or other**: Adjust hex values based on your core count
 3. Place files in the same folder as `AffinityServiceRust.exe`
 4. Run and enjoy optimized system performance!
 
-**💡 Benefits:**
+** Benefits:**
 - **Instant optimization** for hundreds of common applications
-- **Tested configurations** that work well for most systems  
+- **Tested configurations** that work well for most systems
 - **Easy customization** - just edit the hex values for your CPU
 - **Community maintained** - configurations improve over time
 

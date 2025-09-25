@@ -543,6 +543,7 @@ fn parse_args(
     args: &[String],
     interval_ms: &mut u64,
     help_mode: &mut bool,
+    help_all_mode: &mut bool,
     convert_mode: &mut bool,
     find_mode: &mut bool,
     config_file_name: &mut String,
@@ -558,6 +559,9 @@ fn parse_args(
         match args[i].as_str() {
             "-help" | "--help" | "-?" | "/?" | "?" => {
                 *help_mode = true;
+            }
+            "-helpall" | "--helpall" => {
+                *help_all_mode = true;
             }
             "-console" => {
                 *use_console().lock().unwrap() = true;
@@ -606,28 +610,80 @@ fn parse_args(
 }
 
 fn print_help() {
-    println!("usage: AffinityServiceRust.exe args");
+    println!("usage: AffinityServiceRust.exe [args]");
     println!();
-    println!("  -help | --help       print this help message");
-    println!("  -? | /? | ?          print this help message");
+    println!("A Windows service to manage process priority, CPU affinity, and IO priority.");
+    println!();
+    println!("Common Options:");
+    println!("  -help | --help       show this help message");
+    println!("  -console             output to console instead of log file");
+    println!("  -config <file>       config file to use (default: config.ini)");
+    println!("  -interval <ms>       check interval in milliseconds (default: 5000)");
+    println!("  -noUAC               disable UAC elevation request");
+    println!();
+    println!("Modes:");
+    println!("  -convert             convert Process Lasso config (-in <file> -out <file>)");
+    println!("  -find                find processes with default affinity (-blacklist <file>)");
+    println!();
+    println!("Config Format: process_name,priority,affinity_mask,io_priority");
+    println!("  Example: notepad.exe,above normal,0xFF,low");
+    println!();
+    println!("Use -helpall for detailed options and debugging features.");
+}
+
+fn print_help_all() {
+    println!("usage: AffinityServiceRust.exe [args]");
+    println!();
+    println!("=== DETAILED HELP & DEBUG OPTIONS ===");
+    println!();
+    println!("Basic Arguments:");
+    println!("  -help | --help       print basic help message");
+    println!("  -helpall | --helpall print this detailed help with debug options");
+    println!("  -? | /? | ?          print basic help message");
     println!("  -console             use console as output instead of log file");
     println!("  -noUAC | -nouac      disable UAC elevation request");
+    println!("  -config <file>       the config file u wanna use (config.ini by default)");
+    println!("  -interval <ms>       set interval for checking again (5000 by default, minimal 16)");
+    println!();
+    println!("Operating Modes:");
     println!("  -convert             convert process configs from -in <file>(from process lasso) to -out <file>");
     println!("  -find                find those whose affinity is same as system default which is all possible cores windows could use");
-    println!("  -interval <ms>       set interval for checking again (5000 by default, minimal 16)");
-    println!("  -loop <count>        number of loops to run (default: infinite)");
-    println!("  -logloop             log a message at the start of each loop for testing");
-    println!("  -config <file>       the config file u wanna use (config.ini by default)");
     println!("  -blacklist <file>    the blacklist for -find");
     println!("  -in <file>           input file for -convert");
     println!("  -out <file>          output file for -convert");
     println!();
+    println!("Debug & Testing Options:");
+    println!("  -loop <count>        number of loops to run (default: infinite) - for testing");
+    println!("  -logloop             log a message at the start of each loop for testing");
+    println!();
+    println!("=== CONFIGURATION FORMAT ===");
+    println!();
     println!("Config file format: process_name,priority,affinity_mask,io_priority");
-    println!("  Priority:        none, idle, below normal, normal, above normal, high, real time");
-    println!("  Affinity:        0 (no change), or hex/decimal mask (e.g., 0xFF, 255)");
-    println!("  IO Priority:     none, very low, low, normal");
-    println!("  Example:         notepad.exe,above normal,0xFF,low");
-    println!("  Note:            Memory priority management is not yet supported due to Windows API limitations");
+    println!();
+    println!("Priority Options:");
+    println!("  none, idle, below normal, normal, above normal, high, real time");
+    println!("  'none' means the program won't change it");
+    println!();
+    println!("Affinity Mask:");
+    println!("  0 (no change), or hex/decimal mask (e.g., 0xFF, 255)");
+    println!("  Represents CPU cores as binary flags");
+    println!();
+    println!("IO Priority Options:");
+    println!("  none, very low, low, normal");
+    println!("  'none' means the program won't change it");
+    println!("  Note: high/critical removed due to privilege requirements");
+    println!();
+    println!("Example Configuration:");
+    println!("  notepad.exe,above normal,0xFF,low");
+    println!("  game.exe,high,0x0A,normal");
+    println!("  background.exe,idle,0xF000,very low");
+    println!();
+    println!("=== LIMITATIONS & NOTES ===");
+    println!();
+    println!("- Memory priority management is not yet supported due to Windows API limitations");
+    println!("- High/critical IO priorities require special system privileges");
+    println!("- Admin privileges recommended for managing system processes");
+    println!("- Some processes may require debug privileges to modify");
     println!();
 }
 
@@ -730,6 +786,7 @@ fn main() -> windows::core::Result<()> {
     let args: Vec<String> = env::args().collect();
     let mut interval_ms = 5000;
     let mut help_mode = false;
+    let mut help_all_mode = false;
     let mut convert_mode = false;
     let mut find_mode = false;
     let mut config_file_name = "config.ini".to_string();
@@ -743,6 +800,7 @@ fn main() -> windows::core::Result<()> {
         &args,
         &mut interval_ms,
         &mut help_mode,
+        &mut help_all_mode,
         &mut convert_mode,
         &mut find_mode,
         &mut config_file_name,
@@ -755,6 +813,10 @@ fn main() -> windows::core::Result<()> {
     )?;
     if help_mode {
         print_help();
+        return Ok(());
+    }
+    if help_all_mode {
+        print_help_all();
         return Ok(());
     }
     if convert_mode {

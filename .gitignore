@@ -1,3 +1,9 @@
 /target
 /logs
 /Links
+
+# Test files and directories
+test_*.ini
+test_*.ps1
+test_*.bat
+test_nouac_config.ini

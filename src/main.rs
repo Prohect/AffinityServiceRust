@@ -44,10 +44,11 @@ const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
 // Process Information Class for Memory Priority - COMMENTED OUT
 // const PROCESS_INFORMATION_MEMORY_PRIORITY: u32 = 61;  // Returns STATUS_INVALID_INFO_CLASS (0xC0000003)
 
-// External function declaration for NtSetInformationProcess
+// External function declarations for process information
 #[link(name = "ntdll")]
 unsafe extern "system" {
     fn NtSetInformationProcess(process_handle: HANDLE, process_information_class: u32, process_information: *const u32, process_information_length: u32) -> NTSTATUS;
+    fn NtQueryInformationProcess(process_handle: HANDLE, process_information_class: u32, process_information: *mut u32, process_information_length: u32, return_length: *mut u32) -> NTSTATUS;
 }
 
 fn get_log_path(suffix: &str) -> PathBuf {
@@ -330,19 +331,33 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
 
                     // Apply IO Priority if not None
                     if config.io_priority != IOPriority::None {
-                        let io_priority_value = config.io_priority.as_win_const();
-                        let result = NtSetInformationProcess(h_proc, PROCESS_INFORMATION_IO_PRIORITY, &io_priority_value as *const u32, std::mem::size_of::<u32>() as u32);
+                        let mut current_io_priority: u32 = 0;
+                        let mut return_length: u32 = 0;
+                        let query_result = NtQueryInformationProcess(
+                            h_proc,
+                            PROCESS_INFORMATION_IO_PRIORITY,
+                            &mut current_io_priority as *mut u32,
+                            std::mem::size_of::<u32>() as u32,
+                            &mut return_length as *mut u32,
+                        );
 
-                        if result.0 >= 0 {
-                            log!("{:>5}-{} -> IO: {}", pid, config.name, config.io_priority.as_str());
-                        } else {
-                            log_to_find(&format!(
-                                "set_io_priority: [SET_IO_PRIORITY_FAILED][0x{:08X}] {:>5}-{} -> {}",
-                                result.0,
-                                pid,
-                                config.name,
-                                config.io_priority.as_str()
-                            ));
+                        let desired_io_priority = config.io_priority.as_win_const();
+
+                        // Only set IO priority if it's different from current or query failed
+                        if query_result.0 < 0 || current_io_priority != desired_io_priority {
+                            let result = NtSetInformationProcess(h_proc, PROCESS_INFORMATION_IO_PRIORITY, &desired_io_priority as *const u32, std::mem::size_of::<u32>() as u32);
+
+                            if result.0 >= 0 {
+                                log!("{:>5}-{} -> IO: {}", pid, config.name, config.io_priority.as_str());
+                            } else {
+                                log_to_find(&format!(
+                                    "set_io_priority: [SET_IO_PRIORITY_FAILED][0x{:08X}] {:>5}-{} -> {}",
+                                    result.0,
+                                    pid,
+                                    config.name,
+                                    config.io_priority.as_str()
+                                ));
+                            }
                         }
                     }
 
@@ -535,6 +550,8 @@ fn parse_args(
     in_file_name: &mut Option<String>,
     out_file_name: &mut Option<String>,
     no_uac: &mut bool,
+    loop_count: &mut Option<u32>,
+    log_loop: &mut bool,
 ) -> windows::core::Result<()> {
     let mut i = 1;
     while i < args.len() {
@@ -557,6 +574,13 @@ fn parse_args(
             "-interval" if i + 1 < args.len() => {
                 *interval_ms = args[i + 1].parse().unwrap_or(5000).max(16);
                 i += 1;
+            }
+            "-loop" if i + 1 < args.len() => {
+                *loop_count = Some(args[i + 1].parse().unwrap_or(1).max(1));
+                i += 1;
+            }
+            "-logloop" => {
+                *log_loop = true;
             }
             "-config" if i + 1 < args.len() => {
                 *config_file_name = args[i + 1].clone();
@@ -591,6 +615,8 @@ fn print_help() {
     println!("  -convert             convert process configs from -in <file>(from process lasso) to -out <file>");
     println!("  -find                find those whose affinity is same as system default which is all possible cores windows could use");
     println!("  -interval <ms>       set interval for checking again (5000 by default, minimal 16)");
+    println!("  -loop <count>        number of loops to run (default: infinite)");
+    println!("  -logloop             log a message at the start of each loop for testing");
     println!("  -config <file>       the config file u wanna use (config.ini by default)");
     println!("  -blacklist <file>    the blacklist for -find");
     println!("  -in <file>           input file for -convert");
@@ -711,6 +737,8 @@ fn main() -> windows::core::Result<()> {
     let mut in_file_name: Option<String> = None;
     let mut out_file_name: Option<String> = None;
     let mut no_uac = false;
+    let mut loop_count: Option<u32> = None;
+    let mut log_loop = false;
     parse_args(
         &args,
         &mut interval_ms,
@@ -722,6 +750,8 @@ fn main() -> windows::core::Result<()> {
         &mut in_file_name,
         &mut out_file_name,
         &mut no_uac,
+        &mut loop_count,
+        &mut log_loop,
     )?;
     if help_mode {
         print_help();
@@ -760,7 +790,12 @@ fn main() -> windows::core::Result<()> {
     }
     enable_debug_privilege();
 
-    loop {
+    let mut current_loop = 0u32;
+    let mut should_continue = true;
+    while should_continue {
+        if log_loop {
+            log!("Loop {} started", current_loop + 1);
+        }
         unsafe {
             let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
             let mut pe32 = PROCESSENTRY32W::default();
@@ -799,7 +834,21 @@ fn main() -> windows::core::Result<()> {
         }
         let _ = find_logger().lock().unwrap().flush();
         let _ = logger().lock().unwrap().flush();
-        thread::sleep(Duration::from_millis(interval_ms));
-        *LOCALTIME_BUFFER.lock().unwrap() = Local::now();
+
+        current_loop += 1;
+        if let Some(max_loops) = loop_count {
+            if current_loop >= max_loops {
+                if log_loop {
+                    log!("Completed {} loops, exiting", max_loops);
+                }
+                should_continue = false;
+            }
+        }
+
+        if should_continue {
+            thread::sleep(Duration::from_millis(interval_ms));
+            *LOCALTIME_BUFFER.lock().unwrap() = Local::now();
+        }
     }
+    Ok(())
 }

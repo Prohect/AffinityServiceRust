@@ -89,8 +89,8 @@ enum IOPriority {
     VeryLow,
     Low,
     Normal,
-    High,
-    Critical,
+    High,     // no privilege
+    Critical, // no privilege
 }
 impl ProcessPriority {
     const TABLE: &'static [(Self, &'static str, Option<PROCESS_CREATION_FLAGS>)] = &[

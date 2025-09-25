@@ -6,6 +6,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufRead, Write},
     path::{Path, PathBuf},
+    process::Command,
     sync::Mutex,
     thread,
     time::Duration,
@@ -13,7 +14,7 @@ use std::{
 use windows::Win32::System::Threading::GetPriorityClass;
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE, LUID},
-    Security::{AdjustTokenPrivileges, LookupPrivilegeValueW, SE_DEBUG_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY},
+    Security::{AdjustTokenPrivileges, GetTokenInformation, LookupPrivilegeValueW, SE_DEBUG_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_ELEVATION, TOKEN_PRIVILEGES, TOKEN_QUERY, TokenElevation},
     System::{
         Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
         Threading::{
@@ -176,7 +177,7 @@ fn error_from_code(code: u32) -> String {
     }
 }
 
-fn set_priority_and_affinity(pid: u32, config: &ProcessConfig) {
+fn apply_config(pid: u32, config: &ProcessConfig) {
     unsafe {
         match OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) {
             /* this error instance don't contain any information inside, it not the one returned from winAPI, no need to receive it */
@@ -466,12 +467,72 @@ fn enable_debug_privilege() {
                             Err(_) => {
                                 log!("enable_debug_privilege: AdjustTokenPrivileges failed");
                             }
-                            Ok(_) => {}
+                            Ok(_) => {
+                                log!("enable_debug_privilege: AdjustTokenPrivileges succeeded");
+                            }
                         }
                     }
                 }
                 let _ = CloseHandle(token);
             }
+        }
+    }
+}
+
+fn is_running_as_admin() -> bool {
+    unsafe {
+        let current_process = GetCurrentProcess();
+        let mut token: HANDLE = HANDLE::default();
+
+        // Open process token
+        if OpenProcessToken(current_process, TOKEN_QUERY, &mut token).is_err() {
+            return false;
+        }
+
+        let mut elevation: TOKEN_ELEVATION = TOKEN_ELEVATION::default();
+        let mut return_length = 0u32;
+
+        // Check if token is elevated
+        let result = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elevation as *mut _ as *mut _),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut return_length,
+        );
+
+        let _ = CloseHandle(token);
+
+        if result.is_ok() { elevation.TokenIsElevated != 0 } else { false }
+    }
+}
+
+fn request_uac_elevation() -> std::io::Result<()> {
+    let exe_path = env::current_exe()?;
+    let args: Vec<String> = env::args().skip(1).collect();
+
+    log!("Requesting UAC elevation...");
+
+    let mut cmd = Command::new("powershell.exe");
+    cmd.arg("-Command");
+
+    let mut powershell_cmd = format!("Start-Process -FilePath '{}' -Verb RunAs", exe_path.display());
+
+    if !args.is_empty() {
+        let args_str = args.join(" ");
+        powershell_cmd.push_str(&format!(" -ArgumentList '{}'", args_str));
+    }
+
+    cmd.arg(powershell_cmd);
+
+    match cmd.spawn() {
+        Ok(_) => {
+            log!("UAC elevation request sent. Please approve the elevation prompt.");
+            std::process::exit(0);
+        }
+        Err(e) => {
+            log!("Failed to request UAC elevation: {}", e);
+            Err(e)
         }
     }
 }
@@ -505,7 +566,6 @@ fn main() -> windows::core::Result<()> {
         convert(in_file_name, out_file_name);
         return Ok(());
     }
-    enable_debug_privilege();
     log!("Affinity Service started");
     log!("time interval: {}", interval_ms);
     let configs = read_config(&config_file_name).unwrap_or_else(|_| {
@@ -517,6 +577,19 @@ fn main() -> windows::core::Result<()> {
         log!("not even a single config, existing");
         return Ok(());
     }
+    if !is_running_as_admin() {
+        log!("Not running as administrator. Requesting UAC elevation...");
+        match request_uac_elevation() {
+            Ok(_) => {
+                log!("Running with administrator privileges.");
+            }
+            Err(e) => {
+                log!("Failed to request elevation: {}, may not manage all processes", e);
+            }
+        }
+    }
+    enable_debug_privilege();
+
     loop {
         unsafe {
             let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
@@ -528,7 +601,7 @@ fn main() -> windows::core::Result<()> {
                     if !FAIL_SET.lock().unwrap().contains(&process_name) {
                         for config in &configs {
                             if process_name == config.name {
-                                set_priority_and_affinity(pe32.th32ProcessID, &config);
+                                apply_config(pe32.th32ProcessID, &config);
                                 if !Process32NextW(snapshot, &mut pe32).is_ok() {
                                     break 'out_loop;
                                 }

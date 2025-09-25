@@ -178,7 +178,6 @@ The [GitHub repository](https://github.com/Prohect/AffinityServiceRust) includes
 3. Place files in the same folder as `AffinityServiceRust.exe`
 4. Run and enjoy optimized system performance!
 
-** Benefits:**
 **Benefits:**
 - **Instant optimization** for hundreds of common applications
 - **Tested configurations** that work well for most systems

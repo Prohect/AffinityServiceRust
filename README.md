@@ -139,7 +139,7 @@ system_process.exe,none,0xFF,none
 - **Zero**: `0` means no change to current affinity
 
 **Tips:**
-- **🎯 Best Practice:** Use aliases for cleaner, maintainable configs
+- **Best Practice:** Use aliases for cleaner, maintainable configs
 - **Quick Setup:** Download `config.ini` from the [repository](https://github.com/Prohect/AffinityServiceRust) and adjust aliases for your CPU
 - **CPU Migration:** Change aliases once to update all processes when upgrading CPU
 - Use `none` to skip changing that setting
@@ -161,7 +161,7 @@ The [GitHub repository](https://github.com/Prohect/AffinityServiceRust) includes
 
 - **`blacklist.ini`** - Excludes system processes from `-find` mode discovery
 
-**🚀 Quick Setup Steps:**
+**Quick Setup Steps:**
 1. Download `config.ini` and `blacklist.ini` from the repository
 2. **Edit the affinity aliases** in `config.ini` for your CPU:
    ```ini
@@ -179,7 +179,7 @@ The [GitHub repository](https://github.com/Prohect/AffinityServiceRust) includes
 4. Run and enjoy optimized system performance!
 
 ** Benefits:**
-**💡 Benefits:**
+**Benefits:**
 - **Instant optimization** for hundreds of common applications
 - **Tested configurations** that work well for most systems
 - **Easy customization** - just edit the alias definitions for your CPU

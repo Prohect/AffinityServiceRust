@@ -85,21 +85,42 @@ Use `-helpall` to see all available options including conversion and debugging f
 
 **Format:** `process_name,priority,affinity_mask,io_priority`
 
+**🚀 New: Affinity Aliases** - Define reusable affinity masks for easier configuration management:
+
+```ini
+# Define aliases first (lines starting with *)
+*pcore = 0xFF          # Performance cores 0-7  
+*ecore = 0xFFF00       # Efficiency cores 8-19
+*allcores = 0xFFFFF    # All available cores
+
+# Use aliases in configurations
+game.exe,high,*pcore,normal
+discord.exe,below normal,*ecore,low
+```
+
 **Example config.ini:**
 ```ini
-# Gaming - high priority, specific cores, normal IO
-game.exe,high,0x0F,normal
+# === AFFINITY ALIASES === (Define once, use everywhere)
+*pcore = 0xFF          # Performance cores 0-7
+*ecore = 0xFFF00       # Efficiency cores 8-19  
+*pcore_no0 = 0xFE      # P-cores except core 0
+*allcores = 0xFFFFF    # All available cores
 
-# Background apps - low priority, efficiency cores, low IO
-discord.exe,below normal,0xF000,low
-steam.exe,below normal,0xF000,very low
+# === PROCESS CONFIGURATIONS ===
+# Gaming - high priority, performance cores
+game.exe,high,*pcore,normal
+steam.exe,below normal,*pcore_no0,low
 
-# Work apps - normal priority, all cores except first
-chrome.exe,normal,0xFFFE,low
-code.exe,above normal,0xFFFE,normal
+# Background apps - efficiency cores, low priority
+discord.exe,below normal,*ecore,low
+chrome.exe,normal,*ecore,low
 
-# No changes - just monitor
-system_process.exe,none,0,none
+# Work applications - mixed configurations
+code.exe,above normal,*ecore,normal
+notepad.exe,normal,*pcore,none
+
+# Traditional hex values still work
+system_process.exe,none,0xFF,none
 ```
 
 **Settings Explained:**
@@ -107,16 +128,22 @@ system_process.exe,none,0,none
 | Field | Options | Description |
 |-------|---------|-------------|
 | **Priority** | `none`, `idle`, `below normal`, `normal`, `above normal`, `high`, `real time` | Process priority class |
-| **Affinity** | `0` (no change), `0xFF` (cores 0-7), `0xF000` (cores 12-15) | CPU cores as hex mask |
+| **Affinity** | `0` (no change), `0xFF`, `*alias_name` | CPU cores as hex mask or alias |
 | **IO Priority** | `none`, `very low`, `low`, `normal` | Disk I/O priority level |
 
+**Affinity Options:**
+- **Direct values**: `0xFF` (cores 0-7), `0xF000` (cores 12-15), `255` (decimal)
+- **Aliases**: `*pcore`, `*ecore`, `*allcores` (define with `*name = 0xFF`)
+- **Zero**: `0` means no change to current affinity
+
 **Tips:**
-- **Quick Setup:** Download `config.ini` from the [repository](https://github.com/Prohect/AffinityServiceRust) and edit the affinity masks for your CPU
-- Use `none` to skip changing that setting
-- Affinity `0xFF` = cores 0-7, `0xF000` = cores 12-15 (efficiency cores on Intel)
+- **🎯 Best Practice:** Use aliases for cleaner, maintainable configs
+- **Quick Setup:** Download `config.ini` from the [repository](https://github.com/Prohect/AffinityServiceRust) and adjust aliases for your CPU
+- **CPU Migration:** Change aliases once to update all processes when upgrading CPU
+- Use `none` to skip changing that setting  
 - `very low` IO priority for background tasks to reduce system impact
 - For process discovery, also download `blacklist.ini` to exclude system processes
-- Run `AffinityServiceRust.exe -helpall` for detailed configuration help
+- Run `AffinityServiceRust.exe -helpall` for detailed configuration help and alias examples
 
 ### Using Repository Configuration Files
 
@@ -132,19 +159,29 @@ The [GitHub repository](https://github.com/Prohect/AffinityServiceRust) includes
 
 - **`blacklist.ini`** - Excludes system processes from `-find` mode discovery
 
-** Quick Setup Steps:**
+**🚀 Quick Setup Steps:**
 1. Download `config.ini` and `blacklist.ini` from the repository
-2. Edit the affinity masks in `config.ini` to match your CPU cores:
-   - **Intel 8P+12E** (like Ultra7): Use `0xFF` for P-cores, `0xFFF00` for E-cores
-   - **Intel 6P+8E**: Use `0x3F` for P-cores, `0x3FC0` for E-cores
-   - **AMD or other**: Adjust hex values based on your core count
+2. **Edit the affinity aliases** in `config.ini` for your CPU:
+   ```ini
+   # Intel 8P+12E (like 14700KF)
+   *pcore = 0xFF          # Cores 0-7
+   *ecore = 0xFFF00       # Cores 8-19
+   
+   # Intel 6P+8E  
+   *pcore = 0x3F          # Cores 0-5
+   *ecore = 0x3FC0        # Cores 6-13
+   
+   # AMD or custom - adjust based on your CPU
+   ```
 3. Place files in the same folder as `AffinityServiceRust.exe`
 4. Run and enjoy optimized system performance!
 
 ** Benefits:**
+**💡 Benefits:**
 - **Instant optimization** for hundreds of common applications
-- **Tested configurations** that work well for most systems
-- **Easy customization** - just edit the hex values for your CPU
+- **Tested configurations** that work well for most systems  
+- **Easy customization** - just edit the alias definitions for your CPU
+- **Maintainable configs** - change CPU setup once, applies everywhere
 - **Community maintained** - configurations improve over time
 
 ---

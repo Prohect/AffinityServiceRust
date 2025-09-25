@@ -87,7 +87,7 @@ Use `-helpall` to see all available options including conversion and debugging f
 
 **Format:** `process_name,priority,affinity_mask,io_priority`
 
-**🚀 New: Affinity Aliases** - Define reusable affinity masks for easier configuration management:
+**New: Affinity Aliases** - Define reusable affinity masks for easier configuration management:
 
 ```ini
 # Define aliases first (lines starting with *)

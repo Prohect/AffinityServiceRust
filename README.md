@@ -17,7 +17,7 @@ A Windows service written in Rust that automatically manages **process priority*
 ## Quick Start
 
 1. **Download or compile** the `AffinityServiceRust.exe`
-2. **Get configuration files (or Create one on your own)** from the [GitHub repository](https://github.com/Prohect/AffinityServiceRust):
+2. **Get configuration files (or Create one on your own)** from the [GitHub repository](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini):
    - Use the pre-configured `config.ini` as a starting point (covers 200+ common processes)
    - Use the included `blacklist.ini` for process discovery mode
    - Edit these files to match your CPU configuration and needs
@@ -83,7 +83,7 @@ Use `-helpall` to see all available options including conversion and debugging f
 
 ### Configuration File
 
-**Getting Started:** Download the pre-configured `config.ini` from the [GitHub repository](https://github.com/Prohect/AffinityServiceRust) - it includes settings for 200+ common applications and serves as an excellent starting point. Or create your own configuration file all manually.
+**Getting Started:** Download the pre-configured `config.ini` from the [GitHub repository](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) - it includes settings for 200+ common applications and serves as an excellent starting point. Or create your own configuration file all manually.
 
 **Format:** `process_name,priority,affinity_mask,io_priority`
 
@@ -140,7 +140,7 @@ system_process.exe,none,0xFF,none
 
 **Tips:**
 - **Best Practice:** Use aliases for cleaner, maintainable configs
-- **Quick Setup:** Download `config.ini` from the [repository](https://github.com/Prohect/AffinityServiceRust) and adjust aliases for your CPU
+- **Quick Setup:** Download `config.ini` from the [repository](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) and adjust aliases for your CPU
 - **CPU Migration:** Change aliases once to update all processes when upgrading CPU
 - Use `none` to skip changing that setting
 - `very low` IO priority for background tasks to reduce system impact
@@ -150,7 +150,7 @@ system_process.exe,none,0xFF,none
 ### Using Repository Configuration Files
 
 ** Pre-configured Files Available:**
-The [GitHub repository](https://github.com/Prohect/AffinityServiceRust) includes ready-to-use configuration files:
+The [GitHub repository](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) includes ready-to-use configuration files:
 
 - **`config.ini`** - Pre-configured settings for 200+ common applications including:
   - Games (Steam, Epic, individual game executables)

@@ -34,6 +34,16 @@ const IO_PRIORITY_NORMAL: u32 = 2;
 // Process Information Class for IO Priority
 const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
 
+// Memory Priority constants - COMMENTED OUT due to API limitations
+// const MEMORY_PRIORITY_VERY_LOW: u32 = 1;
+// const MEMORY_PRIORITY_LOW: u32 = 2;
+// const MEMORY_PRIORITY_MEDIUM: u32 = 3;
+// const MEMORY_PRIORITY_BELOW_NORMAL: u32 = 4;
+// const MEMORY_PRIORITY_NORMAL: u32 = 5;
+
+// Process Information Class for Memory Priority - COMMENTED OUT
+// const PROCESS_INFORMATION_MEMORY_PRIORITY: u32 = 61;  // Returns STATUS_INVALID_INFO_CLASS (0xC0000003)
+
 // External function declaration for NtSetInformationProcess
 #[link(name = "ntdll")]
 unsafe extern "system" {
@@ -71,6 +81,7 @@ struct ProcessConfig {
     priority: ProcessPriority,
     affinity_mask: usize,
     io_priority: IOPriority,
+    // memory_priority: MemoryPriority,  // Commented out - Windows API not working with standard privileges
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProcessPriority {
@@ -92,6 +103,17 @@ enum IOPriority {
     // High,     // Requires SeIncreaseBasePriorityPrivilege - commented out
     // Critical, // Requires SeIncreaseBasePriorityPrivilege - commented out
 }
+
+// Memory Priority enum - COMMENTED OUT due to Windows API limitations
+// #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// enum MemoryPriority {
+//     None,
+//     VeryLow,
+//     Low,
+//     Medium,
+//     BelowNormal,
+//     Normal,
+// }
 impl ProcessPriority {
     const TABLE: &'static [(Self, &'static str, Option<PROCESS_CREATION_FLAGS>)] = &[
         (Self::None, "none", None),
@@ -135,6 +157,31 @@ impl IOPriority {
         Self::TABLE.iter().find(|(_, name, _)| s.to_lowercase() == *name).map(|(v, _, _)| *v).unwrap_or(Self::None)
     }
 }
+
+// Memory Priority implementation - COMMENTED OUT due to Windows API limitations
+// Returns STATUS_INVALID_INFO_CLASS (0xC0000003) - likely requires different approach or privileges
+// impl MemoryPriority {
+//     const TABLE: &'static [(Self, &'static str, u32)] = &[
+//         (Self::None, "none", MEMORY_PRIORITY_NORMAL),
+//         (Self::VeryLow, "very low", MEMORY_PRIORITY_VERY_LOW),
+//         (Self::Low, "low", MEMORY_PRIORITY_LOW),
+//         (Self::Medium, "medium", MEMORY_PRIORITY_MEDIUM),
+//         (Self::BelowNormal, "below normal", MEMORY_PRIORITY_BELOW_NORMAL),
+//         (Self::Normal, "normal", MEMORY_PRIORITY_NORMAL),
+//     ];
+//
+//     pub fn as_str(&self) -> &'static str {
+//         Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, name, _)| *name).unwrap_or("fail as str")
+//     }
+//
+//     pub fn as_win_const(&self) -> u32 {
+//         Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, _, val)| *val).unwrap_or(MEMORY_PRIORITY_NORMAL)
+//     }
+//
+//     pub fn from_str(s: &str) -> Self {
+//         Self::TABLE.iter().find(|(_, name, _)| s.to_lowercase() == *name).map(|(v, _, _)| *v).unwrap_or(Self::None)
+//     }
+// }
 
 pub fn log_to_find(msg: &str) {
     let time_prefix = LOCALTIME_BUFFER.lock().unwrap().format("%H:%M:%S").to_string();
@@ -185,11 +232,13 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<Vec<ProcessConfig>> {
                 parts[2].parse().unwrap_or(0)
             };
             let io_priority = if parts.len() >= 4 { IOPriority::from_str(parts[3]) } else { IOPriority::None };
+            // let memory_priority = if parts.len() >= 5 { MemoryPriority::from_str(parts[4]) } else { MemoryPriority::None };
             configs.push(ProcessConfig {
                 name,
                 priority,
                 affinity_mask: affinity,
                 io_priority,
+                // memory_priority,  // Commented out - Windows API not working
             });
         }
     }
@@ -297,6 +346,30 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
                         }
                     }
 
+                    // Apply Memory Priority - COMMENTED OUT due to Windows API limitations
+                    // Returns STATUS_INVALID_INFO_CLASS (0xC0000003) with PROCESS_INFORMATION_MEMORY_PRIORITY
+                    // if config.memory_priority != MemoryPriority::None {
+                    //     let memory_priority_value = config.memory_priority.as_win_const();
+                    //     let result = NtSetInformationProcess(
+                    //         h_proc,
+                    //         PROCESS_INFORMATION_MEMORY_PRIORITY,
+                    //         &memory_priority_value as *const u32,
+                    //         std::mem::size_of::<u32>() as u32,
+                    //     );
+                    //
+                    //     if result.0 >= 0 {
+                    //         log!("{:>5}-{} -> Memory: {}", pid, config.name, config.memory_priority.as_str());
+                    //     } else {
+                    //         log_to_find(&format!(
+                    //             "set_memory_priority: [SET_MEMORY_PRIORITY_FAILED][0x{:08X}] {:>5}-{} -> {}",
+                    //             result.0,
+                    //             pid,
+                    //             config.name,
+                    //             config.memory_priority.as_str()
+                    //         ));
+                    //     }
+                    // }
+
                     let _ = CloseHandle(h_proc);
                 }
             }
@@ -392,6 +465,7 @@ fn convert(in_file_name: Option<String>, out_file_name: Option<String>) {
                                             priority,
                                             affinity_mask: 0,
                                             io_priority: IOPriority::None,
+                                            // memory_priority: MemoryPriority::None,  // Commented out
                                         }),
                                     }
                                 } else {
@@ -411,6 +485,7 @@ fn convert(in_file_name: Option<String>, out_file_name: Option<String>) {
                                             priority: ProcessPriority::None,
                                             affinity_mask: mask,
                                             io_priority: IOPriority::None,
+                                            // memory_priority: MemoryPriority::None,  // Commented out
                                         }),
                                     }
                                 } else {
@@ -522,10 +597,11 @@ fn print_help() {
     println!("  -out <file>          output file for -convert");
     println!();
     println!("Config file format: process_name,priority,affinity_mask,io_priority");
-    println!("  Priority:     none, idle, below normal, normal, above normal, high, real time");
-    println!("  Affinity:     0 (no change), or hex/decimal mask (e.g., 0xFF, 255)");
-    println!("  IO Priority:  none, very low, low, normal");
-    println!("  Example:      notepad.exe,above normal,0xFF,low");
+    println!("  Priority:        none, idle, below normal, normal, above normal, high, real time");
+    println!("  Affinity:        0 (no change), or hex/decimal mask (e.g., 0xFF, 255)");
+    println!("  IO Priority:     none, very low, low, normal");
+    println!("  Example:         notepad.exe,above normal,0xFF,low");
+    println!("  Note:            Memory priority management is not yet supported due to Windows API limitations");
     println!();
 }
 

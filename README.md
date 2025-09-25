@@ -112,23 +112,28 @@ process_name,priority,affinity_mask,io_priority
   * `process_name`: The name of the process executable (e.g., `game.exe`).
   * `priority`: The desired process priority. Possible values are: `none`, `idle`, `below normal`, `normal`, `above normal`, `high`, `real time`. `none` means the program won't change it.
   * `affinity_mask`: A hexadecimal or decimal value representing the CPU affinity mask (e.g., `0xFFFE` or `65534`). Any value equal to `0` means the program won't change it.
-  * `io_priority`: The desired I/O priority. Possible values are: `none`, `very low`, `low`, `normal`, `high`, `critical`. `none` means the program won't change it.
+  * `io_priority`: The desired I/O priority. Possible values are: `none`, `very low`, `low`, `normal`. `none` means the program won't change it.
 
 **Example `config.ini`:**
 ```ini
 # This is an example configuration file
 discord.exe,below normal,0,low
 game.exe,high,0x0A,normal
-video_editor.exe,high,0xAA,high
+video_editor.exe,high,0xAA,low
 background_app.exe,idle,0xF000,very low
 system_critical.exe,none,0,none
 ```
 
 **IO Priority Notes:**
 - `very low`, `low`, `normal` work with standard admin privileges
-- `high`, `critical` may require special system privileges and might fail on some systems
+- `high`, `critical` have been removed due to privilege requirements
 - For most applications, `low` or `normal` IO priority is sufficient
 - Use `very low` for background tasks to minimize system impact
+
+**Memory Priority:**
+- Memory priority management is not yet supported due to Windows API limitations
+- The feature returns `STATUS_INVALID_INFO_CLASS` errors and requires further research
+- This may be implemented in a future version with alternative approaches
 
 ### `blacklist.txt` (for `-find` mode)
 

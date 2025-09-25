@@ -28,8 +28,8 @@ use windows::Win32::{
 const IO_PRIORITY_VERY_LOW: u32 = 0;
 const IO_PRIORITY_LOW: u32 = 1;
 const IO_PRIORITY_NORMAL: u32 = 2;
-const IO_PRIORITY_HIGH: u32 = 3;
-const IO_PRIORITY_CRITICAL: u32 = 4;
+// const IO_PRIORITY_HIGH: u32 = 3;        // Requires SeIncreaseBasePriorityPrivilege
+// const IO_PRIORITY_CRITICAL: u32 = 4;    // Requires SeIncreaseBasePriorityPrivilege
 
 // Process Information Class for IO Priority
 const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
@@ -89,8 +89,8 @@ enum IOPriority {
     VeryLow,
     Low,
     Normal,
-    High,     // no privilege
-    Critical, // no privilege
+    // High,     // Requires SeIncreaseBasePriorityPrivilege - commented out
+    // Critical, // Requires SeIncreaseBasePriorityPrivilege - commented out
 }
 impl ProcessPriority {
     const TABLE: &'static [(Self, &'static str, Option<PROCESS_CREATION_FLAGS>)] = &[
@@ -119,8 +119,8 @@ impl IOPriority {
         (Self::VeryLow, "very low", IO_PRIORITY_VERY_LOW),
         (Self::Low, "low", IO_PRIORITY_LOW),
         (Self::Normal, "normal", IO_PRIORITY_NORMAL),
-        (Self::High, "high", IO_PRIORITY_HIGH),
-        (Self::Critical, "critical", IO_PRIORITY_CRITICAL),
+        // (Self::High, "high", IO_PRIORITY_HIGH),           // Requires SeIncreaseBasePriorityPrivilege
+        // (Self::Critical, "critical", IO_PRIORITY_CRITICAL), // Requires SeIncreaseBasePriorityPrivilege
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -524,7 +524,7 @@ fn print_help() {
     println!("Config file format: process_name,priority,affinity_mask,io_priority");
     println!("  Priority:     none, idle, below normal, normal, above normal, high, real time");
     println!("  Affinity:     0 (no change), or hex/decimal mask (e.g., 0xFF, 255)");
-    println!("  IO Priority:  none, very low, low, normal, high, critical");
+    println!("  IO Priority:  none, very low, low, normal");
     println!("  Example:      notepad.exe,above normal,0xFF,low");
     println!();
 }

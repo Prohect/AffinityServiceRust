@@ -23,6 +23,8 @@ A Windows service written in Rust that automatically manages **process priority*
    - Edit these files to match your CPU configuration and needs
 3. **Run the application** - double-click the exe or use command line with options
 
+   **Note:** By default, the application runs silently in the background and logs its activity to a file (`logs\YYYYmmDD.log`). Use the `-console` flag to see real-time output.
+
 ### Basic Usage
 
 ```bash
@@ -89,7 +91,7 @@ Use `-helpall` to see all available options including conversion and debugging f
 
 ```ini
 # Define aliases first (lines starting with *)
-*pcore = 0xFF          # Performance cores 0-7  
+*pcore = 0xFF          # Performance cores 0-7
 *ecore = 0xFFF00       # Efficiency cores 8-19
 *allcores = 0xFFFFF    # All available cores
 
@@ -102,7 +104,7 @@ discord.exe,below normal,*ecore,low
 ```ini
 # === AFFINITY ALIASES === (Define once, use everywhere)
 *pcore = 0xFF          # Performance cores 0-7
-*ecore = 0xFFF00       # Efficiency cores 8-19  
+*ecore = 0xFFF00       # Efficiency cores 8-19
 *pcore_no0 = 0xFE      # P-cores except core 0
 *allcores = 0xFFFFF    # All available cores
 
@@ -140,7 +142,7 @@ system_process.exe,none,0xFF,none
 - **🎯 Best Practice:** Use aliases for cleaner, maintainable configs
 - **Quick Setup:** Download `config.ini` from the [repository](https://github.com/Prohect/AffinityServiceRust) and adjust aliases for your CPU
 - **CPU Migration:** Change aliases once to update all processes when upgrading CPU
-- Use `none` to skip changing that setting  
+- Use `none` to skip changing that setting
 - `very low` IO priority for background tasks to reduce system impact
 - For process discovery, also download `blacklist.ini` to exclude system processes
 - Run `AffinityServiceRust.exe -helpall` for detailed configuration help and alias examples
@@ -166,11 +168,11 @@ The [GitHub repository](https://github.com/Prohect/AffinityServiceRust) includes
    # Intel 8P+12E (like 14700KF)
    *pcore = 0xFF          # Cores 0-7
    *ecore = 0xFFF00       # Cores 8-19
-   
-   # Intel 6P+8E  
+
+   # Intel 6P+8E
    *pcore = 0x3F          # Cores 0-5
    *ecore = 0x3FC0        # Cores 6-13
-   
+
    # AMD or custom - adjust based on your CPU
    ```
 3. Place files in the same folder as `AffinityServiceRust.exe`
@@ -179,7 +181,7 @@ The [GitHub repository](https://github.com/Prohect/AffinityServiceRust) includes
 ** Benefits:**
 **💡 Benefits:**
 - **Instant optimization** for hundreds of common applications
-- **Tested configurations** that work well for most systems  
+- **Tested configurations** that work well for most systems
 - **Easy customization** - just edit the alias definitions for your CPU
 - **Maintainable configs** - change CPU setup once, applies everywhere
 - **Community maintained** - configurations improve over time

@@ -3,13 +3,15 @@
 
 # Affinity Service Rust
 
-This is a Windows service written in Rust that allows you to manage the **process priority** and **CPU affinity** for specific applications. It can be configured to automatically set these values for processes as they run, and it also includes a utility for converting configuration files from other applications like Process Lasso.
+This is a Windows service written in Rust that allows you to manage the **process priority**, **CPU affinity**, and **IO priority** for specific applications. It can be configured to automatically set these values for processes as they run, and it also includes a utility for converting configuration files from other applications like Process Lasso.
 
 ## Features
 
   * **Process Priority Management:** Automatically sets the priority class for specified processes (e.g., Idle, High, Realtime).
   * **CPU Affinity Management:** Assigns a specific set of CPU cores to a process using an affinity mask.
+  * **IO Priority Management:** Controls disk I/O priority for processes (Very Low, Low, Normal, High, Critical).
   * **Configuration:** Reads settings from a simple, comma-separated configuration file.
+  * **UAC Control:** Option to run without UAC elevation for limited privilege scenarios.
   * **Conversion Utility:** Converts configuration files from a different format (specifically, the one used by Process Lasso) into a format this service can use.
   * **Process Monitoring:** Can identify and log processes that are running with the default system CPU affinity.
 
@@ -34,6 +36,12 @@ However, it is a good idea to set a scheduled task for this program to run autom
     ```
     `The config is "config.ini" by default, you don't have to set it.`  
     `The program logs to a log file by default, unless you run it with "-console".`
+
+  * **Run without UAC elevation (limited privileges):**
+    ```bash
+    AffinityServiceRust.exe -console -noUAC
+    ```
+    Use this when you don't want UAC prompts or when running in environments where admin privileges aren't available. Note that some processes may not be manageable without admin privileges.
 
   * **Convert a Process Lasso configuration file:**
     ```bash
@@ -76,6 +84,19 @@ However, it is a good idea to set a scheduled task for this program to run autom
     **Note:** `-help` will print usage information and then exit the program.  
     `"-?", "?", "--help"` all do the same thing as above.
 
+### Command Line Arguments
+
+  * `-console` - Use console output instead of log file
+  * `-noUAC` or `-nouac` - Disable UAC elevation request (run with current privileges)
+  * `-help` / `--help` / `-?` / `/?` / `?` - Show help message
+  * `-config <file>` - Use custom configuration file (default: config.ini)
+  * `-interval <ms>` - Set check interval in milliseconds (default: 5000, minimum: 16)
+  * `-convert` - Convert configuration files and exit
+  * `-find` - Monitor for unmanaged processes
+  * `-blacklist <file>` - Blacklist file for -find mode
+  * `-in <file>` - Input file for -convert mode
+  * `-out <file>` - Output file for -convert mode
+
 ---
 
 ## Configuration
@@ -85,20 +106,29 @@ However, it is a good idea to set a scheduled task for this program to run autom
 The service reads from `config.ini` by default. Each line in the file represents a process configuration and should be formatted as follows:
 
 ```
-process_name,priority,affinity_mask
+process_name,priority,affinity_mask,io_priority
 ```
 
   * `process_name`: The name of the process executable (e.g., `game.exe`).
-  * `priority`: The desired process priority. Possible values are: `none`, `idle`, `below normal`, `normal`, `above normal`, `high`, `real time`. `none` means the program won't take care of it.
-  * `affinity_mask`: A hexadecimal value representing the CPU affinity mask (e.g., `0xFFFE`). Any value equal to `0` means the program won't take care of it.
+  * `priority`: The desired process priority. Possible values are: `none`, `idle`, `below normal`, `normal`, `above normal`, `high`, `real time`. `none` means the program won't change it.
+  * `affinity_mask`: A hexadecimal or decimal value representing the CPU affinity mask (e.g., `0xFFFE` or `65534`). Any value equal to `0` means the program won't change it.
+  * `io_priority`: The desired I/O priority. Possible values are: `none`, `very low`, `low`, `normal`, `high`, `critical`. `none` means the program won't change it.
 
 **Example `config.ini`:**
 ```ini
 # This is an example configuration file
-discord.exe,below normal,0
-game.exe,high,0x0A
-video_editor.exe,high,0xAA
+discord.exe,below normal,0,low
+game.exe,high,0x0A,normal
+video_editor.exe,high,0xAA,high
+background_app.exe,idle,0xF000,very low
+system_critical.exe,none,0,none
 ```
+
+**IO Priority Notes:**
+- `very low`, `low`, `normal` work with standard admin privileges
+- `high`, `critical` may require special system privileges and might fail on some systems
+- For most applications, `low` or `normal` IO priority is sufficient
+- Use `very low` for background tasks to minimize system impact
 
 ### `blacklist.txt` (for `-find` mode)
 

@@ -13,7 +13,7 @@ use std::{
 };
 use windows::Win32::System::Threading::GetPriorityClass;
 use windows::Win32::{
-    Foundation::{CloseHandle, GetLastError, HANDLE, LUID},
+    Foundation::{CloseHandle, GetLastError, HANDLE, LUID, NTSTATUS},
     Security::{AdjustTokenPrivileges, GetTokenInformation, LookupPrivilegeValueW, SE_DEBUG_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_ELEVATION, TOKEN_PRIVILEGES, TOKEN_QUERY, TokenElevation},
     System::{
         Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
@@ -23,6 +23,22 @@ use windows::Win32::{
         },
     },
 };
+
+// IO Priority constants
+const IO_PRIORITY_VERY_LOW: u32 = 0;
+const IO_PRIORITY_LOW: u32 = 1;
+const IO_PRIORITY_NORMAL: u32 = 2;
+const IO_PRIORITY_HIGH: u32 = 3;
+const IO_PRIORITY_CRITICAL: u32 = 4;
+
+// Process Information Class for IO Priority
+const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
+
+// External function declaration for NtSetInformationProcess
+#[link(name = "ntdll")]
+unsafe extern "system" {
+    fn NtSetInformationProcess(process_handle: HANDLE, process_information_class: u32, process_information: *const u32, process_information_length: u32) -> NTSTATUS;
+}
 
 fn get_log_path(suffix: &str) -> PathBuf {
     let year = LOCALTIME_BUFFER.lock().unwrap().year();
@@ -54,6 +70,7 @@ struct ProcessConfig {
     name: String,
     priority: ProcessPriority,
     affinity_mask: usize,
+    io_priority: IOPriority,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProcessPriority {
@@ -64,6 +81,16 @@ enum ProcessPriority {
     AboveNormal,
     High,
     Realtime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IOPriority {
+    None,
+    VeryLow,
+    Low,
+    Normal,
+    High,
+    Critical,
 }
 impl ProcessPriority {
     const TABLE: &'static [(Self, &'static str, Option<PROCESS_CREATION_FLAGS>)] = &[
@@ -81,6 +108,29 @@ impl ProcessPriority {
     pub fn as_win_const(&self) -> Option<PROCESS_CREATION_FLAGS> {
         Self::TABLE.iter().find(|(v, _, _)| v == self).and_then(|(_, _, val)| *val)
     }
+    pub fn from_str(s: &str) -> Self {
+        Self::TABLE.iter().find(|(_, name, _)| s.to_lowercase() == *name).map(|(v, _, _)| *v).unwrap_or(Self::None)
+    }
+}
+
+impl IOPriority {
+    const TABLE: &'static [(Self, &'static str, u32)] = &[
+        (Self::None, "none", IO_PRIORITY_NORMAL),
+        (Self::VeryLow, "very low", IO_PRIORITY_VERY_LOW),
+        (Self::Low, "low", IO_PRIORITY_LOW),
+        (Self::Normal, "normal", IO_PRIORITY_NORMAL),
+        (Self::High, "high", IO_PRIORITY_HIGH),
+        (Self::Critical, "critical", IO_PRIORITY_CRITICAL),
+    ];
+
+    pub fn as_str(&self) -> &'static str {
+        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, name, _)| *name).unwrap_or("fail as str")
+    }
+
+    pub fn as_win_const(&self) -> u32 {
+        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, _, val)| *val).unwrap_or(IO_PRIORITY_NORMAL)
+    }
+
     pub fn from_str(s: &str) -> Self {
         Self::TABLE.iter().find(|(_, name, _)| s.to_lowercase() == *name).map(|(v, _, _)| *v).unwrap_or(Self::None)
     }
@@ -134,10 +184,12 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<Vec<ProcessConfig>> {
             } else {
                 parts[2].parse().unwrap_or(0)
             };
+            let io_priority = if parts.len() >= 4 { IOPriority::from_str(parts[3]) } else { IOPriority::None };
             configs.push(ProcessConfig {
                 name,
                 priority,
                 affinity_mask: affinity,
+                io_priority,
             });
         }
     }
@@ -225,6 +277,24 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
                             },
                             _ => {}
                         },
+                    }
+
+                    // Apply IO Priority if not None
+                    if config.io_priority != IOPriority::None {
+                        let io_priority_value = config.io_priority.as_win_const();
+                        let result = NtSetInformationProcess(h_proc, PROCESS_INFORMATION_IO_PRIORITY, &io_priority_value as *const u32, std::mem::size_of::<u32>() as u32);
+
+                        if result.0 >= 0 {
+                            log!("{:>5}-{} -> IO: {}", pid, config.name, config.io_priority.as_str());
+                        } else {
+                            log_to_find(&format!(
+                                "set_io_priority: [SET_IO_PRIORITY_FAILED][0x{:08X}] {:>5}-{} -> {}",
+                                result.0,
+                                pid,
+                                config.name,
+                                config.io_priority.as_str()
+                            ));
+                        }
                     }
 
                     let _ = CloseHandle(h_proc);
@@ -317,7 +387,12 @@ fn convert(in_file_name: Option<String>, out_file_name: Option<String>) {
                                     let priority = ProcessPriority::from_str(chunk[1]);
                                     match configs.iter_mut().find(|c| c.name == name) {
                                         Some(cfg) => cfg.priority = priority,
-                                        None => configs.push(ProcessConfig { name, priority, affinity_mask: 0 }),
+                                        None => configs.push(ProcessConfig {
+                                            name,
+                                            priority,
+                                            affinity_mask: 0,
+                                            io_priority: IOPriority::None,
+                                        }),
                                     }
                                 } else {
                                     log!("Invalid priority configuration line: {}", line);
@@ -335,6 +410,7 @@ fn convert(in_file_name: Option<String>, out_file_name: Option<String>) {
                                             name,
                                             priority: ProcessPriority::None,
                                             affinity_mask: mask,
+                                            io_priority: IOPriority::None,
                                         }),
                                     }
                                 } else {
@@ -383,6 +459,7 @@ fn parse_args(
     blacklist_file_name: &mut Option<String>,
     in_file_name: &mut Option<String>,
     out_file_name: &mut Option<String>,
+    no_uac: &mut bool,
 ) -> windows::core::Result<()> {
     let mut i = 1;
     while i < args.len() {
@@ -392,6 +469,9 @@ fn parse_args(
             }
             "-console" => {
                 *use_console().lock().unwrap() = true;
+            }
+            "-noUAC" | "-nouac" => {
+                *no_uac = true;
             }
             "-convert" => {
                 *convert_mode = true;
@@ -432,6 +512,7 @@ fn print_help() {
     println!("  -help | --help       print this help message");
     println!("  -? | /? | ?          print this help message");
     println!("  -console             use console as output instead of log file");
+    println!("  -noUAC | -nouac      disable UAC elevation request");
     println!("  -convert             convert process configs from -in <file>(from process lasso) to -out <file>");
     println!("  -find                find those whose affinity is same as system default which is all possible cores windows could use");
     println!("  -interval <ms>       set interval for checking again (5000 by default, minimal 16)");
@@ -439,6 +520,12 @@ fn print_help() {
     println!("  -blacklist <file>    the blacklist for -find");
     println!("  -in <file>           input file for -convert");
     println!("  -out <file>          output file for -convert");
+    println!();
+    println!("Config file format: process_name,priority,affinity_mask,io_priority");
+    println!("  Priority:     none, idle, below normal, normal, above normal, high, real time");
+    println!("  Affinity:     0 (no change), or hex/decimal mask (e.g., 0xFF, 255)");
+    println!("  IO Priority:  none, very low, low, normal, high, critical");
+    println!("  Example:      notepad.exe,above normal,0xFF,low");
     println!();
 }
 
@@ -547,6 +634,7 @@ fn main() -> windows::core::Result<()> {
     let mut blacklist_file_name: Option<String> = None;
     let mut in_file_name: Option<String> = None;
     let mut out_file_name: Option<String> = None;
+    let mut no_uac = false;
     parse_args(
         &args,
         &mut interval_ms,
@@ -557,6 +645,7 @@ fn main() -> windows::core::Result<()> {
         &mut blacklist_file_name,
         &mut in_file_name,
         &mut out_file_name,
+        &mut no_uac,
     )?;
     if help_mode {
         print_help();
@@ -578,13 +667,18 @@ fn main() -> windows::core::Result<()> {
         return Ok(());
     }
     if !is_running_as_admin() {
-        log!("Not running as administrator. Requesting UAC elevation...");
-        match request_uac_elevation() {
-            Ok(_) => {
-                log!("Running with administrator privileges.");
-            }
-            Err(e) => {
-                log!("Failed to request elevation: {}, may not manage all processes", e);
+        if no_uac {
+            log!("Not running as administrator. UAC elevation disabled by -noUAC flag.");
+            log!("Warning: May not be able to manage all processes without admin privileges.");
+        } else {
+            log!("Not running as administrator. Requesting UAC elevation...");
+            match request_uac_elevation() {
+                Ok(_) => {
+                    log!("Running with administrator privileges.");
+                }
+                Err(e) => {
+                    log!("Failed to request elevation: {}, may not manage all processes", e);
+                }
             }
         }
     }

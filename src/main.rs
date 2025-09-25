@@ -1,7 +1,7 @@
 use chrono::{DateTime, Datelike, Local};
 use once_cell::sync::Lazy;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     env,
     fs::{self, File, OpenOptions},
     io::{self, BufRead, Write},
@@ -214,24 +214,61 @@ fn log_message(args: &str) {
 }
 
 fn read_config<P: AsRef<Path>>(path: P) -> io::Result<Vec<ProcessConfig>> {
-    let file = File::open(path)?;
+    let file = File::open(&path)?;
     let reader = io::BufReader::new(file);
     let mut configs = Vec::new();
-    for line in reader.lines() {
-        let line = line?;
+    let mut affinity_aliases = HashMap::new();
+
+    // Read all lines into memory first
+    let lines: Result<Vec<String>, _> = reader.lines().collect();
+    let lines = lines?;
+
+    // First pass: collect affinity aliases
+    for line in &lines {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
+
+        // Check for alias definition (starts with *)
+        if line.starts_with('*') {
+            if let Some(eq_pos) = line.find('=') {
+                let alias_name = line[1..eq_pos].trim().to_lowercase();
+                let alias_value = line[eq_pos + 1..].trim();
+
+                let affinity_value = if alias_value.starts_with("0x") {
+                    usize::from_str_radix(alias_value.trim_start_matches("0x"), 16).unwrap_or(0)
+                } else {
+                    alias_value.parse().unwrap_or(0)
+                };
+
+                affinity_aliases.insert(alias_name, affinity_value);
+            }
+        }
+    }
+
+    // Second pass: parse process configs
+    for line in &lines {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('*') {
+            continue;
+        }
+
         let parts: Vec<&str> = line.split(',').collect();
         if parts.len() >= 3 {
             let name = parts[0].to_lowercase();
             let priority: ProcessPriority = ProcessPriority::from_str(&parts[1]);
-            let affinity = if parts[2].trim_start().starts_with("0x") {
+
+            // Parse affinity - check for alias or direct value
+            let affinity = if parts[2].trim().starts_with('*') {
+                let alias_name = parts[2].trim().trim_start_matches('*').to_lowercase();
+                *affinity_aliases.get(&alias_name).unwrap_or(&0)
+            } else if parts[2].trim_start().starts_with("0x") {
                 usize::from_str_radix(parts[2].trim_start_matches("0x"), 16).unwrap_or(0)
             } else {
                 parts[2].parse().unwrap_or(0)
             };
+
             let io_priority = if parts.len() >= 4 { IOPriority::from_str(parts[3]) } else { IOPriority::None };
             // let memory_priority = if parts.len() >= 5 { MemoryPriority::from_str(parts[4]) } else { MemoryPriority::None };
             configs.push(ProcessConfig {
@@ -666,7 +703,16 @@ fn print_help_all() {
     println!();
     println!("Affinity Mask:");
     println!("  0 (no change), or hex/decimal mask (e.g., 0xFF, 255)");
+    println!("  *alias_name to use predefined alias");
     println!("  Represents CPU cores as binary flags");
+    println!();
+    println!("Affinity Aliases:");
+    println!("  Define reusable masks with: *alias_name = 0xFF");
+    println!("  Examples:");
+    println!("    *pcore = 0xFF        # Performance cores (0-7)");
+    println!("    *ecore = 0xFFF00     # Efficiency cores (8-19)");
+    println!("    *allcores = 0xFFFFF  # All cores");
+    println!("  Then use: game.exe,high,*pcore,normal");
     println!();
     println!("IO Priority Options:");
     println!("  none, very low, low, normal");
@@ -674,9 +720,13 @@ fn print_help_all() {
     println!("  Note: high/critical removed due to privilege requirements");
     println!();
     println!("Example Configuration:");
-    println!("  notepad.exe,above normal,0xFF,low");
-    println!("  game.exe,high,0x0A,normal");
-    println!("  background.exe,idle,0xF000,very low");
+    println!("  # Define aliases first");
+    println!("  *pcore = 0xFF");
+    println!("  *ecore = 0xFFF00");
+    println!("  # Use aliases in configs");
+    println!("  notepad.exe,above normal,*pcore,low");
+    println!("  game.exe,high,*pcore,normal");
+    println!("  background.exe,idle,*ecore,very low");
     println!();
     println!("=== LIMITATIONS & NOTES ===");
     println!();

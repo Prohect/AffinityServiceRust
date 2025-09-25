@@ -17,7 +17,10 @@ A Windows service written in Rust that automatically manages **process priority*
 ## Quick Start
 
 1. **Download or compile** the `AffinityServiceRust.exe`
-2. **Create or edit** `config.ini` with your process settings (see Configuration section)
+2. **Get configuration files (or Create one on your own)** from the [GitHub repository](https://github.com/Prohect/AffinityServiceRust):
+   - Use the pre-configured `config.ini` as a starting point (covers 200+ common processes)
+   - Use the included `blacklist.ini` for process discovery mode
+   - Edit these files to match your CPU configuration and needs
 3. **Run the application** - double-click the exe or use command line with options
 
 ### Basic Usage
@@ -78,7 +81,9 @@ Use `-helpall` to see all available options including conversion and debugging f
 
 ### Configuration File
 
-Create a `config.ini` file with process settings. Format: `process_name,priority,affinity_mask,io_priority`
+**Getting Started:** Download the pre-configured `config.ini` from the [GitHub repository](https://github.com/Prohect/AffinityServiceRust) - it includes settings for 200+ common applications and serves as an excellent starting point. Or create your own configuration file all manually.
+
+**Format:** `process_name,priority,affinity_mask,io_priority`
 
 **Example config.ini:**
 ```ini
@@ -106,10 +111,41 @@ system_process.exe,none,0,none
 | **IO Priority** | `none`, `very low`, `low`, `normal` | Disk I/O priority level |
 
 **Tips:**
+- **Quick Setup:** Download `config.ini` from the [repository](https://github.com/Prohect/AffinityServiceRust) and edit the affinity masks for your CPU
 - Use `none` to skip changing that setting
 - Affinity `0xFF` = cores 0-7, `0xF000` = cores 12-15 (efficiency cores on Intel)
 - `very low` IO priority for background tasks to reduce system impact
+- For process discovery, also download `blacklist.ini` to exclude system processes
 - Run `AffinityServiceRust.exe -helpall` for detailed configuration help
+
+### Using Repository Configuration Files
+
+**📁 Pre-configured Files Available:**
+The [GitHub repository](https://github.com/Prohect/AffinityServiceRust) includes ready-to-use configuration files:
+
+- **`config.ini`** - Pre-configured settings for 200+ common applications including:
+  - Games (Steam, Epic, individual game executables)  
+  - Development tools (VS Code, IDEs, compilers)
+  - Creative apps (Adobe suite, video editors)
+  - System utilities (browsers, Discord, etc.)
+  - Background processes with optimized priority/affinity
+
+- **`blacklist.ini`** - Excludes system processes from `-find` mode discovery
+
+**🚀 Quick Setup Steps:**
+1. Download `config.ini` and `blacklist.ini` from the repository
+2. Edit the affinity masks in `config.ini` to match your CPU cores:
+   - **Intel 8P+12E** (like 14700KF): Use `0xFE` for P-cores, `0xFFF00` for E-cores  
+   - **Intel 6P+8E**: Use `0x3F` for P-cores, `0x3FC0` for E-cores
+   - **AMD or other**: Adjust hex values based on your core count
+3. Place files in the same folder as `AffinityServiceRust.exe`
+4. Run and enjoy optimized system performance!
+
+**💡 Benefits:**
+- **Instant optimization** for hundreds of common applications
+- **Tested configurations** that work well for most systems  
+- **Easy customization** - just edit the hex values for your CPU
+- **Community maintained** - configurations improve over time
 
 ---
 

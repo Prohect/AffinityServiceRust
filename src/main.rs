@@ -11,45 +11,27 @@ use std::{
     thread,
     time::Duration,
 };
-use windows::Win32::System::Threading::GetPriorityClass;
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE, LUID, NTSTATUS},
     Security::{AdjustTokenPrivileges, GetTokenInformation, LookupPrivilegeValueW, SE_DEBUG_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_ELEVATION, TOKEN_PRIVILEGES, TOKEN_QUERY, TokenElevation},
     System::{
         Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
         Threading::{
-            ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetProcessAffinityMask, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS, OpenProcess,
-            OpenProcessToken, PROCESS_CREATION_FLAGS, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION, REALTIME_PRIORITY_CLASS, SetPriorityClass, SetProcessAffinityMask,
+            ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetPriorityClass, GetProcessAffinityMask, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, MEMORY_PRIORITY,
+            MEMORY_PRIORITY_BELOW_NORMAL, MEMORY_PRIORITY_LOW, MEMORY_PRIORITY_MEDIUM, MEMORY_PRIORITY_NORMAL, MEMORY_PRIORITY_VERY_LOW, NORMAL_PRIORITY_CLASS, OpenProcess, OpenProcessToken,
+            PROCESS_CREATION_FLAGS, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION, ProcessMemoryPriority, REALTIME_PRIORITY_CLASS, SetPriorityClass, SetProcessAffinityMask,
+            SetProcessInformation,
         },
     },
 };
 
-// IO Priority constants
-const IO_PRIORITY_VERY_LOW: u32 = 0;
-const IO_PRIORITY_LOW: u32 = 1;
-const IO_PRIORITY_NORMAL: u32 = 2;
-// const IO_PRIORITY_HIGH: u32 = 3;        // Requires SeIncreaseBasePriorityPrivilege
-// const IO_PRIORITY_CRITICAL: u32 = 4;    // Requires SeIncreaseBasePriorityPrivilege
-
-// Process Information Class for IO Priority
-const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
-
-// Memory Priority constants - COMMENTED OUT due to API limitations
-// const MEMORY_PRIORITY_VERY_LOW: u32 = 1;
-// const MEMORY_PRIORITY_LOW: u32 = 2;
-// const MEMORY_PRIORITY_MEDIUM: u32 = 3;
-// const MEMORY_PRIORITY_BELOW_NORMAL: u32 = 4;
-// const MEMORY_PRIORITY_NORMAL: u32 = 5;
-
-// Process Information Class for Memory Priority - COMMENTED OUT
-// const PROCESS_INFORMATION_MEMORY_PRIORITY: u32 = 61;  // Returns STATUS_INVALID_INFO_CLASS (0xC0000003)
-
-// External function declarations for process information
 #[link(name = "ntdll")]
 unsafe extern "system" {
-    fn NtSetInformationProcess(process_handle: HANDLE, process_information_class: u32, process_information: *const u32, process_information_length: u32) -> NTSTATUS;
-    fn NtQueryInformationProcess(process_handle: HANDLE, process_information_class: u32, process_information: *mut u32, process_information_length: u32, return_length: *mut u32) -> NTSTATUS;
+    fn NtQueryInformationProcess(h_prcs: HANDLE, prcess_information_class: u32, p_out: *mut std::ffi::c_void, out_length: u32, return_length: *mut u32) -> NTSTATUS;
+    fn NtSetInformationProcess(process_handle: HANDLE, process_information_class: u32, process_information: *const std::ffi::c_void, process_information_length: u32) -> NTSTATUS;
 }
+
+const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
 
 fn get_log_path(suffix: &str) -> PathBuf {
     let year = LOCALTIME_BUFFER.lock().unwrap().year();
@@ -82,7 +64,7 @@ struct ProcessConfig {
     priority: ProcessPriority,
     affinity_mask: usize,
     io_priority: IOPriority,
-    // memory_priority: MemoryPriority,  // Commented out - Windows API not working with standard privileges
+    memory_priority: MemoryPriority,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProcessPriority {
@@ -94,27 +76,6 @@ enum ProcessPriority {
     High,
     Realtime,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IOPriority {
-    None,
-    VeryLow,
-    Low,
-    Normal,
-    // High,     // Requires SeIncreaseBasePriorityPrivilege - commented out
-    // Critical, // Requires SeIncreaseBasePriorityPrivilege - commented out
-}
-
-// Memory Priority enum - COMMENTED OUT due to Windows API limitations
-// #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// enum MemoryPriority {
-//     None,
-//     VeryLow,
-//     Low,
-//     Medium,
-//     BelowNormal,
-//     Normal,
-// }
 impl ProcessPriority {
     const TABLE: &'static [(Self, &'static str, Option<PROCESS_CREATION_FLAGS>)] = &[
         (Self::None, "none", None),
@@ -136,22 +97,31 @@ impl ProcessPriority {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IOPriority {
+    None,
+    VeryLow,
+    Low,
+    Normal,
+    // High,     // Requires SeIncreaseBasePriorityPrivilege
+    // Critical, // Requires SeIncreaseBasePriorityPrivilege
+}
 impl IOPriority {
-    const TABLE: &'static [(Self, &'static str, u32)] = &[
-        (Self::None, "none", IO_PRIORITY_NORMAL),
-        (Self::VeryLow, "very low", IO_PRIORITY_VERY_LOW),
-        (Self::Low, "low", IO_PRIORITY_LOW),
-        (Self::Normal, "normal", IO_PRIORITY_NORMAL),
-        // (Self::High, "high", IO_PRIORITY_HIGH),           // Requires SeIncreaseBasePriorityPrivilege
-        // (Self::Critical, "critical", IO_PRIORITY_CRITICAL), // Requires SeIncreaseBasePriorityPrivilege
+    const TABLE: &'static [(Self, &'static str, Option<u32>)] = &[
+        (Self::None, "none", None),
+        (Self::VeryLow, "very low", Some(0)),
+        (Self::Low, "low", Some(1)),
+        (Self::Normal, "normal", Some(2)),
+        // (Self::High, "high", Some(3)),           // Requires SeIncreaseBasePriorityPrivilege
+        // (Self::Critical, "critical", Some(4)), // Requires SeIncreaseBasePriorityPrivilege
     ];
 
     pub fn as_str(&self) -> &'static str {
         Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, name, _)| *name).unwrap_or("fail as str")
     }
 
-    pub fn as_win_const(&self) -> u32 {
-        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, _, val)| *val).unwrap_or(IO_PRIORITY_NORMAL)
+    pub fn as_win_const(&self) -> Option<u32> {
+        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, _, val)| *val).unwrap_or(None)
     }
 
     pub fn from_str(s: &str) -> Self {
@@ -159,31 +129,40 @@ impl IOPriority {
     }
 }
 
-// Memory Priority implementation - COMMENTED OUT due to Windows API limitations
-// Returns STATUS_INVALID_INFO_CLASS (0xC0000003) - likely requires different approach or privileges
-// impl MemoryPriority {
-//     const TABLE: &'static [(Self, &'static str, u32)] = &[
-//         (Self::None, "none", MEMORY_PRIORITY_NORMAL),
-//         (Self::VeryLow, "very low", MEMORY_PRIORITY_VERY_LOW),
-//         (Self::Low, "low", MEMORY_PRIORITY_LOW),
-//         (Self::Medium, "medium", MEMORY_PRIORITY_MEDIUM),
-//         (Self::BelowNormal, "below normal", MEMORY_PRIORITY_BELOW_NORMAL),
-//         (Self::Normal, "normal", MEMORY_PRIORITY_NORMAL),
-//     ];
-//
-//     pub fn as_str(&self) -> &'static str {
-//         Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, name, _)| *name).unwrap_or("fail as str")
-//     }
-//
-//     pub fn as_win_const(&self) -> u32 {
-//         Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, _, val)| *val).unwrap_or(MEMORY_PRIORITY_NORMAL)
-//     }
-//
-//     pub fn from_str(s: &str) -> Self {
-//         Self::TABLE.iter().find(|(_, name, _)| s.to_lowercase() == *name).map(|(v, _, _)| *v).unwrap_or(Self::None)
-//     }
-// }
+#[repr(C)]
+#[derive(PartialEq)]
+struct MemoryPriorityInformation(u32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemoryPriority {
+    None,
+    VeryLow,
+    Low,
+    Medium,
+    BelowNormal,
+    Normal,
+}
+impl MemoryPriority {
+    const TABLE: &'static [(Self, &'static str, Option<MEMORY_PRIORITY>)] = &[
+        (Self::None, "none", None),
+        (Self::VeryLow, "very low", Some(MEMORY_PRIORITY_VERY_LOW)),
+        (Self::Low, "low", Some(MEMORY_PRIORITY_LOW)),
+        (Self::Medium, "medium", Some(MEMORY_PRIORITY_MEDIUM)),
+        (Self::BelowNormal, "below normal", Some(MEMORY_PRIORITY_BELOW_NORMAL)),
+        (Self::Normal, "normal", Some(MEMORY_PRIORITY_NORMAL)),
+    ];
 
+    pub fn as_str(&self) -> &'static str {
+        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, s, _)| *s).unwrap_or("none")
+    }
+
+    pub fn as_win_const(&self) -> Option<MEMORY_PRIORITY> {
+        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, _, val)| *val).unwrap_or(None)
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        Self::TABLE.iter().find(|(_, str, _)| *str == s).map(|(v, _, _)| *v).unwrap_or(Self::None)
+    }
+}
 pub fn log_to_find(msg: &str) {
     let time_prefix = LOCALTIME_BUFFER.lock().unwrap().format("%H:%M:%S").to_string();
     if *use_console().lock().unwrap() {
@@ -214,43 +193,26 @@ fn log_message(args: &str) {
 }
 
 fn read_config<P: AsRef<Path>>(path: P) -> io::Result<Vec<ProcessConfig>> {
-    let file = File::open(&path)?;
+    let file = File::open(path)?;
     let reader = io::BufReader::new(file);
     let mut configs = Vec::new();
     let mut affinity_aliases = HashMap::new();
-
-    // Read all lines into memory first
-    let lines: Result<Vec<String>, _> = reader.lines().collect();
-    let lines = lines?;
-
-    // First pass: collect affinity aliases
-    for line in &lines {
+    for line in reader.lines() {
+        let line = line?;
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
-        }
-
-        // Check for alias definition (starts with *)
-        if line.starts_with('*') {
+        } else if line.starts_with('*') {
             if let Some(eq_pos) = line.find('=') {
                 let alias_name = line[1..eq_pos].trim().to_lowercase();
                 let alias_value = line[eq_pos + 1..].trim();
-
                 let affinity_value = if alias_value.starts_with("0x") {
                     usize::from_str_radix(alias_value.trim_start_matches("0x"), 16).unwrap_or(0)
                 } else {
                     alias_value.parse().unwrap_or(0)
                 };
-
                 affinity_aliases.insert(alias_name, affinity_value);
             }
-        }
-    }
-
-    // Second pass: parse process configs
-    for line in &lines {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with('*') {
             continue;
         }
 
@@ -258,25 +220,22 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<Vec<ProcessConfig>> {
         if parts.len() >= 3 {
             let name = parts[0].to_lowercase();
             let priority: ProcessPriority = ProcessPriority::from_str(&parts[1]);
-
-            // Parse affinity - check for alias or direct value
-            let affinity = if parts[2].trim().starts_with('*') {
-                let alias_name = parts[2].trim().trim_start_matches('*').to_lowercase();
-                *affinity_aliases.get(&alias_name).unwrap_or(&0)
+            let affinity_def = parts[2].trim();
+            let affinity = if affinity_def.starts_with('*') {
+                *affinity_aliases.get(&affinity_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
             } else if parts[2].trim_start().starts_with("0x") {
-                usize::from_str_radix(parts[2].trim_start_matches("0x"), 16).unwrap_or(0)
+                usize::from_str_radix(affinity_def.trim_start_matches("0x"), 16).unwrap_or(0)
             } else {
                 parts[2].parse().unwrap_or(0)
             };
-
             let io_priority = if parts.len() >= 4 { IOPriority::from_str(parts[3]) } else { IOPriority::None };
-            // let memory_priority = if parts.len() >= 5 { MemoryPriority::from_str(parts[4]) } else { MemoryPriority::None };
+            let memory_priority = if parts.len() >= 5 { MemoryPriority::from_str(parts[4]) } else { MemoryPriority::None };
             configs.push(ProcessConfig {
                 name,
                 priority,
                 affinity_mask: affinity,
                 io_priority,
-                // memory_priority,  // Commented out - Windows API not working
+                memory_priority,
             });
         }
     }
@@ -321,42 +280,38 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
         match OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) {
             /* this error instance don't contain any information inside, it not the one returned from winAPI, no need to receive it */
             Err(_) => {
-                let code = GetLastError().0;
-                log_to_find(&format!("set_priority_and_affinity: [OPEN_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
+                log_to_find(&format!("apply_config: [OPEN_FAILED][{}] {:>5}-{}", error_from_code(GetLastError().0), pid, config.name));
             }
-            Ok(h_proc) => {
-                if h_proc.is_invalid() {
-                    log_to_find(&format!("set_priority_and_affinity: [INVALID_HANDLE] {:>5}-{}", pid, config.name));
+            Ok(h_prc) => {
+                if h_prc.is_invalid() {
+                    log_to_find(&format!("apply_config: [INVALID_HANDLE] {:>5}-{}", pid, config.name));
                 } else {
                     if let Some(priority_flag) = config.priority.as_win_const() {
-                        if GetPriorityClass(h_proc) != priority_flag.0 {
-                            if SetPriorityClass(h_proc, priority_flag).is_ok() {
-                                log!("{:>5}-{} -> {}", pid, config.name, config.priority.as_str());
+                        if GetPriorityClass(h_prc) != priority_flag.0 {
+                            if SetPriorityClass(h_prc, priority_flag).is_ok() {
+                                log!("{:>5}-{} -> Priority: {}", pid, config.name, config.priority.as_str());
                             } else {
-                                let code = GetLastError().0;
-                                log_to_find(&format!("set_priority_and_affinity: [SET_PRIORITY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
+                                log_to_find(&format!("apply_config: [SET_PRIORITY_FAILED][{}] {:>5}-{}", error_from_code(GetLastError().0), pid, config.name));
                             }
                         }
                     }
 
                     let mut current_mask: usize = 0;
                     let mut system_mask: usize = 0;
-                    match GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask) {
+                    match GetProcessAffinityMask(h_prc, &mut current_mask, &mut system_mask) {
                         Err(_) => {
-                            let code = GetLastError().0;
                             log_to_find(&format!(
-                                "set_priority_and_affinity: [AFFINITY_QUERY_FAILED][{}] {:>5}-{}",
-                                error_from_code(code),
+                                "apply_config: [QUERY_AFFINITY_FAILED][{}] {:>5}-{}",
+                                error_from_code(GetLastError().0),
                                 pid,
                                 config.name
                             ));
                         }
                         Ok(_) => match config.affinity_mask {
                             0 => {}
-                            mask if mask != current_mask => match SetProcessAffinityMask(h_proc, mask) {
+                            mask if mask != current_mask => match SetProcessAffinityMask(h_prc, mask) {
                                 Err(_) => {
-                                    let code = GetLastError().0;
-                                    log_to_find(&format!("set_priority_and_affinity: [SET_AFFINITY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, config.name));
+                                    log_to_find(&format!("apply_config: [SET_AFFINITY_FAILED][{}] {:>5}-{}", error_from_code(GetLastError().0), pid, config.name));
                                 }
                                 Ok(_) => {
                                     log!("{:>5}-{} -> {:#X}", pid, config.name, mask);
@@ -366,63 +321,78 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
                         },
                     }
 
-                    // Apply IO Priority if not None
-                    if config.io_priority != IOPriority::None {
+                    if let Some(io_priority_flag) = config.io_priority.as_win_const() {
                         let mut current_io_priority: u32 = 0;
                         let mut return_length: u32 = 0;
-                        let query_result = NtQueryInformationProcess(
-                            h_proc,
+                        match NtQueryInformationProcess(
+                            h_prc,
                             PROCESS_INFORMATION_IO_PRIORITY,
-                            &mut current_io_priority as *mut u32,
+                            &mut current_io_priority as *mut _ as *mut std::ffi::c_void,
                             std::mem::size_of::<u32>() as u32,
-                            &mut return_length as *mut u32,
-                        );
-
-                        let desired_io_priority = config.io_priority.as_win_const();
-
-                        // Only set IO priority if it's different from current or query failed
-                        if query_result.0 < 0 || current_io_priority != desired_io_priority {
-                            let result = NtSetInformationProcess(h_proc, PROCESS_INFORMATION_IO_PRIORITY, &desired_io_priority as *const u32, std::mem::size_of::<u32>() as u32);
-
-                            if result.0 >= 0 {
-                                log!("{:>5}-{} -> IO: {}", pid, config.name, config.io_priority.as_str());
-                            } else {
+                            &mut return_length,
+                        )
+                        .0
+                        {
+                            query_result if query_result < 0 => {
                                 log_to_find(&format!(
-                                    "set_io_priority: [SET_IO_PRIORITY_FAILED][0x{:08X}] {:>5}-{} -> {}",
-                                    result.0,
+                                    "apply_config: [QUERY_IO_PRIORITY_FAILED][0x{:08X}] {:>5}-{} -> {}",
+                                    query_result,
                                     pid,
                                     config.name,
                                     config.io_priority.as_str()
                                 ));
                             }
+                            query_result if query_result >= 0 => {
+                                if current_io_priority != io_priority_flag {
+                                    match NtSetInformationProcess(
+                                        h_prc,
+                                        PROCESS_INFORMATION_IO_PRIORITY,
+                                        &io_priority_flag as *const _ as *const std::ffi::c_void,
+                                        std::mem::size_of::<u32>() as u32,
+                                    )
+                                    .0
+                                    {
+                                        set_result if set_result < 0 => {
+                                            log_to_find(&format!(
+                                                "apply_config: [SET_IO_PRIORITY_FAILED][0x{:08X}] {:>5}-{} -> {}",
+                                                set_result,
+                                                pid,
+                                                config.name,
+                                                config.io_priority.as_str()
+                                            ));
+                                        }
+                                        set_result if set_result >= 0 => {
+                                            log!("{:>5}-{} -> IO: {}", pid, config.name, config.io_priority.as_str());
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                     }
 
-                    // Apply Memory Priority - COMMENTED OUT due to Windows API limitations
-                    // Returns STATUS_INVALID_INFO_CLASS (0xC0000003) with PROCESS_INFORMATION_MEMORY_PRIORITY
-                    // if config.memory_priority != MemoryPriority::None {
-                    //     let memory_priority_value = config.memory_priority.as_win_const();
-                    //     let result = NtSetInformationProcess(
-                    //         h_proc,
-                    //         PROCESS_INFORMATION_MEMORY_PRIORITY,
-                    //         &memory_priority_value as *const u32,
-                    //         std::mem::size_of::<u32>() as u32,
-                    //     );
-                    //
-                    //     if result.0 >= 0 {
-                    //         log!("{:>5}-{} -> Memory: {}", pid, config.name, config.memory_priority.as_str());
-                    //     } else {
-                    //         log_to_find(&format!(
-                    //             "set_memory_priority: [SET_MEMORY_PRIORITY_FAILED][0x{:08X}] {:>5}-{} -> {}",
-                    //             result.0,
-                    //             pid,
-                    //             config.name,
-                    //             config.memory_priority.as_str()
-                    //         ));
-                    //     }
-                    // }
-
-                    let _ = CloseHandle(h_proc);
+                    if let Some(memory_priority_flag) = config.memory_priority.as_win_const() {
+                        // comment out memory priority query as it is not supported by windows api
+                        match SetProcessInformation(
+                            h_prc,
+                            ProcessMemoryPriority,
+                            &MemoryPriorityInformation(memory_priority_flag.0) as *const _ as *const std::ffi::c_void,
+                            size_of::<MemoryPriorityInformation>() as u32,
+                        ) {
+                            Err(_) => {
+                                log_to_find(&format!(
+                                    "apply_config: [SET_MEMORY_PRIORITY_FAILED][{}] {:>5}-{} -> {}",
+                                    error_from_code(GetLastError().0),
+                                    pid,
+                                    config.name,
+                                    config.memory_priority.as_str()
+                                ));
+                            }
+                            Ok(_) => {}
+                        }
+                    }
+                    let _ = CloseHandle(h_prc);
                 }
             }
         }
@@ -517,7 +487,7 @@ fn convert(in_file_name: Option<String>, out_file_name: Option<String>) {
                                             priority,
                                             affinity_mask: 0,
                                             io_priority: IOPriority::None,
-                                            // memory_priority: MemoryPriority::None,  // Commented out
+                                            memory_priority: MemoryPriority::None,
                                         }),
                                     }
                                 } else {
@@ -537,7 +507,7 @@ fn convert(in_file_name: Option<String>, out_file_name: Option<String>) {
                                             priority: ProcessPriority::None,
                                             affinity_mask: mask,
                                             io_priority: IOPriority::None,
-                                            // memory_priority: MemoryPriority::None,  // Commented out
+                                            memory_priority: MemoryPriority::None,
                                         }),
                                     }
                                 } else {
@@ -655,12 +625,12 @@ fn print_help() {
     println!("  -help | --help       show this help message");
     println!("  -console             output to console instead of log file");
     println!("  -config <file>       config file to use (default: config.ini)");
+    println!("  -find                find processes with default affinity (-blacklist <file>)");
     println!("  -interval <ms>       check interval in milliseconds (default: 5000)");
     println!("  -noUAC               disable UAC elevation request");
     println!();
     println!("Modes:");
     println!("  -convert             convert Process Lasso config (-in <file> -out <file>)");
-    println!("  -find                find processes with default affinity (-blacklist <file>)");
     println!();
     println!("Config Format: process_name,priority,affinity_mask,io_priority");
     println!("  Example: notepad.exe,above normal,0xFF,low");
@@ -680,12 +650,12 @@ fn print_help_all() {
     println!("  -console             use console as output instead of log file");
     println!("  -noUAC | -nouac      disable UAC elevation request");
     println!("  -config <file>       the config file u wanna use (config.ini by default)");
+    println!("  -find                find those whose affinity is same as system default which is all possible cores windows could use");
+    println!("  -blacklist <file>    the blacklist for -find");
     println!("  -interval <ms>       set interval for checking again (5000 by default, minimal 16)");
     println!();
     println!("Operating Modes:");
     println!("  -convert             convert process configs from -in <file>(from process lasso) to -out <file>");
-    println!("  -find                find those whose affinity is same as system default which is all possible cores windows could use");
-    println!("  -blacklist <file>    the blacklist for -find");
     println!("  -in <file>           input file for -convert");
     println!("  -out <file>          output file for -convert");
     println!();
@@ -725,15 +695,12 @@ fn print_help_all() {
     println!("  *ecore = 0xFFF00");
     println!("  # Use aliases in configs");
     println!("  notepad.exe,above normal,*pcore,low");
-    println!("  game.exe,high,*pcore,normal");
+    println!("  game.exe,high,*pcore,normal,none");
     println!("  background.exe,idle,*ecore,very low");
     println!();
     println!("=== LIMITATIONS & NOTES ===");
     println!();
-    println!("- Memory priority management is not yet supported due to Windows API limitations");
-    println!("- High/critical IO priorities require special system privileges");
-    println!("- Admin privileges recommended for managing system processes");
-    println!("- Some processes may require debug privileges to modify");
+    println!("- Admin privileges needed for managing system processes");
     println!();
 }
 
@@ -778,31 +745,30 @@ fn is_running_as_admin() -> bool {
     unsafe {
         let current_process = GetCurrentProcess();
         let mut token: HANDLE = HANDLE::default();
-
-        // Open process token
-        if OpenProcessToken(current_process, TOKEN_QUERY, &mut token).is_err() {
-            return false;
+        let mut result = false;
+        match OpenProcessToken(current_process, TOKEN_QUERY, &mut token) {
+            Err(_) => {}
+            Ok(_) => {
+                let mut elevation: TOKEN_ELEVATION = TOKEN_ELEVATION::default();
+                let mut return_length = 0u32;
+                match GetTokenInformation(
+                    token,
+                    TokenElevation,
+                    Some(&mut elevation as *mut _ as *mut _),
+                    size_of::<TOKEN_ELEVATION>() as u32,
+                    &mut return_length,
+                ) {
+                    Err(_) => {}
+                    Ok(_) => result = elevation.TokenIsElevated != 0,
+                }
+                let _ = CloseHandle(token);
+            }
         }
-
-        let mut elevation: TOKEN_ELEVATION = TOKEN_ELEVATION::default();
-        let mut return_length = 0u32;
-
-        // Check if token is elevated
-        let result = GetTokenInformation(
-            token,
-            TokenElevation,
-            Some(&mut elevation as *mut _ as *mut _),
-            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
-            &mut return_length,
-        );
-
-        let _ = CloseHandle(token);
-
-        if result.is_ok() { elevation.TokenIsElevated != 0 } else { false }
+        result
     }
 }
 
-fn request_uac_elevation() -> std::io::Result<()> {
+fn request_uac_elevation() -> io::Result<()> {
     let exe_path = env::current_exe()?;
     let args: Vec<String> = env::args().skip(1).collect();
 
@@ -946,7 +912,6 @@ fn main() -> windows::core::Result<()> {
         }
         let _ = find_logger().lock().unwrap().flush();
         let _ = logger().lock().unwrap().flush();
-
         current_loop += 1;
         if let Some(max_loops) = loop_count {
             if current_loop >= max_loops {
@@ -956,7 +921,6 @@ fn main() -> windows::core::Result<()> {
                 should_continue = false;
             }
         }
-
         if should_continue {
             thread::sleep(Duration::from_millis(interval_ms));
             *LOCALTIME_BUFFER.lock().unwrap() = Local::now();

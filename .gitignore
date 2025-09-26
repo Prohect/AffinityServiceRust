@@ -1,6 +1,7 @@
 /target
 /logs
 /Links
+/.idea
 
 # Test files and directories
 test_*.ps1

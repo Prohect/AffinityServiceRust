@@ -27,7 +27,7 @@ use windows::Win32::{
 
 #[link(name = "ntdll")]
 unsafe extern "system" {
-    fn NtQueryInformationProcess(h_prcs: HANDLE, prcess_information_class: u32, p_out: *mut std::ffi::c_void, out_length: u32, return_length: *mut u32) -> NTSTATUS;
+    fn NtQueryInformationProcess(h_prc: HANDLE, process_information_class: u32, p_out: *mut std::ffi::c_void, out_length: u32, return_length: *mut u32) -> NTSTATUS;
     fn NtSetInformationProcess(process_handle: HANDLE, process_information_class: u32, process_information: *const std::ffi::c_void, process_information_length: u32) -> NTSTATUS;
 }
 
@@ -328,7 +328,7 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
                             h_prc,
                             PROCESS_INFORMATION_IO_PRIORITY,
                             &mut current_io_priority as *mut _ as *mut std::ffi::c_void,
-                            std::mem::size_of::<u32>() as u32,
+                            size_of::<u32>() as u32,
                             &mut return_length,
                         )
                         .0
@@ -348,7 +348,7 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
                                         h_prc,
                                         PROCESS_INFORMATION_IO_PRIORITY,
                                         &io_priority_flag as *const _ as *const std::ffi::c_void,
-                                        std::mem::size_of::<u32>() as u32,
+                                        size_of::<u32>() as u32,
                                     )
                                     .0
                                     {
@@ -373,7 +373,7 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
                     }
 
                     if let Some(memory_priority_flag) = config.memory_priority.as_win_const() {
-                        // comment out memory priority query as it is not supported by windows api
+                        // comment out memory priority query as it is not supported by Windows api
                         match SetProcessInformation(
                             h_prc,
                             ProcessMemoryPriority,

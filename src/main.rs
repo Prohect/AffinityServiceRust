@@ -13,14 +13,17 @@ use std::{
 };
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE, LUID, NTSTATUS},
-    Security::{AdjustTokenPrivileges, GetTokenInformation, LookupPrivilegeValueW, SE_DEBUG_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_ELEVATION, TOKEN_PRIVILEGES, TOKEN_QUERY, TokenElevation},
+    Security::{
+        AdjustTokenPrivileges, GetTokenInformation, LookupPrivilegeValueW, SE_DEBUG_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_ELEVATION, TOKEN_PRIVILEGES, TOKEN_QUERY,
+        TokenElevation,
+    },
     System::{
         Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
         Threading::{
-            ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetPriorityClass, GetProcessAffinityMask, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, MEMORY_PRIORITY,
-            MEMORY_PRIORITY_BELOW_NORMAL, MEMORY_PRIORITY_LOW, MEMORY_PRIORITY_MEDIUM, MEMORY_PRIORITY_NORMAL, MEMORY_PRIORITY_VERY_LOW, NORMAL_PRIORITY_CLASS, OpenProcess, OpenProcessToken,
-            PROCESS_CREATION_FLAGS, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION, ProcessMemoryPriority, REALTIME_PRIORITY_CLASS, SetPriorityClass, SetProcessAffinityMask,
-            SetProcessInformation,
+            ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetPriorityClass, GetProcessAffinityMask, HIGH_PRIORITY_CLASS,
+            IDLE_PRIORITY_CLASS, MEMORY_PRIORITY, MEMORY_PRIORITY_BELOW_NORMAL, MEMORY_PRIORITY_LOW, MEMORY_PRIORITY_MEDIUM, MEMORY_PRIORITY_NORMAL,
+            MEMORY_PRIORITY_VERY_LOW, NORMAL_PRIORITY_CLASS, OpenProcess, OpenProcessToken, PROCESS_CREATION_FLAGS, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION,
+            ProcessMemoryPriority, REALTIME_PRIORITY_CLASS, SetPriorityClass, SetProcessAffinityMask, SetProcessInformation,
         },
     },
 };
@@ -28,7 +31,12 @@ use windows::Win32::{
 #[link(name = "ntdll")]
 unsafe extern "system" {
     fn NtQueryInformationProcess(h_prc: HANDLE, process_information_class: u32, p_out: *mut std::ffi::c_void, out_length: u32, return_length: *mut u32) -> NTSTATUS;
-    fn NtSetInformationProcess(process_handle: HANDLE, process_information_class: u32, process_information: *const std::ffi::c_void, process_information_length: u32) -> NTSTATUS;
+    fn NtSetInformationProcess(
+        process_handle: HANDLE,
+        process_information_class: u32,
+        process_information: *const std::ffi::c_void,
+        process_information_length: u32,
+    ) -> NTSTATUS;
 }
 
 const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
@@ -93,7 +101,11 @@ impl ProcessPriority {
         Self::TABLE.iter().find(|(v, _, _)| v == self).and_then(|(_, _, val)| *val)
     }
     pub fn from_str(s: &str) -> Self {
-        Self::TABLE.iter().find(|(_, name, _)| s.to_lowercase() == *name).map(|(v, _, _)| *v).unwrap_or(Self::None)
+        Self::TABLE
+            .iter()
+            .find(|(_, name, _)| s.to_lowercase() == *name)
+            .map(|(v, _, _)| *v)
+            .unwrap_or(Self::None)
     }
 }
 
@@ -125,7 +137,11 @@ impl IOPriority {
     }
 
     pub fn from_str(s: &str) -> Self {
-        Self::TABLE.iter().find(|(_, name, _)| s.to_lowercase() == *name).map(|(v, _, _)| *v).unwrap_or(Self::None)
+        Self::TABLE
+            .iter()
+            .find(|(_, name, _)| s.to_lowercase() == *name)
+            .map(|(v, _, _)| *v)
+            .unwrap_or(Self::None)
     }
 }
 
@@ -229,7 +245,11 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<Vec<ProcessConfig>> {
                 parts[2].parse().unwrap_or(0)
             };
             let io_priority = if parts.len() >= 4 { IOPriority::from_str(parts[3]) } else { IOPriority::None };
-            let memory_priority = if parts.len() >= 5 { MemoryPriority::from_str(parts[4]) } else { MemoryPriority::None };
+            let memory_priority = if parts.len() >= 5 {
+                MemoryPriority::from_str(parts[4])
+            } else {
+                MemoryPriority::None
+            };
             configs.push(ProcessConfig {
                 name,
                 priority,
@@ -280,7 +300,12 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
         match OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) {
             /* this error instance don't contain any information inside, it not the one returned from winAPI, no need to receive it */
             Err(_) => {
-                log_to_find(&format!("apply_config: [OPEN_FAILED][{}] {:>5}-{}", error_from_code(GetLastError().0), pid, config.name));
+                log_to_find(&format!(
+                    "apply_config: [OPEN_FAILED][{}] {:>5}-{}",
+                    error_from_code(GetLastError().0),
+                    pid,
+                    config.name
+                ));
             }
             Ok(h_prc) => {
                 if h_prc.is_invalid() {
@@ -291,7 +316,12 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
                             if SetPriorityClass(h_prc, priority_flag).is_ok() {
                                 log!("{:>5}-{} -> Priority: {}", pid, config.name, config.priority.as_str());
                             } else {
-                                log_to_find(&format!("apply_config: [SET_PRIORITY_FAILED][{}] {:>5}-{}", error_from_code(GetLastError().0), pid, config.name));
+                                log_to_find(&format!(
+                                    "apply_config: [SET_PRIORITY_FAILED][{}] {:>5}-{}",
+                                    error_from_code(GetLastError().0),
+                                    pid,
+                                    config.name
+                                ));
                             }
                         }
                     }
@@ -311,7 +341,12 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
                             0 => {}
                             mask if mask != current_mask => match SetProcessAffinityMask(h_prc, mask) {
                                 Err(_) => {
-                                    log_to_find(&format!("apply_config: [SET_AFFINITY_FAILED][{}] {:>5}-{}", error_from_code(GetLastError().0), pid, config.name));
+                                    log_to_find(&format!(
+                                        "apply_config: [SET_AFFINITY_FAILED][{}] {:>5}-{}",
+                                        error_from_code(GetLastError().0),
+                                        pid,
+                                        config.name
+                                    ));
                                 }
                                 Ok(_) => {
                                     log!("{:>5}-{} -> {:#X}", pid, config.name, mask);
@@ -420,7 +455,12 @@ fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
                     match GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask) {
                         Err(_) => {
                             let code = GetLastError().0;
-                            log_to_find(&format!("is_affinity_unset: [AFFINITY_QUERY_FAILED][{}] {:>5}-{}", error_from_code(code), pid, process_name));
+                            log_to_find(&format!(
+                                "is_affinity_unset: [AFFINITY_QUERY_FAILED][{}] {:>5}-{}",
+                                error_from_code(code),
+                                pid,
+                                process_name
+                            ));
                             if code == 5 {
                                 FAIL_SET.lock().unwrap().insert(process_name.to_string());
                             }
@@ -560,6 +600,7 @@ fn parse_args(
     no_uac: &mut bool,
     loop_count: &mut Option<u32>,
     log_loop: &mut bool,
+    skip_log_before_elevation: &mut bool,
 ) -> windows::core::Result<()> {
     let mut i = 1;
     while i < args.len() {
@@ -608,6 +649,9 @@ fn parse_args(
             "-out" if i + 1 < args.len() => {
                 *out_file_name = Some(args[i + 1].clone());
                 i += 1;
+            }
+            "-skip_log_before_elevation" => {
+                *skip_log_before_elevation = true;
             }
             _ => {}
         }
@@ -770,22 +814,17 @@ fn is_running_as_admin() -> bool {
 
 fn request_uac_elevation() -> io::Result<()> {
     let exe_path = env::current_exe()?;
-    let args: Vec<String> = env::args().skip(1).collect();
-
+    let mut args: Vec<String> = env::args().skip(1).collect();
+    args.push("-skip_log_before_elevation".to_string());
     log!("Requesting UAC elevation...");
-
     let mut cmd = Command::new("powershell.exe");
     cmd.arg("-Command");
-
     let mut powershell_cmd = format!("Start-Process -FilePath '{}' -Verb RunAs", exe_path.display());
-
     if !args.is_empty() {
         let args_str = args.join(" ");
         powershell_cmd.push_str(&format!(" -ArgumentList '{}'", args_str));
     }
-
     cmd.arg(powershell_cmd);
-
     match cmd.spawn() {
         Ok(_) => {
             log!("UAC elevation request sent. Please approve the elevation prompt.");
@@ -812,6 +851,7 @@ fn main() -> windows::core::Result<()> {
     let mut no_uac = false;
     let mut loop_count: Option<u32> = None;
     let mut log_loop = false;
+    let mut skip_log_before_elevation = false;
     parse_args(
         &args,
         &mut interval_ms,
@@ -826,6 +866,7 @@ fn main() -> windows::core::Result<()> {
         &mut no_uac,
         &mut loop_count,
         &mut log_loop,
+        &mut skip_log_before_elevation,
     )?;
     if help_mode {
         print_help();
@@ -839,16 +880,33 @@ fn main() -> windows::core::Result<()> {
         convert(in_file_name, out_file_name);
         return Ok(());
     }
-    log!("Affinity Service started");
-    log!("time interval: {}", interval_ms);
+    if !skip_log_before_elevation {
+        log!("Affinity Service started");
+        log!("time interval: {}", interval_ms);
+    }
     let configs = read_config(&config_file_name).unwrap_or_else(|_| {
-        log!("cannot read configs: {}", config_file_name);
+        if !skip_log_before_elevation {
+            log!("cannot read configs: {}", config_file_name);
+        }
         Vec::new()
     });
-    let blacklist = if let Some(bf) = blacklist_file_name { read_list(bf).unwrap_or_default() } else { Vec::new() };
-    if configs.is_empty() && !find_mode {
-        log!("not even a single config, existing");
-        return Ok(());
+    let blacklist = if let Some(bf) = blacklist_file_name {
+        read_list(bf).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let is_config_empty = configs.is_empty();
+    let is_blacklist_empty = blacklist.is_empty();
+    if is_config_empty && is_blacklist_empty {
+        if !find_mode {
+            if skip_log_before_elevation {
+                log!("not even a single config, existing");
+            }
+            return Ok(());
+        }
+    } else {
+        log!("{} configs load", configs.len());
+        log!("{} blacklist items load", blacklist.len());
     }
     if !is_running_as_admin() {
         if no_uac {

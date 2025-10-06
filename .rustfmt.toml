@@ -1,8 +1,8 @@
 # 每行最大长度
-max_width = 192
+max_width = 170
 
 # 注释自动换行的最大长度（配合 wrap_comments = true）
-comment_width = 192
+comment_width = 170
 
 # 是否自动换行过长注释
 wrap_comments = true

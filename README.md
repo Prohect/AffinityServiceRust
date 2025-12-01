@@ -13,6 +13,7 @@ A simple app for windows written in Rust that automatically manages **process pr
   * **IO Priority Management:** Controls I/O priority (Very Low, Low, Normal)
   * **Timer resolution Management:** Assigns timer resolution for windows
   * **Simple Configuration:** Easy-to-edit INI file with process settings
+  * **Find unmanaged processes:** Discover which processes could benefit from custom settings. And it could tell u what's been run on your system.
   * **Process Lasso Compatibility:** Convert existing Process Lasso configurations to Affinity Service Rust format
   * **Flexible Operation:** Run with or without admin privileges, console or background mode
   
@@ -57,7 +58,7 @@ AffinityServiceRust.exe -convert -in prolasso.ini -out my_config.ini
 **Find unmanaged processes:**
 ```bash
 # any process with default affinity and not in config nor blacklist will be found and output to logs\YYYYmmDD.find.log
-AffinityServiceRust.exe -find -console
+AffinityServiceRust.exe -find
 ```
 This helps discover which processes could benefit from custom settings. And it could tell u what's been run on your system.
 

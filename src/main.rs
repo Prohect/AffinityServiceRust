@@ -374,7 +374,7 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
                         }
                     }
 
-                    if config.cpu_set_mask != 0 {
+                    if config.cpu_set_mask != 0 && !get_cpu_set_information().lock().unwrap().is_empty() {
                         let mut toset: bool = false;
                         let mut requiredidcount: u32 = 0;
                         match GetProcessDefaultCpuSets(h_prc, None, &mut requiredidcount).as_bool() {
@@ -918,7 +918,7 @@ fn init_cpu_set_information() -> Vec<SYSTEM_CPU_SET_INFORMATION> {
         )
         .as_bool()
         {
-            false => panic!("GetSystemCpuSetInformation failed"),
+            false => log_to_find("GetSystemCpuSetInformation failed"),
             true => {}
         };
         let mut offset = 0;

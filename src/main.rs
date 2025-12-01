@@ -251,7 +251,7 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<Vec<ProcessConfig>> {
             } else {
                 parts[2].parse().unwrap_or(0)
             };
-            let cpuset_def = parts[3].trim();
+            let cpuset_def = if parts.len() >= 4 { parts[3].trim() } else { "0" };
             let cpuset = if cpuset_def.starts_with('*') {
                 *affinity_aliases.get(&cpuset_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
             } else if parts[3].trim_start().starts_with("0x") {

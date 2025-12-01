@@ -20,8 +20,8 @@
 
 1. 下载或编译 `AffinityServiceRust.exe`
 2. 从本仓库获取配置文件或自行创建: 
-   - 使用预配置的 `config.ini` 作为起点覆盖 200+ 常见进程
-   - 使用包含的 `blacklist.ini` 作为进程发现模式的黑名单
+   - 使用预配置的 [`config.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) 作为起点覆盖 200+ 常见进程
+   - 使用包含的 [`blacklist.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/blacklist.ini) 作为进程发现模式的黑名单
    - 根据你的 CPU 拓扑和偏好编辑这些文件
 3. 运行应用程序 —— 建议使用命令行；也可以双击 .exe 使用默认选项运行
 
@@ -132,7 +132,7 @@ system_process.exe,none,0xFF,255,none
 
 提示: 
 - 最佳实践: 使用别名使配置更简洁且易维护
-- 快速设置: 从仓库下载预配置的 `config.ini` 和 `blacklist.ini`, 并根据你的 CPU 调整别名
+- 快速设置: 从仓库下载预配置的 [`config.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) 和 [`blacklist.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/blacklist.ini), 并根据你的 CPU 调整别名
 - 升级 CPU 后只需修改别名定义即可一次性更新所有规则
 - 使用 `none` 或 `0` 跳过对某一项的更改
 - 运行 `AffinityServiceRust.exe -helpall` 获取详细配置说明与别名示例
@@ -140,7 +140,7 @@ system_process.exe,none,0xFF,255,none
 ### 使用仓库中的配置文件
 
 快速设置步骤: 
-1. 从仓库下载 `config.ini` 和 `blacklist.ini`
+1. 从仓库下载 [`config.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) 和 [`blacklist.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/blacklist.ini)
 2. 在 `config.ini` 中编辑亲和性别名以匹配你的 CPU 拓扑: 
 ```ini
 # Intel 8P+12E例如 14700KF

@@ -72,6 +72,7 @@ This helps discover which processes could benefit from custom settings. And it c
 | `-config <file>` | Use custom config file (default: config.ini) |
 | `-noUAC` | Run without requesting admin privileges |
 | `-interval <ms>` | Check interval in milliseconds (default: 5000) |
+| `-resolution <0.0001ms>` | timer resolution (default: not change this) |
 
 Use `-helpall` to see all available options including conversion and debugging features.
 

@@ -93,20 +93,20 @@ Use `-helpall` to see all available options including conversion and debugging f
 *allcores = 0xFFFFF    # All available cores
 
 # === PROCESS CONFIGURATIONS ===
-# Gaming - high priority, performance cores
-game.exe,high,*pcore,normal
-steam.exe,below normal,*pcore_no0,low
+# Gaming - high priority, prefer performance cores
+game.exe,high,*allcores,*pcore_no0,normal
+steam.exe,below normal,*pcore_no0,0,low
 
 # Background apps - efficiency cores, low priority
-discord.exe,below normal,*ecore,low
-chrome.exe,normal,*ecore,low
+discord.exe,below normal,*ecore,0,low
+chrome.exe,normal,*ecore,0,low
 
 # Work applications - mixed configurations
-code.exe,above normal,*ecore,normal
-notepad.exe,normal,*pcore,none
+code.exe,above normal,*allcores,*ecore,normal
+notepad.exe,normal,*ecore,0,none
 
-# Traditional hex values still work
-system_process.exe,none,0xFF,none
+# Hexadecimal or Decimal values still work
+system_process.exe,none,0xFF,255,none
 ```
 
 **Settings Explained:**
@@ -144,7 +144,7 @@ system_process.exe,none,0xFF,none
    *pcore = 0x3F          # Cores 0-5
    *ecore = 0x3FC0        # Cores 6-13
 
-   # AMD or custom - adjust based on your CPU
+   # adjust based on your CPU
    ```
 3. Place files in the same folder as `AffinityServiceRust.exe`
 4. Run and enjoy optimized system performance!

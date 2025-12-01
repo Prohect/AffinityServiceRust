@@ -379,9 +379,12 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
                         let mut requiredidcount: u32 = 0;
                         match GetProcessDefaultCpuSets(h_prc, None, &mut requiredidcount).as_bool() {
                             true => {
+                                // 0 is large enough, meaning there are no CPU sets for this process, so we need to set the default CPU set
                                 toset = true;
                             }
                             false => {
+                                // 0 is not large enough, meaning there are CPU sets for this process, so we need to read them.
+                                // or error and it should be recaught by the next match GetProcessDefaultCpuSets statement
                                 let mut current_cpusetids: Vec<u32> = vec![0u32; requiredidcount as usize];
                                 match GetProcessDefaultCpuSets(h_prc, Some(&mut current_cpusetids[..]), &mut requiredidcount).as_bool() {
                                     false => {

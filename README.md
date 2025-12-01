@@ -1,4 +1,7 @@
 # Affinity Service Rust
+<!-- languages -->
+- 🇺🇸 [en us](#https://github.com/Prohect/AffinityServiceRust/blob/master/README.md)
+- 🇨🇳 [中文 (简体)](#https://github.com/Prohect/AffinityServiceRust/blob/master/README.zh-CN.md)
 
 A simple app for Windows written in Rust that automatically manages process priority, CPU affinity, Windows CPU sets, and I/O priority for specific processes. It reads from a simple configuration file and applies matching rules to running processes.
 

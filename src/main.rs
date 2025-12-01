@@ -945,249 +945,167 @@ fn cpusetids_from_mask(mask: usize) -> Vec<u32> {
 }
 
 fn main() -> windows::core::Result<()> {
-    const TEST: bool = false;
-    if TEST {
-        println!("test");
-        unsafe {
-            let mut required_size: u32 = 0;
-
-            // get buffer size
-            let _ = GetSystemCpuSetInformation(None, 0, &mut required_size, Some(GetCurrentProcess()), Some(0));
-
-            let mut buffer: Vec<u8> = vec![0u8; required_size as usize];
-
-            // get actual information
-            match GetSystemCpuSetInformation(
-                Some(buffer.as_mut_ptr() as *mut SYSTEM_CPU_SET_INFORMATION),
-                required_size,
-                &mut required_size,
-                Some(GetCurrentProcess()),
-                Some(0),
-            )
-            .as_bool()
-            {
-                true => {}
-                false => panic!("GetSystemCpuSetInformation failed"),
-            };
-
-            let mut offset = 0;
-            while offset < required_size as usize {
-                let entry_ptr = buffer.as_ptr().add(offset) as *const SYSTEM_CPU_SET_INFORMATION;
-                let entry = &*entry_ptr;
-
-                // CpuSet
-                let cpu = entry.Anonymous.CpuSet;
-
-                let core_type = if cpu.EfficiencyClass >= 1 { "P-core" } else { "E-core" };
-
-                println!(
-                    "CPU Set ID: {}, Group: {}, LogicalProcessorIndex: {}, CoreIndex: {}, CoreType: {}, EfficiencyClass: {}",
-                    cpu.Id, cpu.Group, cpu.LogicalProcessorIndex, cpu.CoreIndex, core_type, cpu.EfficiencyClass
-                );
-
-                offset += entry.Size as usize;
+    let args: Vec<String> = env::args().collect();
+    let mut interval_ms = 5000;
+    let mut help_mode = false;
+    let mut help_all_mode = false;
+    let mut convert_mode = false;
+    let mut find_mode = false;
+    let mut config_file_name = "config.ini".to_string();
+    let mut blacklist_file_name: Option<String> = None;
+    let mut in_file_name: Option<String> = None;
+    let mut out_file_name: Option<String> = None;
+    let mut no_uac = false;
+    let mut loop_count: Option<u32> = None;
+    let mut time_resolution: u32 = 0;
+    let mut log_loop = false;
+    let mut skip_log_before_elevation = false;
+    parse_args(
+        &args,
+        &mut interval_ms,
+        &mut help_mode,
+        &mut help_all_mode,
+        &mut convert_mode,
+        &mut find_mode,
+        &mut config_file_name,
+        &mut blacklist_file_name,
+        &mut in_file_name,
+        &mut out_file_name,
+        &mut no_uac,
+        &mut loop_count,
+        &mut time_resolution,
+        &mut log_loop,
+        &mut skip_log_before_elevation,
+    )?;
+    if help_mode {
+        print_help();
+        return Ok(());
+    }
+    if help_all_mode {
+        print_help_all();
+        return Ok(());
+    }
+    if convert_mode {
+        convert(in_file_name, out_file_name);
+        return Ok(());
+    }
+    if !skip_log_before_elevation {
+        log!("Affinity Service started");
+        log!("time interval: {}", interval_ms);
+    }
+    let configs = read_config(&config_file_name).unwrap_or_else(|_| {
+        if !skip_log_before_elevation {
+            log!("cannot read configs: {}", config_file_name);
+        }
+        Vec::new()
+    });
+    let blacklist = if let Some(bf) = blacklist_file_name {
+        read_list(bf).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let is_config_empty = configs.is_empty();
+    let is_blacklist_empty = blacklist.is_empty();
+    if is_config_empty && is_blacklist_empty {
+        if !find_mode {
+            if skip_log_before_elevation {
+                log!("not even a single config, existing");
             }
-
-            cpusetids_from_mask(0xfe).iter().for_each(|e| println!("0xfe CPU Set ID: {}", e));
-
-            // while true {
-            //     println!("loop");
-            //     let mut requiredidcount: u32 = 0;
-            //     let mut need_set: bool = false;
-            //     match GetProcessDefaultCpuSets(GetCurrentProcess(), None, &mut requiredidcount)
-            //         .as_bool()
-            //     {
-            //         true => {
-            //             println!("apply_config: [QUERY_CPUSET_FAILED] {:>5}-{}", 0, 0);
-            //         }
-            //         false => {
-            //             let mut cpusetids: Vec<u32> = vec![0u32; requiredidcount as usize];
-            //             match GetProcessDefaultCpuSets(
-            //                 GetCurrentProcess(),
-            //                 Some(&mut cpusetids[..]),
-            //                 &mut requiredidcount,
-            //             )
-            //             .as_bool()
-            //             {
-            //                 false => {
-            //                     println!("apply_config: [QUERY_CPUSET_FAILED] {:>5}-{}", 0, 0);
-            //                 }
-            //                 true => {
-            //                     println!("requiredidcount {} ", requiredidcount);
-            //                     cpusetids.iter().for_each(|cpu_set| {
-            //                         println!("CPU Set ID: {}", cpu_set);
-            //                     });
-            //                 }
-            //             }
-            //         }
-            //     }
-            //     thread::sleep(Duration::from_millis(1000));
-            // }
+            return Ok(());
         }
     } else {
-        let args: Vec<String> = env::args().collect();
-        let mut interval_ms = 5000;
-        let mut help_mode = false;
-        let mut help_all_mode = false;
-        let mut convert_mode = false;
-        let mut find_mode = false;
-        let mut config_file_name = "config.ini".to_string();
-        let mut blacklist_file_name: Option<String> = None;
-        let mut in_file_name: Option<String> = None;
-        let mut out_file_name: Option<String> = None;
-        let mut no_uac = false;
-        let mut loop_count: Option<u32> = None;
-        let mut time_resolution: u32 = 0;
-        let mut log_loop = false;
-        let mut skip_log_before_elevation = false;
-        parse_args(
-            &args,
-            &mut interval_ms,
-            &mut help_mode,
-            &mut help_all_mode,
-            &mut convert_mode,
-            &mut find_mode,
-            &mut config_file_name,
-            &mut blacklist_file_name,
-            &mut in_file_name,
-            &mut out_file_name,
-            &mut no_uac,
-            &mut loop_count,
-            &mut time_resolution,
-            &mut log_loop,
-            &mut skip_log_before_elevation,
-        )?;
-        if help_mode {
-            print_help();
-            return Ok(());
-        }
-        if help_all_mode {
-            print_help_all();
-            return Ok(());
-        }
-        if convert_mode {
-            convert(in_file_name, out_file_name);
-            return Ok(());
-        }
-        if !skip_log_before_elevation {
-            log!("Affinity Service started");
-            log!("time interval: {}", interval_ms);
-        }
-        let configs = read_config(&config_file_name).unwrap_or_else(|_| {
-            if !skip_log_before_elevation {
-                log!("cannot read configs: {}", config_file_name);
-            }
-            Vec::new()
-        });
-        let blacklist = if let Some(bf) = blacklist_file_name {
-            read_list(bf).unwrap_or_default()
+        log!("{} configs load", configs.len());
+        log!("{} blacklist items load", blacklist.len());
+    }
+    if !is_running_as_admin() {
+        if no_uac {
+            log!("Not running as administrator. UAC elevation disabled by -noUAC flag.");
+            log!("Warning: May not be able to manage all processes without admin privileges.");
         } else {
-            Vec::new()
-        };
-        let is_config_empty = configs.is_empty();
-        let is_blacklist_empty = blacklist.is_empty();
-        if is_config_empty && is_blacklist_empty {
-            if !find_mode {
-                if skip_log_before_elevation {
-                    log!("not even a single config, existing");
+            log!("Not running as administrator. Requesting UAC elevation...");
+            match request_uac_elevation() {
+                Ok(_) => {
+                    log!("Running with administrator privileges.");
                 }
-                return Ok(());
-            }
-        } else {
-            log!("{} configs load", configs.len());
-            log!("{} blacklist items load", blacklist.len());
-        }
-        if !is_running_as_admin() {
-            if no_uac {
-                log!("Not running as administrator. UAC elevation disabled by -noUAC flag.");
-                log!("Warning: May not be able to manage all processes without admin privileges.");
-            } else {
-                log!("Not running as administrator. Requesting UAC elevation...");
-                match request_uac_elevation() {
-                    Ok(_) => {
-                        log!("Running with administrator privileges.");
-                    }
-                    Err(e) => {
-                        log!("Failed to request elevation: {}, may not manage all processes", e);
-                    }
+                Err(e) => {
+                    log!("Failed to request elevation: {}, may not manage all processes", e);
                 }
-            }
-        }
-        enable_debug_privilege();
-        if time_resolution != 0 {
-            unsafe {
-                let mut current_resolution = 0u32;
-                match NtSetTimerResolution(time_resolution, true, &mut current_resolution as *mut _ as *mut std::ffi::c_void).0 {
-                    ntstatus if ntstatus < 0 => {
-                        log!("Failed to set timer resolution: 0x{:08X}", ntstatus);
-                    }
-                    ntstatus if ntstatus >= 0 => {
-                        log!("Succeed to set timer resolution: {:.4}ms", time_resolution as f64 / 10000f64);
-                        log!("elder timer resolution: {:.4}ms", current_resolution);
-                    }
-                    _ => {}
-                };
-            }
-        }
-        let mut current_loop = 0u32;
-        let mut should_continue = true;
-        while should_continue {
-            if log_loop {
-                log!("Loop {} started", current_loop + 1);
-            }
-            unsafe {
-                let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
-                let mut pe32 = PROCESSENTRY32W::default();
-                pe32.dwSize = size_of::<PROCESSENTRY32W>() as u32;
-                if Process32FirstW(snapshot, &mut pe32).is_ok() {
-                    'out_loop: loop {
-                        let process_name = String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]).to_lowercase();
-                        if !FAIL_SET.lock().unwrap().contains(&process_name) {
-                            for config in &configs {
-                                if process_name == config.name {
-                                    apply_config(pe32.th32ProcessID, &config);
-                                    if !Process32NextW(snapshot, &mut pe32).is_ok() {
-                                        break 'out_loop;
-                                    }
-                                    continue 'out_loop;
-                                }
-                            }
-                            if find_mode {
-                                if blacklist.contains(&process_name) {
-                                    if !Process32NextW(snapshot, &mut pe32).is_ok() {
-                                        break;
-                                    }
-                                    continue;
-                                }
-                                if is_affinity_unset(pe32.th32ProcessID, process_name.as_str()) {
-                                    log_process_find(&process_name);
-                                }
-                            }
-                        }
-                        if !Process32NextW(snapshot, &mut pe32).is_ok() {
-                            break;
-                        }
-                    }
-                }
-                let _ = CloseHandle(snapshot);
-            }
-            let _ = find_logger().lock().unwrap().flush();
-            let _ = logger().lock().unwrap().flush();
-            current_loop += 1;
-            if let Some(max_loops) = loop_count {
-                if current_loop >= max_loops {
-                    if log_loop {
-                        log!("Completed {} loops, exiting", max_loops);
-                    }
-                    should_continue = false;
-                }
-            }
-            if should_continue {
-                thread::sleep(Duration::from_millis(interval_ms));
-                *LOCALTIME_BUFFER.lock().unwrap() = Local::now();
             }
         }
     }
-
+    enable_debug_privilege();
+    if time_resolution != 0 {
+        unsafe {
+            let mut current_resolution = 0u32;
+            match NtSetTimerResolution(time_resolution, true, &mut current_resolution as *mut _ as *mut std::ffi::c_void).0 {
+                ntstatus if ntstatus < 0 => {
+                    log!("Failed to set timer resolution: 0x{:08X}", ntstatus);
+                }
+                ntstatus if ntstatus >= 0 => {
+                    log!("Succeed to set timer resolution: {:.4}ms", time_resolution as f64 / 10000f64);
+                    log!("elder timer resolution: {:.4}ms", current_resolution);
+                }
+                _ => {}
+            };
+        }
+    }
+    let mut current_loop = 0u32;
+    let mut should_continue = true;
+    while should_continue {
+        if log_loop {
+            log!("Loop {} started", current_loop + 1);
+        }
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
+            let mut pe32 = PROCESSENTRY32W::default();
+            pe32.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+            if Process32FirstW(snapshot, &mut pe32).is_ok() {
+                'out_loop: loop {
+                    let process_name = String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]).to_lowercase();
+                    if !FAIL_SET.lock().unwrap().contains(&process_name) {
+                        for config in &configs {
+                            if process_name == config.name {
+                                apply_config(pe32.th32ProcessID, &config);
+                                if !Process32NextW(snapshot, &mut pe32).is_ok() {
+                                    break 'out_loop;
+                                }
+                                continue 'out_loop;
+                            }
+                        }
+                        if find_mode {
+                            if blacklist.contains(&process_name) {
+                                if !Process32NextW(snapshot, &mut pe32).is_ok() {
+                                    break;
+                                }
+                                continue;
+                            }
+                            if is_affinity_unset(pe32.th32ProcessID, process_name.as_str()) {
+                                log_process_find(&process_name);
+                            }
+                        }
+                    }
+                    if !Process32NextW(snapshot, &mut pe32).is_ok() {
+                        break;
+                    }
+                }
+            }
+            let _ = CloseHandle(snapshot);
+        }
+        let _ = find_logger().lock().unwrap().flush();
+        let _ = logger().lock().unwrap().flush();
+        current_loop += 1;
+        if let Some(max_loops) = loop_count {
+            if current_loop >= max_loops {
+                if log_loop {
+                    log!("Completed {} loops, exiting", max_loops);
+                }
+                should_continue = false;
+            }
+        }
+        if should_continue {
+            thread::sleep(Duration::from_millis(interval_ms));
+            *LOCALTIME_BUFFER.lock().unwrap() = Local::now();
+        }
+    }
     Ok(())
 }

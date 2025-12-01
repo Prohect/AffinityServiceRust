@@ -9,6 +9,7 @@ test_*.bat
 
 # Ignore all INI files by default
 *.ini
+Cargo.lock
 
 # Except for the main config and blacklist files
 !config.ini

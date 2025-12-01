@@ -383,15 +383,31 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
                                 toset = true;
                             }
                             false => {
-                                // 0 is not large enough, meaning there are CPU sets for this process, so we need to read them.
-                                // or error and it should be recaught by the next match GetProcessDefaultCpuSets statement
-                                let mut current_cpusetids: Vec<u32> = vec![0u32; requiredidcount as usize];
-                                match GetProcessDefaultCpuSets(h_prc, Some(&mut current_cpusetids[..]), &mut requiredidcount).as_bool() {
-                                    false => {
-                                        log_to_find(&format!("apply_config: [QUERY_CPUSET_FAILED] {:>5}-{}-{}", pid, config.name, requiredidcount));
-                                    }
-                                    true => {
-                                        toset = current_cpusetids != cpusetids_from_mask(config.cpu_set_mask);
+                                let code = GetLastError().0;
+                                if code != 122 {
+                                    // 122 -> INSUFFICIENT_BUFFER, 0 is not large enough, meaning there are CPU sets for this process, so read them.
+                                    log_to_find(&format!(
+                                        "apply_config: [QUERY_CPUSET_FAILED][{}] {:>5}-{}-{}",
+                                        error_from_code(code),
+                                        pid,
+                                        config.name,
+                                        requiredidcount
+                                    ));
+                                } else {
+                                    let mut current_cpusetids: Vec<u32> = vec![0u32; requiredidcount as usize];
+                                    match GetProcessDefaultCpuSets(h_prc, Some(&mut current_cpusetids[..]), &mut requiredidcount).as_bool() {
+                                        false => {
+                                            log_to_find(&format!(
+                                                "apply_config: [QUERY_CPUSET_FAILED][{}] {:>5}-{}-{}",
+                                                error_from_code(GetLastError().0),
+                                                pid,
+                                                config.name,
+                                                requiredidcount
+                                            ));
+                                        }
+                                        true => {
+                                            toset = current_cpusetids != cpusetids_from_mask(config.cpu_set_mask);
+                                        }
                                     }
                                 }
                             }

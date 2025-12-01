@@ -3,16 +3,20 @@
 
 # Affinity Service Rust
 
-A Windows service written in Rust that automatically manages **process priority**, **CPU affinity**, and **IO priority** for specific applications. It reads from a simple configuration file and applies settings to processes as they run.
+A simple app for windows written in Rust that automatically manages **process priority**, **CPU affinity**, **CPU sets**, and **IO priority** for specific process. It reads from a simple configuration file and applies settings by scan process list with certain rate.
 
 ## Features
 
-  * **Process Priority Management:** Automatically sets priority class (Idle, Normal, High, etc.)
-  * **CPU Affinity Management:** Assigns processes to specific CPU cores using affinity masks
-  * **IO Priority Management:** Controls disk I/O priority (Very Low, Low, Normal)
+  * **Process Priority Management:** Automatically sets priority class (Idle,Below Normal, Normal, Above Normal, High, Realtime)
+  * **CPU Affinity Management:** Assigns processes to limit(hard) CPU cores using affinity masks
+  * **CPU Set Management:** Assigns windows to prefer(soft) CPU sets for a specific process
+  * **IO Priority Management:** Controls I/O priority (Very Low, Low, Normal)
+  * **Timer resolution Management:** Assigns timer resolution for windows
   * **Simple Configuration:** Easy-to-edit INI file with process settings
-  * **Process Lasso Compatibility:** Convert existing Process Lasso configurations
+  * **Process Lasso Compatibility:** Convert existing Process Lasso configurations to Affinity Service Rust format
   * **Flexible Operation:** Run with or without admin privileges, console or background mode
+  
+  Difference between CPU affinity and CPU set: CPU affinity is a hard limit on which cores a process can run on, if a process creates a son process then the son process will inherit the affinity, while CPU set is a new concept from Windows 10 version 1709 (Fall Creators Update), it allows a process to run on a subset of available cores, but it does not guarantee that the process will run on those cores. CPU set is a soft preference, meaning that the operating system may still schedule the process on other cores if necessary.And CPU set will not be inherited by son process.
 
 ## Quick Start
 
@@ -21,23 +25,15 @@ A Windows service written in Rust that automatically manages **process priority*
    - Use the pre-configured `config.ini` as a starting point (covers 200+ common processes)
    - Use the included `blacklist.ini` for process discovery mode
    - Edit these files to match your CPU configuration and needs
-3. **Run the application** - double-click the exe or use command line with options
+3. **Run the application** - use command line(recommand) with args or double-click the exe to run with default args
 
-   **Note:** By default, the application runs silently in the background and logs its activity to a file (`logs\YYYYmmDD.log`). Use the `-console` flag to see real-time output.
+   **Note:** By default, the application runs silently in the background and logs its activity to files (`logs\YYYYmmDD.log`,`logs\YYYYmmDD.find.log`). Use the `-console` arg to see real-time output.
 
 ### Basic Usage
 
 ```bash
-# Run with default settings (uses config.ini)
-AffinityServiceRust.exe
 
-# Run with console output (see real-time logs)
-AffinityServiceRust.exe -console
-
-# Run without UAC prompts (may limited by privileges if not run as admin)
-AffinityServiceRust.exe -console -noUAC
-
-# Use custom config file
+# Use custom config file (may limited by privileges if not run as admin with arg '-noUAC')
 AffinityServiceRust.exe -config my_config.ini -console
 ```
 
@@ -60,9 +56,10 @@ AffinityServiceRust.exe -convert -in prolasso.ini -out my_config.ini
 
 **Find unmanaged processes:**
 ```bash
+# any process with default affinity and not in config nor blacklist will be found and output to logs\YYYYmmDD.find.log
 AffinityServiceRust.exe -find -console
 ```
-This helps discover which processes could benefit from custom settings.
+This helps discover which processes could benefit from custom settings. And it could tell u what's been run on your system.
 
 ### Common Options
 
@@ -83,26 +80,11 @@ Use `-helpall` to see all available options including conversion and debugging f
 
 ### Configuration File
 
-**Getting Started:** Download the pre-configured [`config.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) from this  repository - it includes settings for 200+ common applications and serves as an excellent starting point. Or create your own configuration file all manually.
-
-**Format:** `process_name,priority,affinity_mask,io_priority`
-
-**New: Affinity Aliases** - Define reusable affinity masks for easier configuration management:
-
-```ini
-# Define aliases first (lines starting with *)
-*pcore = 0xFF          # Performance cores 0-7
-*ecore = 0xFFF00       # Efficiency cores 8-19
-*allcores = 0xFFFFF    # All available cores
-
-# Use aliases in configurations
-game.exe,high,*pcore,normal
-discord.exe,below normal,*ecore,low
-```
+**Format:** `process_name,priority,affinity_mask,cpu_set_mask,io_priority`
 
 **Example config.ini:**
 ```ini
-# === AFFINITY ALIASES === (Define once, use everywhere)
+# === AFFINITY ALIASES === (Define once, use everywhere, only need to change definitions of aliases when cpu type changes)
 *pcore = 0xFF          # Performance cores 0-7
 *ecore = 0xFFF00       # Efficiency cores 8-19
 *pcore_no0 = 0xFE      # P-cores except core 0
@@ -129,9 +111,10 @@ system_process.exe,none,0xFF,none
 
 | Field | Options | Description |
 |-------|---------|-------------|
-| **Priority** | `none`, `idle`, `below normal`, `normal`, `above normal`, `high`, `real time` | Process priority class |
+| **Priority** | `none`(no change), `idle`, `below normal`, `normal`, `above normal`, `high`, `real time` | Process priority class |
 | **Affinity** | `0` (no change), `0xFF`, `*alias_name` | CPU cores as hex mask or alias |
-| **IO Priority** | `none`, `very low`, `low`, `normal` | Disk I/O priority level |
+| **CPU set** | `0` (no change), `0xFF`, `*alias_name` | CPU cores as hex mask or alias |
+| **IO Priority** | `none`, `very low`, `low`, `normal` | I/O priority level |
 
 **Affinity Options:**
 - **Direct values**: `0xFF` (cores 0-7), `0xF000` (cores 12-15), `255` (decimal)
@@ -140,26 +123,12 @@ system_process.exe,none,0xFF,none
 
 **Tips:**
 - **Best Practice:** Use aliases for cleaner, maintainable configs
-- **Quick Setup:** Download [`config.ini`]((https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini)) from the repository and adjust aliases for your CPU
-- **CPU Migration:** Change aliases once to update all processes when upgrading CPU
+- **Quick Setup:** Download the pre-configured [`config.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) and pre-blacklist [`blacklist.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/blacklist.ini) from this  repository - it includes settings for 200+ common applications and serves as an excellent starting point. Or create your own configuration file manually.`blacklist.ini` contains some system processes that -find should exclude.
+- **CPU Migration:** Change aliases once to update all settings when upgrading CPU
 - Use `none` to skip changing that setting
-- `very low` IO priority for background tasks to reduce system impact
-- For process discovery, also download `blacklist.ini` to exclude system processes
 - Run `AffinityServiceRust.exe -helpall` for detailed configuration help and alias examples
 
 ### Using Repository Configuration Files
-
-** Pre-configured Files Available:**
-The repository includes ready-to-use configuration files:
-
-- **`config.ini`** - Pre-configured settings for 200+ common applications including:
-  - Games (Steam, Epic, individual game executables)
-  - Development tools (VS Code, IDEs, compilers)
-  - Creative apps (Adobe suite, video editors)
-  - System utilities (browsers, Discord, etc.)
-  - Background processes with optimized priority/affinity
-
-- **`blacklist.ini`** - Excludes system processes from `-find` mode discovery
 
 **Quick Setup Steps:**
 1. Download [`config.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) and [`blacklist.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/blacklist.ini) from the repository
@@ -190,8 +159,8 @@ The repository includes ready-to-use configuration files:
 ## Tips & Notes
 
 - **Admin Privileges:** Recommended for managing system processes, but `-noUAC` option available for limited scenarios
-- **Performance Impact:** Minimal CPU usage, only scans processes every 5 seconds by default
-- **Logging:** Creates timestamped log files, use `-console` to see real-time output
+- **Performance Impact:** Minimal CPU usage and memory usage, only scans processes every 5 seconds by default. Rate configurable
+- **Logging:** Creates timestamped log files, or use `-console` to see real-time output
 - **Process Lasso Users:** Use `-convert` to import your existing configurations
 
 ## Contributing

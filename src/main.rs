@@ -19,11 +19,12 @@ use windows::Win32::{
     },
     System::{
         Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
+        SystemInformation::{GetSystemCpuSetInformation, SYSTEM_CPU_SET_INFORMATION},
         Threading::{
-            ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetPriorityClass, GetProcessAffinityMask, HIGH_PRIORITY_CLASS,
-            IDLE_PRIORITY_CLASS, MEMORY_PRIORITY, MEMORY_PRIORITY_BELOW_NORMAL, MEMORY_PRIORITY_LOW, MEMORY_PRIORITY_MEDIUM, MEMORY_PRIORITY_NORMAL,
+            ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetPriorityClass, GetProcessAffinityMask, GetProcessDefaultCpuSets,
+            HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, MEMORY_PRIORITY, MEMORY_PRIORITY_BELOW_NORMAL, MEMORY_PRIORITY_LOW, MEMORY_PRIORITY_MEDIUM, MEMORY_PRIORITY_NORMAL,
             MEMORY_PRIORITY_VERY_LOW, NORMAL_PRIORITY_CLASS, OpenProcess, OpenProcessToken, PROCESS_CREATION_FLAGS, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION,
-            ProcessMemoryPriority, REALTIME_PRIORITY_CLASS, SetPriorityClass, SetProcessAffinityMask, SetProcessInformation,
+            ProcessMemoryPriority, REALTIME_PRIORITY_CLASS, SetPriorityClass, SetProcessAffinityMask, SetProcessDefaultCpuSets, SetProcessInformation,
         },
     },
 };
@@ -37,6 +38,7 @@ unsafe extern "system" {
         process_information: *const std::ffi::c_void,
         process_information_length: u32,
     ) -> NTSTATUS;
+    fn NtSetTimerResolution(desired_resolution: u32, set_resolution: bool, p_current_resolution: *mut std::ffi::c_void) -> NTSTATUS;
 }
 
 const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
@@ -59,6 +61,10 @@ fn find_logger() -> &'static Mutex<File> {
     static FIND_LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path(".find")).unwrap()));
     &FIND_LOG_FILE
 }
+fn get_cpu_set_information() -> &'static Mutex<Vec<SYSTEM_CPU_SET_INFORMATION>> {
+    static CPU_SET_INFORMATION: Lazy<Mutex<Vec<SYSTEM_CPU_SET_INFORMATION>>> = Lazy::new(|| Mutex::new(init_cpu_set_information()));
+    &CPU_SET_INFORMATION
+}
 static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 static FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
@@ -71,6 +77,7 @@ struct ProcessConfig {
     name: String,
     priority: ProcessPriority,
     affinity_mask: usize,
+    cpu_set_mask: usize,
     io_priority: IOPriority,
     memory_priority: MemoryPriority,
 }
@@ -190,7 +197,7 @@ pub fn log_to_find(msg: &str) {
 
 pub fn log_process_find(process_name: &str) {
     if FINDS_SET.lock().unwrap().insert(process_name.to_string().clone()) {
-        log_to_find(&format!("find {}", process_name))
+        log_to_find(&format!("find {}", process_name));
     }
 }
 
@@ -244,9 +251,17 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<Vec<ProcessConfig>> {
             } else {
                 parts[2].parse().unwrap_or(0)
             };
-            let io_priority = if parts.len() >= 4 { IOPriority::from_str(parts[3]) } else { IOPriority::None };
-            let memory_priority = if parts.len() >= 5 {
-                MemoryPriority::from_str(parts[4])
+            let cpuset_def = parts[3].trim();
+            let cpuset = if cpuset_def.starts_with('*') {
+                *affinity_aliases.get(&cpuset_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
+            } else if parts[3].trim_start().starts_with("0x") {
+                usize::from_str_radix(cpuset_def.trim_start_matches("0x"), 16).unwrap_or(0)
+            } else {
+                parts[3].parse().unwrap_or(0)
+            };
+            let io_priority = if parts.len() >= 5 { IOPriority::from_str(parts[4]) } else { IOPriority::None };
+            let memory_priority = if parts.len() >= 6 {
+                MemoryPriority::from_str(parts[5])
             } else {
                 MemoryPriority::None
             };
@@ -254,6 +269,7 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<Vec<ProcessConfig>> {
                 name,
                 priority,
                 affinity_mask: affinity,
+                cpu_set_mask: cpuset,
                 io_priority,
                 memory_priority,
             });
@@ -326,34 +342,67 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
                         }
                     }
 
-                    let mut current_mask: usize = 0;
-                    let mut system_mask: usize = 0;
-                    match GetProcessAffinityMask(h_prc, &mut current_mask, &mut system_mask) {
-                        Err(_) => {
-                            log_to_find(&format!(
-                                "apply_config: [QUERY_AFFINITY_FAILED][{}] {:>5}-{}",
-                                error_from_code(GetLastError().0),
-                                pid,
-                                config.name
-                            ));
-                        }
-                        Ok(_) => match config.affinity_mask {
-                            0 => {}
-                            mask if mask != current_mask => match SetProcessAffinityMask(h_prc, mask) {
-                                Err(_) => {
-                                    log_to_find(&format!(
-                                        "apply_config: [SET_AFFINITY_FAILED][{}] {:>5}-{}",
-                                        error_from_code(GetLastError().0),
-                                        pid,
-                                        config.name
-                                    ));
-                                }
-                                Ok(_) => {
-                                    log!("{:>5}-{} -> {:#X}", pid, config.name, mask);
-                                }
+                    if config.affinity_mask != 0 {
+                        let mut current_mask: usize = 0;
+                        let mut system_mask: usize = 0;
+                        match GetProcessAffinityMask(h_prc, &mut current_mask, &mut system_mask) {
+                            Err(_) => {
+                                log_to_find(&format!(
+                                    "apply_config: [QUERY_AFFINITY_FAILED][{}] {:>5}-{}",
+                                    error_from_code(GetLastError().0),
+                                    pid,
+                                    config.name
+                                ));
+                            }
+                            Ok(_) => match config.affinity_mask {
+                                0 => {}
+                                mask if mask != current_mask => match SetProcessAffinityMask(h_prc, mask) {
+                                    Err(_) => {
+                                        log_to_find(&format!(
+                                            "apply_config: [SET_AFFINITY_FAILED][{}] {:>5}-{}",
+                                            error_from_code(GetLastError().0),
+                                            pid,
+                                            config.name
+                                        ));
+                                    }
+                                    Ok(_) => {
+                                        log!("{:>5}-{} {:#X}-> {:#X}", pid, config.name, current_mask, mask);
+                                    }
+                                },
+                                _ => {}
                             },
-                            _ => {}
-                        },
+                        }
+                    }
+
+                    if config.cpu_set_mask != 0 {
+                        let mut toset: bool = false;
+                        let mut requiredidcount: u32 = 0;
+                        match GetProcessDefaultCpuSets(h_prc, None, &mut requiredidcount).as_bool() {
+                            true => {
+                                toset = true;
+                            }
+                            false => {
+                                let mut current_cpusetids: Vec<u32> = vec![0u32; requiredidcount as usize];
+                                match GetProcessDefaultCpuSets(h_prc, Some(&mut current_cpusetids[..]), &mut requiredidcount).as_bool() {
+                                    false => {
+                                        log_to_find(&format!("apply_config: [QUERY_CPUSET_FAILED] {:>5}-{}-{}", pid, config.name, requiredidcount));
+                                    }
+                                    true => {
+                                        toset = current_cpusetids != cpusetids_from_mask(config.cpu_set_mask);
+                                    }
+                                }
+                            }
+                        }
+                        if toset {
+                            match SetProcessDefaultCpuSets(h_prc, Some(&cpusetids_from_mask(config.cpu_set_mask))).as_bool() {
+                                false => {
+                                    log_to_find(&format!("apply_config: [SET_CPUSET_FAILED] {:>5}-{}", pid, config.name));
+                                }
+                                true => {
+                                    log!("{:>5}-{} -> (cpu set) {:#X}", pid, config.name, config.cpu_set_mask);
+                                }
+                            }
+                        }
                     }
 
                     if let Some(io_priority_flag) = config.io_priority.as_win_const() {
@@ -526,6 +575,7 @@ fn convert(in_file_name: Option<String>, out_file_name: Option<String>) {
                                             name,
                                             priority,
                                             affinity_mask: 0,
+                                            cpu_set_mask: 0,
                                             io_priority: IOPriority::None,
                                             memory_priority: MemoryPriority::None,
                                         }),
@@ -546,6 +596,7 @@ fn convert(in_file_name: Option<String>, out_file_name: Option<String>) {
                                             name,
                                             priority: ProcessPriority::None,
                                             affinity_mask: mask,
+                                            cpu_set_mask: 0,
                                             io_priority: IOPriority::None,
                                             memory_priority: MemoryPriority::None,
                                         }),
@@ -559,7 +610,15 @@ fn convert(in_file_name: Option<String>, out_file_name: Option<String>) {
                     match File::create(out_file) {
                         Ok(mut output) => {
                             for cfg in &configs {
-                                let _ = writeln!(output, "{},{},0x{:X}", cfg.name, cfg.priority.as_str(), cfg.affinity_mask);
+                                let _ = writeln!(
+                                    output,
+                                    "{},{},0x{:X},0x{:X},{}",
+                                    cfg.name,
+                                    cfg.priority.as_str(),
+                                    cfg.affinity_mask,
+                                    cfg.cpu_set_mask,
+                                    cfg.io_priority.as_str()
+                                );
                             }
                             log!("convert done, {} process configs have been output", configs.len());
                         }
@@ -599,6 +658,7 @@ fn parse_args(
     out_file_name: &mut Option<String>,
     no_uac: &mut bool,
     loop_count: &mut Option<u32>,
+    time_resolution: &mut u32,
     log_loop: &mut bool,
     skip_log_before_elevation: &mut bool,
 ) -> windows::core::Result<()> {
@@ -629,6 +689,10 @@ fn parse_args(
             }
             "-loop" if i + 1 < args.len() => {
                 *loop_count = Some(args[i + 1].parse().unwrap_or(1).max(1));
+                i += 1;
+            }
+            "-resolution" if i + 1 < args.len() => {
+                *time_resolution = args[i + 1].parse().unwrap_or(0).max(0);
                 i += 1;
             }
             "-logloop" => {
@@ -672,6 +736,7 @@ fn print_help() {
     println!("  -find                find processes with default affinity (-blacklist <file>)");
     println!("  -interval <ms>       check interval in milliseconds (default: 5000)");
     println!("  -noUAC               disable UAC elevation request");
+    println!("  -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)");
     println!();
     println!("Modes:");
     println!("  -convert             convert Process Lasso config (-in <file> -out <file>)");
@@ -705,6 +770,7 @@ fn print_help_all() {
     println!();
     println!("Debug & Testing Options:");
     println!("  -loop <count>        number of loops to run (default: infinite) - for testing");
+    println!("  -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)");
     println!("  -logloop             log a message at the start of each loop for testing");
     println!();
     println!("=== CONFIGURATION FORMAT ===");
@@ -837,152 +903,291 @@ fn request_uac_elevation() -> io::Result<()> {
     }
 }
 
-fn main() -> windows::core::Result<()> {
-    let args: Vec<String> = env::args().collect();
-    let mut interval_ms = 5000;
-    let mut help_mode = false;
-    let mut help_all_mode = false;
-    let mut convert_mode = false;
-    let mut find_mode = false;
-    let mut config_file_name = "config.ini".to_string();
-    let mut blacklist_file_name: Option<String> = None;
-    let mut in_file_name: Option<String> = None;
-    let mut out_file_name: Option<String> = None;
-    let mut no_uac = false;
-    let mut loop_count: Option<u32> = None;
-    let mut log_loop = false;
-    let mut skip_log_before_elevation = false;
-    parse_args(
-        &args,
-        &mut interval_ms,
-        &mut help_mode,
-        &mut help_all_mode,
-        &mut convert_mode,
-        &mut find_mode,
-        &mut config_file_name,
-        &mut blacklist_file_name,
-        &mut in_file_name,
-        &mut out_file_name,
-        &mut no_uac,
-        &mut loop_count,
-        &mut log_loop,
-        &mut skip_log_before_elevation,
-    )?;
-    if help_mode {
-        print_help();
-        return Ok(());
-    }
-    if help_all_mode {
-        print_help_all();
-        return Ok(());
-    }
-    if convert_mode {
-        convert(in_file_name, out_file_name);
-        return Ok(());
-    }
-    if !skip_log_before_elevation {
-        log!("Affinity Service started");
-        log!("time interval: {}", interval_ms);
-    }
-    let configs = read_config(&config_file_name).unwrap_or_else(|_| {
-        if !skip_log_before_elevation {
-            log!("cannot read configs: {}", config_file_name);
+fn init_cpu_set_information() -> Vec<SYSTEM_CPU_SET_INFORMATION> {
+    let mut cpu_set_information: Vec<SYSTEM_CPU_SET_INFORMATION> = Vec::new();
+    unsafe {
+        let mut required_size: u32 = 0;
+        let _ = GetSystemCpuSetInformation(None, 0, &mut required_size, Some(GetCurrentProcess()), Some(0));
+        let mut buffer: Vec<u8> = vec![0u8; required_size as usize];
+        match GetSystemCpuSetInformation(
+            Some(buffer.as_mut_ptr() as *mut SYSTEM_CPU_SET_INFORMATION),
+            required_size,
+            &mut required_size,
+            Some(GetCurrentProcess()),
+            Some(0),
+        )
+        .as_bool()
+        {
+            false => panic!("GetSystemCpuSetInformation failed"),
+            true => {}
+        };
+        let mut offset = 0;
+        while offset < required_size as usize {
+            let entry_ptr = buffer.as_ptr().add(offset) as *const SYSTEM_CPU_SET_INFORMATION;
+            let entry = &*entry_ptr;
+            cpu_set_information.push(*entry);
+            offset += entry.Size as usize;
         }
-        Vec::new()
-    });
-    let blacklist = if let Some(bf) = blacklist_file_name {
-        read_list(bf).unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    let is_config_empty = configs.is_empty();
-    let is_blacklist_empty = blacklist.is_empty();
-    if is_config_empty && is_blacklist_empty {
-        if !find_mode {
-            if skip_log_before_elevation {
-                log!("not even a single config, existing");
+    }
+    cpu_set_information
+}
+
+fn cpusetids_from_mask(mask: usize) -> Vec<u32> {
+    let mut cpuids: Vec<u32> = Vec::new();
+    unsafe {
+        get_cpu_set_information().lock().unwrap().iter().for_each(|entry| {
+            if ((1 << entry.Anonymous.CpuSet.LogicalProcessorIndex) & mask) != 0 {
+                cpuids.push(entry.Anonymous.CpuSet.Id);
             }
+        });
+    }
+    cpuids
+}
+
+fn main() -> windows::core::Result<()> {
+    const TEST: bool = false;
+    if TEST {
+        println!("test");
+        unsafe {
+            let mut required_size: u32 = 0;
+
+            // get buffer size
+            let _ = GetSystemCpuSetInformation(None, 0, &mut required_size, Some(GetCurrentProcess()), Some(0));
+
+            let mut buffer: Vec<u8> = vec![0u8; required_size as usize];
+
+            // get actual information
+            match GetSystemCpuSetInformation(
+                Some(buffer.as_mut_ptr() as *mut SYSTEM_CPU_SET_INFORMATION),
+                required_size,
+                &mut required_size,
+                Some(GetCurrentProcess()),
+                Some(0),
+            )
+            .as_bool()
+            {
+                true => {}
+                false => panic!("GetSystemCpuSetInformation failed"),
+            };
+
+            let mut offset = 0;
+            while offset < required_size as usize {
+                let entry_ptr = buffer.as_ptr().add(offset) as *const SYSTEM_CPU_SET_INFORMATION;
+                let entry = &*entry_ptr;
+
+                // CpuSet
+                let cpu = entry.Anonymous.CpuSet;
+
+                let core_type = if cpu.EfficiencyClass >= 1 { "P-core" } else { "E-core" };
+
+                println!(
+                    "CPU Set ID: {}, Group: {}, LogicalProcessorIndex: {}, CoreIndex: {}, CoreType: {}, EfficiencyClass: {}",
+                    cpu.Id, cpu.Group, cpu.LogicalProcessorIndex, cpu.CoreIndex, core_type, cpu.EfficiencyClass
+                );
+
+                offset += entry.Size as usize;
+            }
+
+            cpusetids_from_mask(0xfe).iter().for_each(|e| println!("0xfe CPU Set ID: {}", e));
+
+            // while true {
+            //     println!("loop");
+            //     let mut requiredidcount: u32 = 0;
+            //     let mut need_set: bool = false;
+            //     match GetProcessDefaultCpuSets(GetCurrentProcess(), None, &mut requiredidcount)
+            //         .as_bool()
+            //     {
+            //         true => {
+            //             println!("apply_config: [QUERY_CPUSET_FAILED] {:>5}-{}", 0, 0);
+            //         }
+            //         false => {
+            //             let mut cpusetids: Vec<u32> = vec![0u32; requiredidcount as usize];
+            //             match GetProcessDefaultCpuSets(
+            //                 GetCurrentProcess(),
+            //                 Some(&mut cpusetids[..]),
+            //                 &mut requiredidcount,
+            //             )
+            //             .as_bool()
+            //             {
+            //                 false => {
+            //                     println!("apply_config: [QUERY_CPUSET_FAILED] {:>5}-{}", 0, 0);
+            //                 }
+            //                 true => {
+            //                     println!("requiredidcount {} ", requiredidcount);
+            //                     cpusetids.iter().for_each(|cpu_set| {
+            //                         println!("CPU Set ID: {}", cpu_set);
+            //                     });
+            //                 }
+            //             }
+            //         }
+            //     }
+            //     thread::sleep(Duration::from_millis(1000));
+            // }
+        }
+    } else {
+        let args: Vec<String> = env::args().collect();
+        let mut interval_ms = 5000;
+        let mut help_mode = false;
+        let mut help_all_mode = false;
+        let mut convert_mode = false;
+        let mut find_mode = false;
+        let mut config_file_name = "config.ini".to_string();
+        let mut blacklist_file_name: Option<String> = None;
+        let mut in_file_name: Option<String> = None;
+        let mut out_file_name: Option<String> = None;
+        let mut no_uac = false;
+        let mut loop_count: Option<u32> = None;
+        let mut time_resolution: u32 = 0;
+        let mut log_loop = false;
+        let mut skip_log_before_elevation = false;
+        parse_args(
+            &args,
+            &mut interval_ms,
+            &mut help_mode,
+            &mut help_all_mode,
+            &mut convert_mode,
+            &mut find_mode,
+            &mut config_file_name,
+            &mut blacklist_file_name,
+            &mut in_file_name,
+            &mut out_file_name,
+            &mut no_uac,
+            &mut loop_count,
+            &mut time_resolution,
+            &mut log_loop,
+            &mut skip_log_before_elevation,
+        )?;
+        if help_mode {
+            print_help();
             return Ok(());
         }
-    } else {
-        log!("{} configs load", configs.len());
-        log!("{} blacklist items load", blacklist.len());
-    }
-    if !is_running_as_admin() {
-        if no_uac {
-            log!("Not running as administrator. UAC elevation disabled by -noUAC flag.");
-            log!("Warning: May not be able to manage all processes without admin privileges.");
+        if help_all_mode {
+            print_help_all();
+            return Ok(());
+        }
+        if convert_mode {
+            convert(in_file_name, out_file_name);
+            return Ok(());
+        }
+        if !skip_log_before_elevation {
+            log!("Affinity Service started");
+            log!("time interval: {}", interval_ms);
+        }
+        let configs = read_config(&config_file_name).unwrap_or_else(|_| {
+            if !skip_log_before_elevation {
+                log!("cannot read configs: {}", config_file_name);
+            }
+            Vec::new()
+        });
+        let blacklist = if let Some(bf) = blacklist_file_name {
+            read_list(bf).unwrap_or_default()
         } else {
-            log!("Not running as administrator. Requesting UAC elevation...");
-            match request_uac_elevation() {
-                Ok(_) => {
-                    log!("Running with administrator privileges.");
+            Vec::new()
+        };
+        let is_config_empty = configs.is_empty();
+        let is_blacklist_empty = blacklist.is_empty();
+        if is_config_empty && is_blacklist_empty {
+            if !find_mode {
+                if skip_log_before_elevation {
+                    log!("not even a single config, existing");
                 }
-                Err(e) => {
-                    log!("Failed to request elevation: {}, may not manage all processes", e);
+                return Ok(());
+            }
+        } else {
+            log!("{} configs load", configs.len());
+            log!("{} blacklist items load", blacklist.len());
+        }
+        if !is_running_as_admin() {
+            if no_uac {
+                log!("Not running as administrator. UAC elevation disabled by -noUAC flag.");
+                log!("Warning: May not be able to manage all processes without admin privileges.");
+            } else {
+                log!("Not running as administrator. Requesting UAC elevation...");
+                match request_uac_elevation() {
+                    Ok(_) => {
+                        log!("Running with administrator privileges.");
+                    }
+                    Err(e) => {
+                        log!("Failed to request elevation: {}, may not manage all processes", e);
+                    }
                 }
             }
         }
+        enable_debug_privilege();
+        if time_resolution != 0 {
+            unsafe {
+                let mut current_resolution = 0u32;
+                match NtSetTimerResolution(time_resolution, true, &mut current_resolution as *mut _ as *mut std::ffi::c_void).0 {
+                    ntstatus if ntstatus < 0 => {
+                        log!("Failed to set timer resolution: 0x{:08X}", ntstatus);
+                    }
+                    ntstatus if ntstatus >= 0 => {
+                        log!("Succeed to set timer resolution: {:.4}ms", time_resolution as f64 / 10000f64);
+                        log!("elder timer resolution: {:.4}ms", current_resolution);
+                    }
+                    _ => {}
+                };
+            }
+        }
+        let mut current_loop = 0u32;
+        let mut should_continue = true;
+        while should_continue {
+            if log_loop {
+                log!("Loop {} started", current_loop + 1);
+            }
+            unsafe {
+                let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
+                let mut pe32 = PROCESSENTRY32W::default();
+                pe32.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+                if Process32FirstW(snapshot, &mut pe32).is_ok() {
+                    'out_loop: loop {
+                        let process_name = String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]).to_lowercase();
+                        if !FAIL_SET.lock().unwrap().contains(&process_name) {
+                            for config in &configs {
+                                if process_name == config.name {
+                                    apply_config(pe32.th32ProcessID, &config);
+                                    if !Process32NextW(snapshot, &mut pe32).is_ok() {
+                                        break 'out_loop;
+                                    }
+                                    continue 'out_loop;
+                                }
+                            }
+                            if find_mode {
+                                if blacklist.contains(&process_name) {
+                                    if !Process32NextW(snapshot, &mut pe32).is_ok() {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                                if is_affinity_unset(pe32.th32ProcessID, process_name.as_str()) {
+                                    log_process_find(&process_name);
+                                }
+                            }
+                        }
+                        if !Process32NextW(snapshot, &mut pe32).is_ok() {
+                            break;
+                        }
+                    }
+                }
+                let _ = CloseHandle(snapshot);
+            }
+            let _ = find_logger().lock().unwrap().flush();
+            let _ = logger().lock().unwrap().flush();
+            current_loop += 1;
+            if let Some(max_loops) = loop_count {
+                if current_loop >= max_loops {
+                    if log_loop {
+                        log!("Completed {} loops, exiting", max_loops);
+                    }
+                    should_continue = false;
+                }
+            }
+            if should_continue {
+                thread::sleep(Duration::from_millis(interval_ms));
+                *LOCALTIME_BUFFER.lock().unwrap() = Local::now();
+            }
+        }
     }
-    enable_debug_privilege();
 
-    let mut current_loop = 0u32;
-    let mut should_continue = true;
-    while should_continue {
-        if log_loop {
-            log!("Loop {} started", current_loop + 1);
-        }
-        unsafe {
-            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
-            let mut pe32 = PROCESSENTRY32W::default();
-            pe32.dwSize = size_of::<PROCESSENTRY32W>() as u32;
-            if Process32FirstW(snapshot, &mut pe32).is_ok() {
-                'out_loop: loop {
-                    let process_name = String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]).to_lowercase();
-                    if !FAIL_SET.lock().unwrap().contains(&process_name) {
-                        for config in &configs {
-                            if process_name == config.name {
-                                apply_config(pe32.th32ProcessID, &config);
-                                if !Process32NextW(snapshot, &mut pe32).is_ok() {
-                                    break 'out_loop;
-                                }
-                                continue 'out_loop;
-                            }
-                        }
-                        if find_mode {
-                            if blacklist.contains(&process_name) {
-                                if !Process32NextW(snapshot, &mut pe32).is_ok() {
-                                    break;
-                                }
-                                continue;
-                            }
-                            if is_affinity_unset(pe32.th32ProcessID, process_name.as_str()) {
-                                log_process_find(&process_name);
-                            }
-                        }
-                    }
-                    if !Process32NextW(snapshot, &mut pe32).is_ok() {
-                        break;
-                    }
-                }
-            }
-            let _ = CloseHandle(snapshot);
-        }
-        let _ = find_logger().lock().unwrap().flush();
-        let _ = logger().lock().unwrap().flush();
-        current_loop += 1;
-        if let Some(max_loops) = loop_count {
-            if current_loop >= max_loops {
-                if log_loop {
-                    log!("Completed {} loops, exiting", max_loops);
-                }
-                should_continue = false;
-            }
-        }
-        if should_continue {
-            thread::sleep(Duration::from_millis(interval_ms));
-            *LOCALTIME_BUFFER.lock().unwrap() = Local::now();
-        }
-    }
     Ok(())
 }

@@ -23,8 +23,8 @@ Note on affinity vs. CPU sets: CPU affinity is a hard limit on which cores a pro
 
 1. Download or compile `AffinityServiceRust.exe`
 2. Get configuration files (or create one) from this repository:
-   - Use the pre-configured `config.ini` as a starting point (covers 200+ common processes)
-   - Use the included `blacklist.ini` for process discovery mode
+   - Use the pre-configured [`config.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) as a starting point (covers 200+ common processes)
+   - Use the included [`blacklist.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/blacklist.ini) for process discovery mode
    - Edit these files to match your CPU layout and preferences
 3. Run the application — command-line usage is recommended. You can double-click the .exe to run with default options.
 
@@ -134,7 +134,7 @@ Affinity options:
 
 Tips:
 - Best practice: use aliases for cleaner, maintainable configs
-- Quick setup: download the pre-configured `config.ini` and `blacklist.ini` from the repository and adapt aliases to your CPU
+- Quick setup: download the pre-configured [`config.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) and [`blacklist.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/blacklist.ini) from the repository and adapt aliases to your CPU
 - When upgrading CPU, change the alias definitions once to update all rules
 - Use `none` or `0` to skip changing a particular setting
 - Run `AffinityServiceRust.exe -helpall` for detailed configuration help and alias examples
@@ -142,7 +142,7 @@ Tips:
 ### Using Repository Configuration Files
 
 Quick setup:
-1. Download `config.ini` and `blacklist.ini` from the repository
+1. Download [`config.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) and [`blacklist.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/blacklist.ini) from the repository
 2. Edit affinity aliases in `config.ini` to match your CPU topology:
 ```ini
 # Intel 8P+12E (e.g., 14700KF)

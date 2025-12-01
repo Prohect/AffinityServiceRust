@@ -415,7 +415,12 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
                         if toset {
                             match SetProcessDefaultCpuSets(h_prc, Some(&cpusetids_from_mask(config.cpu_set_mask))).as_bool() {
                                 false => {
-                                    log_to_find(&format!("apply_config: [SET_CPUSET_FAILED] {:>5}-{}", pid, config.name));
+                                    log_to_find(&format!(
+                                        "apply_config: [SET_CPUSET_FAILED][{}] {:>5}-{}",
+                                        error_from_code(GetLastError().0),
+                                        pid,
+                                        config.name
+                                    ));
                                 }
                                 true => {
                                     log!("{:>5}-{} -> (cpu set) {:#X}", pid, config.name, config.cpu_set_mask);

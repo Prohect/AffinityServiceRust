@@ -122,8 +122,8 @@ enum IOPriority {
     VeryLow,
     Low,
     Normal,
-    // High,     // Requires SeIncreaseBasePriorityPrivilege
-    // Critical, // Requires SeIncreaseBasePriorityPrivilege
+    // High,     // Not Available
+    // Critical, // Not Available
 }
 impl IOPriority {
     const TABLE: &'static [(Self, &'static str, Option<u32>)] = &[
@@ -131,8 +131,8 @@ impl IOPriority {
         (Self::VeryLow, "very low", Some(0)),
         (Self::Low, "low", Some(1)),
         (Self::Normal, "normal", Some(2)),
-        // (Self::High, "high", Some(3)),           // Requires SeIncreaseBasePriorityPrivilege
-        // (Self::Critical, "critical", Some(4)), // Requires SeIncreaseBasePriorityPrivilege
+        // (Self::High, "high", Some(3)),           // Not Available
+        // (Self::Critical, "critical", Some(4)), // Not Available
     ];
 
     pub fn as_str(&self) -> &'static str {

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Datelike, Local};
 use once_cell::sync::Lazy;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map::Entry},
     env,
     fs::{self, File, OpenOptions},
     io::{self, BufRead, Write},
@@ -18,14 +18,18 @@ use windows::Win32::{
         TokenElevation,
     },
     System::{
-        Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
+        Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+        },
         SystemInformation::{GetSystemCpuSetInformation, SYSTEM_CPU_SET_INFORMATION},
         Threading::{
             ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetPriorityClass, GetProcessAffinityMask, GetProcessDefaultCpuSets,
             HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, MEMORY_PRIORITY, MEMORY_PRIORITY_BELOW_NORMAL, MEMORY_PRIORITY_LOW, MEMORY_PRIORITY_MEDIUM, MEMORY_PRIORITY_NORMAL,
-            MEMORY_PRIORITY_VERY_LOW, NORMAL_PRIORITY_CLASS, OpenProcess, OpenProcessToken, PROCESS_CREATION_FLAGS, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION,
-            ProcessMemoryPriority, REALTIME_PRIORITY_CLASS, SetPriorityClass, SetProcessAffinityMask, SetProcessDefaultCpuSets, SetProcessInformation,
+            MEMORY_PRIORITY_VERY_LOW, NORMAL_PRIORITY_CLASS, OpenProcess, OpenProcessToken, OpenThread, PROCESS_CREATION_FLAGS, PROCESS_QUERY_INFORMATION,
+            PROCESS_SET_INFORMATION, ProcessMemoryPriority, REALTIME_PRIORITY_CLASS, SetPriorityClass, SetProcessAffinityMask, SetProcessDefaultCpuSets,
+            SetProcessInformation, SetThreadSelectedCpuSets, THREAD_QUERY_INFORMATION, THREAD_SET_LIMITED_INFORMATION,
         },
+        WindowsProgramming::QueryThreadCycleTime,
     },
 };
 
@@ -78,6 +82,7 @@ struct ProcessConfig {
     priority: ProcessPriority,
     affinity_mask: usize,
     cpu_set_mask: usize,
+    prime_cpu_mask: usize,
     io_priority: IOPriority,
     memory_priority: MemoryPriority,
 }
@@ -116,6 +121,71 @@ impl ProcessPriority {
     }
 }
 
+struct ThreadStats {
+    last_cycles: u64,
+    handle: Option<HANDLE>, // Only present if thread is a VIP (selected)
+}
+
+impl ThreadStats {
+    pub fn new() -> Self {
+        Self { last_cycles: 0, handle: None }
+    }
+}
+
+struct ProcessStats {
+    alive: bool,
+    tid_to_thread_stats: HashMap<u32, ThreadStats>,
+}
+
+impl ProcessStats {
+    pub fn new() -> Self {
+        Self {
+            alive: true,
+            tid_to_thread_stats: HashMap::new(),
+        }
+    }
+}
+
+struct PrimeCoreScheduler {
+    // clear threadStats once process exit as pid may be reused by OS
+    pid_to_process_stats: HashMap<u32, ProcessStats>,
+}
+
+impl PrimeCoreScheduler {
+    fn new() -> Self {
+        Self {
+            pid_to_process_stats: HashMap::new(),
+        }
+    }
+
+    fn reset_alive(&mut self) {
+        // set alive to false every loop start
+        self.pid_to_process_stats.values_mut().for_each(|stats| stats.alive = false);
+    }
+
+    fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats {
+        let process_stats = self.pid_to_process_stats.entry(pid).or_insert_with(ProcessStats::new);
+        process_stats.alive = true;
+        process_stats.tid_to_thread_stats.entry(tid).or_insert_with(ThreadStats::new)
+    }
+
+    fn close_dead_process_handles(&mut self) {
+        self.pid_to_process_stats.retain(|_, process_stats| {
+            if !process_stats.alive {
+                for stats in process_stats.tid_to_thread_stats.values() {
+                    if let Some(handle) = stats.handle {
+                        unsafe {
+                            let _ = CloseHandle(handle);
+                        }
+                    }
+                }
+                false
+            } else {
+                true
+            }
+        });
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IOPriority {
     None,
@@ -259,9 +329,17 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<Vec<ProcessConfig>> {
             } else {
                 parts[3].parse().unwrap_or(0)
             };
-            let io_priority = if parts.len() >= 5 { IOPriority::from_str(parts[4]) } else { IOPriority::None };
-            let memory_priority = if parts.len() >= 6 {
-                MemoryPriority::from_str(parts[5])
+            let prime_cpu_def = if parts.len() >= 5 { parts[4].trim() } else { "0" };
+            let prime_cpuset = if prime_cpu_def.starts_with('*') {
+                *affinity_aliases.get(&prime_cpu_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
+            } else if parts[4].trim_start().starts_with("0x") {
+                usize::from_str_radix(prime_cpu_def.trim_start_matches("0x"), 16).unwrap_or(0)
+            } else {
+                parts[4].parse().unwrap_or(0)
+            };
+            let io_priority = if parts.len() >= 6 { IOPriority::from_str(parts[5]) } else { IOPriority::None };
+            let memory_priority = if parts.len() >= 7 {
+                MemoryPriority::from_str(parts[6])
             } else {
                 MemoryPriority::None
             };
@@ -270,6 +348,7 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<Vec<ProcessConfig>> {
                 priority,
                 affinity_mask: affinity,
                 cpu_set_mask: cpuset,
+                prime_cpu_mask: prime_cpuset,
                 io_priority,
                 memory_priority,
             });
@@ -311,7 +390,7 @@ fn error_from_code(code: u32) -> String {
     }
 }
 
-fn apply_config(pid: u32, config: &ProcessConfig) {
+fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut PrimeCoreScheduler) {
     unsafe {
         match OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) {
             /* this error instance don't contain any information inside, it not the one returned from winAPI, no need to receive it */
@@ -342,9 +421,9 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
                         }
                     }
 
-                    if config.affinity_mask != 0 {
-                        let mut current_mask: usize = 0;
-                        let mut system_mask: usize = 0;
+                    let mut current_mask: usize = 0;
+                    let mut system_mask: usize = 0; // all possible cores
+                    if config.affinity_mask != 0 || config.prime_cpu_mask != 0 {
                         match GetProcessAffinityMask(h_prc, &mut current_mask, &mut system_mask) {
                             Err(_) => {
                                 log_to_find(&format!(
@@ -356,7 +435,7 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
                             }
                             Ok(_) => match config.affinity_mask {
                                 0 => {}
-                                mask if mask != current_mask => match SetProcessAffinityMask(h_prc, mask) {
+                                config_mask if config_mask != current_mask => match SetProcessAffinityMask(h_prc, config_mask) {
                                     Err(_) => {
                                         log_to_find(&format!(
                                             "apply_config: [SET_AFFINITY_FAILED][{}] {:>5}-{}",
@@ -366,7 +445,8 @@ fn apply_config(pid: u32, config: &ProcessConfig) {
                                         ));
                                     }
                                     Ok(_) => {
-                                        log!("{:>5}-{} {:#X}-> {:#X}", pid, config.name, current_mask, mask);
+                                        log!("{:>5}-{} {:#X}-> {:#X}", pid, config.name, current_mask, config_mask);
+                                        current_mask = config_mask;
                                     }
                                 },
                                 _ => {}
@@ -600,6 +680,7 @@ fn convert(in_file_name: Option<String>, out_file_name: Option<String>) {
                                             priority,
                                             affinity_mask: 0,
                                             cpu_set_mask: 0,
+                                            prime_cpu_mask: 0,
                                             io_priority: IOPriority::None,
                                             memory_priority: MemoryPriority::None,
                                         }),
@@ -621,6 +702,7 @@ fn convert(in_file_name: Option<String>, out_file_name: Option<String>) {
                                             priority: ProcessPriority::None,
                                             affinity_mask: mask,
                                             cpu_set_mask: 0,
+                                            prime_cpu_mask: 0,
                                             io_priority: IOPriority::None,
                                             memory_priority: MemoryPriority::None,
                                         }),
@@ -636,11 +718,12 @@ fn convert(in_file_name: Option<String>, out_file_name: Option<String>) {
                             for cfg in &configs {
                                 let _ = writeln!(
                                     output,
-                                    "{},{},0x{:X},0x{:X},{}",
+                                    "{},{},0x{:X},0x{:X},0x{:X},{}",
                                     cfg.name,
                                     cfg.priority.as_str(),
                                     cfg.affinity_mask,
                                     cfg.cpu_set_mask,
+                                    cfg.prime_cpu_mask,
                                     cfg.io_priority.as_str()
                                 );
                             }
@@ -1073,6 +1156,7 @@ fn main() -> windows::core::Result<()> {
             };
         }
     }
+    let mut prime_core_scheduler = PrimeCoreScheduler::new();
     let mut current_loop = 0u32;
     let mut should_continue = true;
     while should_continue {
@@ -1089,7 +1173,7 @@ fn main() -> windows::core::Result<()> {
                     if !FAIL_SET.lock().unwrap().contains(&process_name) {
                         for config in &configs {
                             if process_name == config.name {
-                                apply_config(pe32.th32ProcessID, &config);
+                                apply_config(pe32.th32ProcessID, &config, &mut prime_core_scheduler);
                                 if !Process32NextW(snapshot, &mut pe32).is_ok() {
                                     break 'out_loop;
                                 }

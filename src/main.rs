@@ -204,22 +204,27 @@ impl PrimeCoreScheduler {
 pub struct ProcessEntry {
     pub process: SYSTEM_PROCESS_INFORMATION,
     threads: HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    threads_base_ptr: usize,
 }
 
 impl ProcessEntry {
-    pub fn new(process: SYSTEM_PROCESS_INFORMATION) -> Self {
+    pub fn new(process: SYSTEM_PROCESS_INFORMATION, threads_base_ptr: *const SYSTEM_THREAD_INFORMATION) -> Self {
         ProcessEntry {
             process,
             threads: HashMap::new(),
+            threads_base_ptr: threads_base_ptr as usize,
         }
     }
     pub fn get_threads(&mut self) -> &HashMap<u32, SYSTEM_THREAD_INFORMATION> {
-        if self.process.NumberOfThreads != self.threads.len() as u32 {
+        if self.process.NumberOfThreads as usize != self.threads.len() {
             unsafe {
-                let threads_ptr = &self.process.Threads as *const SYSTEM_THREAD_INFORMATION;
+                let threads_ptr = self.threads_base_ptr as *const SYSTEM_THREAD_INFORMATION;
+                if threads_ptr.is_null() {
+                    return &self.threads;
+                }
                 for i in 0..self.process.NumberOfThreads as usize {
-                    let thread = &*threads_ptr.add(i);
-                    self.threads.insert(thread.ClientId.UniqueThread as u32, *thread);
+                    let thread = *threads_ptr.add(i);
+                    self.threads.insert(thread.ClientId.UniqueThread as u32, thread);
                 }
             }
         }
@@ -687,10 +692,9 @@ impl ProcessSnapshot {
             loop {
                 let process_entry_ptr = buf_ptr.add(offset) as *const SYSTEM_PROCESS_INFORMATION;
                 let entry = &*process_entry_ptr;
-
-                let process_entry = ProcessEntry::new(*entry);
+                let threads_ptr = &(*process_entry_ptr).Threads as *const SYSTEM_THREAD_INFORMATION;
+                let process_entry = ProcessEntry::new(*entry, threads_ptr);
                 by_pid.insert(entry.UniqueProcessId as u32, process_entry);
-
                 if entry.NextEntryOffset == 0 {
                     break;
                 }

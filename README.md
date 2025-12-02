@@ -172,6 +172,17 @@ Benefits:
 - Logging: generates timestamped logs in the `logs` folder; use `-console` for real-time output
 - Process Lasso users: use `-convert` to import existing settings
 
+## compile
+- you can use rustup to install Rust and cargo
+- during installation, it ask to install visual studio build tools
+- by default, only one individual component is selected MSVC
+- that's enough for cargo system to build the application
+- but if you need rust analyzer, you will need the following components:
+    - MSBuild
+    - Windows 11 SDK
+- Run `cargo build --release` to compile the application
+
+
 ## Contributing
 
 If you find a bug or have an idea for improvement, feel free to open an issue or submit a pull request.

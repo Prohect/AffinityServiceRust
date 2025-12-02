@@ -206,7 +206,6 @@ pub struct ProcessEntry {
     threads: HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     threads_base_ptr: usize,
 }
-
 impl ProcessEntry {
     pub fn new(process: SYSTEM_PROCESS_INFORMATION, threads_base_ptr: *const SYSTEM_THREAD_INFORMATION) -> Self {
         ProcessEntry {
@@ -1115,7 +1114,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                 let thread = total_time_delta_to_thread.get(&sorted_keys[sorted_keys.len() - i - 1]).unwrap();
                                 let thread_stats = prime_core_scheduler.get_thread_stats(pid, thread.tid());
                                 if !thread_stats.handle.is_some() {
-                                    log_to_find(&format!("open handle for {}-{:#X}", thread.tid(), thread.start_address()));
                                     match OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION, false, thread.tid()) {
                                         Err(_) => {
                                             log_to_find(&format!(
@@ -1129,7 +1127,7 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                         }
                                         Ok(handle) => {
                                             thread_stats.handle = Some(handle);
-                                            match SetThreadSelectedCpuSets(handle, &[cpu_setids[cpu_setids.len() - 1 - counter]]).as_bool() {
+                                            match SetThreadSelectedCpuSets(handle, &[cpu_setids[cpu_setids.len() - counter - 1]]).as_bool() {
                                                 false => {
                                                     log_to_find(&format!(
                                                         "apply_config: [SET_THREAD_SELECTED_CPU_SETS_FAILED] {:>5}-{}-{}",
@@ -1145,14 +1143,14 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                                         pid,
                                                         thread.tid(),
                                                         config.name,
-                                                        mask_from_cpusetids(&[cpu_setids[cpu_setids.len() - 1 - counter]])
+                                                        mask_from_cpusetids(&[cpu_setids[cpu_setids.len() - counter]])
                                                     );
                                                 }
                                             }
                                         }
                                     }
                                 }
-                                if !counter < cpu_setids.len() {
+                                if cpu_setids.len() as i32 - counter as i32 - 1 < 0 {
                                     break;
                                 }
                             }

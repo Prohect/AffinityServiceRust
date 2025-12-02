@@ -1,7 +1,7 @@
 use chrono::{DateTime, Datelike, Local};
 use once_cell::sync::Lazy;
 use std::{
-    collections::{HashMap, HashSet, hash_map::Entry},
+    collections::{HashMap, HashSet},
     env,
     fs::{self, File, OpenOptions},
     io::{self, BufRead, Write},
@@ -508,6 +508,8 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                             }
                         }
                     }
+
+                    //TODO:SetThreadSelectedCpuSets
 
                     if let Some(io_priority_flag) = config.io_priority.as_win_const() {
                         let mut current_io_priority: u32 = 0;

@@ -1,16 +1,21 @@
+#[allow(unused_imports)]
 use chrono::{DateTime, Datelike, Local};
+use ntapi::ntexapi::{NtQuerySystemInformation, SYSTEM_PROCESS_INFORMATION, SYSTEM_THREAD_INFORMATION, SystemProcessInformation};
 use once_cell::sync::Lazy;
 use std::{
     collections::{HashMap, HashSet},
     env,
     fs::{self, File, OpenOptions},
     io::{self, BufRead, Write},
+    mem::size_of,
     path::{Path, PathBuf},
     process::Command,
+    slice,
     sync::Mutex,
     thread,
     time::Duration,
 };
+#[allow(unused_imports)]
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE, LUID, NTSTATUS},
     Security::{
@@ -120,23 +125,26 @@ impl ProcessPriority {
             .unwrap_or(Self::None)
     }
 }
-
+#[allow(dead_code)]
 struct ThreadStats {
-    last_cycles: u64,
+    last_total_time: i64,
     handle: Option<HANDLE>, // Only present if thread is a VIP (selected)
 }
-
+#[allow(dead_code)]
 impl ThreadStats {
     pub fn new() -> Self {
-        Self { last_cycles: 0, handle: None }
+        Self {
+            last_total_time: 0,
+            handle: None,
+        }
     }
 }
-
+#[allow(dead_code)]
 struct ProcessStats {
     alive: bool,
     tid_to_thread_stats: HashMap<u32, ThreadStats>,
 }
-
+#[allow(dead_code)]
 impl ProcessStats {
     pub fn new() -> Self {
         Self {
@@ -145,12 +153,12 @@ impl ProcessStats {
         }
     }
 }
-
+#[allow(dead_code)]
 struct PrimeCoreScheduler {
     // clear threadStats once process exit as pid may be reused by OS
     pid_to_process_stats: HashMap<u32, ProcessStats>,
 }
-
+#[allow(dead_code)]
 impl PrimeCoreScheduler {
     fn new() -> Self {
         Self {
@@ -175,6 +183,12 @@ impl PrimeCoreScheduler {
                 for stats in process_stats.tid_to_thread_stats.values() {
                     if let Some(handle) = stats.handle {
                         unsafe {
+                            match SetThreadSelectedCpuSets(handle, &[]).as_bool() {
+                                false => {
+                                    log_to_find(&format!("close_dead_process_handles: [SET_THREAD_SELECTED_CPU_SETS_FAILED]"));
+                                }
+                                true => {}
+                            }
                             let _ = CloseHandle(handle);
                         }
                     }
@@ -186,6 +200,572 @@ impl PrimeCoreScheduler {
         });
     }
 }
+#[derive(Clone)]
+pub struct ProcessEntry {
+    pub process: SYSTEM_PROCESS_INFORMATION,
+    threads: HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+}
+
+impl ProcessEntry {
+    pub fn new(process: SYSTEM_PROCESS_INFORMATION) -> Self {
+        ProcessEntry {
+            process,
+            threads: HashMap::new(),
+        }
+    }
+    pub fn get_threads(&mut self) -> &HashMap<u32, SYSTEM_THREAD_INFORMATION> {
+        if self.process.NumberOfThreads != self.threads.len() as u32 {
+            unsafe {
+                let threads_ptr = &self.process.Threads as *const SYSTEM_THREAD_INFORMATION;
+                for i in 0..self.process.NumberOfThreads as usize {
+                    let thread = &*threads_ptr.add(i);
+                    self.threads.insert(thread.ClientId.UniqueThread as u32, *thread);
+                }
+            }
+        }
+        &self.threads
+    }
+
+    pub fn get_thread(&mut self, tid: u32) -> Option<&SYSTEM_THREAD_INFORMATION> {
+        self.get_threads();
+        self.threads.get(&tid)
+    }
+    pub fn get_name(&self) -> String {
+        unsafe {
+            if self.process.ImageName.Length > 0 && !self.process.ImageName.Buffer.is_null() {
+                let wchar_count = (self.process.ImageName.Length / 2) as usize;
+                let wide_slice = slice::from_raw_parts(self.process.ImageName.Buffer, wchar_count);
+                String::from_utf16_lossy(wide_slice).to_lowercase()
+            } else {
+                String::new()
+            }
+        }
+    }
+    pub fn get_name_original_case(&self) -> String {
+        unsafe {
+            if self.process.ImageName.Length > 0 && !self.process.ImageName.Buffer.is_null() {
+                let wchar_count = (self.process.ImageName.Length / 2) as usize;
+                let wide_slice = slice::from_raw_parts(self.process.ImageName.Buffer, wchar_count);
+                String::from_utf16_lossy(wide_slice)
+            } else {
+                String::new()
+            }
+        }
+    }
+    #[inline]
+    pub fn pid(&self) -> u32 {
+        self.process.UniqueProcessId as usize as u32
+    }
+    #[inline]
+    pub fn ppid(&self) -> u32 {
+        self.process.InheritedFromUniqueProcessId as usize as u32
+    }
+    #[inline]
+    pub fn session_id(&self) -> u32 {
+        self.process.SessionId
+    }
+    #[inline]
+    pub fn unique_process_key(&self) -> usize {
+        self.process.UniqueProcessKey
+    }
+    #[inline]
+    pub fn thread_count(&self) -> u32 {
+        self.process.NumberOfThreads
+    }
+    #[inline]
+    pub fn thread_count_high_watermark(&self) -> u32 {
+        self.process.NumberOfThreadsHighWatermark
+    }
+    #[inline]
+    pub fn handle_count(&self) -> u32 {
+        self.process.HandleCount
+    }
+    #[inline]
+    pub fn base_priority(&self) -> i32 {
+        self.process.BasePriority
+    }
+    /// (100ns ticks since 1601-01-01)
+    #[inline]
+    pub fn create_time(&self) -> i64 {
+        unsafe { *self.process.CreateTime.QuadPart() }
+    }
+    #[inline]
+    pub fn user_time(&self) -> i64 {
+        unsafe { *self.process.UserTime.QuadPart() }
+    }
+    #[inline]
+    pub fn kernel_time(&self) -> i64 {
+        unsafe { *self.process.KernelTime.QuadPart() }
+    }
+    #[inline]
+    pub fn total_time(&self) -> i64 {
+        self.user_time() + self.kernel_time()
+    }
+    #[inline]
+    pub fn user_time_secs(&self) -> f64 {
+        self.user_time() as f64 / 10_000_000.0
+    }
+    #[inline]
+    pub fn kernel_time_secs(&self) -> f64 {
+        self.kernel_time() as f64 / 10_000_000.0
+    }
+    #[inline]
+    pub fn total_time_secs(&self) -> f64 {
+        self.total_time() as f64 / 10_000_000.0
+    }
+    #[inline]
+    pub fn cycle_time(&self) -> u64 {
+        self.process.CycleTime
+    }
+    #[inline]
+    pub fn working_set_size(&self) -> usize {
+        self.process.WorkingSetSize
+    }
+    #[inline]
+    pub fn working_set_size_kb(&self) -> usize {
+        self.process.WorkingSetSize / 1024
+    }
+    #[inline]
+    pub fn peak_working_set_size(&self) -> usize {
+        self.process.PeakWorkingSetSize
+    }
+    #[inline]
+    pub fn peak_working_set_size_kb(&self) -> usize {
+        self.process.PeakWorkingSetSize / 1024
+    }
+    #[inline]
+    pub fn working_set_private_size(&self) -> i64 {
+        unsafe { *self.process.WorkingSetPrivateSize.QuadPart() }
+    }
+    #[inline]
+    pub fn working_set_private_size_kb(&self) -> i64 {
+        self.working_set_private_size() / 1024
+    }
+    #[inline]
+    pub fn virtual_size(&self) -> usize {
+        self.process.VirtualSize
+    }
+    #[inline]
+    pub fn virtual_size_mb(&self) -> usize {
+        self.process.VirtualSize / (1024 * 1024)
+    }
+    #[inline]
+    pub fn peak_virtual_size(&self) -> usize {
+        self.process.PeakVirtualSize
+    }
+    #[inline]
+    pub fn peak_virtual_size_mb(&self) -> usize {
+        self.process.PeakVirtualSize / (1024 * 1024)
+    }
+    #[inline]
+    pub fn pagefile_usage(&self) -> usize {
+        self.process.PagefileUsage
+    }
+    #[inline]
+    pub fn pagefile_usage_kb(&self) -> usize {
+        self.process.PagefileUsage / 1024
+    }
+    #[inline]
+    pub fn peak_pagefile_usage(&self) -> usize {
+        self.process.PeakPagefileUsage
+    }
+    #[inline]
+    pub fn peak_pagefile_usage_kb(&self) -> usize {
+        self.process.PeakPagefileUsage / 1024
+    }
+    #[inline]
+    pub fn private_page_count(&self) -> usize {
+        self.process.PrivatePageCount
+    }
+    #[inline]
+    pub fn private_page_count_kb(&self) -> usize {
+        self.process.PrivatePageCount / 1024
+    }
+    #[inline]
+    pub fn page_fault_count(&self) -> u32 {
+        self.process.PageFaultCount
+    }
+    #[inline]
+    pub fn hard_fault_count(&self) -> u32 {
+        self.process.HardFaultCount
+    }
+    #[inline]
+    pub fn quota_paged_pool_usage(&self) -> usize {
+        self.process.QuotaPagedPoolUsage
+    }
+    #[inline]
+    pub fn quota_paged_pool_usage_kb(&self) -> usize {
+        self.process.QuotaPagedPoolUsage / 1024
+    }
+    #[inline]
+    pub fn quota_peak_paged_pool_usage(&self) -> usize {
+        self.process.QuotaPeakPagedPoolUsage
+    }
+    #[inline]
+    pub fn quota_peak_paged_pool_usage_kb(&self) -> usize {
+        self.process.QuotaPeakPagedPoolUsage / 1024
+    }
+    #[inline]
+    pub fn quota_non_paged_pool_usage(&self) -> usize {
+        self.process.QuotaNonPagedPoolUsage
+    }
+    #[inline]
+    pub fn quota_non_paged_pool_usage_kb(&self) -> usize {
+        self.process.QuotaNonPagedPoolUsage / 1024
+    }
+    #[inline]
+    pub fn quota_peak_non_paged_pool_usage(&self) -> usize {
+        self.process.QuotaPeakNonPagedPoolUsage
+    }
+    #[inline]
+    pub fn quota_peak_non_paged_pool_usage_kb(&self) -> usize {
+        self.process.QuotaPeakNonPagedPoolUsage / 1024
+    }
+    #[inline]
+    pub fn read_operation_count(&self) -> i64 {
+        unsafe { *self.process.ReadOperationCount.QuadPart() }
+    }
+    #[inline]
+    pub fn write_operation_count(&self) -> i64 {
+        unsafe { *self.process.WriteOperationCount.QuadPart() }
+    }
+    #[inline]
+    pub fn other_operation_count(&self) -> i64 {
+        unsafe { *self.process.OtherOperationCount.QuadPart() }
+    }
+    #[inline]
+    pub fn total_operation_count(&self) -> i64 {
+        self.read_operation_count() + self.write_operation_count() + self.other_operation_count()
+    }
+    #[inline]
+    pub fn read_transfer_count(&self) -> i64 {
+        unsafe { *self.process.ReadTransferCount.QuadPart() }
+    }
+    #[inline]
+    pub fn read_transfer_count_kb(&self) -> i64 {
+        self.read_transfer_count() / 1024
+    }
+    #[inline]
+    pub fn write_transfer_count(&self) -> i64 {
+        unsafe { *self.process.WriteTransferCount.QuadPart() }
+    }
+    #[inline]
+    pub fn write_transfer_count_kb(&self) -> i64 {
+        self.write_transfer_count() / 1024
+    }
+    #[inline]
+    pub fn other_transfer_count(&self) -> i64 {
+        unsafe { *self.process.OtherTransferCount.QuadPart() }
+    }
+    #[inline]
+    pub fn other_transfer_count_kb(&self) -> i64 {
+        self.other_transfer_count() / 1024
+    }
+    #[inline]
+    pub fn total_transfer_count(&self) -> i64 {
+        self.read_transfer_count() + self.write_transfer_count() + self.other_transfer_count()
+    }
+    #[inline]
+    pub fn total_transfer_count_kb(&self) -> i64 {
+        self.total_transfer_count() / 1024
+    }
+}
+
+pub trait ThreadInfoExt {
+    fn tid(&self) -> u32;
+    fn pid(&self) -> u32;
+
+    /// (100ns)
+    fn kernel_time(&self) -> i64;
+    fn user_time(&self) -> i64;
+    fn total_time(&self) -> i64;
+    fn create_time(&self) -> i64;
+    fn wait_time_ms(&self) -> u32;
+
+    fn kernel_time_secs(&self) -> f64;
+    fn user_time_secs(&self) -> f64;
+    fn total_time_secs(&self) -> f64;
+
+    fn start_address(&self) -> usize;
+
+    fn priority(&self) -> i32;
+    fn base_priority(&self) -> i32;
+
+    fn context_switches(&self) -> u32;
+    fn state(&self) -> u32;
+    fn wait_reason(&self) -> u32;
+
+    fn is_running(&self) -> bool;
+    fn is_ready(&self) -> bool;
+    fn is_waiting(&self) -> bool;
+    fn is_runnable(&self) -> bool;
+
+    fn state_str(&self) -> &'static str;
+    fn wait_reason_str(&self) -> &'static str;
+}
+
+impl ThreadInfoExt for SYSTEM_THREAD_INFORMATION {
+    #[inline]
+    fn tid(&self) -> u32 {
+        self.ClientId.UniqueThread as usize as u32
+    }
+    #[inline]
+    fn pid(&self) -> u32 {
+        self.ClientId.UniqueProcess as usize as u32
+    }
+    #[inline]
+    fn kernel_time(&self) -> i64 {
+        unsafe { *self.KernelTime.QuadPart() }
+    }
+    #[inline]
+    fn user_time(&self) -> i64 {
+        unsafe { *self.UserTime.QuadPart() }
+    }
+    #[inline]
+    fn total_time(&self) -> i64 {
+        self.kernel_time() + self.user_time()
+    }
+    #[inline]
+    fn create_time(&self) -> i64 {
+        unsafe { *self.CreateTime.QuadPart() }
+    }
+    #[inline]
+    fn wait_time_ms(&self) -> u32 {
+        self.WaitTime
+    }
+    #[inline]
+    fn kernel_time_secs(&self) -> f64 {
+        self.kernel_time() as f64 / 10_000_000.0
+    }
+    #[inline]
+    fn user_time_secs(&self) -> f64 {
+        self.user_time() as f64 / 10_000_000.0
+    }
+    #[inline]
+    fn total_time_secs(&self) -> f64 {
+        self.total_time() as f64 / 10_000_000.0
+    }
+    #[inline]
+    fn start_address(&self) -> usize {
+        self.StartAddress as usize
+    }
+    #[inline]
+    fn priority(&self) -> i32 {
+        self.Priority
+    }
+    #[inline]
+    fn base_priority(&self) -> i32 {
+        self.BasePriority
+    }
+    #[inline]
+    fn context_switches(&self) -> u32 {
+        self.ContextSwitches
+    }
+    #[inline]
+    fn state(&self) -> u32 {
+        self.ThreadState
+    }
+    #[inline]
+    fn wait_reason(&self) -> u32 {
+        self.WaitReason
+    }
+    #[inline]
+    fn is_running(&self) -> bool {
+        self.ThreadState == 2
+    }
+    #[inline]
+    fn is_ready(&self) -> bool {
+        self.ThreadState == 1
+    }
+    #[inline]
+    fn is_waiting(&self) -> bool {
+        self.ThreadState == 5
+    }
+    #[inline]
+    fn is_runnable(&self) -> bool {
+        matches!(self.ThreadState, 1 | 2 | 3 | 7)
+    }
+
+    fn state_str(&self) -> &'static str {
+        match self.ThreadState {
+            0 => "Initialized",
+            1 => "Ready",
+            2 => "Running",
+            3 => "Standby",
+            4 => "Terminated",
+            5 => "Waiting",
+            6 => "Transition",
+            7 => "DeferredReady",
+            8 => "GateWaitObsolete",
+            9 => "WaitingForProcessInSwap",
+            _ => "Unknown",
+        }
+    }
+
+    fn wait_reason_str(&self) -> &'static str {
+        match self.WaitReason {
+            0 => "Executive",
+            1 => "FreePage",
+            2 => "PageIn",
+            3 => "PoolAllocation",
+            4 => "DelayExecution",
+            5 => "Suspended",
+            6 => "UserRequest",
+            7 => "WrExecutive",
+            8 => "WrFreePage",
+            9 => "WrPageIn",
+            10 => "WrPoolAllocation",
+            11 => "WrDelayExecution",
+            12 => "WrSuspended",
+            13 => "WrUserRequest",
+            14 => "WrEventPair",
+            15 => "WrQueue",
+            16 => "WrLpcReceive",
+            17 => "WrLpcReply",
+            18 => "WrVirtualMemory",
+            19 => "WrPageOut",
+            20 => "WrRendezvous",
+            21 => "WrKeyedEvent",
+            22 => "WrTerminated",
+            23 => "WrProcessInSwap",
+            24 => "WrCpuRateControl",
+            25 => "WrCalloutStack",
+            26 => "WrKernel",
+            27 => "WrResource",
+            28 => "WrPushLock",
+            29 => "WrMutex",
+            30 => "WrQuantumEnd",
+            31 => "WrDispatchInt",
+            32 => "WrPreempted",
+            33 => "WrYieldExecution",
+            34 => "WrFastMutex",
+            35 => "WrGuardedMutex",
+            36 => "WrRundown",
+            37 => "WrAlertByThreadId",
+            38 => "WrDeferredPreempt",
+            _ => "Unknown",
+        }
+    }
+}
+#[allow(dead_code)]
+pub struct ProcessSnapshot {
+    buffer: Vec<u8>, //is used to store the snapshot of the processes, parsed in unsafe
+    pub pid_to_process: HashMap<u32, ProcessEntry>,
+}
+
+impl ProcessSnapshot {
+    pub fn take() -> Result<Self, i32> {
+        let mut buf_len: usize = 512 * 1024;
+        let mut buffer: Vec<u8>;
+        let mut return_len: u32 = 0;
+
+        unsafe {
+            loop {
+                buffer = vec![0u8; buf_len];
+                let status = NtQuerySystemInformation(SystemProcessInformation, buffer.as_mut_ptr() as *mut _, buf_len as u32, &mut return_len);
+
+                // STATUS_INFO_LENGTH_MISMATCH = 0xC0000004
+                const STATUS_INFO_LENGTH_MISMATCH: i32 = -1073741820i32;
+
+                if status == STATUS_INFO_LENGTH_MISMATCH {
+                    buf_len = if return_len > 0 { return_len as usize + 8192 } else { buf_len * 2 };
+                    continue;
+                }
+
+                if status < 0 {
+                    return Err(status);
+                }
+
+                buffer.truncate(return_len as usize);
+                break;
+            }
+
+            let mut by_pid: HashMap<u32, ProcessEntry> = HashMap::new();
+            let mut offset: usize = 0;
+            let buf_ptr = buffer.as_ptr();
+
+            loop {
+                let process_entry_ptr = buf_ptr.add(offset) as *const SYSTEM_PROCESS_INFORMATION;
+                let entry = &*process_entry_ptr;
+
+                let process_entry = ProcessEntry::new(*entry);
+                by_pid.insert(entry.UniqueProcessId as u32, process_entry);
+
+                if entry.NextEntryOffset == 0 {
+                    break;
+                }
+                offset += entry.NextEntryOffset as usize;
+            }
+
+            Ok(ProcessSnapshot { buffer, pid_to_process: by_pid })
+        }
+    }
+    pub fn get_by_name(&self, name: String) -> Vec<&ProcessEntry> {
+        self.pid_to_process.values().filter(|entry| (**entry).get_name() == name).collect()
+    }
+}
+
+pub fn thread_state_str(state: u32) -> &'static str {
+    match state {
+        0 => "Initialized",
+        1 => "Ready",
+        2 => "Running",
+        3 => "Standby",
+        4 => "Terminated",
+        5 => "Waiting",
+        6 => "Transition",
+        7 => "DeferredReady",
+        8 => "GateWaitObsolete",
+        9 => "WaitingForProcessInSwap",
+        _ => "Unknown",
+    }
+}
+
+pub fn wait_reason_str(reason: u32) -> &'static str {
+    match reason {
+        0 => "Executive",
+        1 => "FreePage",
+        2 => "PageIn",
+        3 => "PoolAllocation",
+        4 => "DelayExecution",
+        5 => "Suspended",
+        6 => "UserRequest",
+        7 => "WrExecutive",
+        8 => "WrFreePage",
+        9 => "WrPageIn",
+        10 => "WrPoolAllocation",
+        11 => "WrDelayExecution",
+        12 => "WrSuspended",
+        13 => "WrUserRequest",
+        14 => "WrEventPair",
+        15 => "WrQueue",
+        16 => "WrLpcReceive",
+        17 => "WrLpcReply",
+        18 => "WrVirtualMemory",
+        19 => "WrPageOut",
+        20 => "WrRendezvous",
+        21 => "WrKeyedEvent",
+        22 => "WrTerminated",
+        23 => "WrProcessInSwap",
+        24 => "WrCpuRateControl",
+        25 => "WrCalloutStack",
+        26 => "WrKernel",
+        27 => "WrResource",
+        28 => "WrPushLock",
+        29 => "WrMutex",
+        30 => "WrQuantumEnd",
+        31 => "WrDispatchInt",
+        32 => "WrPreempted",
+        33 => "WrYieldExecution",
+        34 => "WrFastMutex",
+        35 => "WrGuardedMutex",
+        36 => "WrRundown",
+        37 => "WrAlertByThreadId",
+        38 => "WrDeferredPreempt",
+        _ => "Unknown",
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IOPriority {
     None,
@@ -285,10 +865,10 @@ fn log_message(args: &str) {
     }
 }
 
-fn read_config<P: AsRef<Path>>(path: P) -> io::Result<Vec<ProcessConfig>> {
+fn read_config<P: AsRef<Path>>(path: P) -> io::Result<HashMap<String, ProcessConfig>> {
     let file = File::open(path)?;
     let reader = io::BufReader::new(file);
-    let mut configs = Vec::new();
+    let mut configs = HashMap::new();
     let mut affinity_aliases = HashMap::new();
     for line in reader.lines() {
         let line = line?;
@@ -343,15 +923,18 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<Vec<ProcessConfig>> {
             } else {
                 MemoryPriority::None
             };
-            configs.push(ProcessConfig {
-                name,
-                priority,
-                affinity_mask: affinity,
-                cpu_set_mask: cpuset,
-                prime_cpu_mask: prime_cpuset,
-                io_priority,
-                memory_priority,
-            });
+            configs.insert(
+                name.clone(),
+                ProcessConfig {
+                    name,
+                    priority,
+                    affinity_mask: affinity,
+                    cpu_set_mask: cpuset,
+                    prime_cpu_mask: prime_cpuset,
+                    io_priority,
+                    memory_priority,
+                },
+            );
         }
     }
     Ok(configs)
@@ -390,7 +973,8 @@ fn error_from_code(code: u32) -> String {
     }
 }
 
-fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut PrimeCoreScheduler) {
+#[allow(unused_assignments)]
+fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut PrimeCoreScheduler, processes: &mut ProcessSnapshot) {
     unsafe {
         match OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) {
             /* this error instance don't contain any information inside, it not the one returned from winAPI, no need to receive it */
@@ -509,7 +1093,67 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                         }
                     }
 
-                    //TODO:SetThreadSelectedCpuSets
+                    if config.prime_cpu_mask != 0 {
+                        let cpu_setids = cpusetids_from_mask(config.prime_cpu_mask & current_mask);
+                        if let Some(process) = processes.pid_to_process.get_mut(&pid) {
+                            let mut total_time_delta_to_thread: HashMap<i64, SYSTEM_THREAD_INFORMATION> = HashMap::new();
+                            process.get_threads().values().for_each(|thread| {
+                                let thread_stats = prime_core_scheduler.get_thread_stats(pid, thread.tid());
+                                let total_time = thread.total_time();
+                                let total_time_delta = total_time - thread_stats.last_total_time;
+                                thread_stats.last_total_time = total_time;
+                                total_time_delta_to_thread.insert(total_time_delta, *thread);
+                            });
+                            let mut sorted_keys = total_time_delta_to_thread.keys().collect::<Vec<_>>();
+                            sorted_keys.sort();
+                            let mut counter = 0;
+                            for i in 0..sorted_keys.len() {
+                                let thread = total_time_delta_to_thread.get(&sorted_keys[sorted_keys.len() - i - 1]).unwrap();
+                                let thread_stats = prime_core_scheduler.get_thread_stats(pid, thread.tid());
+                                if !thread_stats.handle.is_some() {
+                                    log_to_find(&format!("open handle for {}-{:#X}", thread.tid(), thread.start_address()));
+                                    match OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION, false, thread.tid()) {
+                                        Err(_) => {
+                                            log_to_find(&format!(
+                                                "apply_config: [OPEN_THREAD_FAILED][{}] {:>5}-{}-{}:{:#X}",
+                                                error_from_code(GetLastError().0),
+                                                pid,
+                                                thread.tid(),
+                                                config.name,
+                                                thread.start_address()
+                                            ));
+                                        }
+                                        Ok(handle) => {
+                                            thread_stats.handle = Some(handle);
+                                            match SetThreadSelectedCpuSets(handle, &[cpu_setids[cpu_setids.len() - 1 - counter]]).as_bool() {
+                                                false => {
+                                                    log_to_find(&format!(
+                                                        "apply_config: [SET_THREAD_SELECTED_CPU_SETS_FAILED] {:>5}-{}-{}",
+                                                        pid,
+                                                        thread.tid(),
+                                                        config.name
+                                                    ));
+                                                }
+                                                true => {
+                                                    counter += 1;
+                                                    log!(
+                                                        "{:>5}-{}-{} -> (thread cpu set) {:#X}",
+                                                        pid,
+                                                        thread.tid(),
+                                                        config.name,
+                                                        mask_from_cpusetids(&[cpu_setids[cpu_setids.len() - 1 - counter]])
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if !counter < cpu_setids.len() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
 
                     if let Some(io_priority_flag) = config.io_priority.as_win_const() {
                         let mut current_io_priority: u32 = 0;
@@ -588,7 +1232,7 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
         }
     }
 }
-
+#[allow(dead_code)]
 fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
     unsafe {
         let mut result = false;
@@ -628,7 +1272,6 @@ fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
                 }
             }
         }
-
         result
     }
 }
@@ -1053,6 +1696,18 @@ fn cpusetids_from_mask(mask: usize) -> Vec<u32> {
     cpuids
 }
 
+fn mask_from_cpusetids(cpuids: &[u32]) -> usize {
+    let mut mask: usize = 0;
+    unsafe {
+        for entry in get_cpu_set_information().lock().unwrap().iter() {
+            if cpuids.contains(&entry.Anonymous.CpuSet.Id) {
+                mask |= 1 << entry.Anonymous.CpuSet.LogicalProcessorIndex;
+            }
+        }
+    }
+    mask
+}
+
 fn main() -> windows::core::Result<()> {
     let args: Vec<String> = env::args().collect();
     let mut interval_ms = 5000;
@@ -1106,7 +1761,7 @@ fn main() -> windows::core::Result<()> {
         if !skip_log_before_elevation {
             log!("cannot read configs: {}", config_file_name);
         }
-        Vec::new()
+        HashMap::new()
     });
     let blacklist = if let Some(bf) = blacklist_file_name {
         read_list(bf).unwrap_or_default()
@@ -1161,46 +1816,33 @@ fn main() -> windows::core::Result<()> {
     let mut prime_core_scheduler = PrimeCoreScheduler::new();
     let mut current_loop = 0u32;
     let mut should_continue = true;
+
     while should_continue {
         if log_loop {
             log!("Loop {} started", current_loop + 1);
         }
-        unsafe {
-            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
-            let mut pe32 = PROCESSENTRY32W::default();
-            pe32.dwSize = size_of::<PROCESSENTRY32W>() as u32;
-            if Process32FirstW(snapshot, &mut pe32).is_ok() {
-                'out_loop: loop {
-                    let process_name = String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]).to_lowercase();
-                    if !FAIL_SET.lock().unwrap().contains(&process_name) {
-                        for config in &configs {
-                            if process_name == config.name {
-                                apply_config(pe32.th32ProcessID, &config, &mut prime_core_scheduler);
-                                if !Process32NextW(snapshot, &mut pe32).is_ok() {
-                                    break 'out_loop;
-                                }
-                                continue 'out_loop;
-                            }
-                        }
-                        if find_mode {
-                            if blacklist.contains(&process_name) {
-                                if !Process32NextW(snapshot, &mut pe32).is_ok() {
-                                    break;
-                                }
-                                continue;
-                            }
-                            if is_affinity_unset(pe32.th32ProcessID, process_name.as_str()) {
-                                log_process_find(&process_name);
-                            }
-                        }
-                    }
-                    if !Process32NextW(snapshot, &mut pe32).is_ok() {
-                        break;
+        match ProcessSnapshot::take() {
+            Ok(mut processes) => {
+                prime_core_scheduler.reset_alive();
+                let to_process: Vec<(u32, String)> = processes
+                    .pid_to_process
+                    .values()
+                    .filter_map(|entry| {
+                        let name = entry.get_name();
+                        if configs.contains_key(&name) { Some((entry.pid(), name)) } else { None }
+                    })
+                    .collect();
+                for (pid, name) in to_process {
+                    if let Some(config) = configs.get(&name) {
+                        apply_config(pid, config, &mut prime_core_scheduler, &mut processes);
                     }
                 }
+                prime_core_scheduler.close_dead_process_handles();
             }
-            let _ = CloseHandle(snapshot);
-        }
+            Err(err) => {
+                log!("Failed to take process snapshot: {}", err);
+            }
+        };
         let _ = find_logger().lock().unwrap().flush();
         let _ = logger().lock().unwrap().flush();
         current_loop += 1;

@@ -1098,7 +1098,7 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                             let process = processes.pid_to_process.get_mut(&pid).unwrap();
                             let thread_count = process.thread_count() as usize;
                             let candidate_count = get_cpu_set_information().lock().unwrap().len().min(thread_count);
-                            let mut tid_with_handle: Vec<(u32, HANDLE)> = vec![(0u32, HANDLE::default()); candidate_count];
+                            let mut candidate_tids: Vec<u32> = vec![0u32; candidate_count];
                             let mut tid_with_delta_cycles: Vec<(u32, u64)> = vec![(0u32, 0u64); candidate_count];
 
                             // Step 1: Sort threads by delta time and select top candidates
@@ -1113,22 +1113,21 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                 tid_with_delta_time.sort_by_key(|&(_, delta)| delta);
                                 let precandidate_len = tid_with_delta_time.len();
                                 for i in 0..candidate_count {
-                                    tid_with_handle[i].0 = tid_with_delta_time[precandidate_len - i - 1].0;
+                                    candidate_tids[i] = tid_with_delta_time[precandidate_len - i - 1].0;
                                 }
                             }
 
                             // Step 2: Open thread handles and query cycle times
                             for i in 0..candidate_count {
-                                let tid = tid_with_handle[i].0;
+                                let tid = candidate_tids[i];
                                 let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
                                 let process_name = &config.name;
                                 match thread_stats.handle {
                                     None => {
-                                        tid_with_handle[i].1 = match OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION, false, tid) {
+                                        match OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION, false, tid) {
                                             Err(_) => {
                                                 let error_code = error_from_code(GetLastError().0);
                                                 log_to_find(&format!("apply_config: [OPEN_THREAD][{}] {:>5}-{}-{}", error_code, pid, tid, process_name));
-                                                HANDLE::default()
                                             }
                                             Ok(handle) => {
                                                 let mut cycles: u64 = 0;
@@ -1142,7 +1141,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                                     }
                                                 };
                                                 thread_stats.handle = Some(handle);
-                                                handle
                                             }
                                         };
                                     }
@@ -1158,7 +1156,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                                 thread_stats.last_cycles = cycles;
                                             }
                                         };
-                                        tid_with_handle[i].1 = handle;
                                     }
                                 }
                             }

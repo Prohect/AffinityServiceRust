@@ -1516,17 +1516,10 @@ fn main() -> windows::core::Result<()> {
         match ProcessSnapshot::take() {
             Ok(mut processes) => {
                 prime_core_scheduler.reset_alive();
-                let to_process: Vec<(u32, String)> = processes
-                    .pid_to_process
-                    .values()
-                    .filter_map(|entry| {
-                        let name = entry.get_name();
-                        if configs.contains_key(name) { Some((entry.pid(), name.to_string())) } else { None }
-                    })
-                    .collect();
-                for (pid, name) in to_process {
-                    if let Some(config) = configs.get(&name) {
-                        apply_config(pid, config, &mut prime_core_scheduler, &mut processes);
+                for i in 0..processes.pid_to_process.values().len() {
+                    let process = processes.pid_to_process.values().nth(i).unwrap();
+                    if let Some(config) = configs.get(process.get_name()) {
+                        apply_config(process.pid(), config, &mut prime_core_scheduler, &mut processes);
                     }
                 }
                 prime_core_scheduler.close_dead_process_handles();

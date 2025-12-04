@@ -97,7 +97,7 @@ AffinityServiceRust.exe -find
 
 ### 配置文件格式
 
-格式：`process_name,priority,affinity_mask,cpu_set_mask,prime_cpu_mask,io_priority`
+格式：`process_name,priority,affinity_mask,cpu_set_mask,prime_cpu_mask,io_priority,memory_priority`
 
 字段说明：
 - process_name：可执行文件名（例如 `chrome.exe`）

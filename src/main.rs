@@ -84,7 +84,6 @@ pub struct ConfigConstants {
     pub keep_threshold: f64,
     pub entry_threshold: f64,
 }
-
 impl Default for ConfigConstants {
     fn default() -> Self {
         Self {
@@ -94,6 +93,7 @@ impl Default for ConfigConstants {
         }
     }
 }
+
 #[derive(Debug, Clone)]
 struct ProcessConfig {
     name: String,
@@ -146,7 +146,6 @@ struct ThreadStats {
     cpu_set_ids: Vec<u32>,
     active_streak: u8,
 }
-
 impl ThreadStats {
     pub fn new() -> Self {
         Self {
@@ -163,7 +162,6 @@ struct ProcessStats {
     alive: bool,
     tid_to_thread_stats: HashMap<u32, ThreadStats>,
 }
-
 impl ProcessStats {
     pub fn new() -> Self {
         Self {
@@ -173,13 +171,11 @@ impl ProcessStats {
     }
 }
 
-#[allow(dead_code)]
 struct PrimeCoreScheduler {
-    // clear threadStats once process exit as pid may be reused by OS
+    // clear threadStats once process exit as pid or tid may be reused by OS
     pid_to_process_stats: HashMap<u32, ProcessStats>,
     constants: ConfigConstants,
 }
-
 impl PrimeCoreScheduler {
     fn new(constants: ConfigConstants) -> Self {
         Self {
@@ -187,16 +183,12 @@ impl PrimeCoreScheduler {
             constants,
         }
     }
-
     fn reset_alive(&mut self) {
-        // set alive to false every loop start
         self.pid_to_process_stats.values_mut().for_each(|stats| stats.alive = false);
     }
-
     fn set_alive(&mut self, pid: u32) {
         self.pid_to_process_stats.entry(pid).or_insert_with(ProcessStats::new).alive = true;
     }
-
     #[inline]
     fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats {
         self.pid_to_process_stats
@@ -206,7 +198,6 @@ impl PrimeCoreScheduler {
             .entry(tid)
             .or_insert_with(ThreadStats::new)
     }
-
     fn close_dead_process_handles(&mut self) {
         self.pid_to_process_stats.retain(|_, process_stats| {
             if !process_stats.alive {
@@ -217,13 +208,12 @@ impl PrimeCoreScheduler {
                         }
                     }
                 }
-                false
-            } else {
-                true
             }
+            process_stats.alive
         });
     }
 }
+
 #[derive(Clone)]
 pub struct ProcessEntry {
     pub process: SYSTEM_PROCESS_INFORMATION,
@@ -249,8 +239,10 @@ impl ProcessEntry {
             name,
         }
     }
+    #[inline]
     pub fn get_threads(&mut self) -> &HashMap<u32, SYSTEM_THREAD_INFORMATION> {
         if self.process.NumberOfThreads as usize != self.threads.len() {
+            let _ = &self.threads.clear();
             unsafe {
                 let threads_ptr = self.threads_base_ptr as *const SYSTEM_THREAD_INFORMATION;
                 if threads_ptr.is_null() {
@@ -264,16 +256,15 @@ impl ProcessEntry {
         }
         &self.threads
     }
-
+    #[inline]
     pub fn get_thread(&mut self, tid: u32) -> Option<&SYSTEM_THREAD_INFORMATION> {
-        self.get_threads();
-        self.threads.get(&tid)
+        self.get_threads().get(&tid)
     }
     #[inline]
     pub fn get_name(&self) -> &str {
         &self.name
     }
-
+    #[inline]
     pub fn get_name_original_case(&self) -> String {
         unsafe {
             if self.process.ImageName.Length > 0 && !self.process.ImageName.Buffer.is_null() {
@@ -290,400 +281,15 @@ impl ProcessEntry {
         self.process.UniqueProcessId as usize as u32
     }
     #[inline]
-    pub fn ppid(&self) -> u32 {
-        self.process.InheritedFromUniqueProcessId as usize as u32
-    }
-    #[inline]
-    pub fn session_id(&self) -> u32 {
-        self.process.SessionId
-    }
-    #[inline]
-    pub fn unique_process_key(&self) -> usize {
-        self.process.UniqueProcessKey
-    }
-    #[inline]
     pub fn thread_count(&self) -> u32 {
         self.process.NumberOfThreads
     }
-    #[inline]
-    pub fn thread_count_high_watermark(&self) -> u32 {
-        self.process.NumberOfThreadsHighWatermark
-    }
-    #[inline]
-    pub fn handle_count(&self) -> u32 {
-        self.process.HandleCount
-    }
-    #[inline]
-    pub fn base_priority(&self) -> i32 {
-        self.process.BasePriority
-    }
-    /// (100ns ticks since 1601-01-01)
-    #[inline]
-    pub fn create_time(&self) -> i64 {
-        unsafe { *self.process.CreateTime.QuadPart() }
-    }
-    #[inline]
-    pub fn user_time(&self) -> i64 {
-        unsafe { *self.process.UserTime.QuadPart() }
-    }
-    #[inline]
-    pub fn kernel_time(&self) -> i64 {
-        unsafe { *self.process.KernelTime.QuadPart() }
-    }
-    #[inline]
-    pub fn total_time(&self) -> i64 {
-        self.user_time() + self.kernel_time()
-    }
-    #[inline]
-    pub fn user_time_secs(&self) -> f64 {
-        self.user_time() as f64 / 10_000_000.0
-    }
-    #[inline]
-    pub fn kernel_time_secs(&self) -> f64 {
-        self.kernel_time() as f64 / 10_000_000.0
-    }
-    #[inline]
-    pub fn total_time_secs(&self) -> f64 {
-        self.total_time() as f64 / 10_000_000.0
-    }
-    #[inline]
-    pub fn cycle_time(&self) -> u64 {
-        self.process.CycleTime
-    }
-    #[inline]
-    pub fn working_set_size(&self) -> usize {
-        self.process.WorkingSetSize
-    }
-    #[inline]
-    pub fn working_set_size_kb(&self) -> usize {
-        self.process.WorkingSetSize / 1024
-    }
-    #[inline]
-    pub fn peak_working_set_size(&self) -> usize {
-        self.process.PeakWorkingSetSize
-    }
-    #[inline]
-    pub fn peak_working_set_size_kb(&self) -> usize {
-        self.process.PeakWorkingSetSize / 1024
-    }
-    #[inline]
-    pub fn working_set_private_size(&self) -> i64 {
-        unsafe { *self.process.WorkingSetPrivateSize.QuadPart() }
-    }
-    #[inline]
-    pub fn working_set_private_size_kb(&self) -> i64 {
-        self.working_set_private_size() / 1024
-    }
-    #[inline]
-    pub fn virtual_size(&self) -> usize {
-        self.process.VirtualSize
-    }
-    #[inline]
-    pub fn virtual_size_mb(&self) -> usize {
-        self.process.VirtualSize / (1024 * 1024)
-    }
-    #[inline]
-    pub fn peak_virtual_size(&self) -> usize {
-        self.process.PeakVirtualSize
-    }
-    #[inline]
-    pub fn peak_virtual_size_mb(&self) -> usize {
-        self.process.PeakVirtualSize / (1024 * 1024)
-    }
-    #[inline]
-    pub fn pagefile_usage(&self) -> usize {
-        self.process.PagefileUsage
-    }
-    #[inline]
-    pub fn pagefile_usage_kb(&self) -> usize {
-        self.process.PagefileUsage / 1024
-    }
-    #[inline]
-    pub fn peak_pagefile_usage(&self) -> usize {
-        self.process.PeakPagefileUsage
-    }
-    #[inline]
-    pub fn peak_pagefile_usage_kb(&self) -> usize {
-        self.process.PeakPagefileUsage / 1024
-    }
-    #[inline]
-    pub fn private_page_count(&self) -> usize {
-        self.process.PrivatePageCount
-    }
-    #[inline]
-    pub fn private_page_count_kb(&self) -> usize {
-        self.process.PrivatePageCount / 1024
-    }
-    #[inline]
-    pub fn page_fault_count(&self) -> u32 {
-        self.process.PageFaultCount
-    }
-    #[inline]
-    pub fn hard_fault_count(&self) -> u32 {
-        self.process.HardFaultCount
-    }
-    #[inline]
-    pub fn quota_paged_pool_usage(&self) -> usize {
-        self.process.QuotaPagedPoolUsage
-    }
-    #[inline]
-    pub fn quota_paged_pool_usage_kb(&self) -> usize {
-        self.process.QuotaPagedPoolUsage / 1024
-    }
-    #[inline]
-    pub fn quota_peak_paged_pool_usage(&self) -> usize {
-        self.process.QuotaPeakPagedPoolUsage
-    }
-    #[inline]
-    pub fn quota_peak_paged_pool_usage_kb(&self) -> usize {
-        self.process.QuotaPeakPagedPoolUsage / 1024
-    }
-    #[inline]
-    pub fn quota_non_paged_pool_usage(&self) -> usize {
-        self.process.QuotaNonPagedPoolUsage
-    }
-    #[inline]
-    pub fn quota_non_paged_pool_usage_kb(&self) -> usize {
-        self.process.QuotaNonPagedPoolUsage / 1024
-    }
-    #[inline]
-    pub fn quota_peak_non_paged_pool_usage(&self) -> usize {
-        self.process.QuotaPeakNonPagedPoolUsage
-    }
-    #[inline]
-    pub fn quota_peak_non_paged_pool_usage_kb(&self) -> usize {
-        self.process.QuotaPeakNonPagedPoolUsage / 1024
-    }
-    #[inline]
-    pub fn read_operation_count(&self) -> i64 {
-        unsafe { *self.process.ReadOperationCount.QuadPart() }
-    }
-    #[inline]
-    pub fn write_operation_count(&self) -> i64 {
-        unsafe { *self.process.WriteOperationCount.QuadPart() }
-    }
-    #[inline]
-    pub fn other_operation_count(&self) -> i64 {
-        unsafe { *self.process.OtherOperationCount.QuadPart() }
-    }
-    #[inline]
-    pub fn total_operation_count(&self) -> i64 {
-        self.read_operation_count() + self.write_operation_count() + self.other_operation_count()
-    }
-    #[inline]
-    pub fn read_transfer_count(&self) -> i64 {
-        unsafe { *self.process.ReadTransferCount.QuadPart() }
-    }
-    #[inline]
-    pub fn read_transfer_count_kb(&self) -> i64 {
-        self.read_transfer_count() / 1024
-    }
-    #[inline]
-    pub fn write_transfer_count(&self) -> i64 {
-        unsafe { *self.process.WriteTransferCount.QuadPart() }
-    }
-    #[inline]
-    pub fn write_transfer_count_kb(&self) -> i64 {
-        self.write_transfer_count() / 1024
-    }
-    #[inline]
-    pub fn other_transfer_count(&self) -> i64 {
-        unsafe { *self.process.OtherTransferCount.QuadPart() }
-    }
-    #[inline]
-    pub fn other_transfer_count_kb(&self) -> i64 {
-        self.other_transfer_count() / 1024
-    }
-    #[inline]
-    pub fn total_transfer_count(&self) -> i64 {
-        self.read_transfer_count() + self.write_transfer_count() + self.other_transfer_count()
-    }
-    #[inline]
-    pub fn total_transfer_count_kb(&self) -> i64 {
-        self.total_transfer_count() / 1024
-    }
 }
 
-pub trait ThreadInfoExt {
-    fn tid(&self) -> u32;
-    fn pid(&self) -> u32;
-
-    /// (100ns)
-    fn kernel_time(&self) -> i64;
-    fn user_time(&self) -> i64;
-    fn total_time(&self) -> i64;
-    fn create_time(&self) -> i64;
-    fn wait_time_ms(&self) -> u32;
-
-    fn kernel_time_secs(&self) -> f64;
-    fn user_time_secs(&self) -> f64;
-    fn total_time_secs(&self) -> f64;
-
-    fn start_address(&self) -> usize;
-
-    fn priority(&self) -> i32;
-    fn base_priority(&self) -> i32;
-
-    fn context_switches(&self) -> u32;
-    fn state(&self) -> u32;
-    fn wait_reason(&self) -> u32;
-
-    fn is_running(&self) -> bool;
-    fn is_ready(&self) -> bool;
-    fn is_waiting(&self) -> bool;
-    fn is_runnable(&self) -> bool;
-
-    fn state_str(&self) -> &'static str;
-    fn wait_reason_str(&self) -> &'static str;
-}
-
-impl ThreadInfoExt for SYSTEM_THREAD_INFORMATION {
-    #[inline]
-    fn tid(&self) -> u32 {
-        self.ClientId.UniqueThread as usize as u32
-    }
-    #[inline]
-    fn pid(&self) -> u32 {
-        self.ClientId.UniqueProcess as usize as u32
-    }
-    #[inline]
-    fn kernel_time(&self) -> i64 {
-        unsafe { *self.KernelTime.QuadPart() }
-    }
-    #[inline]
-    fn user_time(&self) -> i64 {
-        unsafe { *self.UserTime.QuadPart() }
-    }
-    #[inline]
-    fn total_time(&self) -> i64 {
-        self.kernel_time() + self.user_time()
-    }
-    #[inline]
-    fn create_time(&self) -> i64 {
-        unsafe { *self.CreateTime.QuadPart() }
-    }
-    #[inline]
-    fn wait_time_ms(&self) -> u32 {
-        self.WaitTime
-    }
-    #[inline]
-    fn kernel_time_secs(&self) -> f64 {
-        self.kernel_time() as f64 / 10_000_000.0
-    }
-    #[inline]
-    fn user_time_secs(&self) -> f64 {
-        self.user_time() as f64 / 10_000_000.0
-    }
-    #[inline]
-    fn total_time_secs(&self) -> f64 {
-        self.total_time() as f64 / 10_000_000.0
-    }
-    #[inline]
-    fn start_address(&self) -> usize {
-        self.StartAddress as usize
-    }
-    #[inline]
-    fn priority(&self) -> i32 {
-        self.Priority
-    }
-    #[inline]
-    fn base_priority(&self) -> i32 {
-        self.BasePriority
-    }
-    #[inline]
-    fn context_switches(&self) -> u32 {
-        self.ContextSwitches
-    }
-    #[inline]
-    fn state(&self) -> u32 {
-        self.ThreadState
-    }
-    #[inline]
-    fn wait_reason(&self) -> u32 {
-        self.WaitReason
-    }
-    #[inline]
-    fn is_running(&self) -> bool {
-        self.ThreadState == 2
-    }
-    #[inline]
-    fn is_ready(&self) -> bool {
-        self.ThreadState == 1
-    }
-    #[inline]
-    fn is_waiting(&self) -> bool {
-        self.ThreadState == 5
-    }
-    #[inline]
-    fn is_runnable(&self) -> bool {
-        matches!(self.ThreadState, 1 | 2 | 3 | 7)
-    }
-
-    fn state_str(&self) -> &'static str {
-        match self.ThreadState {
-            0 => "Initialized",
-            1 => "Ready",
-            2 => "Running",
-            3 => "Standby",
-            4 => "Terminated",
-            5 => "Waiting",
-            6 => "Transition",
-            7 => "DeferredReady",
-            8 => "GateWaitObsolete",
-            9 => "WaitingForProcessInSwap",
-            _ => "Unknown",
-        }
-    }
-
-    fn wait_reason_str(&self) -> &'static str {
-        match self.WaitReason {
-            0 => "Executive",
-            1 => "FreePage",
-            2 => "PageIn",
-            3 => "PoolAllocation",
-            4 => "DelayExecution",
-            5 => "Suspended",
-            6 => "UserRequest",
-            7 => "WrExecutive",
-            8 => "WrFreePage",
-            9 => "WrPageIn",
-            10 => "WrPoolAllocation",
-            11 => "WrDelayExecution",
-            12 => "WrSuspended",
-            13 => "WrUserRequest",
-            14 => "WrEventPair",
-            15 => "WrQueue",
-            16 => "WrLpcReceive",
-            17 => "WrLpcReply",
-            18 => "WrVirtualMemory",
-            19 => "WrPageOut",
-            20 => "WrRendezvous",
-            21 => "WrKeyedEvent",
-            22 => "WrTerminated",
-            23 => "WrProcessInSwap",
-            24 => "WrCpuRateControl",
-            25 => "WrCalloutStack",
-            26 => "WrKernel",
-            27 => "WrResource",
-            28 => "WrPushLock",
-            29 => "WrMutex",
-            30 => "WrQuantumEnd",
-            31 => "WrDispatchInt",
-            32 => "WrPreempted",
-            33 => "WrYieldExecution",
-            34 => "WrFastMutex",
-            35 => "WrGuardedMutex",
-            36 => "WrRundown",
-            37 => "WrAlertByThreadId",
-            38 => "WrDeferredPreempt",
-            _ => "Unknown",
-        }
-    }
-}
 pub struct ProcessSnapshot {
     ///is used to store the snapshot of the processes, parsed in unsafe
-    pub pid_to_process: HashMap<u32, ProcessEntry>,
     buffer: Vec<u8>,
+    pub pid_to_process: HashMap<u32, ProcessEntry>,
 }
 impl Drop for ProcessSnapshot {
     fn drop(&mut self) {
@@ -691,13 +297,11 @@ impl Drop for ProcessSnapshot {
         self.buffer.clear();
     }
 }
-
 impl ProcessSnapshot {
     pub fn take() -> Result<Self, i32> {
-        let mut buf_len: usize = 512 * 1024;
+        let mut buf_len: usize = 1024;
         let mut buffer: Vec<u8>;
         let mut return_len: u32 = 0;
-
         unsafe {
             loop {
                 buffer = vec![0u8; buf_len];
@@ -735,7 +339,7 @@ impl ProcessSnapshot {
                 offset += entry.NextEntryOffset as usize;
             }
 
-            Ok(ProcessSnapshot { pid_to_process, buffer })
+            Ok(ProcessSnapshot { buffer, pid_to_process })
         }
     }
     pub fn get_by_name(&self, name: String) -> Vec<&ProcessEntry> {
@@ -782,6 +386,7 @@ impl IOPriority {
 #[repr(C)]
 #[derive(PartialEq)]
 struct MemoryPriorityInformation(u32);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MemoryPriority {
     None,
@@ -800,19 +405,17 @@ impl MemoryPriority {
         (Self::BelowNormal, "below normal", Some(MEMORY_PRIORITY_BELOW_NORMAL)),
         (Self::Normal, "normal", Some(MEMORY_PRIORITY_NORMAL)),
     ];
-
     pub fn as_str(&self) -> &'static str {
         Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, s, _)| *s).unwrap_or("none")
     }
-
     pub fn as_win_const(&self) -> Option<MEMORY_PRIORITY> {
         Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, _, val)| *val).unwrap_or(None)
     }
-
     pub fn from_str(s: &str) -> Self {
         Self::TABLE.iter().find(|(_, str, _)| *str == s).map(|(v, _, _)| *v).unwrap_or(Self::None)
     }
 }
+
 pub fn log_to_find(msg: &str) {
     let time_prefix = LOCALTIME_BUFFER.lock().unwrap().format("%H:%M:%S").to_string();
     if *use_console().lock().unwrap() {
@@ -847,7 +450,6 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<(HashMap<String, ProcessCo
     let reader = io::BufReader::new(file);
     let mut configs = HashMap::new();
     let mut affinity_aliases = HashMap::new();
-
     let mut constants = ConfigConstants::default();
 
     for line in reader.lines() {
@@ -855,10 +457,9 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<(HashMap<String, ProcessCo
         let line = line.trim();
 
         if line.is_empty() || line.starts_with('#') {
-            // 空行或注释
             continue;
         } else if line.starts_with('@') {
-            // 常量定义: @NAME=VALUE
+            // define constant: @NAME=VALUE
             if let Some(eq_pos) = line.find('=') {
                 let const_name = line[1..eq_pos].trim().to_uppercase();
                 let const_value = line[eq_pos + 1..].trim();
@@ -888,7 +489,7 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<(HashMap<String, ProcessCo
             }
             continue;
         } else if line.starts_with('*') {
-            // 掩码别名: *NAME=VALUE
+            // define mask alias: *NAME=VALUE
             if let Some(eq_pos) = line.find('=') {
                 let alias_name = line[1..eq_pos].trim().to_lowercase();
                 let alias_value = line[eq_pos + 1..].trim();
@@ -902,7 +503,7 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<(HashMap<String, ProcessCo
             continue;
         }
 
-        // 进程配置行
+        // process configuration line
         let parts: Vec<&str> = line.split(',').collect();
         if parts.len() >= 3 {
             let name = parts[0].to_lowercase();
@@ -987,11 +588,9 @@ fn error_from_code(code: u32) -> String {
     }
 }
 
-#[allow(unused_assignments)]
 fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut PrimeCoreScheduler, processes: &mut ProcessSnapshot) {
     unsafe {
         match OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) {
-            /* this error instance don't contain any information inside, it not the one returned from winAPI, no need to receive it */
             Err(_) => {
                 log_to_find(&format!("apply_config: [OPEN][{}] {:>5}-{}", error_from_code(GetLastError().0), pid, config.name));
             }
@@ -1058,7 +657,7 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                             false => {
                                 let code = GetLastError().0;
                                 if code != 122 {
-                                    // 122 -> INSUFFICIENT_BUFFER, 0 is not large enough, meaning there are CPU sets for this process, so read them.
+                                    // 122 -> INSUFFICIENT_BUFFER. 0 is not large enough, meaning there are CPU sets for this process, so read them.
                                     log_to_find(&format!(
                                         "apply_config: [QUERY_CPUSET][{}] {:>5}-{}-{}",
                                         error_from_code(code),
@@ -1110,13 +709,13 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                             let thread_count = process.thread_count() as usize;
                             let candidate_count = get_cpu_set_information().lock().unwrap().len().min(thread_count);
                             let mut candidate_tids: Vec<u32> = vec![0u32; candidate_count];
+                            // (tid, delta_cycles, is_prime)
                             let mut tid_with_delta_cycles: Vec<(u32, u64, bool)> = vec![(0u32, 0u64, false); candidate_count];
-
                             // Step 1: Sort threads by delta time and select top candidates
                             {
                                 let mut tid_with_delta_time: Vec<(u32, i64)> = Vec::with_capacity(thread_count);
                                 process.get_threads().iter().for_each(|(tid, thread)| {
-                                    let total_time = thread.total_time();
+                                    let total_time = thread.KernelTime.QuadPart() + thread.UserTime.QuadPart();
                                     let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
                                     tid_with_delta_time.push((*tid, total_time - thread_stats.last_total_time));
                                     thread_stats.last_total_time = total_time;
@@ -1127,9 +726,7 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                     candidate_tids[i] = tid_with_delta_time[precandidate_len - i - 1].0;
                                 }
                             }
-
                             // Step 2: Open thread handles and query cycle times
-                            // (tid, delta_cycles, is_prime)
                             for i in 0..candidate_count {
                                 let tid = candidate_tids[i];
                                 let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
@@ -1171,14 +768,12 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                     }
                                 }
                             }
-
                             // Step 3: Sort by delta_cycles descending and calculate thresholds
                             tid_with_delta_cycles.sort_by_key(|&(_, delta_cycles, _)| std::cmp::Reverse(delta_cycles));
                             let max_cycles = tid_with_delta_cycles.first().map(|&(_, c, _)| c).unwrap_or(0u64);
                             let entry_min_cycles = (max_cycles as f64 * prime_core_scheduler.constants.entry_threshold) as u64;
                             let keep_min_cycles = (max_cycles as f64 * prime_core_scheduler.constants.keep_threshold) as u64;
                             let prime_count = cpu_setids.len().min(candidate_count);
-
                             // Update active_streak for all candidate threads
                             for &(tid, delta_cycles, _) in &tid_with_delta_cycles {
                                 if tid == 0 {
@@ -1191,11 +786,8 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                     thread_stats.active_streak = 0;
                                 }
                             }
-
-                            // Mark prime threads
                             let mut new_prime_count: usize = 0;
-
-                            // First pass: mark protected threads (already promoted AND cycles >= keep_threshold)
+                            // First pass: mark protected prime threads (already promoted AND cycles >= keep_threshold)
                             for (tid, delta_cycles, is_prime) in tid_with_delta_cycles.iter_mut() {
                                 if *tid == 0 || new_prime_count >= prime_count {
                                     continue;
@@ -1205,7 +797,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                     new_prime_count += 1;
                                 }
                             }
-
                             // Second pass: mark new candidates that pass entry threshold and streak
                             for (tid, delta_cycles, is_prime) in tid_with_delta_cycles.iter_mut() {
                                 if new_prime_count >= prime_count {
@@ -1219,7 +810,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                     new_prime_count += 1;
                                 }
                             }
-
                             // Step 4: Promote new threads
                             for &(tid, delta_cycles, is_prime) in &tid_with_delta_cycles {
                                 if !is_prime {
@@ -1242,7 +832,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                     }
                                 }
                             }
-
                             // Step 5: Demote threads that are no longer prime
                             process.get_threads().iter().for_each(|(tid, _)| {
                                 let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
@@ -1347,7 +936,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
 fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
     unsafe {
         let mut result = false;
-
         match OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) {
             Err(_) => {
                 let code = GetLastError().0;
@@ -1936,7 +1524,6 @@ fn main() -> windows::core::Result<()> {
                         if configs.contains_key(name) { Some((entry.pid(), name.to_string())) } else { None }
                     })
                     .collect();
-
                 for (pid, name) in to_process {
                     if let Some(config) = configs.get(&name) {
                         apply_config(pid, config, &mut prime_core_scheduler, &mut processes);

@@ -11,13 +11,14 @@ A Windows process management tool written in Rust that automatically applies CPU
 | Feature | Description |
 |---------|-------------|
 | **Process Priority** | Set priority class (Idle → Real-time) |
-| **CPU Affinity** | Restrict processes to specific cores (hard limit, inherited by child processes) |
-| **CPU Sets** | Assign preferred cores via Windows CPU sets (soft preference) |
-| **Prime Core Scheduling** | Pin most active threads to designated cores (soft preference) |
+| **CPU Affinity** | Restrict processes to specific cores (hard limit, inherited by child processes, ≤64 cores only) |
+| **CPU Sets** | Assign preferred cores via Windows CPU sets (soft preference, works on >64 cores) |
+| **Prime Core Scheduling** | Assign most active threads to designated cores (soft preference) |
 | **I/O Priority** | Control I/O priority (Very Low → High, High requires admin) |
 | **Memory Priority** | Control memory page priority (Very Low → Normal) |
-| **Multi-CPU Group** | Support for systems with >64 logical processors |
 | **Timer Resolution** | Adjust Windows timer resolution |
+
+> **Note on >64 core systems:** CPU affinity (hard limit) only works within a single processor group (≤64 cores). For systems with >64 cores, use CPU Sets instead which work across all processor groups as a soft preference.
 
 ### Prime Core Scheduling
 

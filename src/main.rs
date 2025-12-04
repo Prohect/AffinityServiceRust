@@ -8,7 +8,7 @@
 //! - CPU affinity masks (legacy) and CPU sets (Windows 10+)
 //! - **Prime Thread Scheduler**: dynamically pins most active threads to preferred cores
 //! - IO and Memory priority control via undocumented NT APIs
-//! - Find mode: discovers processes without custom affinity settings
+//! - Find mode: discovers processes without custom affinity settings and not in configs
 //! - **Multi-CPU group support**: Works with systems having >64 logical processors
 //!
 //! ## Prime Thread Scheduler

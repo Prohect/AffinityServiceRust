@@ -45,54 +45,6 @@ unsafe extern "system" {
     fn NtSetTimerResolution(desired_resolution: u32, set_resolution: bool, p_current_resolution: *mut std::ffi::c_void) -> NTSTATUS;
 }
 
-const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
-
-fn get_log_path(suffix: &str) -> PathBuf {
-    let time = LOCALTIME_BUFFER.lock().unwrap();
-    let (year, month, day) = (time.year(), time.month(), time.day());
-    drop(time);
-    let log_dir = PathBuf::from("logs");
-    if !log_dir.exists() {
-        let _ = fs::create_dir_all(&log_dir);
-    }
-    log_dir.join(format!("{:04}{:02}{:02}{}.log", year, month, day, suffix))
-}
-fn logger() -> &'static Mutex<File> {
-    static LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path("")).unwrap()));
-    &LOG_FILE
-}
-fn find_logger() -> &'static Mutex<File> {
-    static FIND_LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path(".find")).unwrap()));
-    &FIND_LOG_FILE
-}
-fn get_cpu_set_information() -> &'static Mutex<Vec<SYSTEM_CPU_SET_INFORMATION>> {
-    static CPU_SET_INFORMATION: Lazy<Mutex<Vec<SYSTEM_CPU_SET_INFORMATION>>> = Lazy::new(|| Mutex::new(init_cpu_set_information()));
-    &CPU_SET_INFORMATION
-}
-static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
-static FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
-static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
-fn use_console() -> &'static Mutex<bool> {
-    static CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
-    &CONSOLE
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct ConfigConstants {
-    pub hysteresis_ratio: f64,
-    pub keep_threshold: f64,
-    pub entry_threshold: f64,
-}
-impl Default for ConfigConstants {
-    fn default() -> Self {
-        Self {
-            hysteresis_ratio: 1.259,
-            keep_threshold: 0.69,
-            entry_threshold: 0.42,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 struct ProcessConfig {
     name: String,
@@ -137,36 +89,67 @@ impl ProcessPriority {
             .unwrap_or(Self::None)
     }
 }
-
-struct ThreadStats {
-    last_total_time: i64,
-    last_cycles: u64,
-    handle: Option<HANDLE>,
-    cpu_set_ids: Vec<u32>,
-    active_streak: u8,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IOPriority {
+    None,
+    VeryLow,
+    Low,
+    Normal,
+    // High,     // Not Available
+    // Critical, // Not Available
 }
-impl ThreadStats {
-    pub fn new() -> Self {
-        Self {
-            last_total_time: 0,
-            last_cycles: 0,
-            handle: None,
-            cpu_set_ids: vec![],
-            active_streak: 0,
-        }
+impl IOPriority {
+    const TABLE: &'static [(Self, &'static str, Option<u32>)] = &[
+        (Self::None, "none", None),
+        (Self::VeryLow, "very low", Some(0)),
+        (Self::Low, "low", Some(1)),
+        (Self::Normal, "normal", Some(2)),
+        // (Self::High, "high", Some(3)),           // Not Available
+        // (Self::Critical, "critical", Some(4)), // Not Available
+    ];
+    pub fn as_str(&self) -> &'static str {
+        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, name, _)| *name).unwrap_or("fail as str")
+    }
+    pub fn as_win_const(&self) -> Option<u32> {
+        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, _, val)| *val).unwrap_or(None)
+    }
+    pub fn from_str(s: &str) -> Self {
+        Self::TABLE
+            .iter()
+            .find(|(_, name, _)| s.to_lowercase() == *name)
+            .map(|(v, _, _)| *v)
+            .unwrap_or(Self::None)
     }
 }
-
-struct ProcessStats {
-    alive: bool,
-    tid_to_thread_stats: HashMap<u32, ThreadStats>,
+#[repr(C)]
+#[derive(PartialEq)]
+struct MemoryPriorityInformation(u32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemoryPriority {
+    None,
+    VeryLow,
+    Low,
+    Medium,
+    BelowNormal,
+    Normal,
 }
-impl ProcessStats {
-    pub fn new() -> Self {
-        Self {
-            alive: true,
-            tid_to_thread_stats: HashMap::new(),
-        }
+impl MemoryPriority {
+    const TABLE: &'static [(Self, &'static str, Option<MEMORY_PRIORITY>)] = &[
+        (Self::None, "none", None),
+        (Self::VeryLow, "very low", Some(MEMORY_PRIORITY_VERY_LOW)),
+        (Self::Low, "low", Some(MEMORY_PRIORITY_LOW)),
+        (Self::Medium, "medium", Some(MEMORY_PRIORITY_MEDIUM)),
+        (Self::BelowNormal, "below normal", Some(MEMORY_PRIORITY_BELOW_NORMAL)),
+        (Self::Normal, "normal", Some(MEMORY_PRIORITY_NORMAL)),
+    ];
+    pub fn as_str(&self) -> &'static str {
+        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, s, _)| *s).unwrap_or("none")
+    }
+    pub fn as_win_const(&self) -> Option<MEMORY_PRIORITY> {
+        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, _, val)| *val).unwrap_or(None)
+    }
+    pub fn from_str(s: &str) -> Self {
+        Self::TABLE.iter().find(|(_, str, _)| *str == s).map(|(v, _, _)| *v).unwrap_or(Self::None)
     }
 }
 
@@ -212,7 +195,105 @@ impl PrimeCoreScheduler {
         });
     }
 }
+struct ProcessStats {
+    alive: bool,
+    tid_to_thread_stats: HashMap<u32, ThreadStats>,
+}
+impl ProcessStats {
+    pub fn new() -> Self {
+        Self {
+            alive: true,
+            tid_to_thread_stats: HashMap::new(),
+        }
+    }
+}
+struct ThreadStats {
+    last_total_time: i64,
+    last_cycles: u64,
+    handle: Option<HANDLE>,
+    cpu_set_ids: Vec<u32>,
+    active_streak: u8,
+}
+impl ThreadStats {
+    pub fn new() -> Self {
+        Self {
+            last_total_time: 0,
+            last_cycles: 0,
+            handle: None,
+            cpu_set_ids: vec![],
+            active_streak: 0,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy)]
+pub struct ConfigConstants {
+    pub hysteresis_ratio: f64,
+    pub keep_threshold: f64,
+    pub entry_threshold: f64,
+}
+impl Default for ConfigConstants {
+    fn default() -> Self {
+        Self {
+            hysteresis_ratio: 1.259,
+            keep_threshold: 0.69,
+            entry_threshold: 0.42,
+        }
+    }
+}
 
+pub struct ProcessSnapshot {
+    ///is used to store the snapshot of the processes, parsed in unsafe
+    buffer: Vec<u8>,
+    pub pid_to_process: HashMap<u32, ProcessEntry>,
+}
+impl Drop for ProcessSnapshot {
+    fn drop(&mut self) {
+        self.pid_to_process.clear();
+        self.buffer.clear();
+    }
+}
+impl ProcessSnapshot {
+    pub fn take() -> Result<Self, i32> {
+        let mut buf_len: usize = 1024;
+        let mut buffer: Vec<u8>;
+        let mut return_len: u32 = 0;
+        unsafe {
+            loop {
+                buffer = vec![0u8; buf_len];
+                let status = NtQuerySystemInformation(SystemProcessInformation, buffer.as_mut_ptr() as *mut _, buf_len as u32, &mut return_len);
+                // STATUS_INFO_LENGTH_MISMATCH = 0xC0000004
+                const STATUS_INFO_LENGTH_MISMATCH: i32 = -1073741820i32;
+                if status == STATUS_INFO_LENGTH_MISMATCH {
+                    buf_len = if return_len > 0 { return_len as usize + 8192 } else { buf_len * 2 };
+                    continue;
+                }
+                if status < 0 {
+                    return Err(status);
+                }
+                buffer.truncate(return_len as usize);
+                break;
+            }
+            let mut pid_to_process: HashMap<u32, ProcessEntry> = HashMap::new();
+            let mut offset: usize = 0;
+            let buf_ptr = buffer.as_ptr();
+            loop {
+                let process_entry_ptr = buf_ptr.add(offset) as *const SYSTEM_PROCESS_INFORMATION;
+                let entry = &*process_entry_ptr;
+                let threads_ptr = &(*process_entry_ptr).Threads as *const SYSTEM_THREAD_INFORMATION;
+                let process_entry = ProcessEntry::new(*entry, threads_ptr);
+                pid_to_process.insert(entry.UniqueProcessId as u32, process_entry);
+                if entry.NextEntryOffset == 0 {
+                    break;
+                }
+                offset += entry.NextEntryOffset as usize;
+            }
+            Ok(ProcessSnapshot { buffer, pid_to_process })
+        }
+    }
+    pub fn get_by_name(&self, name: String) -> Vec<&ProcessEntry> {
+        self.pid_to_process.values().filter(|entry| (**entry).get_name() == name).collect()
+    }
+}
 #[derive(Clone)]
 pub struct ProcessEntry {
     pub process: SYSTEM_PROCESS_INFORMATION,
@@ -285,125 +366,37 @@ impl ProcessEntry {
     }
 }
 
-pub struct ProcessSnapshot {
-    ///is used to store the snapshot of the processes, parsed in unsafe
-    buffer: Vec<u8>,
-    pub pid_to_process: HashMap<u32, ProcessEntry>,
+fn use_console() -> &'static Mutex<bool> {
+    static CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
+    &CONSOLE
 }
-impl Drop for ProcessSnapshot {
-    fn drop(&mut self) {
-        self.pid_to_process.clear();
-        self.buffer.clear();
-    }
+fn logger() -> &'static Mutex<File> {
+    static LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path("")).unwrap()));
+    &LOG_FILE
 }
-impl ProcessSnapshot {
-    pub fn take() -> Result<Self, i32> {
-        let mut buf_len: usize = 1024;
-        let mut buffer: Vec<u8>;
-        let mut return_len: u32 = 0;
-        unsafe {
-            loop {
-                buffer = vec![0u8; buf_len];
-                let status = NtQuerySystemInformation(SystemProcessInformation, buffer.as_mut_ptr() as *mut _, buf_len as u32, &mut return_len);
-                // STATUS_INFO_LENGTH_MISMATCH = 0xC0000004
-                const STATUS_INFO_LENGTH_MISMATCH: i32 = -1073741820i32;
-                if status == STATUS_INFO_LENGTH_MISMATCH {
-                    buf_len = if return_len > 0 { return_len as usize + 8192 } else { buf_len * 2 };
-                    continue;
-                }
-                if status < 0 {
-                    return Err(status);
-                }
-                buffer.truncate(return_len as usize);
-                break;
-            }
-            let mut pid_to_process: HashMap<u32, ProcessEntry> = HashMap::new();
-            let mut offset: usize = 0;
-            let buf_ptr = buffer.as_ptr();
-            loop {
-                let process_entry_ptr = buf_ptr.add(offset) as *const SYSTEM_PROCESS_INFORMATION;
-                let entry = &*process_entry_ptr;
-                let threads_ptr = &(*process_entry_ptr).Threads as *const SYSTEM_THREAD_INFORMATION;
-                let process_entry = ProcessEntry::new(*entry, threads_ptr);
-                pid_to_process.insert(entry.UniqueProcessId as u32, process_entry);
-                if entry.NextEntryOffset == 0 {
-                    break;
-                }
-                offset += entry.NextEntryOffset as usize;
-            }
-            Ok(ProcessSnapshot { buffer, pid_to_process })
-        }
+fn find_logger() -> &'static Mutex<File> {
+    static FIND_LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path(".find")).unwrap()));
+    &FIND_LOG_FILE
+}
+fn get_log_path(suffix: &str) -> PathBuf {
+    let time = LOCALTIME_BUFFER.lock().unwrap();
+    let (year, month, day) = (time.year(), time.month(), time.day());
+    drop(time);
+    let log_dir = PathBuf::from("logs");
+    if !log_dir.exists() {
+        let _ = fs::create_dir_all(&log_dir);
     }
-    pub fn get_by_name(&self, name: String) -> Vec<&ProcessEntry> {
-        self.pid_to_process.values().filter(|entry| (**entry).get_name() == name).collect()
-    }
+    log_dir.join(format!("{:04}{:02}{:02}{}.log", year, month, day, suffix))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IOPriority {
-    None,
-    VeryLow,
-    Low,
-    Normal,
-    // High,     // Not Available
-    // Critical, // Not Available
-}
-impl IOPriority {
-    const TABLE: &'static [(Self, &'static str, Option<u32>)] = &[
-        (Self::None, "none", None),
-        (Self::VeryLow, "very low", Some(0)),
-        (Self::Low, "low", Some(1)),
-        (Self::Normal, "normal", Some(2)),
-        // (Self::High, "high", Some(3)),           // Not Available
-        // (Self::Critical, "critical", Some(4)), // Not Available
-    ];
-    pub fn as_str(&self) -> &'static str {
-        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, name, _)| *name).unwrap_or("fail as str")
-    }
-    pub fn as_win_const(&self) -> Option<u32> {
-        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, _, val)| *val).unwrap_or(None)
-    }
-    pub fn from_str(s: &str) -> Self {
-        Self::TABLE
-            .iter()
-            .find(|(_, name, _)| s.to_lowercase() == *name)
-            .map(|(v, _, _)| *v)
-            .unwrap_or(Self::None)
-    }
+fn get_cpu_set_information() -> &'static Mutex<Vec<SYSTEM_CPU_SET_INFORMATION>> {
+    static CPU_SET_INFORMATION: Lazy<Mutex<Vec<SYSTEM_CPU_SET_INFORMATION>>> = Lazy::new(|| Mutex::new(init_cpu_set_information()));
+    &CPU_SET_INFORMATION
 }
 
-#[repr(C)]
-#[derive(PartialEq)]
-struct MemoryPriorityInformation(u32);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MemoryPriority {
-    None,
-    VeryLow,
-    Low,
-    Medium,
-    BelowNormal,
-    Normal,
-}
-impl MemoryPriority {
-    const TABLE: &'static [(Self, &'static str, Option<MEMORY_PRIORITY>)] = &[
-        (Self::None, "none", None),
-        (Self::VeryLow, "very low", Some(MEMORY_PRIORITY_VERY_LOW)),
-        (Self::Low, "low", Some(MEMORY_PRIORITY_LOW)),
-        (Self::Medium, "medium", Some(MEMORY_PRIORITY_MEDIUM)),
-        (Self::BelowNormal, "below normal", Some(MEMORY_PRIORITY_BELOW_NORMAL)),
-        (Self::Normal, "normal", Some(MEMORY_PRIORITY_NORMAL)),
-    ];
-    pub fn as_str(&self) -> &'static str {
-        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, s, _)| *s).unwrap_or("none")
-    }
-    pub fn as_win_const(&self) -> Option<MEMORY_PRIORITY> {
-        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, _, val)| *val).unwrap_or(None)
-    }
-    pub fn from_str(s: &str) -> Self {
-        Self::TABLE.iter().find(|(_, str, _)| *str == s).map(|(v, _, _)| *v).unwrap_or(Self::None)
-    }
-}
+static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
+static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+static FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
 macro_rules! log {
     ($($arg:tt)*) => {
@@ -504,6 +497,537 @@ fn mask_from_cpusetids(cpuids: &[u32]) -> usize {
         }
     }
     mask
+}
+
+fn read_config<P: AsRef<Path>>(path: P) -> io::Result<(HashMap<String, ProcessConfig>, ConfigConstants)> {
+    let file = File::open(path)?;
+    let reader = io::BufReader::new(file);
+    let mut configs = HashMap::new();
+    let mut affinity_aliases = HashMap::new();
+    let mut constants = ConfigConstants::default();
+
+    for line in reader.lines() {
+        let line = line?;
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        } else if line.starts_with('@') {
+            // define constant: @NAME=VALUE
+            if let Some(eq_pos) = line.find('=') {
+                let const_name = line[1..eq_pos].trim().to_uppercase();
+                let const_value = line[eq_pos + 1..].trim();
+                match const_name.as_str() {
+                    "HYSTERESIS_RATIO" => {
+                        if let Ok(v) = const_value.parse::<f64>() {
+                            constants.hysteresis_ratio = v;
+                            log!("Config: HYSTERESIS_RATIO = {}", v);
+                        }
+                    }
+                    "KEEP_THRESHOLD" => {
+                        if let Ok(v) = const_value.parse::<f64>() {
+                            constants.keep_threshold = v;
+                            log!("Config: KEEP_THRESHOLD = {}", v);
+                        }
+                    }
+                    "ENTRY_THRESHOLD" => {
+                        if let Ok(v) = const_value.parse::<f64>() {
+                            constants.entry_threshold = v;
+                            log!("Config: ENTRY_THRESHOLD = {}", v);
+                        }
+                    }
+                    _ => {
+                        log_to_find(&format!("Unknown constant: {}", const_name));
+                    }
+                }
+            }
+            continue;
+        } else if line.starts_with('*') {
+            // define mask alias: *NAME=VALUE
+            if let Some(eq_pos) = line.find('=') {
+                let alias_name = line[1..eq_pos].trim().to_lowercase();
+                let alias_value = line[eq_pos + 1..].trim();
+                let affinity_value = if alias_value.starts_with("0x") {
+                    usize::from_str_radix(alias_value.trim_start_matches("0x"), 16).unwrap_or(0)
+                } else {
+                    alias_value.parse().unwrap_or(0)
+                };
+                affinity_aliases.insert(alias_name, affinity_value);
+            }
+            continue;
+        }
+
+        // process configuration line
+        let parts: Vec<&str> = line.split(',').collect();
+        if parts.len() >= 3 {
+            let name = parts[0].to_lowercase();
+            let priority: ProcessPriority = ProcessPriority::from_str(&parts[1]);
+            let affinity_def = parts[2].trim();
+            let affinity = if affinity_def.starts_with('*') {
+                *affinity_aliases.get(&affinity_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
+            } else if parts[2].trim_start().starts_with("0x") {
+                usize::from_str_radix(affinity_def.trim_start_matches("0x"), 16).unwrap_or(0)
+            } else {
+                parts[2].parse().unwrap_or(0)
+            };
+            let cpuset_def = if parts.len() >= 4 { parts[3].trim() } else { "0" };
+            let cpuset = if cpuset_def.starts_with('*') {
+                *affinity_aliases.get(&cpuset_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
+            } else if cpuset_def.starts_with("0x") {
+                usize::from_str_radix(cpuset_def.trim_start_matches("0x"), 16).unwrap_or(0)
+            } else {
+                cpuset_def.parse().unwrap_or(0)
+            };
+            let prime_cpu_def = if parts.len() >= 5 { parts[4].trim() } else { "0" };
+            let prime_cpuset = if prime_cpu_def.starts_with('*') {
+                *affinity_aliases.get(&prime_cpu_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
+            } else if prime_cpu_def.starts_with("0x") {
+                usize::from_str_radix(prime_cpu_def.trim_start_matches("0x"), 16).unwrap_or(0)
+            } else {
+                prime_cpu_def.parse().unwrap_or(0)
+            };
+            let io_priority = if parts.len() >= 6 { IOPriority::from_str(parts[5]) } else { IOPriority::None };
+            let memory_priority = if parts.len() >= 7 {
+                MemoryPriority::from_str(parts[6])
+            } else {
+                MemoryPriority::None
+            };
+            configs.insert(
+                name.clone(),
+                ProcessConfig {
+                    name,
+                    priority,
+                    affinity_mask: affinity,
+                    cpu_set_mask: cpuset,
+                    prime_cpu_mask: prime_cpuset,
+                    io_priority,
+                    memory_priority,
+                },
+            );
+        }
+    }
+    Ok((configs, constants))
+}
+fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> {
+    let file = File::open(path)?;
+    let reader = io::BufReader::new(file);
+    Ok(reader
+        .lines()
+        .filter_map(|l| l.ok())
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty() && !s.starts_with('#'))
+        .collect())
+}
+fn read_utf16le_file(path: &str) -> io::Result<String> {
+    let bytes = fs::read(path)?;
+    let utf16: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    Ok(String::from_utf16_lossy(&utf16))
+}
+fn parse_mask(s: &str) -> usize {
+    let mut mask = 0;
+    for part in s.split(';') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some((start, end)) = part.split_once('-') {
+            let start: usize = start.trim().parse().unwrap_or(0);
+            let end: usize = end.trim().parse().unwrap_or(start);
+            for core in start..=end {
+                mask |= 1 << core;
+            }
+        } else {
+            let core: usize = part.parse().unwrap_or(0);
+            mask |= 1 << core;
+        }
+    }
+    mask
+}
+
+fn parse_args(
+    args: &[String],
+    interval_ms: &mut u64,
+    help_mode: &mut bool,
+    help_all_mode: &mut bool,
+    convert_mode: &mut bool,
+    find_mode: &mut bool,
+    config_file_name: &mut String,
+    blacklist_file_name: &mut Option<String>,
+    in_file_name: &mut Option<String>,
+    out_file_name: &mut Option<String>,
+    no_uac: &mut bool,
+    loop_count: &mut Option<u32>,
+    time_resolution: &mut u32,
+    log_loop: &mut bool,
+    skip_log_before_elevation: &mut bool,
+) -> windows::core::Result<()> {
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-help" | "--help" | "-?" | "/?" | "?" => {
+                *help_mode = true;
+            }
+            "-helpall" | "--helpall" => {
+                *help_all_mode = true;
+            }
+            "-console" => {
+                *use_console().lock().unwrap() = true;
+            }
+            "-noUAC" | "-nouac" => {
+                *no_uac = true;
+            }
+            "-convert" => {
+                *convert_mode = true;
+            }
+            "-find" => {
+                *find_mode = true;
+            }
+            "-interval" if i + 1 < args.len() => {
+                *interval_ms = args[i + 1].parse().unwrap_or(5000).max(16);
+                i += 1;
+            }
+            "-loop" if i + 1 < args.len() => {
+                *loop_count = Some(args[i + 1].parse().unwrap_or(1).max(1));
+                i += 1;
+            }
+            "-resolution" if i + 1 < args.len() => {
+                *time_resolution = args[i + 1].parse().unwrap_or(0).max(0);
+                i += 1;
+            }
+            "-logloop" => {
+                *log_loop = true;
+            }
+            "-config" if i + 1 < args.len() => {
+                *config_file_name = args[i + 1].clone();
+                i += 1;
+            }
+            "-blacklist" if i + 1 < args.len() => {
+                *blacklist_file_name = Some(args[i + 1].clone());
+                i += 1;
+            }
+            "-in" if i + 1 < args.len() => {
+                *in_file_name = Some(args[i + 1].clone());
+                i += 1;
+            }
+            "-out" if i + 1 < args.len() => {
+                *out_file_name = Some(args[i + 1].clone());
+                i += 1;
+            }
+            "-skip_log_before_elevation" => {
+                *skip_log_before_elevation = true;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Ok(())
+}
+
+fn print_help() {
+    println!("usage: AffinityServiceRust.exe [args]");
+    println!();
+    println!("A Windows service to manage process priority, CPU affinity, and IO priority.");
+    println!();
+    println!("Common Options:");
+    println!("  -help | --help       show this help message");
+    println!("  -console             output to console instead of log file");
+    println!("  -config <file>       config file to use (default: config.ini)");
+    println!("  -find                find processes with default affinity (-blacklist <file>)");
+    println!("  -interval <ms>       check interval in milliseconds (default: 5000)");
+    println!("  -noUAC               disable UAC elevation request");
+    println!("  -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)");
+    println!();
+    println!("Modes:");
+    println!("  -convert             convert Process Lasso config (-in <file> -out <file>)");
+    println!();
+    println!("Config Format: process_name,priority,affinity_mask,io_priority");
+    println!("  Example: notepad.exe,above normal,0xFF,low");
+    println!();
+    println!("Use -helpall for detailed options and debugging features.");
+}
+fn print_help_all() {
+    println!("usage: AffinityServiceRust.exe [args]");
+    println!();
+    println!("=== DETAILED HELP & DEBUG OPTIONS ===");
+    println!();
+    println!("Basic Arguments:");
+    println!("  -help | --help       print basic help message");
+    println!("  -helpall | --helpall print this detailed help with debug options");
+    println!("  -? | /? | ?          print basic help message");
+    println!("  -console             use console as output instead of log file");
+    println!("  -noUAC | -nouac      disable UAC elevation request");
+    println!("  -config <file>       the config file u wanna use (config.ini by default)");
+    println!("  -find                find those whose affinity is same as system default which is all possible cores windows could use");
+    println!("  -blacklist <file>    the blacklist for -find");
+    println!("  -interval <ms>       set interval for checking again (5000 by default, minimal 16)");
+    println!();
+    println!("Operating Modes:");
+    println!("  -convert             convert process configs from -in <file>(from process lasso) to -out <file>");
+    println!("  -in <file>           input file for -convert");
+    println!("  -out <file>          output file for -convert");
+    println!();
+    println!("Debug & Testing Options:");
+    println!("  -loop <count>        number of loops to run (default: infinite) - for testing");
+    println!("  -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)");
+    println!("  -logloop             log a message at the start of each loop for testing");
+    println!();
+    println!("=== CONFIGURATION FORMAT ===");
+    println!();
+    println!("Config file format: process_name,priority,affinity_mask,io_priority");
+    println!();
+    println!("Priority Options:");
+    println!("  none, idle, below normal, normal, above normal, high, real time");
+    println!("  'none' means the program won't change it");
+    println!();
+    println!("Affinity Mask:");
+    println!("  0 (no change), or hex/decimal mask (e.g., 0xFF, 255)");
+    println!("  *alias_name to use predefined alias");
+    println!("  Represents CPU cores as binary flags");
+    println!();
+    println!("Affinity Aliases:");
+    println!("  Define reusable masks with: *alias_name = 0xFF");
+    println!("  Examples:");
+    println!("    *pcore = 0xFF        # Performance cores (0-7)");
+    println!("    *ecore = 0xFFF00     # Efficiency cores (8-19)");
+    println!("    *allcores = 0xFFFFF  # All cores");
+    println!("  Then use: game.exe,high,*pcore,normal");
+    println!();
+    println!("IO Priority Options:");
+    println!("  none, very low, low, normal");
+    println!("  'none' means the program won't change it");
+    println!("  Note: high/critical removed due to privilege requirements");
+    println!();
+    println!("Example Configuration:");
+    println!("  # Define aliases first");
+    println!("  *pcore = 0xFF");
+    println!("  *ecore = 0xFFF00");
+    println!("  # Use aliases in configs");
+    println!("  notepad.exe,above normal,*pcore,low");
+    println!("  game.exe,high,*pcore,normal,none");
+    println!("  background.exe,idle,*ecore,very low");
+    println!();
+    println!("=== LIMITATIONS & NOTES ===");
+    println!();
+    println!("- Admin privileges needed for managing system processes");
+    println!();
+}
+
+fn convert(in_file_name: Option<String>, out_file_name: Option<String>) {
+    if let Some(ref in_file) = in_file_name {
+        if let Some(ref out_file) = out_file_name {
+            match read_utf16le_file(in_file) {
+                Ok(in_content) => {
+                    let mut configs: Vec<ProcessConfig> = Vec::new();
+                    for line in in_content.lines() {
+                        let line = line.trim();
+                        if line.is_empty() {
+                            continue;
+                        }
+                        if let Some(rest) = line.strip_prefix("DefaultPriorities=") {
+                            let fields = split_trim_nonempty(rest);
+                            for chunk in fields.chunks(2) {
+                                if chunk.len() == 2 {
+                                    let name = chunk[0].to_lowercase();
+                                    let priority = ProcessPriority::from_str(chunk[1]);
+                                    match configs.iter_mut().find(|c| c.name == name) {
+                                        Some(cfg) => cfg.priority = priority,
+                                        None => configs.push(ProcessConfig {
+                                            name,
+                                            priority,
+                                            affinity_mask: 0,
+                                            cpu_set_mask: 0,
+                                            prime_cpu_mask: 0,
+                                            io_priority: IOPriority::None,
+                                            memory_priority: MemoryPriority::None,
+                                        }),
+                                    }
+                                } else {
+                                    log!("Invalid priority configuration line: {}", line);
+                                }
+                            }
+                        } else if let Some(rest) = line.strip_prefix("DefaultAffinitiesEx=") {
+                            let fields = split_trim_nonempty(rest);
+                            for chunk in fields.chunks(3) {
+                                if chunk.len() == 3 {
+                                    let name = chunk[0].to_lowercase();
+                                    let mask = parse_mask(chunk[2]);
+                                    match configs.iter_mut().find(|c| c.name == name) {
+                                        Some(cfg) => cfg.affinity_mask = mask,
+                                        None => configs.push(ProcessConfig {
+                                            name,
+                                            priority: ProcessPriority::None,
+                                            affinity_mask: mask,
+                                            cpu_set_mask: 0,
+                                            prime_cpu_mask: 0,
+                                            io_priority: IOPriority::None,
+                                            memory_priority: MemoryPriority::None,
+                                        }),
+                                    }
+                                } else {
+                                    log!("Invalid affinity configuration line: {}", line);
+                                }
+                            }
+                        }
+                    }
+                    match File::create(out_file) {
+                        Ok(mut output) => {
+                            for cfg in &configs {
+                                let _ = writeln!(
+                                    output,
+                                    "{},{},0x{:X},0x{:X},0x{:X},{}",
+                                    cfg.name,
+                                    cfg.priority.as_str(),
+                                    cfg.affinity_mask,
+                                    cfg.cpu_set_mask,
+                                    cfg.prime_cpu_mask,
+                                    cfg.io_priority.as_str()
+                                );
+                            }
+                            log!("convert done, {} process configs have been output", configs.len());
+                        }
+                        Err(_) => {
+                            log!("cannot create output file: {}", out_file);
+                        }
+                    }
+                }
+                Err(_) => {
+                    log!("cannot read from file: {}", in_file);
+                }
+            }
+        } else {
+            log!("not output file (-out <file>)!");
+        }
+    } else {
+        log!("no input file (-in <file>)!");
+    };
+}
+#[inline]
+fn split_trim_nonempty(s: &str) -> Vec<&str> {
+    s.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect()
+}
+
+fn is_running_as_admin() -> bool {
+    unsafe {
+        let current_process = GetCurrentProcess();
+        let mut token: HANDLE = HANDLE::default();
+        let mut result = false;
+        match OpenProcessToken(current_process, TOKEN_QUERY, &mut token) {
+            Err(_) => {}
+            Ok(_) => {
+                let mut elevation: TOKEN_ELEVATION = TOKEN_ELEVATION::default();
+                let mut return_length = 0u32;
+                match GetTokenInformation(
+                    token,
+                    TokenElevation,
+                    Some(&mut elevation as *mut _ as *mut _),
+                    size_of::<TOKEN_ELEVATION>() as u32,
+                    &mut return_length,
+                ) {
+                    Err(_) => {}
+                    Ok(_) => result = elevation.TokenIsElevated != 0,
+                }
+                let _ = CloseHandle(token);
+            }
+        }
+        result
+    }
+}
+
+fn request_uac_elevation() -> io::Result<()> {
+    let exe_path = env::current_exe()?;
+    let mut args: Vec<String> = env::args().skip(1).collect();
+    args.push("-skip_log_before_elevation".to_string());
+    log!("Requesting UAC elevation...");
+    let mut cmd = Command::new("powershell.exe");
+    cmd.arg("-Command");
+    let mut powershell_cmd = format!("Start-Process -FilePath '{}' -Verb RunAs", exe_path.display());
+    if !args.is_empty() {
+        let args_str = args.join(" ");
+        powershell_cmd.push_str(&format!(" -ArgumentList '{}'", args_str));
+    }
+    cmd.arg(powershell_cmd);
+    match cmd.spawn() {
+        Ok(_) => {
+            log!("UAC elevation request sent. Please approve the elevation prompt.");
+            std::process::exit(0);
+        }
+        Err(e) => {
+            log!("Failed to request UAC elevation: {}", e);
+            Err(e)
+        }
+    }
+}
+fn enable_debug_privilege() {
+    unsafe {
+        let mut token: HANDLE = HANDLE::default();
+        match OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token) {
+            Err(_) => {
+                log!("enable_debug_privilege: self OpenProcessToken failed");
+            }
+            Ok(_) => {
+                let mut l_uid = LUID::default();
+                match LookupPrivilegeValueW(None, SE_DEBUG_NAME, &mut l_uid) {
+                    Err(_) => {
+                        log!("enable_debug_privilege: LookupPrivilegeValueW failed");
+                    }
+                    Ok(_) => {
+                        let tp = TOKEN_PRIVILEGES {
+                            PrivilegeCount: 1,
+                            Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
+                                Luid: l_uid,
+                                Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
+                            }],
+                        };
+                        match AdjustTokenPrivileges(token, false, Some(&tp as *const _), 0, None, None) {
+                            Err(_) => {
+                                log!("enable_debug_privilege: AdjustTokenPrivileges failed");
+                            }
+                            Ok(_) => {
+                                log!("enable_debug_privilege: AdjustTokenPrivileges succeeded");
+                            }
+                        }
+                    }
+                }
+                let _ = CloseHandle(token);
+            }
+        }
+    }
+}
+
+fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
+    unsafe {
+        let mut result = false;
+        match OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) {
+            Err(_) => {
+                let code = GetLastError().0;
+                log_to_find(&format!("is_affinity_unset: [OPEN][{}] {:>5}-{}", error_from_code(code), pid, process_name));
+                if code == 5 {
+                    FAIL_SET.lock().unwrap().insert(process_name.to_string());
+                }
+            }
+            Ok(h_proc) => {
+                if h_proc.is_invalid() {
+                    log_to_find(&format!("is_affinity_unset: [INVALID_HANDLE] {:>5}-{}", pid, process_name));
+                } else {
+                    let mut current_mask: usize = 0;
+                    let mut system_mask: usize = 0;
+                    match GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask) {
+                        Err(_) => {
+                            let code = GetLastError().0;
+                            log_to_find(&format!("is_affinity_unset: [AFFINITY_QUERY][{}] {:>5}-{}", error_from_code(code), pid, process_name));
+                            if code == 5 {
+                                FAIL_SET.lock().unwrap().insert(process_name.to_string());
+                            }
+                        }
+                        Ok(_) => {
+                            result = current_mask == system_mask;
+                        }
+                    }
+                    let _ = CloseHandle(h_proc);
+                }
+            }
+        }
+        result
+    }
 }
 
 fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut PrimeCoreScheduler, processes: &mut ProcessSnapshot) {
@@ -774,6 +1298,7 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                     }
 
                     if let Some(io_priority_flag) = config.io_priority.as_win_const() {
+                        const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
                         let mut current_io_priority: u32 = 0;
                         let mut return_length: u32 = 0;
                         match NtQueryInformationProcess(
@@ -846,543 +1371,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                     }
                     let _ = CloseHandle(h_prc);
                 }
-            }
-        }
-    }
-}
-
-fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
-    unsafe {
-        let mut result = false;
-        match OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) {
-            Err(_) => {
-                let code = GetLastError().0;
-                log_to_find(&format!("is_affinity_unset: [OPEN][{}] {:>5}-{}", error_from_code(code), pid, process_name));
-                if code == 5 {
-                    FAIL_SET.lock().unwrap().insert(process_name.to_string());
-                }
-            }
-            Ok(h_proc) => {
-                if h_proc.is_invalid() {
-                    log_to_find(&format!("is_affinity_unset: [INVALID_HANDLE] {:>5}-{}", pid, process_name));
-                } else {
-                    let mut current_mask: usize = 0;
-                    let mut system_mask: usize = 0;
-                    match GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask) {
-                        Err(_) => {
-                            let code = GetLastError().0;
-                            log_to_find(&format!("is_affinity_unset: [AFFINITY_QUERY][{}] {:>5}-{}", error_from_code(code), pid, process_name));
-                            if code == 5 {
-                                FAIL_SET.lock().unwrap().insert(process_name.to_string());
-                            }
-                        }
-                        Ok(_) => {
-                            result = current_mask == system_mask;
-                        }
-                    }
-                    let _ = CloseHandle(h_proc);
-                }
-            }
-        }
-        result
-    }
-}
-
-#[inline]
-fn split_trim_nonempty(s: &str) -> Vec<&str> {
-    s.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect()
-}
-
-fn read_config<P: AsRef<Path>>(path: P) -> io::Result<(HashMap<String, ProcessConfig>, ConfigConstants)> {
-    let file = File::open(path)?;
-    let reader = io::BufReader::new(file);
-    let mut configs = HashMap::new();
-    let mut affinity_aliases = HashMap::new();
-    let mut constants = ConfigConstants::default();
-
-    for line in reader.lines() {
-        let line = line?;
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        } else if line.starts_with('@') {
-            // define constant: @NAME=VALUE
-            if let Some(eq_pos) = line.find('=') {
-                let const_name = line[1..eq_pos].trim().to_uppercase();
-                let const_value = line[eq_pos + 1..].trim();
-                match const_name.as_str() {
-                    "HYSTERESIS_RATIO" => {
-                        if let Ok(v) = const_value.parse::<f64>() {
-                            constants.hysteresis_ratio = v;
-                            log!("Config: HYSTERESIS_RATIO = {}", v);
-                        }
-                    }
-                    "KEEP_THRESHOLD" => {
-                        if let Ok(v) = const_value.parse::<f64>() {
-                            constants.keep_threshold = v;
-                            log!("Config: KEEP_THRESHOLD = {}", v);
-                        }
-                    }
-                    "ENTRY_THRESHOLD" => {
-                        if let Ok(v) = const_value.parse::<f64>() {
-                            constants.entry_threshold = v;
-                            log!("Config: ENTRY_THRESHOLD = {}", v);
-                        }
-                    }
-                    _ => {
-                        log_to_find(&format!("Unknown constant: {}", const_name));
-                    }
-                }
-            }
-            continue;
-        } else if line.starts_with('*') {
-            // define mask alias: *NAME=VALUE
-            if let Some(eq_pos) = line.find('=') {
-                let alias_name = line[1..eq_pos].trim().to_lowercase();
-                let alias_value = line[eq_pos + 1..].trim();
-                let affinity_value = if alias_value.starts_with("0x") {
-                    usize::from_str_radix(alias_value.trim_start_matches("0x"), 16).unwrap_or(0)
-                } else {
-                    alias_value.parse().unwrap_or(0)
-                };
-                affinity_aliases.insert(alias_name, affinity_value);
-            }
-            continue;
-        }
-
-        // process configuration line
-        let parts: Vec<&str> = line.split(',').collect();
-        if parts.len() >= 3 {
-            let name = parts[0].to_lowercase();
-            let priority: ProcessPriority = ProcessPriority::from_str(&parts[1]);
-            let affinity_def = parts[2].trim();
-            let affinity = if affinity_def.starts_with('*') {
-                *affinity_aliases.get(&affinity_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
-            } else if parts[2].trim_start().starts_with("0x") {
-                usize::from_str_radix(affinity_def.trim_start_matches("0x"), 16).unwrap_or(0)
-            } else {
-                parts[2].parse().unwrap_or(0)
-            };
-            let cpuset_def = if parts.len() >= 4 { parts[3].trim() } else { "0" };
-            let cpuset = if cpuset_def.starts_with('*') {
-                *affinity_aliases.get(&cpuset_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
-            } else if cpuset_def.starts_with("0x") {
-                usize::from_str_radix(cpuset_def.trim_start_matches("0x"), 16).unwrap_or(0)
-            } else {
-                cpuset_def.parse().unwrap_or(0)
-            };
-            let prime_cpu_def = if parts.len() >= 5 { parts[4].trim() } else { "0" };
-            let prime_cpuset = if prime_cpu_def.starts_with('*') {
-                *affinity_aliases.get(&prime_cpu_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
-            } else if prime_cpu_def.starts_with("0x") {
-                usize::from_str_radix(prime_cpu_def.trim_start_matches("0x"), 16).unwrap_or(0)
-            } else {
-                prime_cpu_def.parse().unwrap_or(0)
-            };
-            let io_priority = if parts.len() >= 6 { IOPriority::from_str(parts[5]) } else { IOPriority::None };
-            let memory_priority = if parts.len() >= 7 {
-                MemoryPriority::from_str(parts[6])
-            } else {
-                MemoryPriority::None
-            };
-            configs.insert(
-                name.clone(),
-                ProcessConfig {
-                    name,
-                    priority,
-                    affinity_mask: affinity,
-                    cpu_set_mask: cpuset,
-                    prime_cpu_mask: prime_cpuset,
-                    io_priority,
-                    memory_priority,
-                },
-            );
-        }
-    }
-    Ok((configs, constants))
-}
-
-fn parse_mask(s: &str) -> usize {
-    let mut mask = 0;
-    for part in s.split(';') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        if let Some((start, end)) = part.split_once('-') {
-            let start: usize = start.trim().parse().unwrap_or(0);
-            let end: usize = end.trim().parse().unwrap_or(start);
-            for core in start..=end {
-                mask |= 1 << core;
-            }
-        } else {
-            let core: usize = part.parse().unwrap_or(0);
-            mask |= 1 << core;
-        }
-    }
-    mask
-}
-
-fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> {
-    let file = File::open(path)?;
-    let reader = io::BufReader::new(file);
-    Ok(reader
-        .lines()
-        .filter_map(|l| l.ok())
-        .map(|s| s.trim().to_lowercase())
-        .filter(|s| !s.is_empty() && !s.starts_with('#'))
-        .collect())
-}
-
-fn read_utf16le_file(path: &str) -> io::Result<String> {
-    let bytes = fs::read(path)?;
-    let utf16: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-    Ok(String::from_utf16_lossy(&utf16))
-}
-
-fn parse_args(
-    args: &[String],
-    interval_ms: &mut u64,
-    help_mode: &mut bool,
-    help_all_mode: &mut bool,
-    convert_mode: &mut bool,
-    find_mode: &mut bool,
-    config_file_name: &mut String,
-    blacklist_file_name: &mut Option<String>,
-    in_file_name: &mut Option<String>,
-    out_file_name: &mut Option<String>,
-    no_uac: &mut bool,
-    loop_count: &mut Option<u32>,
-    time_resolution: &mut u32,
-    log_loop: &mut bool,
-    skip_log_before_elevation: &mut bool,
-) -> windows::core::Result<()> {
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-help" | "--help" | "-?" | "/?" | "?" => {
-                *help_mode = true;
-            }
-            "-helpall" | "--helpall" => {
-                *help_all_mode = true;
-            }
-            "-console" => {
-                *use_console().lock().unwrap() = true;
-            }
-            "-noUAC" | "-nouac" => {
-                *no_uac = true;
-            }
-            "-convert" => {
-                *convert_mode = true;
-            }
-            "-find" => {
-                *find_mode = true;
-            }
-            "-interval" if i + 1 < args.len() => {
-                *interval_ms = args[i + 1].parse().unwrap_or(5000).max(16);
-                i += 1;
-            }
-            "-loop" if i + 1 < args.len() => {
-                *loop_count = Some(args[i + 1].parse().unwrap_or(1).max(1));
-                i += 1;
-            }
-            "-resolution" if i + 1 < args.len() => {
-                *time_resolution = args[i + 1].parse().unwrap_or(0).max(0);
-                i += 1;
-            }
-            "-logloop" => {
-                *log_loop = true;
-            }
-            "-config" if i + 1 < args.len() => {
-                *config_file_name = args[i + 1].clone();
-                i += 1;
-            }
-            "-blacklist" if i + 1 < args.len() => {
-                *blacklist_file_name = Some(args[i + 1].clone());
-                i += 1;
-            }
-            "-in" if i + 1 < args.len() => {
-                *in_file_name = Some(args[i + 1].clone());
-                i += 1;
-            }
-            "-out" if i + 1 < args.len() => {
-                *out_file_name = Some(args[i + 1].clone());
-                i += 1;
-            }
-            "-skip_log_before_elevation" => {
-                *skip_log_before_elevation = true;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    Ok(())
-}
-
-fn print_help() {
-    println!("usage: AffinityServiceRust.exe [args]");
-    println!();
-    println!("A Windows service to manage process priority, CPU affinity, and IO priority.");
-    println!();
-    println!("Common Options:");
-    println!("  -help | --help       show this help message");
-    println!("  -console             output to console instead of log file");
-    println!("  -config <file>       config file to use (default: config.ini)");
-    println!("  -find                find processes with default affinity (-blacklist <file>)");
-    println!("  -interval <ms>       check interval in milliseconds (default: 5000)");
-    println!("  -noUAC               disable UAC elevation request");
-    println!("  -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)");
-    println!();
-    println!("Modes:");
-    println!("  -convert             convert Process Lasso config (-in <file> -out <file>)");
-    println!();
-    println!("Config Format: process_name,priority,affinity_mask,io_priority");
-    println!("  Example: notepad.exe,above normal,0xFF,low");
-    println!();
-    println!("Use -helpall for detailed options and debugging features.");
-}
-
-fn print_help_all() {
-    println!("usage: AffinityServiceRust.exe [args]");
-    println!();
-    println!("=== DETAILED HELP & DEBUG OPTIONS ===");
-    println!();
-    println!("Basic Arguments:");
-    println!("  -help | --help       print basic help message");
-    println!("  -helpall | --helpall print this detailed help with debug options");
-    println!("  -? | /? | ?          print basic help message");
-    println!("  -console             use console as output instead of log file");
-    println!("  -noUAC | -nouac      disable UAC elevation request");
-    println!("  -config <file>       the config file u wanna use (config.ini by default)");
-    println!("  -find                find those whose affinity is same as system default which is all possible cores windows could use");
-    println!("  -blacklist <file>    the blacklist for -find");
-    println!("  -interval <ms>       set interval for checking again (5000 by default, minimal 16)");
-    println!();
-    println!("Operating Modes:");
-    println!("  -convert             convert process configs from -in <file>(from process lasso) to -out <file>");
-    println!("  -in <file>           input file for -convert");
-    println!("  -out <file>          output file for -convert");
-    println!();
-    println!("Debug & Testing Options:");
-    println!("  -loop <count>        number of loops to run (default: infinite) - for testing");
-    println!("  -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)");
-    println!("  -logloop             log a message at the start of each loop for testing");
-    println!();
-    println!("=== CONFIGURATION FORMAT ===");
-    println!();
-    println!("Config file format: process_name,priority,affinity_mask,io_priority");
-    println!();
-    println!("Priority Options:");
-    println!("  none, idle, below normal, normal, above normal, high, real time");
-    println!("  'none' means the program won't change it");
-    println!();
-    println!("Affinity Mask:");
-    println!("  0 (no change), or hex/decimal mask (e.g., 0xFF, 255)");
-    println!("  *alias_name to use predefined alias");
-    println!("  Represents CPU cores as binary flags");
-    println!();
-    println!("Affinity Aliases:");
-    println!("  Define reusable masks with: *alias_name = 0xFF");
-    println!("  Examples:");
-    println!("    *pcore = 0xFF        # Performance cores (0-7)");
-    println!("    *ecore = 0xFFF00     # Efficiency cores (8-19)");
-    println!("    *allcores = 0xFFFFF  # All cores");
-    println!("  Then use: game.exe,high,*pcore,normal");
-    println!();
-    println!("IO Priority Options:");
-    println!("  none, very low, low, normal");
-    println!("  'none' means the program won't change it");
-    println!("  Note: high/critical removed due to privilege requirements");
-    println!();
-    println!("Example Configuration:");
-    println!("  # Define aliases first");
-    println!("  *pcore = 0xFF");
-    println!("  *ecore = 0xFFF00");
-    println!("  # Use aliases in configs");
-    println!("  notepad.exe,above normal,*pcore,low");
-    println!("  game.exe,high,*pcore,normal,none");
-    println!("  background.exe,idle,*ecore,very low");
-    println!();
-    println!("=== LIMITATIONS & NOTES ===");
-    println!();
-    println!("- Admin privileges needed for managing system processes");
-    println!();
-}
-
-fn convert(in_file_name: Option<String>, out_file_name: Option<String>) {
-    if let Some(ref in_file) = in_file_name {
-        if let Some(ref out_file) = out_file_name {
-            match read_utf16le_file(in_file) {
-                Ok(in_content) => {
-                    let mut configs: Vec<ProcessConfig> = Vec::new();
-                    for line in in_content.lines() {
-                        let line = line.trim();
-                        if line.is_empty() {
-                            continue;
-                        }
-                        if let Some(rest) = line.strip_prefix("DefaultPriorities=") {
-                            let fields = split_trim_nonempty(rest);
-                            for chunk in fields.chunks(2) {
-                                if chunk.len() == 2 {
-                                    let name = chunk[0].to_lowercase();
-                                    let priority = ProcessPriority::from_str(chunk[1]);
-                                    match configs.iter_mut().find(|c| c.name == name) {
-                                        Some(cfg) => cfg.priority = priority,
-                                        None => configs.push(ProcessConfig {
-                                            name,
-                                            priority,
-                                            affinity_mask: 0,
-                                            cpu_set_mask: 0,
-                                            prime_cpu_mask: 0,
-                                            io_priority: IOPriority::None,
-                                            memory_priority: MemoryPriority::None,
-                                        }),
-                                    }
-                                } else {
-                                    log!("Invalid priority configuration line: {}", line);
-                                }
-                            }
-                        } else if let Some(rest) = line.strip_prefix("DefaultAffinitiesEx=") {
-                            let fields = split_trim_nonempty(rest);
-                            for chunk in fields.chunks(3) {
-                                if chunk.len() == 3 {
-                                    let name = chunk[0].to_lowercase();
-                                    let mask = parse_mask(chunk[2]);
-                                    match configs.iter_mut().find(|c| c.name == name) {
-                                        Some(cfg) => cfg.affinity_mask = mask,
-                                        None => configs.push(ProcessConfig {
-                                            name,
-                                            priority: ProcessPriority::None,
-                                            affinity_mask: mask,
-                                            cpu_set_mask: 0,
-                                            prime_cpu_mask: 0,
-                                            io_priority: IOPriority::None,
-                                            memory_priority: MemoryPriority::None,
-                                        }),
-                                    }
-                                } else {
-                                    log!("Invalid affinity configuration line: {}", line);
-                                }
-                            }
-                        }
-                    }
-                    match File::create(out_file) {
-                        Ok(mut output) => {
-                            for cfg in &configs {
-                                let _ = writeln!(
-                                    output,
-                                    "{},{},0x{:X},0x{:X},0x{:X},{}",
-                                    cfg.name,
-                                    cfg.priority.as_str(),
-                                    cfg.affinity_mask,
-                                    cfg.cpu_set_mask,
-                                    cfg.prime_cpu_mask,
-                                    cfg.io_priority.as_str()
-                                );
-                            }
-                            log!("convert done, {} process configs have been output", configs.len());
-                        }
-                        Err(_) => {
-                            log!("cannot create output file: {}", out_file);
-                        }
-                    }
-                }
-                Err(_) => {
-                    log!("cannot read from file: {}", in_file);
-                }
-            }
-        } else {
-            log!("not output file (-out <file>)!");
-        }
-    } else {
-        log!("no input file (-in <file>)!");
-    };
-}
-
-fn is_running_as_admin() -> bool {
-    unsafe {
-        let current_process = GetCurrentProcess();
-        let mut token: HANDLE = HANDLE::default();
-        let mut result = false;
-        match OpenProcessToken(current_process, TOKEN_QUERY, &mut token) {
-            Err(_) => {}
-            Ok(_) => {
-                let mut elevation: TOKEN_ELEVATION = TOKEN_ELEVATION::default();
-                let mut return_length = 0u32;
-                match GetTokenInformation(
-                    token,
-                    TokenElevation,
-                    Some(&mut elevation as *mut _ as *mut _),
-                    size_of::<TOKEN_ELEVATION>() as u32,
-                    &mut return_length,
-                ) {
-                    Err(_) => {}
-                    Ok(_) => result = elevation.TokenIsElevated != 0,
-                }
-                let _ = CloseHandle(token);
-            }
-        }
-        result
-    }
-}
-
-fn request_uac_elevation() -> io::Result<()> {
-    let exe_path = env::current_exe()?;
-    let mut args: Vec<String> = env::args().skip(1).collect();
-    args.push("-skip_log_before_elevation".to_string());
-    log!("Requesting UAC elevation...");
-    let mut cmd = Command::new("powershell.exe");
-    cmd.arg("-Command");
-    let mut powershell_cmd = format!("Start-Process -FilePath '{}' -Verb RunAs", exe_path.display());
-    if !args.is_empty() {
-        let args_str = args.join(" ");
-        powershell_cmd.push_str(&format!(" -ArgumentList '{}'", args_str));
-    }
-    cmd.arg(powershell_cmd);
-    match cmd.spawn() {
-        Ok(_) => {
-            log!("UAC elevation request sent. Please approve the elevation prompt.");
-            std::process::exit(0);
-        }
-        Err(e) => {
-            log!("Failed to request UAC elevation: {}", e);
-            Err(e)
-        }
-    }
-}
-
-fn enable_debug_privilege() {
-    unsafe {
-        let mut token: HANDLE = HANDLE::default();
-        match OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token) {
-            Err(_) => {
-                log!("enable_debug_privilege: self OpenProcessToken failed");
-            }
-            Ok(_) => {
-                let mut l_uid = LUID::default();
-                match LookupPrivilegeValueW(None, SE_DEBUG_NAME, &mut l_uid) {
-                    Err(_) => {
-                        log!("enable_debug_privilege: LookupPrivilegeValueW failed");
-                    }
-                    Ok(_) => {
-                        let tp = TOKEN_PRIVILEGES {
-                            PrivilegeCount: 1,
-                            Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
-                                Luid: l_uid,
-                                Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
-                            }],
-                        };
-                        match AdjustTokenPrivileges(token, false, Some(&tp as *const _), 0, None, None) {
-                            Err(_) => {
-                                log!("enable_debug_privilege: AdjustTokenPrivileges failed");
-                            }
-                            Ok(_) => {
-                                log!("enable_debug_privilege: AdjustTokenPrivileges succeeded");
-                            }
-                        }
-                    }
-                }
-                let _ = CloseHandle(token);
             }
         }
     }

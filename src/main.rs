@@ -1509,99 +1509,22 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
     }
 }
 
-/// Main entry point for the AffinityServiceRust application.
-///
-/// This function orchestrates the entire process management service:
-///
-/// 1.  **Parse command-line arguments** - Configure operation mode and parameters
-/// 2.  **Handle special modes** - Help, convert, etc.
-/// 3. **Load configuration** - Read process configs and scheduling constants
-/// 4.  **Elevate privileges** - Request UAC elevation if needed
-/// 5. **Enable debug privilege** - Required for accessing system processes
-/// 6.  **Set timer resolution** - Optional high-precision timing
-/// 7.  **Main loop** - Continuously monitor and configure processes
-///
-/// # Command-Line Arguments
-///
-/// | Argument | Description |
-/// |----------|-------------|
-/// | `-help` | Show basic help message |
-/// | `-helpall` | Show detailed help with all options |
-/// | `-console` | Output to console instead of log file |
-/// | `-config <file>` | Configuration file path (default: config.ini) |
-/// | `-interval <ms>` | Check interval in milliseconds (default: 5000) |
-/// | `-find` | Find processes with default affinity |
-/// | `-blacklist <file>` | Blacklist file for find mode |
-/// | `-convert` | Convert Process Lasso config |
-/// | `-in <file>` | Input file for convert mode |
-/// | `-out <file>` | Output file for convert mode |
-/// | `-noUAC` | Disable UAC elevation request |
-/// | `-loop <count>` | Number of loops to run (for testing) |
-/// | `-resolution <t>` | Timer resolution (5210 = 0.5210ms) |
-/// | `-logloop` | Log message at start of each loop |
-///
-/// # Main Loop Operation
-///
-/// Each iteration of the main loop:
-///
-/// 1. **Take process snapshot** - Get current state of all processes
-/// 2. **Reset alive flags** - Prepare for detecting exited processes
-/// 3. **Apply configurations** - For each process matching a config entry
-/// 4.  **Cleanup dead processes** - Close handles for exited processes
-/// 5. **Find mode** (optional) - Discover unconfigured processes
-/// 6. **Flush logs** - Ensure log data is written to disk
-/// 7. **Sleep** - Wait for the configured interval
-///
-/// # Error Handling
-///
-/// The service is designed to be resilient:
-/// - Configuration errors are logged but don't prevent startup
-/// - Individual process failures don't affect other processes
-/// - Missing admin privileges trigger UAC elevation or continue with reduced capability
-///
-/// # Example Usage
-///
-/// ```bash
-/// # Basic usage with default config
-/// AffinityServiceRust. exe
-///
-/// # Custom config with console output
-/// AffinityServiceRust. exe -config myconfig.ini -console
-///
-/// # Find unconfigured processes
-/// AffinityServiceRust.exe -find -blacklist ignore.txt -console
-///
-/// # Convert Process Lasso config
-/// AffinityServiceRust.exe -convert -in lasso.ini -out config.ini
-///
-/// # Testing with limited loops
-/// AffinityServiceRust.exe -loop 10 -logloop -console
-/// ```
-///
-/// # Returns
-///
-/// - `Ok(())` - Service completed successfully (help mode, convert mode, or loop limit reached)
-/// - `Err(...)` - Windows API error during initialization
 fn main() -> windows::core::Result<()> {
-    // =========================================================================
-    // Step 1: Parse Command-Line Arguments
-    // =========================================================================
     let args: Vec<String> = env::args().collect();
-    let mut interval_ms = 5000; // Check interval in milliseconds
-    let mut help_mode = false; // Show help and exit
-    let mut help_all_mode = false; // Show detailed help and exit
-    let mut convert_mode = false; // Convert Process Lasso config
-    let mut find_mode = false; // Find unconfigured processes
-    let mut config_file_name = "config.ini".to_string(); // Configuration file path
-    let mut blacklist_file_name: Option<String> = None; // Blacklist for find mode
-    let mut in_file_name: Option<String> = None; // Input file for convert
-    let mut out_file_name: Option<String> = None; // Output file for convert
-    let mut no_uac = false; // Disable UAC elevation
-    let mut loop_count: Option<u32> = None; // Limit number of loops (for testing)
-    let mut time_resolution: u32 = 0; // Timer resolution (100-ns units)
-    let mut log_loop = false; // Log at start of each loop
-    let mut skip_log_before_elevation = false; // Skip initial log (after UAC restart)
-
+    let mut interval_ms = 5000;
+    let mut help_mode = false;
+    let mut help_all_mode = false;
+    let mut convert_mode = false;
+    let mut find_mode = false;
+    let mut config_file_name = "config.ini".to_string();
+    let mut blacklist_file_name: Option<String> = None;
+    let mut in_file_name: Option<String> = None;
+    let mut out_file_name: Option<String> = None;
+    let mut no_uac = false;
+    let mut loop_count: Option<u32> = None;
+    let mut time_resolution: u32 = 0;
+    let mut log_loop = false;
+    let mut skip_log_before_elevation = false;
     parse_args(
         &args,
         &mut interval_ms,
@@ -1619,10 +1542,6 @@ fn main() -> windows::core::Result<()> {
         &mut log_loop,
         &mut skip_log_before_elevation,
     )?;
-
-    // =========================================================================
-    // Step 2: Handle Special Modes (Help, Convert)
-    // =========================================================================
     if help_mode {
         print_help();
         return Ok(());
@@ -1635,32 +1554,21 @@ fn main() -> windows::core::Result<()> {
         convert(in_file_name, out_file_name);
         return Ok(());
     }
-
-    // Log startup (skip if this is a UAC-elevated restart)
     if !skip_log_before_elevation {
         log!("Affinity Service started");
         log!("time interval: {}", interval_ms);
     }
-
-    // =========================================================================
-    // Step 3: Load Configuration
-    // =========================================================================
     let (configs, constants) = read_config(&config_file_name).unwrap_or_else(|e| {
         log!("Failed to read config: {}", e);
         (HashMap::new(), ConfigConstants::default())
     });
-
-    // Load blacklist for find mode
     let blacklist = if let Some(bf) = blacklist_file_name {
         read_list(bf).unwrap_or_default()
     } else {
         Vec::new()
     };
-
     let is_config_empty = configs.is_empty();
     let is_blacklist_empty = blacklist.is_empty();
-
-    // Exit if no configuration and not in find mode
     if is_config_empty && is_blacklist_empty {
         if !find_mode {
             if skip_log_before_elevation {
@@ -1672,17 +1580,12 @@ fn main() -> windows::core::Result<()> {
         log!("{} configs load", configs.len());
         log!("{} blacklist items load", blacklist.len());
     }
-
-    // =========================================================================
-    // Step 4: Handle Privilege Elevation
-    // =========================================================================
-    // Admin privileges are required to modify most system processes
     if !is_running_as_admin() {
         if no_uac {
-            log!("Not running as administrator.  UAC elevation disabled by -noUAC flag.");
+            log!("Not running as administrator. UAC elevation disabled by -noUAC flag.");
             log!("Warning: May not be able to manage all processes without admin privileges.");
         } else {
-            log!("Not running as administrator.  Requesting UAC elevation.. .");
+            log!("Not running as administrator. Requesting UAC elevation...");
             match request_uac_elevation() {
                 Ok(_) => {
                     log!("Running with administrator privileges.");
@@ -1693,14 +1596,7 @@ fn main() -> windows::core::Result<()> {
             }
         }
     }
-
-    // Enable SE_DEBUG_PRIVILEGE to access protected processes
     enable_debug_privilege();
-
-    // =========================================================================
-    // Step 5: Set Timer Resolution (Optional)
-    // =========================================================================
-    // Lower timer resolution = more precise timing but higher power consumption
     if time_resolution != 0 {
         unsafe {
             let mut current_resolution = 0u32;
@@ -1716,73 +1612,42 @@ fn main() -> windows::core::Result<()> {
             };
         }
     }
-
-    // =========================================================================
-    // Step 6: Initialize Prime Thread Scheduler
-    // =========================================================================
     let mut prime_core_scheduler = PrimeThreadScheduler::new(constants);
     let mut current_loop = 0u32;
     let mut should_continue = true;
 
-    // =========================================================================
-    // Step 7: Main Processing Loop
-    // =========================================================================
     while should_continue {
-        // Optional: Log each loop iteration (for debugging)
         if log_loop {
             log!("Loop {} started", current_loop + 1);
         }
-
-        // =====================================================================
-        // Step 7.1: Take Process Snapshot and Apply Configurations
-        // =====================================================================
         match ProcessSnapshot::take() {
             Ok(mut processes) => {
-                // Reset alive flags to detect processes that have exited
                 prime_core_scheduler.reset_alive();
-
-                // Apply configuration to each matching process
                 for i in 0..processes.pid_to_process.values().len() {
                     let process = processes.pid_to_process.values().nth(i).unwrap();
                     if let Some(config) = configs.get(process.get_name()) {
                         apply_config(process.pid(), config, &mut prime_core_scheduler, &mut processes);
                     }
                 }
-
-                // Clean up handles for processes that have exited
                 prime_core_scheduler.close_dead_process_handles();
             }
             Err(err) => {
                 log!("Failed to take process snapshot: {}", err);
             }
         };
-
-        // =====================================================================
-        // Step 7. 2: Find Mode - Discover Unconfigured Processes
-        // =====================================================================
-        // This helps users discover processes that might benefit from configuration
         if find_mode {
             unsafe {
                 let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
                 let mut pe32 = PROCESSENTRY32W::default();
                 pe32.dwSize = size_of::<PROCESSENTRY32W>() as u32;
-
                 if Process32FirstW(snapshot, &mut pe32).is_ok() {
                     loop {
-                        // Extract process name from wide string
                         let process_name = String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]).to_lowercase();
-
-                        // Check if process should be reported:
-                        // - Not in fail set (access denied)
-                        // - Not already configured
-                        // - Not in blacklist
-                        // - Has default (unmodified) affinity
                         if !FAIL_SET.lock().unwrap().contains(&process_name) && !configs.contains_key(&process_name) && !blacklist.contains(&process_name) {
                             if is_affinity_unset(pe32.th32ProcessID, process_name.as_str()) {
                                 log_process_find(&process_name);
                             }
                         }
-
                         if !Process32NextW(snapshot, &mut pe32).is_ok() {
                             break;
                         }
@@ -1791,16 +1656,9 @@ fn main() -> windows::core::Result<()> {
                 let _ = CloseHandle(snapshot);
             }
         }
-
-        // =====================================================================
-        // Step 7.3: Flush Logs and Prepare for Next Iteration
-        // =====================================================================
         let _ = find_logger().lock().unwrap().flush();
         let _ = logger().lock().unwrap().flush();
-
         current_loop += 1;
-
-        // Check if we've reached the loop limit (for testing)
         if let Some(max_loops) = loop_count {
             if current_loop >= max_loops {
                 if log_loop {
@@ -1809,14 +1667,10 @@ fn main() -> windows::core::Result<()> {
                 should_continue = false;
             }
         }
-
-        // Wait for next iteration
         if should_continue {
             thread::sleep(Duration::from_millis(interval_ms));
-            // Update cached local time for log timestamps
             *LOCALTIME_BUFFER.lock().unwrap() = Local::now();
         }
     }
-
     Ok(())
 }

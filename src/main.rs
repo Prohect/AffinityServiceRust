@@ -81,16 +81,16 @@ fn use_console() -> &'static Mutex<bool> {
 #[derive(Debug, Clone, Copy)]
 pub struct ConfigConstants {
     pub hysteresis_ratio: f64,
-    pub absolute_keep_ratio: f64,
-    pub entry_threshold_ratio: f64,
+    pub keep_threshold: f64,
+    pub entry_threshold: f64,
 }
 
 impl Default for ConfigConstants {
     fn default() -> Self {
         Self {
             hysteresis_ratio: 1.2,
-            absolute_keep_ratio: 0.7,
-            entry_threshold_ratio: 0.42,
+            keep_threshold: 0.7,
+            entry_threshold: 0.42,
         }
     }
 }
@@ -836,8 +836,8 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<(HashMap<String, ProcessCo
     // 默认常量值
     let mut constants = ConfigConstants {
         hysteresis_ratio: 1.2,
-        absolute_keep_ratio: 0.7,
-        entry_threshold_ratio: 0.42,
+        keep_threshold: 0.7,
+        entry_threshold: 0.42,
     };
 
     for line in reader.lines() {
@@ -861,13 +861,13 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<(HashMap<String, ProcessCo
                     }
                     "ABSOLUTE_KEEP_RATIO" => {
                         if let Ok(v) = const_value.parse::<f64>() {
-                            constants.absolute_keep_ratio = v;
+                            constants.keep_threshold = v;
                             log!("Config: ABSOLUTE_KEEP_RATIO = {}", v);
                         }
                     }
                     "ENTRY_THRESHOLD_RATIO" => {
                         if let Ok(v) = const_value.parse::<f64>() {
-                            constants.entry_threshold_ratio = v;
+                            constants.entry_threshold = v;
                             log!("Config: ENTRY_THRESHOLD_RATIO = {}", v);
                         }
                     }

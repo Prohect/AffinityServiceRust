@@ -180,8 +180,10 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
 
     // Prime thread Scheduling (supports >64 cores via CPU Set APIs)
     if !config.prime_cpus.is_empty() {
-        // Filter prime CPUs to those allowed by current process affinity (for < 64 cores)
-        // For >64 cores, we use all specified prime CPUs since affinity mask doesn't cover them
+        // Filter prime CPUs to those allowed by current process affinity
+        // Per MSDN: GetProcessAffinityMask returns 0 when process has threads in multiple
+        // processor groups (systems with >64 cores where threads span groups), so we use
+        // all specified prime CPUs since the affinity mask is meaningless in that case
         let effective_prime_cpus = if current_mask != 0 {
             filter_indices_by_mask(&config.prime_cpus, current_mask)
         } else {

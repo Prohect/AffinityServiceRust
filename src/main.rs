@@ -1098,7 +1098,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                             let process = processes.pid_to_process.get_mut(&pid).unwrap();
                             let thread_count = process.thread_count() as usize;
                             let candidate_count = get_cpu_set_information().lock().unwrap().len().min(thread_count);
-
                             let mut tid_with_handle: Vec<(u32, HANDLE)> = vec![(0u32, HANDLE::default()); candidate_count];
                             let mut tid_with_delta_cycles: Vec<(u32, u64)> = vec![(0u32, 0u64); candidate_count];
 
@@ -1112,8 +1111,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                     thread_stats.last_total_time = total_time;
                                 });
                                 tid_with_delta_time.sort_by_key(|&(_, delta)| delta);
-
-                                // Pick top threads (highest delta time) as candidates
                                 let precandidate_len = tid_with_delta_time.len();
                                 for i in 0..candidate_count {
                                     tid_with_handle[i].0 = tid_with_delta_time[precandidate_len - i - 1].0;
@@ -1125,7 +1122,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                 let tid = tid_with_handle[i].0;
                                 let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
                                 let process_name = &config.name;
-
                                 match thread_stats.handle {
                                     None => {
                                         tid_with_handle[i].1 = match OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION, false, tid) {
@@ -1172,11 +1168,9 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                             let prime_count = cpu_setids.len().min(candidate_count);
                             let mut prime_tids: Vec<u32> = vec![0u32; prime_count];
                             let delta_cycles_len = tid_with_delta_cycles.len();
-
                             for i in 0..prime_count {
                                 let (tid, delta_cycles) = tid_with_delta_cycles[delta_cycles_len - i - 1];
                                 let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
-
                                 if let Some(handle) = thread_stats.handle {
                                     if !handle.is_invalid() && thread_stats.cpu_set_ids.is_empty() {
                                         match SetThreadSelectedCpuSets(handle, &cpu_setids).as_bool() {

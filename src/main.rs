@@ -390,7 +390,36 @@ fn get_log_path(suffix: &str) -> PathBuf {
 }
 
 fn get_cpu_set_information() -> &'static Mutex<Vec<SYSTEM_CPU_SET_INFORMATION>> {
-    static CPU_SET_INFORMATION: Lazy<Mutex<Vec<SYSTEM_CPU_SET_INFORMATION>>> = Lazy::new(|| Mutex::new(init_cpu_set_information()));
+    static CPU_SET_INFORMATION: Lazy<Mutex<Vec<SYSTEM_CPU_SET_INFORMATION>>> = Lazy::new(|| {
+        Mutex::new({
+            let mut cpu_set_information: Vec<SYSTEM_CPU_SET_INFORMATION> = Vec::new();
+            unsafe {
+                let mut required_size: u32 = 0;
+                let _ = GetSystemCpuSetInformation(None, 0, &mut required_size, Some(GetCurrentProcess()), Some(0));
+                let mut buffer: Vec<u8> = vec![0u8; required_size as usize];
+                match GetSystemCpuSetInformation(
+                    Some(buffer.as_mut_ptr() as *mut SYSTEM_CPU_SET_INFORMATION),
+                    required_size,
+                    &mut required_size,
+                    Some(GetCurrentProcess()),
+                    Some(0),
+                )
+                .as_bool()
+                {
+                    false => log_to_find("GetSystemCpuSetInformation failed"),
+                    true => {}
+                };
+                let mut offset = 0;
+                while offset < required_size as usize {
+                    let entry_ptr = buffer.as_ptr().add(offset) as *const SYSTEM_CPU_SET_INFORMATION;
+                    let entry = &*entry_ptr;
+                    cpu_set_information.push(*entry);
+                    offset += entry.Size as usize;
+                }
+            }
+            cpu_set_information
+        })
+    });
     &CPU_SET_INFORMATION
 }
 
@@ -444,35 +473,6 @@ fn error_from_code(code: u32) -> String {
         193 => "BAD_EXE_FORMAT".to_string(),
         _ => ("code=".to_string()) + &code.to_string(),
     }
-}
-
-fn init_cpu_set_information() -> Vec<SYSTEM_CPU_SET_INFORMATION> {
-    let mut cpu_set_information: Vec<SYSTEM_CPU_SET_INFORMATION> = Vec::new();
-    unsafe {
-        let mut required_size: u32 = 0;
-        let _ = GetSystemCpuSetInformation(None, 0, &mut required_size, Some(GetCurrentProcess()), Some(0));
-        let mut buffer: Vec<u8> = vec![0u8; required_size as usize];
-        match GetSystemCpuSetInformation(
-            Some(buffer.as_mut_ptr() as *mut SYSTEM_CPU_SET_INFORMATION),
-            required_size,
-            &mut required_size,
-            Some(GetCurrentProcess()),
-            Some(0),
-        )
-        .as_bool()
-        {
-            false => log_to_find("GetSystemCpuSetInformation failed"),
-            true => {}
-        };
-        let mut offset = 0;
-        while offset < required_size as usize {
-            let entry_ptr = buffer.as_ptr().add(offset) as *const SYSTEM_CPU_SET_INFORMATION;
-            let entry = &*entry_ptr;
-            cpu_set_information.push(*entry);
-            offset += entry.Size as usize;
-        }
-    }
-    cpu_set_information
 }
 
 fn cpusetids_from_mask(mask: usize) -> Vec<u32> {

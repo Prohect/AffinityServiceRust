@@ -1521,6 +1521,7 @@ fn main() -> windows::core::Result<()> {
                     }
                 }
                 prime_core_scheduler.close_dead_process_handles();
+                drop(processes);
             }
             Err(err) => {
                 log!("Failed to take process snapshot: {}", err);

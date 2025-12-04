@@ -229,13 +229,24 @@ pub struct ProcessEntry {
     pub process: SYSTEM_PROCESS_INFORMATION,
     threads: HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     threads_base_ptr: usize,
+    name: String,
 }
 impl ProcessEntry {
     pub fn new(process: SYSTEM_PROCESS_INFORMATION, threads_base_ptr: *const SYSTEM_THREAD_INFORMATION) -> Self {
+        let name = unsafe {
+            if process.ImageName.Length > 0 && !process.ImageName.Buffer.is_null() {
+                let wchar_count = (process.ImageName.Length / 2) as usize;
+                let wide_slice = slice::from_raw_parts(process.ImageName.Buffer, wchar_count);
+                String::from_utf16_lossy(wide_slice).to_lowercase()
+            } else {
+                String::new()
+            }
+        };
         ProcessEntry {
             process,
             threads: HashMap::new(),
             threads_base_ptr: threads_base_ptr as usize,
+            name,
         }
     }
     pub fn get_threads(&mut self) -> &HashMap<u32, SYSTEM_THREAD_INFORMATION> {
@@ -258,17 +269,11 @@ impl ProcessEntry {
         self.get_threads();
         self.threads.get(&tid)
     }
-    pub fn get_name(&self) -> String {
-        unsafe {
-            if self.process.ImageName.Length > 0 && !self.process.ImageName.Buffer.is_null() {
-                let wchar_count = (self.process.ImageName.Length / 2) as usize;
-                let wide_slice = slice::from_raw_parts(self.process.ImageName.Buffer, wchar_count);
-                String::from_utf16_lossy(wide_slice).to_lowercase()
-            } else {
-                String::new()
-            }
-        }
+    #[inline]
+    pub fn get_name(&self) -> &str {
+        &self.name
     }
+
     pub fn get_name_original_case(&self) -> String {
         unsafe {
             if self.process.ImageName.Length > 0 && !self.process.ImageName.Buffer.is_null() {
@@ -1928,9 +1933,10 @@ fn main() -> windows::core::Result<()> {
                     .values()
                     .filter_map(|entry| {
                         let name = entry.get_name();
-                        if configs.contains_key(&name) { Some((entry.pid(), name)) } else { None }
+                        if configs.contains_key(name) { Some((entry.pid(), name.to_string())) } else { None }
                     })
                     .collect();
+
                 for (pid, name) in to_process {
                     if let Some(config) = configs.get(&name) {
                         apply_config(pid, config, &mut prime_core_scheduler, &mut processes);

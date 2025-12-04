@@ -142,8 +142,9 @@ impl ProcessPriority {
 struct ThreadStats {
     last_total_time: i64,
     last_cycles: u64,
-    handle: Option<HANDLE>, // Only present if thread is a VIP (selected)
+    handle: Option<HANDLE>,
     cpu_set_ids: Vec<u32>,
+    active_streak: u8,
 }
 
 impl ThreadStats {
@@ -153,6 +154,7 @@ impl ThreadStats {
             last_cycles: 0,
             handle: None,
             cpu_set_ids: vec![],
+            active_streak: 0,
         }
     }
 }
@@ -191,10 +193,18 @@ impl PrimeCoreScheduler {
         self.pid_to_process_stats.values_mut().for_each(|stats| stats.alive = false);
     }
 
+    fn set_alive(&mut self, pid: u32) {
+        self.pid_to_process_stats.entry(pid).or_insert_with(ProcessStats::new).alive = true;
+    }
+
+    #[inline]
     fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats {
-        let process_stats = self.pid_to_process_stats.entry(pid).or_insert_with(ProcessStats::new);
-        process_stats.alive = true;
-        process_stats.tid_to_thread_stats.entry(tid).or_insert_with(ThreadStats::new)
+        self.pid_to_process_stats
+            .entry(pid)
+            .or_insert_with(ProcessStats::new)
+            .tid_to_thread_stats
+            .entry(tid)
+            .or_insert_with(ThreadStats::new)
     }
 
     fn close_dead_process_handles(&mut self) {
@@ -1090,11 +1100,12 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                     if config.prime_cpu_mask != 0 {
                         let cpu_setids = cpusetids_from_mask(config.prime_cpu_mask & current_mask);
                         if !cpu_setids.is_empty() {
+                            prime_core_scheduler.set_alive(pid);
                             let process = processes.pid_to_process.get_mut(&pid).unwrap();
                             let thread_count = process.thread_count() as usize;
                             let candidate_count = get_cpu_set_information().lock().unwrap().len().min(thread_count);
                             let mut candidate_tids: Vec<u32> = vec![0u32; candidate_count];
-                            let mut tid_with_delta_cycles: Vec<(u32, u64)> = vec![(0u32, 0u64); candidate_count];
+                            let mut tid_with_delta_cycles: Vec<(u32, u64, bool)> = vec![(0u32, 0u64, false); candidate_count];
 
                             // Step 1: Sort threads by delta time and select top candidates
                             {
@@ -1113,6 +1124,7 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                             }
 
                             // Step 2: Open thread handles and query cycle times
+                            // (tid, delta_cycles, is_prime)
                             for i in 0..candidate_count {
                                 let tid = candidate_tids[i];
                                 let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
@@ -1132,7 +1144,7 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                                         log_to_find(&format!("apply_config: [QUERY_THREAD_CYCLE][{}] {:>5}-{}-{}", error_code, pid, tid, process_name));
                                                     }
                                                     Ok(_) => {
-                                                        tid_with_delta_cycles[i] = (tid, cycles);
+                                                        tid_with_delta_cycles[i] = (tid, cycles, false);
                                                     }
                                                 };
                                                 thread_stats.handle = Some(handle);
@@ -1147,7 +1159,7 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                                 log_to_find(&format!("apply_config: [QUERY_THREAD_CYCLE][{}] {:>5}-{}-{}", error_code, pid, tid, process_name));
                                             }
                                             Ok(_) => {
-                                                tid_with_delta_cycles[i] = (tid, cycles - thread_stats.last_cycles);
+                                                tid_with_delta_cycles[i] = (tid, cycles - thread_stats.last_cycles, false);
                                                 thread_stats.last_cycles = cycles;
                                             }
                                         };
@@ -1155,13 +1167,59 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                 }
                             }
 
-                            // Step 3: Promote top threads to prime cores
-                            tid_with_delta_cycles.sort_by_key(|&(_, delta_cycles)| delta_cycles);
+                            // Step 3: Sort by delta_cycles descending and calculate thresholds
+                            tid_with_delta_cycles.sort_by_key(|&(_, delta_cycles, _)| std::cmp::Reverse(delta_cycles));
+                            let max_cycles = tid_with_delta_cycles.first().map(|&(_, c, _)| c).unwrap_or(0u64);
+                            let entry_min_cycles = (max_cycles as f64 * prime_core_scheduler.constants.entry_threshold) as u64;
+                            let keep_min_cycles = (max_cycles as f64 * prime_core_scheduler.constants.keep_threshold) as u64;
                             let prime_count = cpu_setids.len().min(candidate_count);
-                            let mut prime_tids: Vec<u32> = vec![0u32; prime_count];
-                            let delta_cycles_len = tid_with_delta_cycles.len();
-                            for i in 0..prime_count {
-                                let (tid, delta_cycles) = tid_with_delta_cycles[delta_cycles_len - i - 1];
+
+                            // Update active_streak for all candidate threads
+                            for &(tid, delta_cycles, _) in &tid_with_delta_cycles {
+                                if tid == 0 {
+                                    continue;
+                                }
+                                let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
+                                if delta_cycles >= entry_min_cycles {
+                                    thread_stats.active_streak = thread_stats.active_streak.saturating_add(1).min(254);
+                                } else {
+                                    thread_stats.active_streak = 0;
+                                }
+                            }
+
+                            // Mark prime threads
+                            let mut new_prime_count: usize = 0;
+
+                            // First pass: mark protected threads (already promoted AND cycles >= keep_threshold)
+                            for (tid, delta_cycles, is_prime) in tid_with_delta_cycles.iter_mut() {
+                                if *tid == 0 || new_prime_count >= prime_count {
+                                    continue;
+                                }
+                                if !prime_core_scheduler.get_thread_stats(pid, *tid).cpu_set_ids.is_empty() && *delta_cycles >= keep_min_cycles {
+                                    *is_prime = true;
+                                    new_prime_count += 1;
+                                }
+                            }
+
+                            // Second pass: mark new candidates that pass entry threshold and streak
+                            for (tid, delta_cycles, is_prime) in tid_with_delta_cycles.iter_mut() {
+                                if new_prime_count >= prime_count {
+                                    break;
+                                }
+                                if *tid == 0 || *is_prime {
+                                    continue;
+                                }
+                                if *delta_cycles >= entry_min_cycles && prime_core_scheduler.get_thread_stats(pid, *tid).active_streak >= 2 {
+                                    *is_prime = true;
+                                    new_prime_count += 1;
+                                }
+                            }
+
+                            // Step 4: Promote new threads
+                            for &(tid, delta_cycles, is_prime) in &tid_with_delta_cycles {
+                                if !is_prime {
+                                    continue;
+                                }
                                 let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
                                 if let Some(handle) = thread_stats.handle {
                                     if !handle.is_invalid() && thread_stats.cpu_set_ids.is_empty() {
@@ -1172,7 +1230,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                             }
                                             true => {
                                                 thread_stats.cpu_set_ids = cpu_setids.clone();
-                                                prime_tids[i] = tid;
                                                 let promoted_mask = mask_from_cpusetids(&cpu_setids);
                                                 log!("{:>5}-{}-{} -> (promoted, {:#X}, cycles={})", pid, tid, config.name, promoted_mask, delta_cycles);
                                             }
@@ -1181,10 +1238,10 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                 }
                             }
 
-                            // Step 4: Demote threads that are no longer prime candidates
+                            // Step 5: Demote threads that are no longer prime
                             process.get_threads().iter().for_each(|(tid, _)| {
                                 let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
-                                if !prime_tids.contains(tid) && !thread_stats.cpu_set_ids.is_empty() {
+                                if !tid_with_delta_cycles.iter().any(|&(t, _, p)| t == *tid && p) && !thread_stats.cpu_set_ids.is_empty() {
                                     if let Some(handle) = thread_stats.handle {
                                         if !handle.is_invalid() {
                                             match SetThreadSelectedCpuSets(handle, &[]).as_bool() {

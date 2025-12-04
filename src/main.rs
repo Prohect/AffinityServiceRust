@@ -306,27 +306,21 @@ impl ProcessSnapshot {
             loop {
                 buffer = vec![0u8; buf_len];
                 let status = NtQuerySystemInformation(SystemProcessInformation, buffer.as_mut_ptr() as *mut _, buf_len as u32, &mut return_len);
-
                 // STATUS_INFO_LENGTH_MISMATCH = 0xC0000004
                 const STATUS_INFO_LENGTH_MISMATCH: i32 = -1073741820i32;
-
                 if status == STATUS_INFO_LENGTH_MISMATCH {
                     buf_len = if return_len > 0 { return_len as usize + 8192 } else { buf_len * 2 };
                     continue;
                 }
-
                 if status < 0 {
                     return Err(status);
                 }
-
                 buffer.truncate(return_len as usize);
                 break;
             }
-
             let mut pid_to_process: HashMap<u32, ProcessEntry> = HashMap::new();
             let mut offset: usize = 0;
             let buf_ptr = buffer.as_ptr();
-
             loop {
                 let process_entry_ptr = buf_ptr.add(offset) as *const SYSTEM_PROCESS_INFORMATION;
                 let entry = &*process_entry_ptr;
@@ -338,7 +332,6 @@ impl ProcessSnapshot {
                 }
                 offset += entry.NextEntryOffset as usize;
             }
-
             Ok(ProcessSnapshot { buffer, pid_to_process })
         }
     }

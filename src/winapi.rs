@@ -13,8 +13,8 @@ use std::process::Command;
 use std::sync::Mutex;
 use windows::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, LUID, NTSTATUS};
 use windows::Win32::Security::{
-    AdjustTokenPrivileges, GetTokenInformation, LookupPrivilegeValueW, SE_DEBUG_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_ELEVATION, TOKEN_PRIVILEGES, TOKEN_QUERY,
-    TokenElevation,
+    AdjustTokenPrivileges, GetTokenInformation, LookupPrivilegeValueW, SE_DEBUG_NAME, SE_INC_BASE_PRIORITY_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_ELEVATION,
+    TOKEN_PRIVILEGES, TOKEN_QUERY, TokenElevation,
 };
 use windows::Win32::System::SystemInformation::{GetSystemCpuSetInformation, SYSTEM_CPU_SET_INFORMATION};
 use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessAffinityMask, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION};
@@ -251,8 +251,9 @@ pub fn request_uac_elevation() -> io::Result<()> {
     }
 }
 
-/// Enables SeDebugPrivilege for the current process.
-/// Required to open handles to system processes and processes owned by other users.
+/// Enables SeDebugPrivilege and SeIncreaseBasePriorityPrivilege for the current process.
+/// SeDebugPrivilege is required to open handles to system processes and processes owned by other users.
+/// SeIncreaseBasePriorityPrivilege is required to set high IO priority.
 pub fn enable_debug_privilege() {
     unsafe {
         let mut token: HANDLE = HANDLE::default();
@@ -261,6 +262,7 @@ pub fn enable_debug_privilege() {
                 log!("enable_debug_privilege: self OpenProcessToken failed");
             }
             Ok(_) => {
+                // Enable SeDebugPrivilege
                 let mut l_uid = LUID::default();
                 match LookupPrivilegeValueW(None, SE_DEBUG_NAME, &mut l_uid) {
                     Err(_) => {
@@ -284,6 +286,32 @@ pub fn enable_debug_privilege() {
                         }
                     }
                 }
+
+                // Enable SeIncreaseBasePriorityPrivilege (required for high IO priority)
+                let mut l_uid_priority = LUID::default();
+                match LookupPrivilegeValueW(None, SE_INC_BASE_PRIORITY_NAME, &mut l_uid_priority) {
+                    Err(_) => {
+                        log!("enable_inc_base_priority_privilege: LookupPrivilegeValueW failed");
+                    }
+                    Ok(_) => {
+                        let tp = TOKEN_PRIVILEGES {
+                            PrivilegeCount: 1,
+                            Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
+                                Luid: l_uid_priority,
+                                Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
+                            }],
+                        };
+                        match AdjustTokenPrivileges(token, false, Some(&tp as *const _), 0, None, None) {
+                            Err(_) => {
+                                log!("enable_inc_base_priority_privilege: AdjustTokenPrivileges failed");
+                            }
+                            Ok(_) => {
+                                log!("enable_inc_base_priority_privilege: AdjustTokenPrivileges succeeded");
+                            }
+                        }
+                    }
+                }
+
                 let _ = CloseHandle(token);
             }
         }

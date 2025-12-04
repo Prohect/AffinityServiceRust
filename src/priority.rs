@@ -51,15 +51,19 @@ impl ProcessPriority {
 
 /// IO priority levels for process I/O operations.
 ///
-/// Note: High and Critical are not available without special privileges.
+/// Note on High and Critical:
+/// - High (3): Requires SeIncreaseBasePriorityPrivilege AND admin elevation.
+///   Error 0xC0000061 (STATUS_PRIVILEGE_NOT_HELD) if not elevated.
+/// - Critical (4): Reserved for kernel/system use only.
+///   Error 0xC000000D (STATUS_INVALID_PARAMETER) - not valid from user mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IOPriority {
     None,
     VeryLow,
     Low,
     Normal,
-    // High,     // Not Available
-    // Critical, // Not Available
+    High, // Requires admin elevation (STATUS_PRIVILEGE_NOT_HELD without it)
+          // Critical, // Reserved for kernel use (STATUS_INVALID_PARAMETER)
 }
 
 impl IOPriority {
@@ -68,8 +72,8 @@ impl IOPriority {
         (Self::VeryLow, "very low", Some(0)),
         (Self::Low, "low", Some(1)),
         (Self::Normal, "normal", Some(2)),
-        // (Self::High, "high", Some(3)),           // Not Available
-        // (Self::Critical, "critical", Some(4)), // Not Available
+        (Self::High, "high", Some(3)), // Requires admin elevation
+                                       // (Self::Critical, "critical", Some(4)), // Kernel only
     ];
 
     pub fn as_str(&self) -> &'static str {

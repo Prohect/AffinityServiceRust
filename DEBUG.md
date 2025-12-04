@@ -4,9 +4,19 @@ Quick reference for debugging this Windows process affinity/priority management 
 
 ## Quick Debug Command
 
+**Non-admin (with console output):**
 ```bash
 cargo run --release -- -console -noUAC -logloop -loop 3 -interval 2000 -config test.ini
 ```
+
+**Admin elevation (check log file after):**
+```bash
+cargo run --release -- -logloop -loop 3 -interval 2000 -config test.ini
+# Then check: logs/YYYYMMDD.log
+# Then check: logs/YYYYMMDD.find.log
+```
+
+> **Note:** When running with admin elevation, do NOT use `-console`. The UAC elevation spawns a new process via PowerShell, and the console window closes immediately after execution. Without `-console`, output goes to log files which persist after the process exits.
 
 ## Command Line Arguments
 
@@ -64,9 +74,15 @@ Expected output on success:
 
 ### Test with Admin Privileges
 
-Run without `-noUAC` to request elevation:
+Run without `-noUAC` to request elevation. **Do NOT use `-console`** as the elevated process runs in a separate window that closes immediately:
 ```bash
-cargo run --release -- -console -logloop -loop 3 -interval 2000 -config test.ini
+cargo run --release -- -logloop -loop 3 -interval 2000 -config test.ini
+```
+
+Then check the log file:
+```bash
+tail -50 logs/$(date +%Y%m%d).log   # Linux/Git Bash
+type logs\YYYYMMDD.log              # Windows CMD
 ```
 
 ### Single Loop Test
@@ -90,12 +106,40 @@ Errors are logged with format `[ERROR_TYPE][0x{code}]`:
 | `0x00000005` | ACCESS_DENIED - Need admin or process is protected |
 | `0x00000057` | INVALID_PARAMETER - Wrong struct size or invalid value |
 | `0x00000006` | INVALID_HANDLE - Process handle issue |
+| `0xC0000061` | STATUS_PRIVILEGE_NOT_HELD - Missing required privilege (need admin) |
+| `0xC000000D` | STATUS_INVALID_PARAMETER - Invalid value for this API |
+
+## Priority Levels
+
+### IO Priority
+
+| Level | Value | Status |
+|-------|-------|--------|
+| `very low` | 0 | ✅ Works |
+| `low` | 1 | ✅ Works |
+| `normal` | 2 | ✅ Works |
+| `high` | 3 | ✅ Works with admin elevation (fails without: STATUS_PRIVILEGE_NOT_HELD) |
+| `critical` | 4 | ❌ Reserved for kernel use (STATUS_INVALID_PARAMETER) |
+
+### Memory Priority
+
+| Level | Value | Status |
+|-------|-------|--------|
+| `very low` | 1 | ✅ Works |
+| `low` | 2 | ✅ Works |
+| `medium` | 4 | ✅ Works |
+| `below normal` | 5 | ✅ Works |
+| `normal` | 3 | ✅ Works |
 
 ## Known Issues
 
 1. **ACCESS_DENIED for SYSTEM processes**: Processes running as SYSTEM (e.g., from Task Scheduler) cannot be modified by non-elevated processes. This is expected behavior.
 
 2. **Multiple instances**: If another instance is running with higher privileges, you'll see ACCESS_DENIED when trying to modify it.
+
+3. **Console output lost with admin elevation**: When running with `-console` and UAC elevation, the elevated process spawns in a new window via PowerShell which closes immediately. Use log file output instead (omit `-console`).
+
+4. **High IO priority requires admin**: IO priority `high` only works when running as administrator. Without elevation, you'll get `0xC0000061` (STATUS_PRIVILEGE_NOT_HELD).
 
 ## Project Structure
 

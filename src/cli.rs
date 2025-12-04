@@ -95,7 +95,7 @@ pub fn parse_args(
 pub fn print_help() {
     println!("usage: AffinityServiceRust.exe [args]");
     println!();
-    println!("A Windows service to manage process priority, CPU affinity, and IO priority.");
+    println!("A Windows service to manage process priority, CPU affinity, IO priority, and memory priority.");
     println!();
     println!("Common Options:");
     println!("  -help | --help       show this help message");
@@ -111,7 +111,7 @@ pub fn print_help() {
     println!();
     println!("Config Format: process_name,priority,affinity,cpuset,prime,io_priority,memory_priority");
     println!("  Example: notepad.exe,above normal,0-7,0,0,low,normal");
-    println!("  Example: game.exe,high,*pcore,0,*pcore,normal,normal");
+    println!("  Example: game.exe,high,*pcore,0,*pcore,normal,low");
     println!();
     println!("Use -helpall for detailed options and debugging features.");
 }
@@ -169,9 +169,15 @@ pub fn print_help_all() {
     println!("  Then use: game.exe,high,*pcore,0,*pcore,normal,normal");
     println!();
     println!("IO Priority Options:");
-    println!("  none, very low, low, normal");
+    println!("  none, very low, low, normal, high");
     println!("  'none' means the program won't change it");
-    println!("  Note: high/critical removed due to privilege requirements");
+    println!("  'high' requires admin elevation (fails without admin)");
+    println!("  Note: 'critical' is reserved for kernel use and not available");
+    println!();
+    println!("Memory Priority Options:");
+    println!("  none, very low, low, medium, below normal, normal");
+    println!("  'none' means the program won't change it");
+    println!("  Lower memory priority = pages more likely to be paged out under memory pressure");
     println!();
     println!("Example Configuration:");
     println!("  # Scheduler constants");
@@ -182,10 +188,11 @@ pub fn print_help_all() {
     println!("  *pcore = 0-7;64-71");
     println!("  *ecore = 8-15;72-79");
     println!();
-    println!("  # Process configs: name,priority,affinity,cpuset,prime,io,memory");
+    println!("  # Process configs: name,priority,affinity,cpuset,prime,io_priority,memory_priority");
     println!("  notepad.exe,above normal,*ecore,0,0,low,normal");
     println!("  game.exe,high,0,0,*pcore,normal,normal");
     println!("  background.exe,idle,*ecore,0,0,very low,low");
+    println!("  browser.exe,normal,*ecore,0,0,normal,below normal");
     println!();
     println!("=== MULTI-CPU GROUP SUPPORT ===");
     println!();
@@ -199,5 +206,19 @@ pub fn print_help_all() {
     println!("- Admin privileges needed for managing system processes");
     println!("- SetProcessAffinityMask only works within one CPU group (≤64 cores)");
     println!("- For >64 cores, use CPU Set features (cpuset column) instead of affinity");
+    println!("- IO priority 'high' requires admin elevation");
+    println!("- IO priority 'critical' is kernel-only and not available from user mode");
+    println!();
+    println!("=== DEBUGGING ===");
+    println!();
+    println!("Quick debug command (non-admin):");
+    println!("  AffinityServiceRust.exe -console -noUAC -logloop -loop 3 -interval 2000 -config test.ini");
+    println!();
+    println!("Admin debug (check log file after, do NOT use -console):");
+    println!("  AffinityServiceRust.exe -logloop -loop 3 -interval 2000 -config test.ini");
+    println!("  Then check: logs/YYYYMMDD.log");
+    println!();
+    println!("Note: When running with UAC elevation, -console output goes to a new window");
+    println!("that closes immediately. Use log files instead for admin testing.");
     println!();
 }

@@ -33,7 +33,6 @@ use windows::Win32::{
         WindowsProgramming::QueryThreadCycleTime,
     },
 };
-
 #[link(name = "ntdll")]
 unsafe extern "system" {
     fn NtQueryInformationProcess(h_prc: HANDLE, process_information_class: u32, p_out: *mut std::ffi::c_void, out_length: u32, return_length: *mut u32) -> NTSTATUS;
@@ -358,15 +357,12 @@ impl IOPriority {
         // (Self::High, "high", Some(3)),           // Not Available
         // (Self::Critical, "critical", Some(4)), // Not Available
     ];
-
     pub fn as_str(&self) -> &'static str {
         Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, name, _)| *name).unwrap_or("fail as str")
     }
-
     pub fn as_win_const(&self) -> Option<u32> {
         Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, _, val)| *val).unwrap_or(None)
     }
-
     pub fn from_str(s: &str) -> Self {
         Self::TABLE
             .iter()
@@ -409,21 +405,6 @@ impl MemoryPriority {
     }
 }
 
-pub fn log_to_find(msg: &str) {
-    let time_prefix = LOCALTIME_BUFFER.lock().unwrap().format("%H:%M:%S").to_string();
-    if *use_console().lock().unwrap() {
-        println!("[{}]{}", time_prefix, msg);
-    } else {
-        let _ = writeln!(find_logger().lock().unwrap(), "[{}]{}", time_prefix, msg);
-    }
-}
-
-pub fn log_process_find(process_name: &str) {
-    if FINDS_SET.lock().unwrap().insert(process_name.to_string()) {
-        log_to_find(&format!("find {}", process_name));
-    }
-}
-
 macro_rules! log {
     ($($arg:tt)*) => {
         log_message(format!($($arg)*).as_str());
@@ -437,128 +418,19 @@ fn log_message(args: &str) {
         let _ = writeln!(logger().lock().unwrap(), "[{}]{}", time_prefix, args);
     }
 }
-
-fn read_config<P: AsRef<Path>>(path: P) -> io::Result<(HashMap<String, ProcessConfig>, ConfigConstants)> {
-    let file = File::open(path)?;
-    let reader = io::BufReader::new(file);
-    let mut configs = HashMap::new();
-    let mut affinity_aliases = HashMap::new();
-    let mut constants = ConfigConstants::default();
-
-    for line in reader.lines() {
-        let line = line?;
-        let line = line.trim();
-
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        } else if line.starts_with('@') {
-            // define constant: @NAME=VALUE
-            if let Some(eq_pos) = line.find('=') {
-                let const_name = line[1..eq_pos].trim().to_uppercase();
-                let const_value = line[eq_pos + 1..].trim();
-                match const_name.as_str() {
-                    "HYSTERESIS_RATIO" => {
-                        if let Ok(v) = const_value.parse::<f64>() {
-                            constants.hysteresis_ratio = v;
-                            log!("Config: HYSTERESIS_RATIO = {}", v);
-                        }
-                    }
-                    "KEEP_THRESHOLD" => {
-                        if let Ok(v) = const_value.parse::<f64>() {
-                            constants.keep_threshold = v;
-                            log!("Config: KEEP_THRESHOLD = {}", v);
-                        }
-                    }
-                    "ENTRY_THRESHOLD" => {
-                        if let Ok(v) = const_value.parse::<f64>() {
-                            constants.entry_threshold = v;
-                            log!("Config: ENTRY_THRESHOLD = {}", v);
-                        }
-                    }
-                    _ => {
-                        log_to_find(&format!("Unknown constant: {}", const_name));
-                    }
-                }
-            }
-            continue;
-        } else if line.starts_with('*') {
-            // define mask alias: *NAME=VALUE
-            if let Some(eq_pos) = line.find('=') {
-                let alias_name = line[1..eq_pos].trim().to_lowercase();
-                let alias_value = line[eq_pos + 1..].trim();
-                let affinity_value = if alias_value.starts_with("0x") {
-                    usize::from_str_radix(alias_value.trim_start_matches("0x"), 16).unwrap_or(0)
-                } else {
-                    alias_value.parse().unwrap_or(0)
-                };
-                affinity_aliases.insert(alias_name, affinity_value);
-            }
-            continue;
-        }
-
-        // process configuration line
-        let parts: Vec<&str> = line.split(',').collect();
-        if parts.len() >= 3 {
-            let name = parts[0].to_lowercase();
-            let priority: ProcessPriority = ProcessPriority::from_str(&parts[1]);
-            let affinity_def = parts[2].trim();
-            let affinity = if affinity_def.starts_with('*') {
-                *affinity_aliases.get(&affinity_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
-            } else if parts[2].trim_start().starts_with("0x") {
-                usize::from_str_radix(affinity_def.trim_start_matches("0x"), 16).unwrap_or(0)
-            } else {
-                parts[2].parse().unwrap_or(0)
-            };
-            let cpuset_def = if parts.len() >= 4 { parts[3].trim() } else { "0" };
-            let cpuset = if cpuset_def.starts_with('*') {
-                *affinity_aliases.get(&cpuset_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
-            } else if cpuset_def.starts_with("0x") {
-                usize::from_str_radix(cpuset_def.trim_start_matches("0x"), 16).unwrap_or(0)
-            } else {
-                cpuset_def.parse().unwrap_or(0)
-            };
-            let prime_cpu_def = if parts.len() >= 5 { parts[4].trim() } else { "0" };
-            let prime_cpuset = if prime_cpu_def.starts_with('*') {
-                *affinity_aliases.get(&prime_cpu_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
-            } else if prime_cpu_def.starts_with("0x") {
-                usize::from_str_radix(prime_cpu_def.trim_start_matches("0x"), 16).unwrap_or(0)
-            } else {
-                prime_cpu_def.parse().unwrap_or(0)
-            };
-            let io_priority = if parts.len() >= 6 { IOPriority::from_str(parts[5]) } else { IOPriority::None };
-            let memory_priority = if parts.len() >= 7 {
-                MemoryPriority::from_str(parts[6])
-            } else {
-                MemoryPriority::None
-            };
-            configs.insert(
-                name.clone(),
-                ProcessConfig {
-                    name,
-                    priority,
-                    affinity_mask: affinity,
-                    cpu_set_mask: cpuset,
-                    prime_cpu_mask: prime_cpuset,
-                    io_priority,
-                    memory_priority,
-                },
-            );
-        }
+pub fn log_to_find(msg: &str) {
+    let time_prefix = LOCALTIME_BUFFER.lock().unwrap().format("%H:%M:%S").to_string();
+    if *use_console().lock().unwrap() {
+        println!("[{}]{}", time_prefix, msg);
+    } else {
+        let _ = writeln!(find_logger().lock().unwrap(), "[{}]{}", time_prefix, msg);
     }
-    Ok((configs, constants))
 }
-
-fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> {
-    let file = File::open(path)?;
-    let reader = io::BufReader::new(file);
-    Ok(reader
-        .lines()
-        .filter_map(|l| l.ok())
-        .map(|s| s.trim().to_lowercase())
-        .filter(|s| !s.is_empty() && !s.starts_with('#'))
-        .collect())
+pub fn log_process_find(process_name: &str) {
+    if FINDS_SET.lock().unwrap().insert(process_name.to_string()) {
+        log_to_find(&format!("find {}", process_name));
+    }
 }
-
 fn error_from_code(code: u32) -> String {
     match code {
         0 => "SUCCESS".to_string(),
@@ -579,6 +451,59 @@ fn error_from_code(code: u32) -> String {
         193 => "BAD_EXE_FORMAT".to_string(),
         _ => ("code=".to_string()) + &code.to_string(),
     }
+}
+
+fn init_cpu_set_information() -> Vec<SYSTEM_CPU_SET_INFORMATION> {
+    let mut cpu_set_information: Vec<SYSTEM_CPU_SET_INFORMATION> = Vec::new();
+    unsafe {
+        let mut required_size: u32 = 0;
+        let _ = GetSystemCpuSetInformation(None, 0, &mut required_size, Some(GetCurrentProcess()), Some(0));
+        let mut buffer: Vec<u8> = vec![0u8; required_size as usize];
+        match GetSystemCpuSetInformation(
+            Some(buffer.as_mut_ptr() as *mut SYSTEM_CPU_SET_INFORMATION),
+            required_size,
+            &mut required_size,
+            Some(GetCurrentProcess()),
+            Some(0),
+        )
+        .as_bool()
+        {
+            false => log_to_find("GetSystemCpuSetInformation failed"),
+            true => {}
+        };
+        let mut offset = 0;
+        while offset < required_size as usize {
+            let entry_ptr = buffer.as_ptr().add(offset) as *const SYSTEM_CPU_SET_INFORMATION;
+            let entry = &*entry_ptr;
+            cpu_set_information.push(*entry);
+            offset += entry.Size as usize;
+        }
+    }
+    cpu_set_information
+}
+
+fn cpusetids_from_mask(mask: usize) -> Vec<u32> {
+    let mut cpuids: Vec<u32> = Vec::new();
+    unsafe {
+        get_cpu_set_information().lock().unwrap().iter().for_each(|entry| {
+            if ((1 << entry.Anonymous.CpuSet.LogicalProcessorIndex) & mask) != 0 {
+                cpuids.push(entry.Anonymous.CpuSet.Id);
+            }
+        });
+    }
+    cpuids
+}
+
+fn mask_from_cpusetids(cpuids: &[u32]) -> usize {
+    let mut mask: usize = 0;
+    unsafe {
+        for entry in get_cpu_set_information().lock().unwrap().iter() {
+            if cpuids.contains(&entry.Anonymous.CpuSet.Id) {
+                mask |= 1 << entry.Anonymous.CpuSet.LogicalProcessorIndex;
+            }
+        }
+    }
+    mask
 }
 
 fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut PrimeCoreScheduler, processes: &mut ProcessSnapshot) {
@@ -963,8 +888,118 @@ fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
     }
 }
 
+#[inline]
 fn split_trim_nonempty(s: &str) -> Vec<&str> {
     s.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect()
+}
+
+fn read_config<P: AsRef<Path>>(path: P) -> io::Result<(HashMap<String, ProcessConfig>, ConfigConstants)> {
+    let file = File::open(path)?;
+    let reader = io::BufReader::new(file);
+    let mut configs = HashMap::new();
+    let mut affinity_aliases = HashMap::new();
+    let mut constants = ConfigConstants::default();
+
+    for line in reader.lines() {
+        let line = line?;
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        } else if line.starts_with('@') {
+            // define constant: @NAME=VALUE
+            if let Some(eq_pos) = line.find('=') {
+                let const_name = line[1..eq_pos].trim().to_uppercase();
+                let const_value = line[eq_pos + 1..].trim();
+                match const_name.as_str() {
+                    "HYSTERESIS_RATIO" => {
+                        if let Ok(v) = const_value.parse::<f64>() {
+                            constants.hysteresis_ratio = v;
+                            log!("Config: HYSTERESIS_RATIO = {}", v);
+                        }
+                    }
+                    "KEEP_THRESHOLD" => {
+                        if let Ok(v) = const_value.parse::<f64>() {
+                            constants.keep_threshold = v;
+                            log!("Config: KEEP_THRESHOLD = {}", v);
+                        }
+                    }
+                    "ENTRY_THRESHOLD" => {
+                        if let Ok(v) = const_value.parse::<f64>() {
+                            constants.entry_threshold = v;
+                            log!("Config: ENTRY_THRESHOLD = {}", v);
+                        }
+                    }
+                    _ => {
+                        log_to_find(&format!("Unknown constant: {}", const_name));
+                    }
+                }
+            }
+            continue;
+        } else if line.starts_with('*') {
+            // define mask alias: *NAME=VALUE
+            if let Some(eq_pos) = line.find('=') {
+                let alias_name = line[1..eq_pos].trim().to_lowercase();
+                let alias_value = line[eq_pos + 1..].trim();
+                let affinity_value = if alias_value.starts_with("0x") {
+                    usize::from_str_radix(alias_value.trim_start_matches("0x"), 16).unwrap_or(0)
+                } else {
+                    alias_value.parse().unwrap_or(0)
+                };
+                affinity_aliases.insert(alias_name, affinity_value);
+            }
+            continue;
+        }
+
+        // process configuration line
+        let parts: Vec<&str> = line.split(',').collect();
+        if parts.len() >= 3 {
+            let name = parts[0].to_lowercase();
+            let priority: ProcessPriority = ProcessPriority::from_str(&parts[1]);
+            let affinity_def = parts[2].trim();
+            let affinity = if affinity_def.starts_with('*') {
+                *affinity_aliases.get(&affinity_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
+            } else if parts[2].trim_start().starts_with("0x") {
+                usize::from_str_radix(affinity_def.trim_start_matches("0x"), 16).unwrap_or(0)
+            } else {
+                parts[2].parse().unwrap_or(0)
+            };
+            let cpuset_def = if parts.len() >= 4 { parts[3].trim() } else { "0" };
+            let cpuset = if cpuset_def.starts_with('*') {
+                *affinity_aliases.get(&cpuset_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
+            } else if cpuset_def.starts_with("0x") {
+                usize::from_str_radix(cpuset_def.trim_start_matches("0x"), 16).unwrap_or(0)
+            } else {
+                cpuset_def.parse().unwrap_or(0)
+            };
+            let prime_cpu_def = if parts.len() >= 5 { parts[4].trim() } else { "0" };
+            let prime_cpuset = if prime_cpu_def.starts_with('*') {
+                *affinity_aliases.get(&prime_cpu_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
+            } else if prime_cpu_def.starts_with("0x") {
+                usize::from_str_radix(prime_cpu_def.trim_start_matches("0x"), 16).unwrap_or(0)
+            } else {
+                prime_cpu_def.parse().unwrap_or(0)
+            };
+            let io_priority = if parts.len() >= 6 { IOPriority::from_str(parts[5]) } else { IOPriority::None };
+            let memory_priority = if parts.len() >= 7 {
+                MemoryPriority::from_str(parts[6])
+            } else {
+                MemoryPriority::None
+            };
+            configs.insert(
+                name.clone(),
+                ProcessConfig {
+                    name,
+                    priority,
+                    affinity_mask: affinity,
+                    cpu_set_mask: cpuset,
+                    prime_cpu_mask: prime_cpuset,
+                    io_priority,
+                    memory_priority,
+                },
+            );
+        }
+    }
+    Ok((configs, constants))
 }
 
 fn parse_mask(s: &str) -> usize {
@@ -988,94 +1023,15 @@ fn parse_mask(s: &str) -> usize {
     mask
 }
 
-fn convert(in_file_name: Option<String>, out_file_name: Option<String>) {
-    if let Some(ref in_file) = in_file_name {
-        if let Some(ref out_file) = out_file_name {
-            match read_utf16le_file(in_file) {
-                Ok(in_content) => {
-                    let mut configs: Vec<ProcessConfig> = Vec::new();
-                    for line in in_content.lines() {
-                        let line = line.trim();
-                        if line.is_empty() {
-                            continue;
-                        }
-                        if let Some(rest) = line.strip_prefix("DefaultPriorities=") {
-                            let fields = split_trim_nonempty(rest);
-                            for chunk in fields.chunks(2) {
-                                if chunk.len() == 2 {
-                                    let name = chunk[0].to_lowercase();
-                                    let priority = ProcessPriority::from_str(chunk[1]);
-                                    match configs.iter_mut().find(|c| c.name == name) {
-                                        Some(cfg) => cfg.priority = priority,
-                                        None => configs.push(ProcessConfig {
-                                            name,
-                                            priority,
-                                            affinity_mask: 0,
-                                            cpu_set_mask: 0,
-                                            prime_cpu_mask: 0,
-                                            io_priority: IOPriority::None,
-                                            memory_priority: MemoryPriority::None,
-                                        }),
-                                    }
-                                } else {
-                                    log!("Invalid priority configuration line: {}", line);
-                                }
-                            }
-                        } else if let Some(rest) = line.strip_prefix("DefaultAffinitiesEx=") {
-                            let fields = split_trim_nonempty(rest);
-                            for chunk in fields.chunks(3) {
-                                if chunk.len() == 3 {
-                                    let name = chunk[0].to_lowercase();
-                                    let mask = parse_mask(chunk[2]);
-                                    match configs.iter_mut().find(|c| c.name == name) {
-                                        Some(cfg) => cfg.affinity_mask = mask,
-                                        None => configs.push(ProcessConfig {
-                                            name,
-                                            priority: ProcessPriority::None,
-                                            affinity_mask: mask,
-                                            cpu_set_mask: 0,
-                                            prime_cpu_mask: 0,
-                                            io_priority: IOPriority::None,
-                                            memory_priority: MemoryPriority::None,
-                                        }),
-                                    }
-                                } else {
-                                    log!("Invalid affinity configuration line: {}", line);
-                                }
-                            }
-                        }
-                    }
-                    match File::create(out_file) {
-                        Ok(mut output) => {
-                            for cfg in &configs {
-                                let _ = writeln!(
-                                    output,
-                                    "{},{},0x{:X},0x{:X},0x{:X},{}",
-                                    cfg.name,
-                                    cfg.priority.as_str(),
-                                    cfg.affinity_mask,
-                                    cfg.cpu_set_mask,
-                                    cfg.prime_cpu_mask,
-                                    cfg.io_priority.as_str()
-                                );
-                            }
-                            log!("convert done, {} process configs have been output", configs.len());
-                        }
-                        Err(_) => {
-                            log!("cannot create output file: {}", out_file);
-                        }
-                    }
-                }
-                Err(_) => {
-                    log!("cannot read from file: {}", in_file);
-                }
-            }
-        } else {
-            log!("not output file (-out <file>)!");
-        }
-    } else {
-        log!("no input file (-in <file>)!");
-    };
+fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> {
+    let file = File::open(path)?;
+    let reader = io::BufReader::new(file);
+    Ok(reader
+        .lines()
+        .filter_map(|l| l.ok())
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty() && !s.starts_with('#'))
+        .collect())
 }
 
 fn read_utf16le_file(path: &str) -> io::Result<String> {
@@ -1253,41 +1209,94 @@ fn print_help_all() {
     println!();
 }
 
-fn enable_debug_privilege() {
-    unsafe {
-        let mut token: HANDLE = HANDLE::default();
-        match OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token) {
-            Err(_) => {
-                log!("enable_debug_privilege: self OpenProcessToken failed");
-            }
-            Ok(_) => {
-                let mut l_uid = LUID::default();
-                match LookupPrivilegeValueW(None, SE_DEBUG_NAME, &mut l_uid) {
-                    Err(_) => {
-                        log!("enable_debug_privilege: LookupPrivilegeValueW failed");
-                    }
-                    Ok(_) => {
-                        let tp = TOKEN_PRIVILEGES {
-                            PrivilegeCount: 1,
-                            Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
-                                Luid: l_uid,
-                                Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
-                            }],
-                        };
-                        match AdjustTokenPrivileges(token, false, Some(&tp as *const _), 0, None, None) {
-                            Err(_) => {
-                                log!("enable_debug_privilege: AdjustTokenPrivileges failed");
+fn convert(in_file_name: Option<String>, out_file_name: Option<String>) {
+    if let Some(ref in_file) = in_file_name {
+        if let Some(ref out_file) = out_file_name {
+            match read_utf16le_file(in_file) {
+                Ok(in_content) => {
+                    let mut configs: Vec<ProcessConfig> = Vec::new();
+                    for line in in_content.lines() {
+                        let line = line.trim();
+                        if line.is_empty() {
+                            continue;
+                        }
+                        if let Some(rest) = line.strip_prefix("DefaultPriorities=") {
+                            let fields = split_trim_nonempty(rest);
+                            for chunk in fields.chunks(2) {
+                                if chunk.len() == 2 {
+                                    let name = chunk[0].to_lowercase();
+                                    let priority = ProcessPriority::from_str(chunk[1]);
+                                    match configs.iter_mut().find(|c| c.name == name) {
+                                        Some(cfg) => cfg.priority = priority,
+                                        None => configs.push(ProcessConfig {
+                                            name,
+                                            priority,
+                                            affinity_mask: 0,
+                                            cpu_set_mask: 0,
+                                            prime_cpu_mask: 0,
+                                            io_priority: IOPriority::None,
+                                            memory_priority: MemoryPriority::None,
+                                        }),
+                                    }
+                                } else {
+                                    log!("Invalid priority configuration line: {}", line);
+                                }
                             }
-                            Ok(_) => {
-                                log!("enable_debug_privilege: AdjustTokenPrivileges succeeded");
+                        } else if let Some(rest) = line.strip_prefix("DefaultAffinitiesEx=") {
+                            let fields = split_trim_nonempty(rest);
+                            for chunk in fields.chunks(3) {
+                                if chunk.len() == 3 {
+                                    let name = chunk[0].to_lowercase();
+                                    let mask = parse_mask(chunk[2]);
+                                    match configs.iter_mut().find(|c| c.name == name) {
+                                        Some(cfg) => cfg.affinity_mask = mask,
+                                        None => configs.push(ProcessConfig {
+                                            name,
+                                            priority: ProcessPriority::None,
+                                            affinity_mask: mask,
+                                            cpu_set_mask: 0,
+                                            prime_cpu_mask: 0,
+                                            io_priority: IOPriority::None,
+                                            memory_priority: MemoryPriority::None,
+                                        }),
+                                    }
+                                } else {
+                                    log!("Invalid affinity configuration line: {}", line);
+                                }
                             }
                         }
                     }
+                    match File::create(out_file) {
+                        Ok(mut output) => {
+                            for cfg in &configs {
+                                let _ = writeln!(
+                                    output,
+                                    "{},{},0x{:X},0x{:X},0x{:X},{}",
+                                    cfg.name,
+                                    cfg.priority.as_str(),
+                                    cfg.affinity_mask,
+                                    cfg.cpu_set_mask,
+                                    cfg.prime_cpu_mask,
+                                    cfg.io_priority.as_str()
+                                );
+                            }
+                            log!("convert done, {} process configs have been output", configs.len());
+                        }
+                        Err(_) => {
+                            log!("cannot create output file: {}", out_file);
+                        }
+                    }
                 }
-                let _ = CloseHandle(token);
+                Err(_) => {
+                    log!("cannot read from file: {}", in_file);
+                }
             }
+        } else {
+            log!("not output file (-out <file>)!");
         }
-    }
+    } else {
+        log!("no input file (-in <file>)!");
+    };
 }
 
 fn is_running_as_admin() -> bool {
@@ -1342,57 +1351,41 @@ fn request_uac_elevation() -> io::Result<()> {
     }
 }
 
-fn init_cpu_set_information() -> Vec<SYSTEM_CPU_SET_INFORMATION> {
-    let mut cpu_set_information: Vec<SYSTEM_CPU_SET_INFORMATION> = Vec::new();
+fn enable_debug_privilege() {
     unsafe {
-        let mut required_size: u32 = 0;
-        let _ = GetSystemCpuSetInformation(None, 0, &mut required_size, Some(GetCurrentProcess()), Some(0));
-        let mut buffer: Vec<u8> = vec![0u8; required_size as usize];
-        match GetSystemCpuSetInformation(
-            Some(buffer.as_mut_ptr() as *mut SYSTEM_CPU_SET_INFORMATION),
-            required_size,
-            &mut required_size,
-            Some(GetCurrentProcess()),
-            Some(0),
-        )
-        .as_bool()
-        {
-            false => log_to_find("GetSystemCpuSetInformation failed"),
-            true => {}
-        };
-        let mut offset = 0;
-        while offset < required_size as usize {
-            let entry_ptr = buffer.as_ptr().add(offset) as *const SYSTEM_CPU_SET_INFORMATION;
-            let entry = &*entry_ptr;
-            cpu_set_information.push(*entry);
-            offset += entry.Size as usize;
-        }
-    }
-    cpu_set_information
-}
-
-fn cpusetids_from_mask(mask: usize) -> Vec<u32> {
-    let mut cpuids: Vec<u32> = Vec::new();
-    unsafe {
-        get_cpu_set_information().lock().unwrap().iter().for_each(|entry| {
-            if ((1 << entry.Anonymous.CpuSet.LogicalProcessorIndex) & mask) != 0 {
-                cpuids.push(entry.Anonymous.CpuSet.Id);
+        let mut token: HANDLE = HANDLE::default();
+        match OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token) {
+            Err(_) => {
+                log!("enable_debug_privilege: self OpenProcessToken failed");
             }
-        });
-    }
-    cpuids
-}
-
-fn mask_from_cpusetids(cpuids: &[u32]) -> usize {
-    let mut mask: usize = 0;
-    unsafe {
-        for entry in get_cpu_set_information().lock().unwrap().iter() {
-            if cpuids.contains(&entry.Anonymous.CpuSet.Id) {
-                mask |= 1 << entry.Anonymous.CpuSet.LogicalProcessorIndex;
+            Ok(_) => {
+                let mut l_uid = LUID::default();
+                match LookupPrivilegeValueW(None, SE_DEBUG_NAME, &mut l_uid) {
+                    Err(_) => {
+                        log!("enable_debug_privilege: LookupPrivilegeValueW failed");
+                    }
+                    Ok(_) => {
+                        let tp = TOKEN_PRIVILEGES {
+                            PrivilegeCount: 1,
+                            Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
+                                Luid: l_uid,
+                                Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
+                            }],
+                        };
+                        match AdjustTokenPrivileges(token, false, Some(&tp as *const _), 0, None, None) {
+                            Err(_) => {
+                                log!("enable_debug_privilege: AdjustTokenPrivileges failed");
+                            }
+                            Ok(_) => {
+                                log!("enable_debug_privilege: AdjustTokenPrivileges succeeded");
+                            }
+                        }
+                    }
+                }
+                let _ = CloseHandle(token);
             }
         }
     }
-    mask
 }
 
 fn main() -> windows::core::Result<()> {

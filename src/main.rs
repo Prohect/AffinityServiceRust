@@ -49,9 +49,9 @@ unsafe extern "system" {
 const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
 
 fn get_log_path(suffix: &str) -> PathBuf {
-    let year = LOCALTIME_BUFFER.lock().unwrap().year();
-    let month = LOCALTIME_BUFFER.lock().unwrap().month();
-    let day = LOCALTIME_BUFFER.lock().unwrap().day();
+    let time = LOCALTIME_BUFFER.lock().unwrap();
+    let (year, month, day) = (time.year(), time.month(), time.day());
+    drop(time);
     let log_dir = PathBuf::from("logs");
     if !log_dir.exists() {
         let _ = fs::create_dir_all(&log_dir);
@@ -143,7 +143,7 @@ struct ThreadStats {
     last_total_time: i64,
     last_cycles: u64,
     handle: Option<HANDLE>, // Only present if thread is a VIP (selected)
-    cpu_set_id: Option<u32>,
+    cpu_set_ids: Vec<u32>,
 }
 
 impl ThreadStats {
@@ -152,7 +152,7 @@ impl ThreadStats {
             last_total_time: 0,
             last_cycles: 0,
             handle: None,
-            cpu_set_id: None,
+            cpu_set_ids: vec![],
         }
     }
 }
@@ -171,6 +171,7 @@ impl ProcessStats {
     }
 }
 
+#[allow(dead_code)]
 struct PrimeCoreScheduler {
     // clear threadStats once process exit as pid may be reused by OS
     pid_to_process_stats: HashMap<u32, ProcessStats>,
@@ -664,11 +665,16 @@ impl ThreadInfoExt for SYSTEM_THREAD_INFORMATION {
         }
     }
 }
-#[allow(dead_code)]
 pub struct ProcessSnapshot {
     ///is used to store the snapshot of the processes, parsed in unsafe
-    buffer: Vec<u8>,
     pub pid_to_process: HashMap<u32, ProcessEntry>,
+    buffer: Vec<u8>,
+}
+impl Drop for ProcessSnapshot {
+    fn drop(&mut self) {
+        self.pid_to_process.clear();
+        self.buffer.clear();
+    }
 }
 
 impl ProcessSnapshot {
@@ -698,7 +704,7 @@ impl ProcessSnapshot {
                 break;
             }
 
-            let mut by_pid: HashMap<u32, ProcessEntry> = HashMap::new();
+            let mut pid_to_process: HashMap<u32, ProcessEntry> = HashMap::new();
             let mut offset: usize = 0;
             let buf_ptr = buffer.as_ptr();
 
@@ -707,79 +713,18 @@ impl ProcessSnapshot {
                 let entry = &*process_entry_ptr;
                 let threads_ptr = &(*process_entry_ptr).Threads as *const SYSTEM_THREAD_INFORMATION;
                 let process_entry = ProcessEntry::new(*entry, threads_ptr);
-                by_pid.insert(entry.UniqueProcessId as u32, process_entry);
+                pid_to_process.insert(entry.UniqueProcessId as u32, process_entry);
                 if entry.NextEntryOffset == 0 {
                     break;
                 }
                 offset += entry.NextEntryOffset as usize;
             }
 
-            Ok(ProcessSnapshot { buffer, pid_to_process: by_pid })
+            Ok(ProcessSnapshot { pid_to_process, buffer })
         }
     }
     pub fn get_by_name(&self, name: String) -> Vec<&ProcessEntry> {
         self.pid_to_process.values().filter(|entry| (**entry).get_name() == name).collect()
-    }
-}
-
-pub fn thread_state_str(state: u32) -> &'static str {
-    match state {
-        0 => "Initialized",
-        1 => "Ready",
-        2 => "Running",
-        3 => "Standby",
-        4 => "Terminated",
-        5 => "Waiting",
-        6 => "Transition",
-        7 => "DeferredReady",
-        8 => "GateWaitObsolete",
-        9 => "WaitingForProcessInSwap",
-        _ => "Unknown",
-    }
-}
-
-pub fn wait_reason_str(reason: u32) -> &'static str {
-    match reason {
-        0 => "Executive",
-        1 => "FreePage",
-        2 => "PageIn",
-        3 => "PoolAllocation",
-        4 => "DelayExecution",
-        5 => "Suspended",
-        6 => "UserRequest",
-        7 => "WrExecutive",
-        8 => "WrFreePage",
-        9 => "WrPageIn",
-        10 => "WrPoolAllocation",
-        11 => "WrDelayExecution",
-        12 => "WrSuspended",
-        13 => "WrUserRequest",
-        14 => "WrEventPair",
-        15 => "WrQueue",
-        16 => "WrLpcReceive",
-        17 => "WrLpcReply",
-        18 => "WrVirtualMemory",
-        19 => "WrPageOut",
-        20 => "WrRendezvous",
-        21 => "WrKeyedEvent",
-        22 => "WrTerminated",
-        23 => "WrProcessInSwap",
-        24 => "WrCpuRateControl",
-        25 => "WrCalloutStack",
-        26 => "WrKernel",
-        27 => "WrResource",
-        28 => "WrPushLock",
-        29 => "WrMutex",
-        30 => "WrQuantumEnd",
-        31 => "WrDispatchInt",
-        32 => "WrPreempted",
-        33 => "WrYieldExecution",
-        34 => "WrFastMutex",
-        35 => "WrGuardedMutex",
-        36 => "WrRundown",
-        37 => "WrAlertByThreadId",
-        38 => "WrDeferredPreempt",
-        _ => "Unknown",
     }
 }
 
@@ -863,7 +808,7 @@ pub fn log_to_find(msg: &str) {
 }
 
 pub fn log_process_find(process_name: &str) {
-    if FINDS_SET.lock().unwrap().insert(process_name.to_string().clone()) {
+    if FINDS_SET.lock().unwrap().insert(process_name.to_string()) {
         log_to_find(&format!("find {}", process_name));
     }
 }
@@ -963,18 +908,18 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<(HashMap<String, ProcessCo
             let cpuset_def = if parts.len() >= 4 { parts[3].trim() } else { "0" };
             let cpuset = if cpuset_def.starts_with('*') {
                 *affinity_aliases.get(&cpuset_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
-            } else if parts[3].trim_start().starts_with("0x") {
+            } else if cpuset_def.starts_with("0x") {
                 usize::from_str_radix(cpuset_def.trim_start_matches("0x"), 16).unwrap_or(0)
             } else {
-                parts[3].parse().unwrap_or(0)
+                cpuset_def.parse().unwrap_or(0)
             };
             let prime_cpu_def = if parts.len() >= 5 { parts[4].trim() } else { "0" };
             let prime_cpuset = if prime_cpu_def.starts_with('*') {
                 *affinity_aliases.get(&prime_cpu_def.trim_start_matches('*').to_lowercase()).unwrap_or(&0)
-            } else if parts[4].trim_start().starts_with("0x") {
+            } else if prime_cpu_def.starts_with("0x") {
                 usize::from_str_radix(prime_cpu_def.trim_start_matches("0x"), 16).unwrap_or(0)
             } else {
-                parts[4].parse().unwrap_or(0)
+                prime_cpu_def.parse().unwrap_or(0)
             };
             let io_priority = if parts.len() >= 6 { IOPriority::from_str(parts[5]) } else { IOPriority::None };
             let memory_priority = if parts.len() >= 7 {
@@ -1154,274 +1099,142 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
 
                     if config.prime_cpu_mask != 0 {
                         let cpu_setids = cpusetids_from_mask(config.prime_cpu_mask & current_mask);
+                        let total_cores = get_cpu_set_information().lock().unwrap().len();
                         if !cpu_setids.is_empty() {
-                            let total_cores = get_cpu_set_information().lock().unwrap().len();
-                            let max_vip_count = cpu_setids.len();
-
-                            if let Some(process) = processes.pid_to_process.get_mut(&pid) {
-                                // ========== 阶段 1: 用 delta_time 快速筛选 top total_cores 个候选者 ==========
-                                let mut tid_to_delta_time: Vec<(u32, i64)> = Vec::new();
-
-                                for thread in process.get_threads().values() {
-                                    let tid = thread.tid();
-                                    let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
-
+                            let process = processes.pid_to_process.get_mut(&pid).unwrap();
+                            let mut tid_with_handle: Vec<(u32, HANDLE)> = vec![(0u32, HANDLE::default()); total_cores.min(process.thread_count() as usize)];
+                            let mut tid_with_delta_cycles: Vec<(u32, u64)> = vec![(0u32, 0u64); tid_with_handle.len()];
+                            {
+                                let mut tid_with_delta_time: Vec<(u32, i64)> = Vec::new();
+                                process.get_threads().iter().for_each(|(tid, thread)| {
                                     let total_time = thread.total_time();
-                                    let delta_time = total_time - thread_stats.last_total_time;
-                                    thread_stats.last_total_time = total_time;
-
-                                    tid_to_delta_time.push((tid, delta_time));
+                                    tid_with_delta_time.push((*tid, total_time - prime_core_scheduler.get_thread_stats(pid, *tid).last_total_time));
+                                    prime_core_scheduler.get_thread_stats(pid, *tid).last_total_time = total_time;
+                                });
+                                tid_with_delta_time.sort_by_key(|&(_, delta)| delta);
+                                for i in 0..tid_with_handle.len() {
+                                    tid_with_handle[i].0 = tid_with_delta_time[tid_with_delta_time.len() - i - 1].0;
                                 }
-
-                                // 按 delta_time 降序排序, 取 top total_cores 个
-                                tid_to_delta_time.sort_by(|a, b| b.1.cmp(&a.1));
-                                let candidates: Vec<u32> = tid_to_delta_time.iter().take(total_cores).map(|(tid, _)| *tid).collect();
-
-                                // ========== 阶段 2: 只对候选者查询 cycles, 并保留 handle ==========
-                                let mut tid_to_delta_cycles: HashMap<u32, u64> = HashMap::new();
-
-                                for tid in &candidates {
-                                    let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
-
-                                    let (cycles, new_handle): (u64, Option<HANDLE>) = {
-                                        let (handle, is_new) = match thread_stats.handle {
-                                            Some(h) => (h, false),
-                                            None => match OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION, false, *tid) {
-                                                Ok(h) => (h, true),
-                                                Err(_) => {
-                                                    log_to_find(&format!(
-                                                        "apply_config: [OPEN_THREAD_FOR_CYCLES_FAILED][{}] {:>5}-{}-{}",
-                                                        error_from_code(GetLastError().0),
-                                                        pid,
-                                                        tid,
-                                                        config.name
-                                                    ));
-                                                    (HANDLE::default(), false)
-                                                }
-                                            },
-                                        };
-
-                                        if handle.is_invalid() {
-                                            (0, None)
-                                        } else {
-                                            let mut cycles: u64 = 0;
-                                            match QueryThreadCycleTime(handle, &mut cycles) {
-                                                Err(_) => {
-                                                    log_to_find(&format!(
-                                                        "apply_config: [QUERY_THREAD_CYCLE_TIME_FAILED][{}] {:>5}-{}-{}",
-                                                        error_from_code(GetLastError().0),
-                                                        pid,
-                                                        tid,
-                                                        config.name
-                                                    ));
-                                                    if is_new {
-                                                        let _ = CloseHandle(handle);
-                                                    }
-                                                    (0, None)
-                                                }
-                                                Ok(()) => {
-                                                    if is_new {
-                                                        (cycles, Some(handle))
-                                                    } else {
-                                                        (cycles, None)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    };
-
-                                    // 如果获得了新 handle, 保存到 thread_stats
-                                    if let Some(h) = new_handle {
-                                        thread_stats.handle = Some(h);
-                                    }
-
-                                    let delta_cycles = cycles.saturating_sub(thread_stats.last_cycles);
-                                    thread_stats.last_cycles = cycles;
-
-                                    tid_to_delta_cycles.insert(*tid, delta_cycles);
-                                }
-
-                                // 找出最大的 delta_cycles
-                                let max_delta_cycles = tid_to_delta_cycles.values().copied().max().unwrap_or(0);
-
-                                // ========== 阶段 3: VIP 选择与三重容忍机制 ==========
-
-                                // 阈值常量
-                                let hysteresis_ratio: f64 = prime_core_scheduler.constants.hysteresis_ratio; // 候选者必须比 VIP * ? 强
-                                let absolute_keep_ratio: f64 = prime_core_scheduler.constants.absolute_keep_ratio; // VIP >= 最大值 * ? 则保留
-                                let entry_threshold_ratio: f64 = prime_core_scheduler.constants.entry_threshold_ratio; // 进入 VIP 需要 >= 最大值的 * ?
-
-                                let absolute_keep_threshold = (max_delta_cycles as f64 * absolute_keep_ratio) as u64;
-                                let entry_threshold = (max_delta_cycles as f64 * entry_threshold_ratio) as u64;
-
-                                // 获取当前 VIP 及其 delta_cycles
-                                let mut current_vips: Vec<(u32, u64)> = Vec::new();
-                                if let Some(process_stats) = prime_core_scheduler.pid_to_process_stats.get(&pid) {
-                                    for (tid, ts) in &process_stats.tid_to_thread_stats {
-                                        if ts.handle.is_some() && ts.cpu_set_id.is_some() {
-                                            let score = tid_to_delta_cycles.get(tid).copied().unwrap_or(0);
-                                            current_vips.push((*tid, score));
-                                        }
-                                    }
-                                }
-
-                                // 获取非 VIP 候选者（有 handle 但还没分配 cpu_set_id 的）
-                                // 新增: 必须达到 entry_threshold 才能成为候选者
-                                let current_vip_tids: HashSet<u32> = current_vips.iter().map(|(t, _)| *t).collect();
-                                let mut new_candidates: Vec<(u32, u64)> = tid_to_delta_cycles
-                                    .iter()
-                                    .filter(|(tid, score)| !current_vip_tids.contains(tid) && **score >= entry_threshold)
-                                    .map(|(&tid, &score)| (tid, score))
-                                    .collect();
-                                new_candidates.sort_by(|a, b| b.1.cmp(&a.1)); // 降序
-
-                                // 当前 VIP 按 delta_cycles 升序（最弱的在前）
-                                current_vips.sort_by(|a, b| a.1.cmp(&b.1));
-
-                                // 检查当前 VIP 是否低于 entry_threshold，如果是则需要降级
-                                let mut vips_below_entry: Vec<u32> = Vec::new();
-                                for (tid, score) in &current_vips {
-                                    if *score < entry_threshold {
-                                        vips_below_entry.push(*tid);
-                                    }
-                                }
-
-                                let mut to_demote: Vec<u32> = vips_below_entry.clone();
-                                let mut to_promote: Vec<u32> = Vec::new();
-
-                                // 从 current_vips 中移除低于 entry_threshold 的
-                                current_vips.retain(|(_, score)| *score >= entry_threshold);
-
-                                // 先填空位（包括刚刚因低于 entry_threshold 而空出的）
-                                let empty_slots = max_vip_count.saturating_sub(current_vips.len());
-                                for (tid, _) in new_candidates.iter().take(empty_slots) {
-                                    to_promote.push(*tid);
-                                }
-
-                                // 尝试替换弱者
-                                let remaining = new_candidates.iter().skip(empty_slots);
-                                let mut weak_iter = current_vips.iter().peekable();
-
-                                for (cand_tid, cand_score) in remaining {
-                                    match weak_iter.peek() {
-                                        None => break,
-                                        Some((weak_tid, weak_score)) => {
-                                            // 条件 1: 绝对保留 - VIP 的 delta_cycles >= 最大值的 70%
-                                            if *weak_score >= absolute_keep_threshold {
-                                                break;
-                                            }
-
-                                            // 条件 2: 相对容忍 - 候选者必须比 VIP 强 20%
-                                            let relative_threshold = (*weak_score as f64 * hysteresis_ratio) as u64;
-                                            if *cand_score > relative_threshold {
-                                                to_demote.push(*weak_tid);
-                                                to_promote.push(*cand_tid);
-                                                weak_iter.next();
-                                            } else {
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // ========== 执行降级: 关闭落选者的 handle ==========
-                                let mut freed_cpu_set_ids: Vec<u32> = Vec::new();
-                                if let Some(process_stats) = prime_core_scheduler.pid_to_process_stats.get_mut(&pid) {
-                                    for tid in &to_demote {
-                                        if let Some(thread_stats) = process_stats.tid_to_thread_stats.get_mut(tid) {
-                                            if let Some(handle) = thread_stats.handle.take() {
-                                                let _ = SetThreadSelectedCpuSets(handle, &[]);
-                                                let _ = CloseHandle(handle);
-                                            }
-                                            if let Some(cpu_id) = thread_stats.cpu_set_id.take() {
-                                                freed_cpu_set_ids.push(cpu_id);
-                                                let delta = tid_to_delta_cycles.get(tid).unwrap_or(&0);
-                                                log!(
-                                                    "{:>5}-{}-{} <- (demoted, freed {:#X}, cycles={})",
+                            }
+                            for i in 0..tid_with_handle.len() {
+                                let tid = tid_with_handle[i].0;
+                                let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
+                                match thread_stats.handle {
+                                    None => {
+                                        tid_with_handle[i].1 = match OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION, false, tid) {
+                                            Err(_) => {
+                                                log_to_find(&format!(
+                                                    "apply_config: [OPEN_THREAD_FAILED][{}] {:>5}-{}-{}",
+                                                    error_from_code(GetLastError().0),
                                                     pid,
                                                     tid,
-                                                    config.name,
-                                                    mask_from_cpusetids(&[cpu_id]),
-                                                    delta
-                                                );
+                                                    config.name
+                                                ));
+                                                HANDLE::default()
                                             }
-                                        }
-                                    }
-
-                                    // 关闭未被选中的候选者的 handle（有 handle 但不在 to_promote 和 current_vips 中）
-                                    let promoted_set: HashSet<u32> = to_promote.iter().copied().collect();
-                                    let remaining_vip_tids: HashSet<u32> = current_vips.iter().map(|(t, _)| *t).collect();
-                                    for tid in &candidates {
-                                        if !remaining_vip_tids.contains(tid) && !promoted_set.contains(tid) {
-                                            if let Some(thread_stats) = process_stats.tid_to_thread_stats.get_mut(tid) {
-                                                if let Some(handle) = thread_stats.handle.take() {
-                                                    let _ = CloseHandle(handle);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // ========== 构建可用核心池 ==========
-                                let mut used_cpu_set_ids: HashSet<u32> = HashSet::new();
-                                if let Some(process_stats) = prime_core_scheduler.pid_to_process_stats.get(&pid) {
-                                    for (_, ts) in &process_stats.tid_to_thread_stats {
-                                        if ts.handle.is_some() {
-                                            if let Some(cpu_id) = ts.cpu_set_id {
-                                                used_cpu_set_ids.insert(cpu_id);
-                                            }
-                                        }
-                                    }
-                                }
-
-                                let mut available_cpu_set_ids: Vec<u32> = freed_cpu_set_ids;
-                                for cpu_id in &cpu_setids {
-                                    if !used_cpu_set_ids.contains(cpu_id) && !available_cpu_set_ids.contains(cpu_id) {
-                                        available_cpu_set_ids.push(*cpu_id);
-                                    }
-                                }
-                                available_cpu_set_ids.sort_by(|a, b| b.cmp(a)); // 优先大核
-
-                                // ========== 执行升级: 直接使用已有的 handle ==========
-                                let mut available_iter = available_cpu_set_ids.into_iter();
-                                for tid in &to_promote {
-                                    let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
-
-                                    match thread_stats.handle {
-                                        None => {
-                                            log_to_find(&format!("apply_config: [NO_HANDLE_FOR_PROMOTE] {:>5}-{}-{}", pid, tid, config.name));
-                                            continue;
-                                        }
-                                        Some(handle) => {
-                                            if let Some(cpu_id) = available_iter.next() {
-                                                match SetThreadSelectedCpuSets(handle, &[cpu_id]).as_bool() {
-                                                    false => {
+                                            Ok(handle) => {
+                                                let mut cycles: u64 = 0;
+                                                match QueryThreadCycleTime(handle, &mut cycles) {
+                                                    Err(_) => {
                                                         log_to_find(&format!(
-                                                            "apply_config: [SET_THREAD_SELECTED_CPU_SETS_FAILED][{}] {:>5}-{}-{}",
+                                                            "apply_config: [QUERY_THREAD_CYCLE_FAILED][{}] {:>5}-{}-{}",
                                                             error_from_code(GetLastError().0),
                                                             pid,
                                                             tid,
                                                             config.name
                                                         ));
                                                     }
-                                                    true => {
-                                                        thread_stats.cpu_set_id = Some(cpu_id);
-                                                        let delta = tid_to_delta_cycles.get(tid).unwrap_or(&0);
-                                                        log!(
-                                                            "{:>5}-{}-{} -> (promoted, {:#X}, cycles={})",
-                                                            pid,
-                                                            tid,
-                                                            config.name,
-                                                            mask_from_cpusetids(&[cpu_id]),
-                                                            delta
-                                                        );
+                                                    Ok(_) => {
+                                                        tid_with_delta_cycles[i].0 = tid;
+                                                        tid_with_delta_cycles[i].1 = cycles;
                                                     }
-                                                }
+                                                };
+                                                prime_core_scheduler.get_thread_stats(pid, tid).handle = Some(handle);
+                                                handle
+                                            }
+                                        };
+                                    }
+                                    Some(handle) => {
+                                        let mut cycles: u64 = 0;
+                                        match QueryThreadCycleTime(handle, &mut cycles) {
+                                            Err(_) => {
+                                                log_to_find(&format!(
+                                                    "apply_config: [QUERY_THREAD_CYCLE_FAILED][{}] {:>5}-{}-{}",
+                                                    error_from_code(GetLastError().0),
+                                                    pid,
+                                                    tid,
+                                                    config.name
+                                                ));
+                                            }
+                                            Ok(_) => {
+                                                tid_with_delta_cycles[i].0 = tid;
+                                                tid_with_delta_cycles[i].1 = cycles - prime_core_scheduler.get_thread_stats(pid, tid).last_cycles;
+                                                prime_core_scheduler.get_thread_stats(pid, tid).last_cycles = cycles;
+                                            }
+                                        };
+                                        tid_with_handle[i].1 = handle;
+                                    }
+                                }
+                            }
+                            tid_with_delta_cycles.sort_by_key(|&(_, delta_cycles)| delta_cycles);
+                            let prime_count = cpu_setids.len().min(tid_with_handle.len());
+                            let mut prime_tids: Vec<u32> = vec![0u32; prime_count];
+                            for i in 0..prime_count {
+                                let idx = tid_with_delta_cycles.len() - i - 1;
+                                let tid = tid_with_delta_cycles[idx].0;
+                                let delta_cycles = tid_with_delta_cycles[idx].1;
+                                let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
+                                if let Some(handle) = thread_stats.handle {
+                                    if !handle.is_invalid() && thread_stats.cpu_set_ids.len() == 0 {
+                                        match SetThreadSelectedCpuSets(handle, &cpu_setids).as_bool() {
+                                            false => {
+                                                log_to_find(&format!(
+                                                    "apply_config: [SET_THREAD_SELECTED_CPU_SETS_FAILED][{}] {:>5}-{}-{}",
+                                                    error_from_code(GetLastError().0),
+                                                    pid,
+                                                    tid,
+                                                    config.name
+                                                ));
+                                            }
+                                            true => {
+                                                prime_core_scheduler.get_thread_stats(pid, tid).cpu_set_ids = cpu_setids.clone();
+                                                prime_tids[i] = tid;
+                                                log!(
+                                                    "{:>5}-{}-{} -> (promoted, {:#X}, cycles={})",
+                                                    pid,
+                                                    tid,
+                                                    config.name,
+                                                    mask_from_cpusetids(&cpu_setids),
+                                                    delta_cycles
+                                                );
                                             }
                                         }
                                     }
                                 }
                             }
+                            process.get_threads().iter().for_each(|(tid, _)| {
+                                if !prime_tids.contains(tid) && prime_core_scheduler.get_thread_stats(pid, *tid).cpu_set_ids.len() > 0 {
+                                    if let Some(handle) = prime_core_scheduler.get_thread_stats(pid, *tid).handle {
+                                        if !handle.is_invalid() {
+                                            match SetThreadSelectedCpuSets(handle, &[]).as_bool() {
+                                                false => {
+                                                    log_to_find(&format!(
+                                                        "apply_config: [SET_THREAD_SELECTED_CPU_SETS_FAILED][{}] {:>5}-{}-{}",
+                                                        error_from_code(GetLastError().0),
+                                                        pid,
+                                                        tid,
+                                                        config.name
+                                                    ));
+                                                }
+                                                true => {
+                                                    log!("{:>5}-{}-{} -> (demoted)", pid, tid, config.name);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    prime_core_scheduler.get_thread_stats(pid, *tid).cpu_set_ids = vec![];
+                                };
+                            });
                         }
                     }
 

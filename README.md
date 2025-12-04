@@ -21,14 +21,14 @@ A Windows process management tool written in Rust that automatically applies CPU
 
 ### Prime Core Scheduling
 
-For multi-threaded applications (e.g., games), this feature identifies CPU-intensive threads and pins them to designated cores:
+For multi-threaded applications (e.g., games), this feature identifies CPU-intensive threads and assigns them to designated cores using Windows CPU sets (soft preference, not hard pinning):
 
 - Monitors thread CPU cycle consumption over time
 - Filters low-activity threads (entry threshold: 42% of max)
 - Protects promoted threads from premature demotion (keep threshold: 69% of max)
 - Requires consistent activity (2+ intervals) before promotion
 
-Useful for games where main/render threads should run on P-cores while avoiding cores 0/1 (hardware interrupt handlers).
+Useful for games where main/render threads should prefer P-cores while avoiding cores 0/1 (hardware interrupt handlers).
 
 ## Quick Start
 

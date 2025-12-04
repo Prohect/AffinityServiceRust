@@ -68,17 +68,20 @@ impl Default for ConfigConstants {
 ///
 /// Supports multiple formats:
 /// - Legacy hex mask (≤64 cores): `0xFF`, `0xFFFF`
-/// - Decimal mask (≤64 cores): `255`
 /// - Single CPU index: `5`
 /// - Range: `0-7`
 /// - Multiple ranges with semicolons: `0-7;64-71`
 /// - Mixed: `0-3;8;9;64-67`
+///
+/// Note: Decimal masks are NOT supported to avoid confusion with single core indices.
+/// Use hex format (0xFF) for masks or the new range format (0-7) instead.
 ///
 /// # Examples
 /// ```
 /// parse_cpu_spec("0xFF")       // -> [0, 1, 2, 3, 4, 5, 6, 7]
 /// parse_cpu_spec("0-7;64-71")  // -> [0, 1, 2, 3, 4, 5, 6, 7, 64, 65, 66, 67, 68, 69, 70, 71]
 /// parse_cpu_spec("0;4;8")      // -> [0, 4, 8]
+/// parse_cpu_spec("7")          // -> [7] (single core, not a mask)
 /// ```
 pub fn parse_cpu_spec(s: &str) -> Vec<u32> {
     let s = s.trim();
@@ -95,19 +98,9 @@ pub fn parse_cpu_spec(s: &str) -> Vec<u32> {
         return Vec::new();
     }
 
-    // Check if it's a plain decimal number (could be a mask for backward compat)
-    // Only treat as mask if it doesn't contain semicolons or dashes
-    if !s.contains(';') && !s.contains('-') {
-        if let Ok(value) = s.parse::<u64>() {
-            // If it's a small number (< 256), could be either a mask or a single CPU index
-            // For backward compatibility, treat numbers >= 2 as masks if they could represent multiple CPUs
-            // Single CPU indices should use the range format: "5" as mask vs "5;5" or just document it
-            // Actually, for full backward compat, treat any plain number as a mask
-            return mask_to_cpu_indices(value);
-        }
-    }
-
-    // Parse range/index format: "0-7;64-71;128"
+    // Parse range/index format: "0-7;64-71;128" or single CPU index like "7"
+    // Note: Plain decimal numbers are treated as single CPU indices, not masks
+    // Use hex format (0xFF) for masks to avoid confusion
     let mut cpus = Vec::new();
     for part in s.split(';') {
         let part = part.trim();
@@ -443,6 +436,14 @@ mod tests {
     #[test]
     fn test_parse_cpu_spec_individual() {
         assert_eq!(parse_cpu_spec("0;4;8"), vec![0, 4, 8]);
+    }
+
+    #[test]
+    fn test_parse_cpu_spec_single_core() {
+        // Single numbers are treated as CPU indices, not masks
+        assert_eq!(parse_cpu_spec("7"), vec![7]);
+        assert_eq!(parse_cpu_spec("255"), vec![255]);
+        assert_eq!(parse_cpu_spec("8"), vec![8]);
     }
 
     #[test]

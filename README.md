@@ -123,8 +123,11 @@ The new CPU specification format supports systems with >64 logical processors:
 | Range | `0-7` | Cores 0 through 7 |
 | Multiple ranges | `0-7;64-71` | Cores 0-7 and 64-71 (for >64 core systems) |
 | Individual | `0;2;4;6` | Specific cores 0, 2, 4, 6 |
+| Single CPU | `7` | Single core 7 only |
 | Alias | `*pcore` | Use predefined alias |
 | No change | `0` | Don't modify this setting |
+
+**Note:** Decimal masks are NOT supported to avoid confusion with single CPU indices. For example, `7` means core 7, not a mask for cores 0-2. Use hex format (`0x7`) or range format (`0-2`) for masks instead.
 
 ### Defining CPU Aliases
 
@@ -147,7 +150,6 @@ Define aliases once and reuse them throughout your config:
 Tune the thread scheduling behavior with these constants:
 
 ```ini
-@HYSTERESIS_RATIO = 1.259  # Hysteresis for thread promotion decisions
 @ENTRY_THRESHOLD = 0.42    # Minimum cycles ratio to be considered for promotion
 @KEEP_THRESHOLD = 0.69     # Minimum cycles ratio to protect from demotion
 ```
@@ -214,9 +216,9 @@ dwm.exe,high,*p,0,0,high,normal
 | Field | Options | Description |
 |-------|---------|-------------|
 | Priority | `none`, `idle`, `below normal`, `normal`, `above normal`, `high`, `real time` | Process priority class |
-| Affinity | `0`, `0xFF`, `0-7`, `*alias` | CPU cores (hex, range, or alias) |
-| CPU Set | `0`, `0xFF`, `0-7`, `*alias` | Windows CPU set preference |
-| Prime CPU | `0`, `0xFF`, `0-7`, `*alias` | CPUs for thread-level scheduling |
+| Affinity | `0`, `0xFF`, `0-7`, `7`, `*alias` | CPU cores (hex, range, single index, or alias) |
+| CPU Set | `0`, `0xFF`, `0-7`, `7`, `*alias` | Windows CPU set preference |
+| Prime CPU | `0`, `0xFF`, `0-7`, `7`, `*alias` | CPUs for thread-level scheduling |
 | I/O Priority | `none`, `very low`, `low`, `normal`, `high` | I/O priority (`high` needs admin) |
 | Memory Priority | `none`, `very low`, `low`, `medium`, `below normal`, `normal` | Memory page priority |
 
@@ -251,6 +253,7 @@ See [DEBUG.md](DEBUG.md) for detailed debugging information.
 - Process Lasso users: use `-convert` to import existing settings
 - For games with thread pools, prime core scheduling can help stabilize frame times
 - Use range syntax (`0-7;64-71`) instead of hex masks for systems with >64 cores
+- Plain numbers like `7` are treated as single CPU indices, not masks; use hex (`0xFF`) or range (`0-7`) for multi-core specs
 - Memory priority affects how aggressively Windows pages out process memory under pressure
 
 ## Compile

@@ -101,10 +101,27 @@ AffinityServiceRust.exe -find
 字段说明：
 - process_name：可执行文件名（例如 `chrome.exe`）
 - priority：`none`、`idle`、`below normal`、`normal`、`above normal`、`high`、`real time`
-- affinity_mask：亲和性掩码，十六进制（如 `0xFF`）或别名（如 `*pcore`），或 `0` 表示不更改
-- cpu_set_mask：CPU 集掩码（格式同上），或 `0` 表示不更改
-- prime_cpu_mask：线程级 Prime Core 调度的 CPU 掩码，或 `0` 表示禁用
-- io_priority：`none`、`very low`、`low`、`normal`
+- affinity：CPU 规格（见下方格式说明），或 `0` 表示不更改
+- cpu_set：CPU 集规格（格式同上），或 `0` 表示不更改
+- prime_cpus：线程级 Prime Core 调度的 CPU 规格，或 `0` 表示禁用
+- io_priority：`none`、`very low`、`low`、`normal`、`high`（需要管理员权限）
+- memory_priority：`none`、`very low`、`low`、`medium`、`below normal`、`normal`
+
+### CPU 规格格式
+
+新的 CPU 规格格式支持 >64 逻辑处理器的系统：
+
+| 格式 | 示例 | 说明 |
+|------|------|------|
+| 十六进制掩码 | `0xFF` | 旧格式，核心 0-7（仅限 ≤64 核心） |
+| 范围 | `0-7` | 核心 0 到 7 |
+| 多范围 | `0-7;64-71` | 核心 0-7 和 64-71（用于 >64 核心系统） |
+| 单独指定 | `0;2;4;6` | 指定核心 0、2、4、6 |
+| 单个 CPU | `7` | 仅核心 7 |
+| 别名 | `*pcore` | 使用预定义的别名 |
+| 不更改 | `0` | 不修改此设置 |
+
+**注意：** 不支持十进制掩码，以避免与单个 CPU 索引混淆。例如，`7` 表示核心 7，而不是核心 0-2 的掩码。请使用十六进制格式（`0x7`）或范围格式（`0-2`）来表示掩码。
 
 ### 调度常量
 
@@ -115,33 +132,49 @@ AffinityServiceRust.exe -find
 @KEEP_THRESHOLD = 0.69     # 保护不被降级的最小周期占比
 ```
 
-示例 `config. ini`：
+### 定义 CPU 别名
+
+定义别名后可在整个配置中复用：
+
+```ini
+*pcore = 0-7           # 性能核心
+*ecore = 8-19          # 效率核心
+*all = 0-19            # 所有核心
+*pN0 = 1-7             # 除核心 0 外的 P 核
+*pN01 = 2-7            # 除核心 0-1 外的 P 核
+
+# 用于 >64 核心系统
+*a = 0-7;64-71
+*b = 8-15;72-79
+```
+
+### 示例配置
+
 ```ini
 # === 调度常量 ===
 @ENTRY_THRESHOLD = 0.42
-@KEEP_THRESHOLD = 0. 69
+@KEEP_THRESHOLD = 0.69
 
 # === 亲和性别名 ===
-# 定义别名一次并在规则中复用；若 CPU 拓扑变化只需修改这里
-*a = 0xFFFFF        # 所有核心
-*p = 0xFF           # 性能核心 0-7
-*e = 0xFFF00        # 效率核心 8-19
-*pN0 = 0xFE         # 除核心 0 外的 P 核
-*pN01 = 0xFC        # 除核心 0-1 外的 P 核
+*a = 0-19           # 所有核心（Intel 8P+12E）
+*p = 0-7            # 性能核心
+*e = 8-19           # 效率核心
+*pN0 = 1-7          # 除核心 0 外的 P 核
+*pN01 = 2-7         # 除核心 0-1 外的 P 核
 
 # === 进程配置 ===
-# 列顺序：process_name,priority,affinity_mask,cpu_set_mask,prime_cpu_mask,io_priority
+# 格式：process_name,priority,affinity,cpuset,prime,io_priority,memory_priority
 
-# 游戏 - 使用 prime core 调度将主线程/渲染线程固定到 P 核（避开核心 0/1）
-cs2. exe,normal,*a,*p,*pN01,normal
-game.exe,high,*a,*p,*pN01,normal
+# 游戏 - 使用 prime core 调度将主线程/渲染线程固定到 P 核
+cs2.exe,normal,*a,*p,*pN01,normal,normal
+game.exe,high,*a,*p,*pN01,normal,normal
 
-# 后台应用 - 效率核心，低 I/O 优先级
-discord.exe,below normal,*e,0,0,low
-chrome.exe,normal,*e,0,0,low
+# 后台应用 - 效率核心，低优先级
+discord.exe,below normal,*e,0,0,low,low
+chrome.exe,normal,*e,0,0,low,below normal
 
 # 工作应用
-code.exe,above normal,*a,*e,0,normal
+code.exe,above normal,*a,*e,0,normal,normal
 ```
 
 ### 设置说明
@@ -149,37 +182,44 @@ code.exe,above normal,*a,*e,0,normal
 | 字段 | 可选值 | 说明 |
 |------|--------|------|
 | Priority（优先级） | `none`、`idle`、`below normal`、`normal`、`above normal`、`high`、`real time` | 进程优先级类别 |
-| Affinity（亲和性） | `0`、`0xFF`、`*alias_name` | CPU 核心掩码（十六进制、十进制或别名），`0` 表示不更改 |
-| CPU set（CPU 集） | `0`、`0xFF`、`*alias_name` | 进程的 Windows CPU 集掩码（格式同亲和性） |
-| Prime CPU | `0`、`0xFF`、`*alias_name` | 线程级调度的 CPU 掩码（`0` 表示禁用） |
-| I/O Priority（I/O 优先级） | `none`、`very low`、`low`、`normal` | I/O 优先级等级 |
+| Affinity（亲和性） | `0`、`0xFF`、`0-7`、`7`、`*alias` | CPU 核心（十六进制、范围、单个索引或别名） |
+| CPU set（CPU 集） | `0`、`0xFF`、`0-7`、`7`、`*alias` | Windows CPU 集偏好 |
+| Prime CPU | `0`、`0xFF`、`0-7`、`7`、`*alias` | 线程级调度的 CPU（`0` 表示禁用） |
+| I/O Priority（I/O 优先级） | `none`、`very low`、`low`、`normal`、`high` | I/O 优先级等级（`high` 需要管理员权限） |
+| Memory Priority（内存优先级） | `none`、`very low`、`low`、`medium`、`below normal`、`normal` | 内存页面优先级 |
 
-亲和性选项：
-- 直接数值：例如 `0xFF`（核心 0-7）、`0xF000`（核心 12-15），也支持十进制如 `255`
-- 别名：用 `*name = 0xFF` 定义后在规则中以 `*name` 引用
+CPU 规格选项：
+- 十六进制掩码：例如 `0xFF`（核心 0-7）
+- 范围格式：例如 `0-7`（核心 0-7）、`0-7;64-71`（跨 CPU 组）
+- 单个 CPU：例如 `7`（仅核心 7，不是掩码）
+- 别名：用 `*name = 0-7` 定义后在规则中以 `*name` 引用
 - `0`：表示不更改当前值
+
+**注意：** 不支持十进制掩码。`7` 表示核心 7，而不是掩码。使用 `0x7` 或 `0-2` 来表示核心 0-2。
 
 提示：
 - 最佳实践：使用别名使配置更简洁且易维护
-- 快速设置：从仓库下载预配置的 [`config.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) 和 [`blacklist.ini`](https://github. com/Prohect/AffinityServiceRust/blob/master/blacklist.ini)
+- 快速设置：从仓库下载预配置的 [`config.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) 和 [`blacklist.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/blacklist.ini)
 - 升级 CPU 后只需修改别名定义即可一次性更新所有规则
 - 使用 `none` 或 `0` 跳过对某一项的更改
-- 对于游戏，考虑使用 prime_cpu_mask 避开处理中断的核心 0/1
+- 对于游戏，考虑使用 prime_cpus 避开处理中断的核心 0/1
+- 使用范围语法（`0-7;64-71`）代替十六进制掩码以支持 >64 核心系统
+- 纯数字如 `7` 被视为单个 CPU 索引，而非掩码；使用十六进制（`0xFF`）或范围格式（`0-7`）表示多核心
 - 运行 `AffinityServiceRust.exe -helpall` 获取详细配置说明与别名示例
 
 ### 使用仓库中的配置文件
 
 快速设置步骤：
-1. 从仓库下载 [`config.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) 和 [`blacklist.ini`](https://github. com/Prohect/AffinityServiceRust/blob/master/blacklist.ini)
+1. 从仓库下载 [`config.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) 和 [`blacklist.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/blacklist.ini)
 2. 在 `config.ini` 中编辑亲和性别名以匹配你的 CPU 拓扑：
 ```ini
 # Intel 8P+12E（例如 14700KF）
-*p = 0xFF          # 核心 0-7
-*e = 0xFFF00       # 核心 8-19
+*p = 0-7           # 核心 0-7
+*e = 8-19          # 核心 8-19
 
 # Intel 6P+8E
-*p = 0x3F          # 核心 0-5
-*e = 0x3FC0        # 核心 6-13
+*p = 0-5           # 核心 0-5
+*e = 6-13          # 核心 6-13
 ```
 3. 将这些文件放在与 `AffinityServiceRust.exe` 相同的文件夹中
 4. 运行程序
@@ -196,7 +236,7 @@ code.exe,above normal,*a,*e,0,normal
 ## 使用注意与说明
 
 - 建议使用管理员权限以便管理系统进程；对于受限场景可使用 `-noUAC`
-- 性能影响：程序本身占用极少的 CPU 与内存；默认扫描间隔为 5 秒（可配置）
+- 性能影响：程序本身占用极少的 CPU 与内存；默认扫描间隔为 5 秒
 - 日志：在 `logs` 文件夹中生成带时间戳的日志；使用 `-console` 可查看实时输出
 - Process Lasso 用户：使用 `-convert` 导入现有设置
 - 对于使用线程池的游戏，prime core 调度可以帮助稳定帧时间，让关键线程运行在快速核心上

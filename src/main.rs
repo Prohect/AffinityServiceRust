@@ -1056,53 +1056,6 @@ fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
     }
 }
 
-/// Checks if a process has its default (unmodified) CPU affinity.
-///
-/// Used in find mode to discover processes that haven't been configured.
-///
-/// # Arguments
-/// * `pid` - Process ID to check
-/// * `process_name` - Process name for logging
-///
-/// # Returns
-/// `true` if the process has system default affinity, `false` otherwise.
-fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
-    unsafe {
-        let mut result = false;
-        match OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) {
-            Err(_) => {
-                let code = GetLastError().0;
-                log_to_find(&format!("is_affinity_unset: [OPEN][{}] {:>5}-{}", error_from_code(code), pid, process_name));
-                if code == 5 {
-                    FAIL_SET.lock().unwrap().insert(process_name.to_string());
-                }
-            }
-            Ok(h_proc) => {
-                if h_proc.is_invalid() {
-                    log_to_find(&format!("is_affinity_unset: [INVALID_HANDLE] {:>5}-{}", pid, process_name));
-                } else {
-                    let mut current_mask: usize = 0;
-                    let mut system_mask: usize = 0;
-                    match GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask) {
-                        Err(_) => {
-                            let code = GetLastError().0;
-                            log_to_find(&format!("is_affinity_unset: [AFFINITY_QUERY][{}] {:>5}-{}", error_from_code(code), pid, process_name));
-                            if code == 5 {
-                                FAIL_SET.lock().unwrap().insert(process_name.to_string());
-                            }
-                        }
-                        Ok(_) => {
-                            result = current_mask == system_mask;
-                        }
-                    }
-                    let _ = CloseHandle(h_proc);
-                }
-            }
-        }
-        result
-    }
-}
-
 /// Applies the configuration settings to a specific process.
 ///
 /// This is the core function that modifies process attributes based on the configuration.
@@ -1756,7 +1709,7 @@ fn main() -> windows::core::Result<()> {
                     log!("Failed to set timer resolution: 0x{:08X}", ntstatus);
                 }
                 ntstatus if ntstatus >= 0 => {
-                    log!("Succeed to set timer resolution: {:. 4}ms", time_resolution as f64 / 10000f64);
+                    log!("Succeed to set timer resolution: {:.4}ms", time_resolution as f64 / 10000f64);
                     log!("elder timer resolution: {:.4}ms", current_resolution);
                 }
                 _ => {}

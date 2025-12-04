@@ -242,7 +242,7 @@ impl Default for ConfigConstants {
 }
 
 pub struct ProcessSnapshot {
-    ///is used to store the snapshot of the processes, parsed in unsafe
+    ///is used to store the snapshot of processes, parsed in unsafe
     buffer: Vec<u8>,
     pub pid_to_process: HashMap<u32, ProcessEntry>,
 }

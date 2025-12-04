@@ -365,7 +365,6 @@ impl ProcessEntry {
     pub fn get_thread(&mut self, tid: u32) -> Option<&SYSTEM_THREAD_INFORMATION> {
         self.get_threads().get(&tid)
     }
-    /// Gets the lowercase process name.
     #[inline]
     pub fn get_name(&self) -> &str {
         &self.name
@@ -1056,56 +1055,7 @@ fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
     }
 }
 
-/// Applies the configuration settings to a specific process.
-///
-/// This is the core function that modifies process attributes based on the configuration.
-/// It handles all supported settings: priority, affinity, CPU sets, prime thread scheduling,
-/// I/O priority, and memory priority.
-///
-/// # Arguments
-/// * `pid` - Process ID of the target process
-/// * `config` - Configuration to apply to the process
-/// * `prime_core_scheduler` - Scheduler state for prime thread scheduling
-/// * `processes` - Process snapshot for accessing thread information
-///
-/// # Operations Performed
-///
-/// 1. **Process Priority**: Sets the process priority class (Idle to Realtime)
-/// 2.  **CPU Affinity Mask**: Sets which CPU cores the process can run on
-/// 3. **CPU Set Assignment**: Assigns process-default CPU sets for more granular control
-/// 4. **Prime Thread Scheduling**: Dynamically assigns hot threads to performance cores
-/// 5. **I/O Priority**: Sets the I/O priority for disk/network operations
-/// 6. **Memory Priority**: Sets how aggressively memory pages are reclaimed
-///
-/// # Prime Thread Scheduling Algorithm
-///
-/// When `prime_cpu_mask` is configured, the function performs intelligent thread-to-core assignment:
-///
-/// 1. **Sort threads by CPU time delta** - Identify the most active threads
-/// 2. **Query thread cycle times** - Get precise CPU cycle usage for candidates
-/// 3.  **Calculate thresholds** - Based on the hottest thread's cycles:
-///    - `entry_threshold`: Minimum cycles to become a candidate for promotion
-///    - `keep_threshold`: Minimum cycles to remain on prime cores
-/// 4. **Track active streaks** - Threads need consecutive active intervals to be promoted
-/// 5. **Promote hot threads** - Assign qualifying threads to performance cores
-/// 6. **Demote cold threads** - Remove threads that fall below thresholds
-///
-/// This hysteresis-based approach prevents oscillation and ensures stable scheduling.
-///
-/// # Error Handling
-///
-/// All operations are performed on a best-effort basis.  Failures are logged but don't
-/// prevent other settings from being applied. Common failure reasons:
-/// - Access denied (process protection, insufficient privileges)
-/// - Process exited during operation
-/// - Invalid handle states
-///
-/// # Safety
-///
-/// This function uses unsafe Windows API calls to modify process attributes.
-/// Handle cleanup is guaranteed.
 fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut PrimeThreadScheduler, processes: &mut ProcessSnapshot) {
-    // Open process handle with required permissions
     let h_prc = match unsafe { OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) } {
         Err(_) => {
             log_to_find(&format!(
@@ -1123,10 +1073,7 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
         return;
     }
 
-    // =========================================================================
-    // Step 1: Set Process Priority
-    // =========================================================================
-    // Only modify if a specific priority is configured (not None)
+    // Priority
     if let Some(priority_flag) = config.priority.as_win_const() {
         if unsafe { GetPriorityClass(h_prc) } != priority_flag.0 {
             if unsafe { SetPriorityClass(h_prc, priority_flag) }.is_ok() {
@@ -1142,10 +1089,7 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
         }
     }
 
-    // =========================================================================
-    // Step 2: Set CPU Affinity Mask
-    // =========================================================================
-    // Query current affinity first, then only update if different
+    // Affinity
     let mut current_mask: usize = 0;
     let mut system_mask: usize = 0;
     if config.affinity_mask != 0 || config.prime_cpu_mask != 0 {
@@ -1179,23 +1123,17 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
         }
     }
 
-    // =========================================================================
-    // Step 3: Set Process Default CPU Sets
-    // =========================================================================
-    // CPU sets provide more granular control than affinity masks on modern Windows
+    // process default CPU Set
     if config.cpu_set_mask != 0 && !get_cpu_set_information().lock().unwrap().is_empty() {
         let mut toset: bool = false;
         let mut requiredidcount: u32 = 0;
-
-        // First query: check if any CPU sets are currently assigned
         let query_result = unsafe { GetProcessDefaultCpuSets(h_prc, None, &mut requiredidcount).as_bool() };
         if query_result {
-            // 0 is large enough, meaning there are no default CPU sets for this process
+            // 0 is large enough, meaning there are no default CPU sets for this process, so we need to set the default CPU set
             toset = true;
         } else {
             let code = unsafe { GetLastError().0 };
             if code != 122 {
-                // 122 = INSUFFICIENT_BUFFER, expected when sets exist
                 log_to_find(&format!(
                     "apply_config: [QUERY_CPUSET][{}] {:>5}-{}-{}",
                     error_from_code(code),
@@ -1204,7 +1142,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                     requiredidcount
                 ));
             } else {
-                // Second query: get the actual CPU set IDs
                 let mut current_cpusetids: Vec<u32> = vec![0u32; requiredidcount as usize];
                 let second_query = unsafe { GetProcessDefaultCpuSets(h_prc, Some(&mut current_cpusetids[..]), &mut requiredidcount).as_bool() };
                 if !second_query {
@@ -1220,8 +1157,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                 }
             }
         }
-
-        // Apply CPU set if needed
         if toset {
             let set_result = unsafe { SetProcessDefaultCpuSets(h_prc, Some(&cpusetids_from_mask(config.cpu_set_mask))).as_bool() };
             if !set_result {
@@ -1237,32 +1172,18 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
         }
     }
 
-    // =========================================================================
-    // Step 4: Prime Thread Scheduling
-    // =========================================================================
-    // Dynamically assign the most active threads to performance cores.
-    // This is especially useful for hybrid CPU architectures (P-cores + E-cores).
+    // Prime thread Scheduling
     if config.prime_cpu_mask != 0 {
-        // Calculate which CPU set IDs are available for prime threads
-        // (intersection of prime_cpu_mask and current process affinity)
         let cpu_setids = cpusetids_from_mask(config.prime_cpu_mask & current_mask);
-
         if !cpu_setids.is_empty() {
-            // Mark this process as alive for handle cleanup tracking
             prime_core_scheduler.set_alive(pid);
-
             let process = processes.pid_to_process.get_mut(&pid).unwrap();
             let thread_count = process.thread_count() as usize;
-
-            // Limit candidates to avoid excessive overhead
             let candidate_count = get_cpu_set_information().lock().unwrap().len().min(thread_count);
             let mut candidate_tids: Vec<u32> = vec![0u32; candidate_count];
             let mut tid_with_delta_cycles: Vec<(u32, u64, bool)> = vec![(0u32, 0u64, false); candidate_count];
 
-            // -----------------------------------------------------------------
-            // Step 4. 1: Sort threads by CPU time delta and select top candidates
-            // -----------------------------------------------------------------
-            // We use kernel+user time as a quick heuristic to find active threads
+            // Step 1: Sort threads by delta time and select top candidates
             {
                 let mut tid_with_delta_time: Vec<(u32, i64)> = Vec::with_capacity(thread_count);
                 process.get_threads().iter().for_each(|(tid, thread)| {
@@ -1278,17 +1199,13 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                 }
             }
 
-            // -----------------------------------------------------------------
-            // Step 4.2: Open thread handles and query precise cycle times
-            // -----------------------------------------------------------------
-            // CPU cycles provide more accurate activity measurement than time
+            // Step 2: Open thread handles and query cycle times
             for i in 0..candidate_count {
                 let tid = candidate_tids[i];
                 let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
                 let process_name = &config.name;
                 match thread_stats.handle {
                     None => {
-                        // First time seeing this thread - open a handle
                         match unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION, false, tid) } {
                             Err(_) => {
                                 let error_code = error_from_code(unsafe { GetLastError().0 });
@@ -1310,7 +1227,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                         };
                     }
                     Some(handle) => {
-                        // Reuse cached handle for efficiency
                         let mut cycles: u64 = 0;
                         match unsafe { QueryThreadCycleTime(handle, &mut cycles) } {
                             Err(_) => {
@@ -1326,17 +1242,13 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                 }
             }
 
-            // -----------------------------------------------------------------
-            // Step 4. 3: Calculate promotion/demotion thresholds
-            // -----------------------------------------------------------------
-            // Thresholds are based on the hottest thread's activity level
+            // Step 3: Sort by delta_cycles descending and calculate thresholds
             tid_with_delta_cycles.sort_by_key(|&(_, delta_cycles, _)| std::cmp::Reverse(delta_cycles));
             let max_cycles = tid_with_delta_cycles.first().map(|&(_, c, _)| c).unwrap_or(0u64);
             let entry_min_cycles = (max_cycles as f64 * prime_core_scheduler.constants.entry_threshold) as u64;
             let keep_min_cycles = (max_cycles as f64 * prime_core_scheduler.constants.keep_threshold) as u64;
             let prime_count = cpu_setids.len().min(candidate_count);
-
-            // Update active streaks - threads need consecutive active intervals
+            // Update active_streak for all candidate threads
             for &(tid, delta_cycles, _) in &tid_with_delta_cycles {
                 if tid == 0 {
                     continue;
@@ -1348,22 +1260,18 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                     thread_stats.active_streak = 0;
                 }
             }
-
             let mut new_prime_count: usize = 0;
-
-            // First pass: protect already-promoted threads that are still active
+            // First pass: mark protected prime threads
             for (tid, delta_cycles, is_prime) in tid_with_delta_cycles.iter_mut() {
                 if *tid == 0 || new_prime_count >= prime_count {
                     continue;
                 }
-                // Keep threads that are already on prime cores and still meet threshold
                 if !prime_core_scheduler.get_thread_stats(pid, *tid).cpu_set_ids.is_empty() && *delta_cycles >= keep_min_cycles {
                     *is_prime = true;
                     new_prime_count += 1;
                 }
             }
-
-            // Second pass: promote new candidates with sustained activity
+            // Second pass: mark new candidates
             for (tid, delta_cycles, is_prime) in tid_with_delta_cycles.iter_mut() {
                 if new_prime_count >= prime_count {
                     break;
@@ -1371,16 +1279,13 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                 if *tid == 0 || *is_prime {
                     continue;
                 }
-                // New threads need entry_threshold AND consecutive active streaks
                 if *delta_cycles >= entry_min_cycles && prime_core_scheduler.get_thread_stats(pid, *tid).active_streak >= 2 {
                     *is_prime = true;
                     new_prime_count += 1;
                 }
             }
 
-            // -----------------------------------------------------------------
-            // Step 4.4: Apply promotions - assign hot threads to prime cores
-            // -----------------------------------------------------------------
+            // Step 4: Promote new threads
             for &(tid, delta_cycles, is_prime) in &tid_with_delta_cycles {
                 if !is_prime {
                     continue;
@@ -1401,16 +1306,12 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                 }
             }
 
-            // -----------------------------------------------------------------
-            // Step 4.5: Apply demotions - remove cold threads from prime cores
-            // -----------------------------------------------------------------
+            // Step 5: Demote threads that are no longer prime
             process.get_threads().iter().for_each(|(tid, _)| {
                 let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
-                // Check if thread was marked as prime in this cycle
                 if !tid_with_delta_cycles.iter().any(|&(t, _, p)| t == *tid && p) && !thread_stats.cpu_set_ids.is_empty() {
                     if let Some(handle) = thread_stats.handle {
                         if !handle.is_invalid() {
-                            // Clear CPU set restriction to allow thread to run on any core
                             let set_result = unsafe { SetThreadSelectedCpuSets(handle, &[]).as_bool() };
                             if !set_result {
                                 let error_code = error_from_code(unsafe { GetLastError().0 });
@@ -1426,16 +1327,11 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
         }
     }
 
-    // =========================================================================
-    // Step 5: Set I/O Priority
-    // =========================================================================
-    // Uses undocumented NtQueryInformationProcess/NtSetInformationProcess
+    // IO Priority
     if let Some(io_priority_flag) = config.io_priority.as_win_const() {
         const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
         let mut current_io_priority: u32 = 0;
         let mut return_length: u32 = 0;
-
-        // Query current I/O priority
         let query_result = unsafe {
             NtQueryInformationProcess(
                 h_prc,
@@ -1455,7 +1351,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                 config.io_priority.as_str()
             ));
         } else if current_io_priority != io_priority_flag {
-            // Set new I/O priority if different
             let set_result = unsafe {
                 NtSetInformationProcess(
                     h_prc,
@@ -1479,10 +1374,7 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
         }
     }
 
-    // =========================================================================
-    // Step 6: Set Memory Priority
-    // =========================================================================
-    // Controls how aggressively the system reclaims memory pages from this process
+    // Memory Priority
     if let Some(memory_priority_flag) = config.memory_priority.as_win_const() {
         let set_result = unsafe {
             SetProcessInformation(
@@ -1503,7 +1395,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
         }
     }
 
-    // Clean up the process handle
     unsafe {
         let _ = CloseHandle(h_prc);
     }

@@ -88,8 +88,8 @@ pub struct ConfigConstants {
 impl Default for ConfigConstants {
     fn default() -> Self {
         Self {
-            hysteresis_ratio: 1.2,
-            keep_threshold: 0.7,
+            hysteresis_ratio: 1.259,
+            keep_threshold: 0.69,
             entry_threshold: 0.42,
         }
     }
@@ -833,12 +833,7 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<(HashMap<String, ProcessCo
     let mut configs = HashMap::new();
     let mut affinity_aliases = HashMap::new();
 
-    // 默认常量值
-    let mut constants = ConfigConstants {
-        hysteresis_ratio: 1.2,
-        keep_threshold: 0.7,
-        entry_threshold: 0.42,
-    };
+    let mut constants = ConfigConstants::default();
 
     for line in reader.lines() {
         let line = line?;
@@ -859,16 +854,16 @@ fn read_config<P: AsRef<Path>>(path: P) -> io::Result<(HashMap<String, ProcessCo
                             log!("Config: HYSTERESIS_RATIO = {}", v);
                         }
                     }
-                    "ABSOLUTE_KEEP_RATIO" => {
+                    "KEEP_THRESHOLD" => {
                         if let Ok(v) = const_value.parse::<f64>() {
                             constants.keep_threshold = v;
-                            log!("Config: ABSOLUTE_KEEP_RATIO = {}", v);
+                            log!("Config: KEEP_THRESHOLD = {}", v);
                         }
                     }
-                    "ENTRY_THRESHOLD_RATIO" => {
+                    "ENTRY_THRESHOLD" => {
                         if let Ok(v) = const_value.parse::<f64>() {
                             constants.entry_threshold = v;
-                            log!("Config: ENTRY_THRESHOLD_RATIO = {}", v);
+                            log!("Config: ENTRY_THRESHOLD = {}", v);
                         }
                     }
                     _ => {

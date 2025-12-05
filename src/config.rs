@@ -17,10 +17,12 @@ use crate::cli::get_config_help_lines;
 use crate::log;
 use crate::logging::{log_message, log_to_find};
 use crate::priority::{IOPriority, MemoryPriority, ProcessPriority};
-use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::{self, BufRead, Write};
-use std::path::Path;
+use std::{
+    collections::HashMap,
+    fs::{self, File},
+    io::{self, BufRead, Write},
+    path::Path,
+};
 
 /// Configuration for a single process, parsed from config.ini.
 /// Format: `name,priority,affinity,cpu_set,prime_cpu,io_priority,memory_priority`

@@ -4,8 +4,7 @@
 //! via NtQuerySystemInformation.
 
 use ntapi::ntexapi::{NtQuerySystemInformation, SYSTEM_PROCESS_INFORMATION, SYSTEM_THREAD_INFORMATION, SystemProcessInformation};
-use std::collections::HashMap;
-use std::slice;
+use std::{collections::HashMap, slice};
 
 /// A snapshot of all running processes obtained via `NtQuerySystemInformation`.
 ///

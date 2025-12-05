@@ -4,11 +4,13 @@
 
 use chrono::{DateTime, Datelike, Local};
 use once_cell::sync::Lazy;
-use std::collections::HashSet;
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
-use std::path::PathBuf;
-use std::sync::Mutex;
+use std::{
+    collections::HashSet,
+    fs::{self, File, OpenOptions},
+    io::Write,
+    path::PathBuf,
+    sync::Mutex,
+};
 
 /// Global timestamp buffer, updated each loop iteration.
 pub static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));

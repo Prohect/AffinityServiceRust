@@ -6,21 +6,18 @@
 use crate::log;
 use crate::logging::{FAIL_SET, error_from_code, log_to_find};
 use once_cell::sync::Lazy;
-use std::collections::HashMap;
-use std::env;
-use std::io;
-use std::mem::size_of;
-use std::process::Command;
-use std::sync::Mutex;
-use windows::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, LUID, NTSTATUS};
-use windows::Win32::Security::{
-    AdjustTokenPrivileges, GetTokenInformation, LookupPrivilegeValueW, SE_DEBUG_NAME, SE_INC_BASE_PRIORITY_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_ELEVATION,
-    TOKEN_PRIVILEGES, TOKEN_QUERY, TokenElevation,
-};
-use windows::Win32::System::ProcessStatus::{EnumProcessModulesEx, GetModuleBaseNameW, GetModuleInformation, LIST_MODULES_ALL, MODULEINFO};
-use windows::Win32::System::SystemInformation::{GetSystemCpuSetInformation, SYSTEM_CPU_SET_INFORMATION};
-use windows::Win32::System::Threading::{
-    GetCurrentProcess, GetProcessAffinityMask, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_VM_READ,
+use std::{collections::HashMap, env, io, mem::size_of, process::Command, sync::Mutex};
+use windows::Win32::{
+    Foundation::{CloseHandle, GetLastError, HANDLE, LUID, NTSTATUS},
+    Security::{
+        AdjustTokenPrivileges, GetTokenInformation, LookupPrivilegeValueW, SE_DEBUG_NAME, SE_INC_BASE_PRIORITY_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_ELEVATION,
+        TOKEN_PRIVILEGES, TOKEN_QUERY, TokenElevation,
+    },
+    System::{
+        ProcessStatus::{EnumProcessModulesEx, GetModuleBaseNameW, GetModuleInformation, LIST_MODULES_ALL, MODULEINFO},
+        SystemInformation::{GetSystemCpuSetInformation, SYSTEM_CPU_SET_INFORMATION},
+        Threading::{GetCurrentProcess, GetProcessAffinityMask, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_VM_READ},
+    },
 };
 
 // Undocumented NTDLL imports for IO priority and timer resolution control.
@@ -43,40 +40,75 @@ unsafe extern "system" {
     pub fn NtSetTimerResolution(desired_resolution: u32, set_resolution: bool, p_current_resolution: *mut std::ffi::c_void) -> NTSTATUS;
 }
 
+/// Helper struct to hold extracted CPU set data safely.
+#[derive(Clone, Copy)]
+pub struct CpuSetData {
+    id: u32,
+    logical_processor_index: u8,
+}
+
+/// Extracts CPU set data from SYSTEM_CPU_SET_INFORMATION union.
+/// # Safety
+/// The entry must be a valid SYSTEM_CPU_SET_INFORMATION with CpuSet data.
+unsafe fn extract_cpu_set_data(entry: &SYSTEM_CPU_SET_INFORMATION) -> CpuSetData {
+    // SAFETY: Caller guarantees entry contains valid CpuSet data
+    unsafe {
+        CpuSetData {
+            id: entry.Anonymous.CpuSet.Id,
+            logical_processor_index: entry.Anonymous.CpuSet.LogicalProcessorIndex,
+        }
+    }
+}
+
 /// Cached CPU set information for the system.
-static CPU_SET_INFORMATION: Lazy<Mutex<Vec<SYSTEM_CPU_SET_INFORMATION>>> = Lazy::new(|| {
+static CPU_SET_INFORMATION: Lazy<Mutex<Vec<CpuSetData>>> = Lazy::new(|| {
     Mutex::new({
-        let mut cpu_set_information: Vec<SYSTEM_CPU_SET_INFORMATION> = Vec::new();
-        unsafe {
-            let mut required_size: u32 = 0;
-            let _ = GetSystemCpuSetInformation(None, 0, &mut required_size, Some(GetCurrentProcess()), Some(0));
-            let mut buffer: Vec<u8> = vec![0u8; required_size as usize];
-            match GetSystemCpuSetInformation(
+        let mut cpu_set_data: Vec<CpuSetData> = Vec::new();
+        let mut required_size: u32 = 0;
+
+        // First call to get required buffer size
+        // SAFETY: GetCurrentProcess returns a pseudo-handle that doesn't need closing
+        let current_process = unsafe { GetCurrentProcess() };
+        // SAFETY: Passing None for buffer to query required size
+        let _ = unsafe { GetSystemCpuSetInformation(None, 0, &mut required_size, Some(current_process), Some(0)) };
+
+        let mut buffer: Vec<u8> = vec![0u8; required_size as usize];
+
+        // SAFETY: Buffer is properly sized based on required_size from first call
+        let success = unsafe {
+            GetSystemCpuSetInformation(
                 Some(buffer.as_mut_ptr() as *mut SYSTEM_CPU_SET_INFORMATION),
                 required_size,
                 &mut required_size,
-                Some(GetCurrentProcess()),
+                Some(current_process),
                 Some(0),
             )
             .as_bool()
-            {
-                false => log_to_find("GetSystemCpuSetInformation failed"),
-                true => {}
-            };
+        };
+
+        if !success {
+            log_to_find("GetSystemCpuSetInformation failed");
+        } else {
             let mut offset = 0;
             while offset < required_size as usize {
-                let entry_ptr = buffer.as_ptr().add(offset) as *const SYSTEM_CPU_SET_INFORMATION;
-                let entry = &*entry_ptr;
-                cpu_set_information.push(*entry);
+                // SAFETY: We're iterating within the valid buffer bounds, and each entry
+                // contains its size for proper iteration
+                let entry = unsafe {
+                    let entry_ptr = buffer.as_ptr().add(offset) as *const SYSTEM_CPU_SET_INFORMATION;
+                    &*entry_ptr
+                };
+                // SAFETY: Entry is valid SYSTEM_CPU_SET_INFORMATION
+                let data = unsafe { extract_cpu_set_data(entry) };
+                cpu_set_data.push(data);
                 offset += entry.Size as usize;
             }
         }
-        cpu_set_information
+        cpu_set_data
     })
 });
 
 /// Returns a reference to the cached CPU set information.
-pub fn get_cpu_set_information() -> &'static Mutex<Vec<SYSTEM_CPU_SET_INFORMATION>> {
+pub fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>> {
     &CPU_SET_INFORMATION
 }
 
@@ -95,13 +127,12 @@ pub fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32> {
         return Vec::new();
     }
     let mut cpuids: Vec<u32> = Vec::new();
-    unsafe {
-        get_cpu_set_information().lock().unwrap().iter().for_each(|entry| {
-            let logical_index = entry.Anonymous.CpuSet.LogicalProcessorIndex as u32;
-            if cpu_indices.contains(&logical_index) {
-                cpuids.push(entry.Anonymous.CpuSet.Id);
-            }
-        });
+    let guard = get_cpu_set_information().lock().unwrap();
+    for entry in guard.iter() {
+        let logical_index = entry.logical_processor_index as u32;
+        if cpu_indices.contains(&logical_index) {
+            cpuids.push(entry.id);
+        }
     }
     cpuids
 }
@@ -122,13 +153,12 @@ pub fn cpusetids_from_mask(mask: usize) -> Vec<u32> {
         return Vec::new();
     }
     let mut cpuids: Vec<u32> = Vec::new();
-    unsafe {
-        get_cpu_set_information().lock().unwrap().iter().for_each(|entry| {
-            let logical_index = entry.Anonymous.CpuSet.LogicalProcessorIndex;
-            if logical_index < 64 && ((1usize << logical_index) & mask) != 0 {
-                cpuids.push(entry.Anonymous.CpuSet.Id);
-            }
-        });
+    let guard = get_cpu_set_information().lock().unwrap();
+    for entry in guard.iter() {
+        let logical_index = entry.logical_processor_index;
+        if logical_index < 64 && ((1usize << logical_index) & mask) != 0 {
+            cpuids.push(entry.id);
+        }
     }
     cpuids
 }
@@ -145,11 +175,10 @@ pub fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32> {
         return Vec::new();
     }
     let mut indices: Vec<u32> = Vec::new();
-    unsafe {
-        for entry in get_cpu_set_information().lock().unwrap().iter() {
-            if cpuids.contains(&entry.Anonymous.CpuSet.Id) {
-                indices.push(entry.Anonymous.CpuSet.LogicalProcessorIndex as u32);
-            }
+    let guard = get_cpu_set_information().lock().unwrap();
+    for entry in guard.iter() {
+        if cpuids.contains(&entry.id) {
+            indices.push(entry.logical_processor_index as u32);
         }
     }
     indices.sort();
@@ -170,13 +199,12 @@ pub fn mask_from_cpusetids(cpuids: &[u32]) -> usize {
         return 0;
     }
     let mut mask: usize = 0;
-    unsafe {
-        for entry in get_cpu_set_information().lock().unwrap().iter() {
-            if cpuids.contains(&entry.Anonymous.CpuSet.Id) {
-                let idx = entry.Anonymous.CpuSet.LogicalProcessorIndex;
-                if idx < 64 {
-                    mask |= 1 << idx;
-                }
+    let guard = get_cpu_set_information().lock().unwrap();
+    for entry in guard.iter() {
+        if cpuids.contains(&entry.id) {
+            let idx = entry.logical_processor_index;
+            if idx < 64 {
+                mask |= 1 << idx;
             }
         }
     }
@@ -203,29 +231,37 @@ pub fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<
 
 /// Checks if the current process is running with administrator privileges.
 pub fn is_running_as_admin() -> bool {
-    unsafe {
-        let current_process = GetCurrentProcess();
-        let mut token: HANDLE = HANDLE::default();
-        let mut result = false;
-        match OpenProcessToken(current_process, TOKEN_QUERY, &mut token) {
-            Err(_) => {}
-            Ok(_) => {
-                let mut elevation: TOKEN_ELEVATION = TOKEN_ELEVATION::default();
-                let mut return_length = 0u32;
-                match GetTokenInformation(
-                    token,
-                    TokenElevation,
-                    Some(&mut elevation as *mut _ as *mut _),
-                    size_of::<TOKEN_ELEVATION>() as u32,
-                    &mut return_length,
-                ) {
-                    Err(_) => {}
-                    Ok(_) => result = elevation.TokenIsElevated != 0,
-                }
-                let _ = CloseHandle(token);
-            }
-        }
-        result
+    // SAFETY: GetCurrentProcess returns a pseudo-handle that doesn't need closing
+    let current_process = unsafe { GetCurrentProcess() };
+    let mut token: HANDLE = HANDLE::default();
+
+    // SAFETY: OpenProcessToken is safe with valid process handle and out pointer
+    let open_result = unsafe { OpenProcessToken(current_process, TOKEN_QUERY, &mut token) };
+
+    if open_result.is_err() {
+        return false;
+    }
+
+    let mut elevation: TOKEN_ELEVATION = TOKEN_ELEVATION::default();
+    let mut return_length = 0u32;
+
+    // SAFETY: GetTokenInformation with valid token handle and properly sized buffer
+    let info_result = unsafe {
+        GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elevation as *mut _ as *mut _),
+            size_of::<TOKEN_ELEVATION>() as u32,
+            &mut return_length,
+        )
+    };
+
+    // SAFETY: CloseHandle is safe with valid handle
+    let _ = unsafe { CloseHandle(token) };
+
+    match info_result {
+        Err(_) => false,
+        Ok(_) => elevation.TokenIsElevated != 0,
     }
 }
 
@@ -258,119 +294,141 @@ pub fn request_uac_elevation() -> io::Result<()> {
 /// Enables SeDebugPrivilege for the current process.
 /// SeDebugPrivilege is required to open handles to system processes and processes owned by other users.
 pub fn enable_debug_privilege() {
-    unsafe {
-        let mut token: HANDLE = HANDLE::default();
-        match OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token) {
-            Err(_) => {
-                log!("enable_debug_privilege: self OpenProcessToken failed");
-            }
-            Ok(_) => {
-                let mut l_uid = LUID::default();
-                match LookupPrivilegeValueW(None, SE_DEBUG_NAME, &mut l_uid) {
-                    Err(_) => {
-                        log!("enable_debug_privilege: LookupPrivilegeValueW failed");
-                    }
-                    Ok(_) => {
-                        let tp = TOKEN_PRIVILEGES {
-                            PrivilegeCount: 1,
-                            Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
-                                Luid: l_uid,
-                                Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
-                            }],
-                        };
-                        match AdjustTokenPrivileges(token, false, Some(&tp as *const _), 0, None, None) {
-                            Err(_) => {
-                                log!("enable_debug_privilege: AdjustTokenPrivileges failed");
-                            }
-                            Ok(_) => {
-                                log!("enable_debug_privilege: AdjustTokenPrivileges succeeded");
-                            }
-                        }
-                    }
-                }
-                let _ = CloseHandle(token);
-            }
-        }
+    let mut token: HANDLE = HANDLE::default();
+
+    // SAFETY: GetCurrentProcess returns pseudo-handle, OpenProcessToken with valid out pointer
+    let open_result = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token) };
+
+    if open_result.is_err() {
+        log!("enable_debug_privilege: self OpenProcessToken failed");
+        return;
     }
+
+    let mut l_uid = LUID::default();
+
+    // SAFETY: LookupPrivilegeValueW with valid privilege name and out pointer
+    let lookup_result = unsafe { LookupPrivilegeValueW(None, SE_DEBUG_NAME, &mut l_uid) };
+
+    if lookup_result.is_err() {
+        log!("enable_debug_privilege: LookupPrivilegeValueW failed");
+        // SAFETY: CloseHandle with valid handle
+        let _ = unsafe { CloseHandle(token) };
+        return;
+    }
+
+    let tp = TOKEN_PRIVILEGES {
+        PrivilegeCount: 1,
+        Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
+            Luid: l_uid,
+            Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
+        }],
+    };
+
+    // SAFETY: AdjustTokenPrivileges with valid token and properly constructed TOKEN_PRIVILEGES
+    let adjust_result = unsafe { AdjustTokenPrivileges(token, false, Some(&tp as *const _), 0, None, None) };
+
+    if adjust_result.is_err() {
+        log!("enable_debug_privilege: AdjustTokenPrivileges failed");
+    } else {
+        log!("enable_debug_privilege: AdjustTokenPrivileges succeeded");
+    }
+
+    // SAFETY: CloseHandle with valid handle
+    let _ = unsafe { CloseHandle(token) };
 }
 
 /// Enables SeIncreaseBasePriorityPrivilege for the current process.
 /// Required to set high IO priority.
 pub fn enable_inc_base_priority_privilege() {
-    unsafe {
-        let mut token: HANDLE = HANDLE::default();
-        match OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token) {
-            Err(_) => {
-                log!("enable_inc_base_priority_privilege: self OpenProcessToken failed");
-            }
-            Ok(_) => {
-                let mut l_uid = LUID::default();
-                match LookupPrivilegeValueW(None, SE_INC_BASE_PRIORITY_NAME, &mut l_uid) {
-                    Err(_) => {
-                        log!("enable_inc_base_priority_privilege: LookupPrivilegeValueW failed");
-                    }
-                    Ok(_) => {
-                        let tp = TOKEN_PRIVILEGES {
-                            PrivilegeCount: 1,
-                            Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
-                                Luid: l_uid,
-                                Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
-                            }],
-                        };
-                        match AdjustTokenPrivileges(token, false, Some(&tp as *const _), 0, None, None) {
-                            Err(_) => {
-                                log!("enable_inc_base_priority_privilege: AdjustTokenPrivileges failed");
-                            }
-                            Ok(_) => {
-                                log!("enable_inc_base_priority_privilege: AdjustTokenPrivileges succeeded");
-                            }
-                        }
-                    }
-                }
-                let _ = CloseHandle(token);
-            }
-        }
+    let mut token: HANDLE = HANDLE::default();
+
+    // SAFETY: GetCurrentProcess returns pseudo-handle, OpenProcessToken with valid out pointer
+    let open_result = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token) };
+
+    if open_result.is_err() {
+        log!("enable_inc_base_priority_privilege: self OpenProcessToken failed");
+        return;
     }
+
+    let mut l_uid = LUID::default();
+
+    // SAFETY: LookupPrivilegeValueW with valid privilege name and out pointer
+    let lookup_result = unsafe { LookupPrivilegeValueW(None, SE_INC_BASE_PRIORITY_NAME, &mut l_uid) };
+
+    if lookup_result.is_err() {
+        log!("enable_inc_base_priority_privilege: LookupPrivilegeValueW failed");
+        // SAFETY: CloseHandle with valid handle
+        let _ = unsafe { CloseHandle(token) };
+        return;
+    }
+
+    let tp = TOKEN_PRIVILEGES {
+        PrivilegeCount: 1,
+        Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
+            Luid: l_uid,
+            Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
+        }],
+    };
+
+    // SAFETY: AdjustTokenPrivileges with valid token and properly constructed TOKEN_PRIVILEGES
+    let adjust_result = unsafe { AdjustTokenPrivileges(token, false, Some(&tp as *const _), 0, None, None) };
+
+    if adjust_result.is_err() {
+        log!("enable_inc_base_priority_privilege: AdjustTokenPrivileges failed");
+    } else {
+        log!("enable_inc_base_priority_privilege: AdjustTokenPrivileges succeeded");
+    }
+
+    // SAFETY: CloseHandle with valid handle
+    let _ = unsafe { CloseHandle(token) };
 }
 
 /// Checks if a process has default (unmodified) CPU affinity.
 /// Returns true if current_mask == system_mask, meaning "use all available cores".
 /// Used by find mode to discover processes without custom affinity settings.
 pub fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
-    unsafe {
-        let mut result = false;
-        match OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) {
-            Err(_) => {
-                let code = GetLastError().0;
-                log_to_find(&format!("is_affinity_unset: [OPEN][{}] {:>5}-{}", error_from_code(code), pid, process_name));
-                if code == 5 {
-                    FAIL_SET.lock().unwrap().insert(process_name.to_string());
-                }
+    // SAFETY: OpenProcess with valid flags and PID
+    let h_proc = match unsafe { OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) } {
+        Err(_) => {
+            // SAFETY: GetLastError is always safe to call
+            let code = unsafe { GetLastError() }.0;
+            log_to_find(&format!("is_affinity_unset: [OPEN][{}] {:>5}-{}", error_from_code(code), pid, process_name));
+            if code == 5 {
+                FAIL_SET.lock().unwrap().insert(process_name.to_string());
             }
-            Ok(h_proc) => {
-                if h_proc.is_invalid() {
-                    log_to_find(&format!("is_affinity_unset: [INVALID_HANDLE] {:>5}-{}", pid, process_name));
-                } else {
-                    let mut current_mask: usize = 0;
-                    let mut system_mask: usize = 0;
-                    match GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask) {
-                        Err(_) => {
-                            let code = GetLastError().0;
-                            log_to_find(&format!("is_affinity_unset: [AFFINITY_QUERY][{}] {:>5}-{}", error_from_code(code), pid, process_name));
-                            if code == 5 {
-                                FAIL_SET.lock().unwrap().insert(process_name.to_string());
-                            }
-                        }
-                        Ok(_) => {
-                            result = current_mask == system_mask;
-                        }
-                    }
-                    let _ = CloseHandle(h_proc);
-                }
-            }
+            return false;
         }
-        result
+        Ok(h) => h,
+    };
+
+    if h_proc.is_invalid() {
+        log_to_find(&format!("is_affinity_unset: [INVALID_HANDLE] {:>5}-{}", pid, process_name));
+        return false;
     }
+
+    let mut current_mask: usize = 0;
+    let mut system_mask: usize = 0;
+
+    // SAFETY: GetProcessAffinityMask with valid handle and out pointers
+    let affinity_result = unsafe { GetProcessAffinityMask(h_proc, &mut current_mask, &mut system_mask) };
+
+    let result = match affinity_result {
+        Err(_) => {
+            // SAFETY: GetLastError is always safe to call
+            let code = unsafe { GetLastError() }.0;
+            log_to_find(&format!("is_affinity_unset: [AFFINITY_QUERY][{}] {:>5}-{}", error_from_code(code), pid, process_name));
+            if code == 5 {
+                FAIL_SET.lock().unwrap().insert(process_name.to_string());
+            }
+            false
+        }
+        Ok(_) => current_mask == system_mask,
+    };
+
+    // SAFETY: CloseHandle with valid handle
+    let _ = unsafe { CloseHandle(h_proc) };
+
+    result
 }
 
 /// Cached module information for processes.
@@ -436,57 +494,62 @@ pub fn clear_module_cache(pid: u32) {
 fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> {
     let mut result = Vec::new();
 
-    unsafe {
-        // Need PROCESS_QUERY_INFORMATION | PROCESS_VM_READ for module enumeration
-        let h_proc = match OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) {
-            Ok(h) if !h.is_invalid() => h,
-            _ => return result,
-        };
+    // SAFETY: OpenProcess with valid flags and PID
+    let h_proc = match unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) } {
+        Ok(h) if !h.is_invalid() => h,
+        _ => return result,
+    };
 
-        // First call to get the number of modules
-        let mut modules: [windows::Win32::Foundation::HMODULE; 1024] = [windows::Win32::Foundation::HMODULE::default(); 1024];
-        let mut cb_needed: u32 = 0;
+    let mut modules: [windows::Win32::Foundation::HMODULE; 1024] = [windows::Win32::Foundation::HMODULE::default(); 1024];
+    let mut cb_needed: u32 = 0;
 
-        if EnumProcessModulesEx(
+    // SAFETY: EnumProcessModulesEx with valid handle and properly sized buffer
+    let enum_result = unsafe {
+        EnumProcessModulesEx(
             h_proc,
             modules.as_mut_ptr(),
             (modules.len() * size_of::<windows::Win32::Foundation::HMODULE>()) as u32,
             &mut cb_needed,
             LIST_MODULES_ALL,
         )
-        .is_err()
-        {
-            let _ = CloseHandle(h_proc);
-            return result;
-        }
+    };
 
-        let module_count = (cb_needed as usize) / size_of::<windows::Win32::Foundation::HMODULE>();
-
-        for i in 0..module_count.min(modules.len()) {
-            let h_module = modules[i];
-
-            // Get module info (base address and size)
-            let mut mod_info = MODULEINFO::default();
-            if GetModuleInformation(h_proc, h_module, &mut mod_info, size_of::<MODULEINFO>() as u32).is_err() {
-                continue;
-            }
-
-            // Get module name
-            let mut name_buf: [u16; 260] = [0; 260];
-            let name_len = GetModuleBaseNameW(h_proc, Some(h_module), &mut name_buf);
-            if name_len == 0 {
-                continue;
-            }
-
-            let name = String::from_utf16_lossy(&name_buf[..name_len as usize]);
-            let base = mod_info.lpBaseOfDll as usize;
-            let size = mod_info.SizeOfImage as usize;
-
-            result.push((base, size, name));
-        }
-
-        let _ = CloseHandle(h_proc);
+    if enum_result.is_err() {
+        // SAFETY: CloseHandle with valid handle
+        let _ = unsafe { CloseHandle(h_proc) };
+        return result;
     }
+
+    let module_count = (cb_needed as usize) / size_of::<windows::Win32::Foundation::HMODULE>();
+
+    for i in 0..module_count.min(modules.len()) {
+        let h_module = modules[i];
+
+        let mut mod_info = MODULEINFO::default();
+
+        // SAFETY: GetModuleInformation with valid handles and properly sized buffer
+        if unsafe { GetModuleInformation(h_proc, h_module, &mut mod_info, size_of::<MODULEINFO>() as u32) }.is_err() {
+            continue;
+        }
+
+        let mut name_buf: [u16; 260] = [0; 260];
+
+        // SAFETY: GetModuleBaseNameW with valid handles and properly sized buffer
+        let name_len = unsafe { GetModuleBaseNameW(h_proc, Some(h_module), &mut name_buf) };
+
+        if name_len == 0 {
+            continue;
+        }
+
+        let name = String::from_utf16_lossy(&name_buf[..name_len as usize]);
+        let base = mod_info.lpBaseOfDll as usize;
+        let size = mod_info.SizeOfImage as usize;
+
+        result.push((base, size, name));
+    }
+
+    // SAFETY: CloseHandle with valid handle
+    let _ = unsafe { CloseHandle(h_proc) };
 
     result
 }

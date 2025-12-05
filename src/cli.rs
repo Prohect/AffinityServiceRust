@@ -136,12 +136,106 @@ pub fn print_help() {
     log!("Use -helpall for detailed options and debugging features.");
 }
 
-/// Prints the detailed help message with all options.
-pub fn print_help_all() {
-    *use_console().lock().unwrap() = true;
+/// Returns configuration help lines (for embedding in converted files).
+pub fn get_config_help_lines() -> Vec<&'static str> {
+    vec![
+        "============================================================================",
+        "AffinityServiceRust Configuration Format",
+        "============================================================================",
+        "",
+        "Config file format: process_name,priority,affinity,cpuset,prime,io_priority,memory_priority",
+        "",
+        "----------------------------------------------------------------------------",
+        "PRIORITY OPTIONS",
+        "----------------------------------------------------------------------------",
+        "  priority:        none, idle, below normal, normal, above normal, high, real time",
+        "  io_priority:     none, very low, low, normal, high (high requires admin)",
+        "  memory_priority: none, very low, low, medium, below normal, normal",
+        "",
+        "  Use 'none' to skip setting that attribute (keep Windows default).",
+        "",
+        "----------------------------------------------------------------------------",
+        "CPU SPECIFICATION FORMATS",
+        "----------------------------------------------------------------------------",
+        "  0              - no change",
+        "  0xFF           - hex mask (legacy, ≤64 cores)",
+        "  0-7            - CPU range",
+        "  0-7;64-71      - multiple ranges (for >64 cores)",
+        "  0;4;8;64       - individual CPUs",
+        "  *alias_name    - use predefined alias",
+        "",
+        "  NOTE: \"7\" means core 7, NOT a bitmask for cores 0-2.",
+        "        Use \"0x7\" or \"0-2\" if you want cores 0, 1, and 2.",
+        "",
+        "----------------------------------------------------------------------------",
+        "CPU ALIASES (supports >64 cores)",
+        "----------------------------------------------------------------------------",
+        "  Define reusable CPU specs with: *alias_name = spec",
+        "  Examples:",
+        "    *pcore = 0-7;64-71      # P-cores in both CPU groups",
+        "    *ecore = 8-15;72-79     # E-cores in both CPU groups",
+        "    *allcores = 0-127       # All 128 cores",
+        "    *legacy = 0xFF          # Old hex mask still works",
+        "  Then use: game.exe,high,*pcore,0,*pcore,normal,normal",
+        "",
+        "----------------------------------------------------------------------------",
+        "PROCESS GROUPS",
+        "----------------------------------------------------------------------------",
+        "  Group multiple processes with the same rule using { } syntax:",
+        "",
+        "  # Named group (multi-line)",
+        "  group_name {",
+        "      process1.exe, process2.exe",
+        "      # Comments allowed inside",
+        "      process3.exe",
+        "  },priority,affinity,cpuset,prime_cpus,io_priority,memory_priority",
+        "",
+        "  # Named group (single-line)",
+        "  browsers { chrome.exe, firefox.exe },normal,*e,0,0,low,none",
+        "",
+        "  # Anonymous group (no name)",
+        "  { notepad.exe, calc.exe },none,*e,0,0,low,none",
+        "",
+        "----------------------------------------------------------------------------",
+        "SCHEDULER CONSTANTS",
+        "----------------------------------------------------------------------------",
+        "  @HYSTERESIS_RATIO  = 1.259  # candidate must exceed this * lowest prime",
+        "  @KEEP_THRESHOLD    = 0.69   # keep prime when above this * highest",
+        "  @ENTRY_THRESHOLD   = 0.42   # become prime when above this * highest",
+        "",
+        "----------------------------------------------------------------------------",
+        "MULTI-CPU GROUP SUPPORT",
+        "----------------------------------------------------------------------------",
+        "  - Systems with >64 logical processors use multiple CPU groups",
+        "  - Use range syntax (0-7;64-71) instead of hex masks for >64 cores",
+        "  - CPU Set APIs are used automatically for full multi-group support",
+        "  - Legacy hex masks (0xFF) still work for ≤64 core systems",
+        "",
+        "----------------------------------------------------------------------------",
+        "LIMITATIONS & NOTES",
+        "----------------------------------------------------------------------------",
+        "  - Admin privileges needed for managing system processes",
+        "  - SetProcessAffinityMask only works within one CPU group (≤64 cores)",
+        "  - For >64 cores, use CPU Set features (cpuset column) instead of affinity",
+        "  - IO priority 'high' requires admin elevation",
+        "  - IO priority 'critical' is kernel-only and not available from user mode",
+        "",
+        "============================================================================",
+    ]
+}
+
+/// Prints configuration format help to console.
+pub fn print_config_help() {
+    for line in get_config_help_lines() {
+        log!("{}", line);
+    }
+}
+
+/// Prints CLI help (command line arguments).
+pub fn print_cli_help() {
     log!("usage: AffinityServiceRust.exe [args]");
     log!("");
-    log!("=== DETAILED HELP & DEBUG OPTIONS ===");
+    log!("=== COMMAND LINE OPTIONS ===");
     log!("");
     log!("Basic Arguments:");
     log!("  -help | --help       print basic help message");
@@ -168,72 +262,6 @@ pub fn print_help_all() {
     log!("  -noDebugPriv         not request SeDebugPrivilege");
     log!("  -noIncBasePriority   not request SeIncreaseBasePriorityPrivilege");
     log!("");
-    log!("=== CONFIGURATION FORMAT ===");
-    log!("");
-    log!("Config file format: process_name,priority,affinity,cpuset,prime,io_priority,memory_priority");
-    log!("");
-    log!("Priority Options:");
-    log!("  none, idle, below normal, normal, above normal, high, real time");
-    log!("  'none' means the program won't change it");
-    log!("");
-    log!("CPU Specification (affinity, cpuset, prime):");
-    log!("  0              - no change");
-    log!("  0xFF           - hex mask (legacy, ≤64 cores)");
-    log!("  0-7            - CPU range");
-    log!("  0-7;64-71      - multiple ranges (for >64 cores)");
-    log!("  0;4;8;64       - individual CPUs");
-    log!("  *alias_name    - use predefined alias");
-    log!("");
-    log!("CPU Aliases (supports >64 cores):");
-    log!("  Define reusable CPU specs with: *alias_name = spec");
-    log!("  Examples:");
-    log!("    *pcore = 0-7;64-71      # P-cores in both CPU groups");
-    log!("    *ecore = 8-15;72-79     # E-cores in both CPU groups");
-    log!("    *allcores = 0-127       # All 128 cores");
-    log!("    *legacy = 0xFF          # Old hex mask still works");
-    log!("  Then use: game.exe,high,*pcore,0,*pcore,normal,normal");
-    log!("");
-    log!("IO Priority Options:");
-    log!("  none, very low, low, normal, high");
-    log!("  'none' means the program won't change it");
-    log!("  'high' requires admin elevation (fails without admin)");
-    log!("  Note: 'critical' is reserved for kernel use and not available");
-    log!("");
-    log!("Memory Priority Options:");
-    log!("  none, very low, low, medium, below normal, normal");
-    log!("  'none' means the program won't change it");
-    log!("  Lower memory priority = pages more likely to be paged out under memory pressure");
-    log!("");
-    log!("Example Configuration:");
-    log!("  # Scheduler constants");
-    log!("  @KEEP_THRESHOLD=0.69");
-    log!("  @ENTRY_THRESHOLD=0.42");
-    log!("");
-    log!("  # Define CPU aliases (works with >64 cores)");
-    log!("  *pcore = 0-7;64-71");
-    log!("  *ecore = 8-15;72-79");
-    log!("");
-    log!("  # Process configs: name,priority,affinity,cpuset,prime,io_priority,memory_priority");
-    log!("  notepad.exe,above normal,*ecore,0,0,low,normal");
-    log!("  game.exe,high,0,0,*pcore,normal,normal");
-    log!("  background.exe,idle,*ecore,0,0,very low,low");
-    log!("  browser.exe,normal,*ecore,0,0,normal,below normal");
-    log!("");
-    log!("=== MULTI-CPU GROUP SUPPORT ===");
-    log!("");
-    log!("- Systems with >64 logical processors use multiple CPU groups");
-    log!("- Use range syntax (0-7;64-71) instead of hex masks for >64 cores");
-    log!("- CPU Set APIs are used automatically for full multi-group support");
-    log!("- Legacy hex masks (0xFF) still work for ≤64 core systems");
-    log!("");
-    log!("=== LIMITATIONS & NOTES ===");
-    log!("");
-    log!("- Admin privileges needed for managing system processes");
-    log!("- SetProcessAffinityMask only works within one CPU group (≤64 cores)");
-    log!("- For >64 cores, use CPU Set features (cpuset column) instead of affinity");
-    log!("- IO priority 'high' requires admin elevation");
-    log!("- IO priority 'critical' is kernel-only and not available from user mode");
-    log!("");
     log!("=== DEBUGGING ===");
     log!("");
     log!("Quick debug command (non-admin):");
@@ -246,4 +274,12 @@ pub fn print_help_all() {
     log!("Note: When running with UAC elevation, -console output goes to a new window");
     log!("that closes immediately. Use log files instead for admin testing.");
     log!("");
+}
+
+/// Prints the detailed help message with all options (CLI + Config).
+pub fn print_help_all() {
+    *use_console().lock().unwrap() = true;
+    print_cli_help();
+    log!("");
+    print_config_help();
 }

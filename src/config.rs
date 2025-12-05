@@ -13,6 +13,7 @@
 //! - Multiple ranges: `0-7;64-71`
 //! - Mixed: `0-3;8;9;64-67`
 
+use crate::cli::get_config_help_lines;
 use crate::log;
 use crate::logging::{log_message, log_to_find};
 use crate::priority::{IOPriority, MemoryPriority, ProcessPriority};
@@ -604,61 +605,119 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
     };
 
     let mut output_lines: Vec<String> = Vec::new();
+
+    // Prepend config help with # comment prefix
+    for help_line in get_config_help_lines() {
+        if help_line.is_empty() {
+            output_lines.push("#".to_string());
+        } else {
+            output_lines.push(format!("# {}", help_line));
+        }
+    }
+    output_lines.push(String::new());
     output_lines.push("# Converted from Process Lasso config".to_string());
-    output_lines.push("# Format: process_name,priority,affinity,cpuset,prime,io_priority,memory_priority".to_string());
     output_lines.push(String::new());
 
     let mut priorities: HashMap<String, String> = HashMap::new();
     let mut affinities: HashMap<String, String> = HashMap::new();
+    let mut named_affinities: Vec<(String, String)> = Vec::new();
 
-    // Parse DefaultPriorities section
-    let mut in_priorities = false;
-    let mut in_affinities = false;
-
+    // Process Lasso stores data in these formats:
+    // 1. Single line: DefaultPriorities=proc1.exe,priority1,proc2.exe,priority2,...
+    // 2. Single line: DefaultAffinitiesEx=proc1.exe,mask,cpuset,proc2.exe,mask,cpuset,...
+    // 3. Single line: NamedAffinities=alias1,cpuspec1,alias2,cpuspec2,...
     for line in content.lines() {
         let line = line.trim();
-        if line.starts_with("[DefaultPriorities]") {
-            in_priorities = true;
-            in_affinities = false;
-            continue;
-        }
-        if line.starts_with("[DefaultAffinitiesEx]") {
-            in_priorities = false;
-            in_affinities = true;
-            continue;
-        }
-        if line.starts_with('[') {
-            in_priorities = false;
-            in_affinities = false;
-            continue;
+
+        // Parse NamedAffinities=alias,cpuspec,alias,cpuspec,...
+        if line.starts_with("NamedAffinities=") {
+            let value = &line["NamedAffinities=".len()..];
+            let parts: Vec<&str> = value.split(',').collect();
+            // Pairs of (alias_name, cpu_spec)
+            let mut i = 0;
+            while i + 1 < parts.len() {
+                let alias_name = parts[i].trim();
+                let cpu_spec = parts[i + 1].trim();
+                if !alias_name.is_empty() && !cpu_spec.is_empty() {
+                    named_affinities.push((alias_name.to_string(), cpu_spec.to_string()));
+                }
+                i += 2;
+            }
         }
 
-        if in_priorities {
-            if let Some(eq_pos) = line.find('=') {
-                let name = line[..eq_pos].trim().to_lowercase();
-                let value = line[eq_pos + 1..].trim();
-                priorities.insert(name, value.to_string());
+        // Parse DefaultPriorities=name,priority,name,priority,...
+        if line.starts_with("DefaultPriorities=") {
+            let value = &line["DefaultPriorities=".len()..];
+            let parts: Vec<&str> = value.split(',').collect();
+            // Pairs of (name, priority)
+            let mut i = 0;
+            while i + 1 < parts.len() {
+                let name = parts[i].trim().to_lowercase();
+                let priority = parts[i + 1].trim();
+                if !name.is_empty() {
+                    priorities.insert(name, priority.to_string());
+                }
+                i += 2;
             }
         }
-        if in_affinities {
-            if let Some(eq_pos) = line.find('=') {
-                let name = line[..eq_pos].trim().to_lowercase();
-                let value = line[eq_pos + 1..].trim();
-                affinities.insert(name, value.to_string());
+
+        // Parse DefaultAffinitiesEx=name,mask,cpuset,name,mask,cpuset,...
+        if line.starts_with("DefaultAffinitiesEx=") {
+            let value = &line["DefaultAffinitiesEx=".len()..];
+            let parts: Vec<&str> = value.split(',').collect();
+            // Triplets of (name, mask, cpuset) - we use cpuset (index 2)
+            let mut i = 0;
+            while i + 2 < parts.len() {
+                let name = parts[i].trim().to_lowercase();
+                let _mask = parts[i + 1].trim(); // legacy mask, usually 0
+                let cpuset = parts[i + 2].trim(); // the actual CPU range
+                if !name.is_empty() && cpuset != "0" && !cpuset.is_empty() {
+                    affinities.insert(name, cpuset.to_string());
+                }
+                i += 3;
             }
         }
+    }
+
+    // Build a reverse lookup: cpu_spec -> alias_name (for replacing specs with aliases)
+    let mut spec_to_alias: HashMap<String, String> = HashMap::new();
+    for (alias_name, cpu_spec) in &named_affinities {
+        spec_to_alias.insert(cpu_spec.clone(), format!("*{}", alias_name));
+    }
+
+    // Output CPU aliases from NamedAffinities
+    if !named_affinities.is_empty() {
+        output_lines.push("# CPU Aliases (from Process Lasso NamedAffinities)".to_string());
+        for (alias_name, cpu_spec) in &named_affinities {
+            output_lines.push(format!("*{} = {}", alias_name, cpu_spec));
+        }
+        output_lines.push(String::new());
     }
 
     // Merge priorities and affinities
     let mut all_processes: std::collections::HashSet<String> = priorities.keys().cloned().collect();
     all_processes.extend(affinities.keys().cloned());
 
-    for name in all_processes {
+    // Sort process names for consistent output
+    let mut sorted_processes: Vec<String> = all_processes.into_iter().collect();
+    sorted_processes.sort();
+
+    for name in sorted_processes {
         let priority = priorities.get(&name).map(|s| s.as_str()).unwrap_or("none");
-        let affinity = affinities.get(&name).map(|s| s.as_str()).unwrap_or("0");
+        let affinity_raw = affinities.get(&name).map(|s| s.as_str()).unwrap_or("0");
+        // Replace CPU spec with alias if it matches
+        let affinity = spec_to_alias.get(affinity_raw).map(|s| s.as_str()).unwrap_or(affinity_raw);
 
         // Convert Process Lasso priority to our format
-        let priority_str = match priority {
+        // Process Lasso uses text like "high", "above normal", etc. directly
+        let priority_str = match priority.to_lowercase().as_str() {
+            "idle" => "idle",
+            "below normal" => "below normal",
+            "normal" => "normal",
+            "above normal" => "above normal",
+            "high" => "high",
+            "realtime" | "real time" => "real time",
+            // Also handle numeric values
             "1" => "idle",
             "2" => "below normal",
             "3" => "normal",
@@ -670,6 +729,13 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
 
         output_lines.push(format!("{},{},{},0,0,none,none", name, priority_str, affinity));
     }
+
+    log!(
+        "Parsed {} aliases, {} priorities, {} affinities",
+        named_affinities.len(),
+        priorities.len(),
+        affinities.len()
+    );
 
     // Write output file
     let mut out = match File::create(&out_path) {

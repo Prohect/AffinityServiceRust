@@ -31,6 +31,8 @@ cargo run --release -- -logloop -loop 3 -interval 2000 -config test.ini
 | `-blacklist <file>` | Use custom blacklist file | None |
 | `-help` | Show basic help | - |
 | `-help-all` | Show extended help with all options | - |
+| `-validate` | Validate config file syntax without running | - |
+| `-dryrun` | Show what would be changed without applying | - |
 
 ## Test Configuration (test.ini)
 
@@ -60,6 +62,37 @@ process_name,priority,affinity,cpuset,prime_cpus,io_priority,memory_priority
 Use `0` or `none` to skip setting that attribute.
 
 ## Common Debug Scenarios
+
+### Validate Config Syntax
+
+Before running, validate your config file for errors:
+```bash
+cargo run --release -- -validate -config config.ini
+```
+
+Expected output on success:
+```
+✓ Parsed 3 constants
+✓ Parsed 7 CPU aliases
+✓ Parsed 311 process rules
+✓ Config is valid!
+```
+
+### Dry Run Mode
+
+See what changes would be applied without actually making them:
+```bash
+cargo run --release -- -dryrun -noUAC -config test.ini
+```
+
+Example output:
+```
+[DRY RUN] Checking 115 running processes against 6 config rules...
+  notepad.exe (PID 6628):
+    - IO Priority: -> normal
+    - Memory Priority: -> low
+[DRY RUN] 2 change(s) would be made. Run without -dryrun to apply.
+```
 
 ### Test Memory Priority Fix
 

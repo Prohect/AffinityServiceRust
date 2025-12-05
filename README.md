@@ -67,6 +67,8 @@ AffinityServiceRust.exe -find
 | `-resolution <0.0001ms>` | Set timer resolution |
 | `-find` | Log unmanaged processes |
 | `-convert` | Convert Process Lasso config |
+| `-validate` | Validate config file syntax without running |
+| `-dryrun` | Show what would be changed without applying |
 
 ## Configuration
 
@@ -128,6 +130,12 @@ dwm.exe,high,*p,0,0,high,normal
 ## Debugging
 
 ```bash
+# Validate config syntax before running
+AffinityServiceRust.exe -validate -config config.ini
+
+# Dry run - see what would be changed without applying
+AffinityServiceRust.exe -dryrun -noUAC -config config.ini
+
 # Non-admin with console
 AffinityServiceRust.exe -console -noUAC -logloop -loop 3 -interval 2000
 

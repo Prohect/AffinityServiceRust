@@ -289,6 +289,195 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> io::Result<(HashMap<String, Proce
     Ok((configs, constants))
 }
 
+/// Result of config validation
+#[derive(Debug, Default)]
+pub struct ConfigValidationResult {
+    pub constants_count: usize,
+    pub aliases_count: usize,
+    pub configs_count: usize,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+impl ConfigValidationResult {
+    pub fn is_valid(&self) -> bool {
+        self.errors.is_empty()
+    }
+
+    pub fn print_report(&self) {
+        if self.is_valid() {
+            println!("✓ Parsed {} constants", self.constants_count);
+            println!("✓ Parsed {} CPU aliases", self.aliases_count);
+            println!("✓ Parsed {} process rules", self.configs_count);
+            println!("✓ Config is valid!");
+        } else {
+            for error in &self.errors {
+                println!("✗ {}", error);
+            }
+            for warning in &self.warnings {
+                println!("⚠ {}", warning);
+            }
+            println!();
+            println!("Found {} error(s). Fix them before running.", self.errors.len());
+        }
+    }
+}
+
+/// Validates a config file without applying any changes.
+/// Returns detailed information about parsing results and any errors found.
+pub fn validate_config<P: AsRef<Path>>(path: P) -> ConfigValidationResult {
+    let mut result = ConfigValidationResult::default();
+
+    let file = match File::open(&path) {
+        Ok(f) => f,
+        Err(e) => {
+            result.errors.push(format!("Cannot open config file: {}", e));
+            return result;
+        }
+    };
+
+    let reader = io::BufReader::new(file);
+    let mut cpu_aliases: HashMap<String, Vec<u32>> = HashMap::new();
+    let mut line_number = 0;
+
+    for line in reader.lines() {
+        line_number += 1;
+        let line = match line {
+            Ok(l) => l,
+            Err(e) => {
+                result.errors.push(format!("Line {}: Read error: {}", line_number, e));
+                continue;
+            }
+        };
+
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Constant definition
+        if line.starts_with('@') {
+            if let Some(eq_pos) = line.find('=') {
+                let const_name = line[1..eq_pos].trim().to_uppercase();
+                let const_value = line[eq_pos + 1..].trim();
+
+                match const_name.as_str() {
+                    "HYSTERESIS_RATIO" | "KEEP_THRESHOLD" | "ENTRY_THRESHOLD" => {
+                        if const_value.parse::<f64>().is_err() {
+                            result.errors.push(format!(
+                                "Line {}: Invalid value '{}' for constant '{}' - expected a number",
+                                line_number, const_value, const_name
+                            ));
+                        } else {
+                            result.constants_count += 1;
+                        }
+                    }
+                    _ => {
+                        result
+                            .warnings
+                            .push(format!("Line {}: Unknown constant '{}' - will be ignored", line_number, const_name));
+                    }
+                }
+            } else {
+                result
+                    .errors
+                    .push(format!("Line {}: Invalid constant definition '{}' - expected '@NAME = value'", line_number, line));
+            }
+            continue;
+        }
+
+        // CPU alias definition
+        if line.starts_with('*') {
+            if let Some(eq_pos) = line.find('=') {
+                let alias_name = line[1..eq_pos].trim().to_lowercase();
+                let alias_value = line[eq_pos + 1..].trim();
+
+                if alias_name.is_empty() {
+                    result.errors.push(format!("Line {}: Empty alias name", line_number));
+                } else {
+                    let cpus = parse_cpu_spec(alias_value);
+                    if cpus.is_empty() && alias_value != "0" {
+                        result
+                            .warnings
+                            .push(format!("Line {}: Alias '*{}' has empty CPU set from '{}'", line_number, alias_name, alias_value));
+                    }
+                    cpu_aliases.insert(alias_name, cpus);
+                    result.aliases_count += 1;
+                }
+            } else {
+                result
+                    .errors
+                    .push(format!("Line {}: Invalid alias definition '{}' - expected '*name = cpu_spec'", line_number, line));
+            }
+            continue;
+        }
+
+        // Process configuration line
+        let parts: Vec<&str> = line.split(',').collect();
+        if parts.len() < 3 {
+            result.errors.push(format!(
+                "Line {}: Too few fields ({}) - expected at least 3 (name,priority,affinity)",
+                line_number,
+                parts.len()
+            ));
+            continue;
+        }
+
+        let name = parts[0].trim();
+        if name.is_empty() {
+            result.errors.push(format!("Line {}: Empty process name", line_number));
+            continue;
+        }
+
+        // Validate priority
+        let priority_str = parts[1].trim();
+        if ProcessPriority::from_str(priority_str) == ProcessPriority::None && !priority_str.eq_ignore_ascii_case("none") {
+            result
+                .warnings
+                .push(format!("Line {}: Unknown priority '{}' - will be treated as 'none'", line_number, priority_str));
+        }
+
+        // Validate CPU specs (affinity, cpuset, prime)
+        for (i, field_name) in [(2, "affinity"), (3, "cpuset"), (4, "prime_cpus")].iter() {
+            if parts.len() > *i {
+                let spec = parts[*i].trim();
+                if spec.starts_with('*') {
+                    let alias = spec.trim_start_matches('*').to_lowercase();
+                    if !cpu_aliases.contains_key(&alias) {
+                        result
+                            .errors
+                            .push(format!("Line {}: Undefined alias '*{}' in {} field", line_number, alias, field_name));
+                    }
+                }
+            }
+        }
+
+        // Validate IO priority
+        if parts.len() >= 6 {
+            let io_str = parts[5].trim();
+            if IOPriority::from_str(io_str) == IOPriority::None && !io_str.eq_ignore_ascii_case("none") {
+                result
+                    .warnings
+                    .push(format!("Line {}: Unknown IO priority '{}' - will be treated as 'none'", line_number, io_str));
+            }
+        }
+
+        // Validate Memory priority
+        if parts.len() >= 7 {
+            let mem_str = parts[6].trim();
+            if MemoryPriority::from_str(mem_str) == MemoryPriority::None && !mem_str.eq_ignore_ascii_case("none") {
+                result
+                    .warnings
+                    .push(format!("Line {}: Unknown memory priority '{}' - will be treated as 'none'", line_number, mem_str));
+            }
+        }
+
+        result.configs_count += 1;
+    }
+
+    result
+}
+
 /// Reads a list of process names from a file (for blacklist).
 pub fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> {
     let file = File::open(path)?;

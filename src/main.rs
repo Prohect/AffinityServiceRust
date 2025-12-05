@@ -38,7 +38,7 @@ mod winapi;
 
 use chrono::Local;
 use cli::{parse_args, print_help, print_help_all};
-use config::{ConfigConstants, ProcessConfig, convert, cpu_indices_to_mask, format_cpu_indices, read_config, read_list};
+use config::{ConfigConstants, ProcessConfig, convert, cpu_indices_to_mask, format_cpu_indices, read_config, read_list, validate_config};
 use logging::{FAIL_SET, LOCALTIME_BUFFER, error_from_code, find_logger, log_process_find, log_to_find, logger};
 use priority::MemoryPriorityInformation;
 use process::ProcessSnapshot;
@@ -60,6 +60,64 @@ use windows::Win32::{
         WindowsProgramming::QueryThreadCycleTime,
     },
 };
+
+/// Checks what changes would be applied to a process without actually applying them (dry run mode).
+/// Returns a vector of strings describing what would be changed.
+fn dry_run_check(pid: u32, config: &ProcessConfig) -> Vec<String> {
+    let mut changes = Vec::new();
+
+    let open_result = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) };
+    let h_prc = match open_result {
+        Err(_) => return vec![format!("[SKIP] Cannot open process (access denied)")],
+        Ok(h_prc) => h_prc,
+    };
+    if h_prc.is_invalid() {
+        return vec![format!("[SKIP] Invalid handle")];
+    }
+
+    // Check Priority
+    if let Some(priority_flag) = config.priority.as_win_const() {
+        let current_priority = unsafe { GetPriorityClass(h_prc) };
+        if current_priority != priority_flag.0 {
+            changes.push(format!("Priority: current -> {}", config.priority.as_str()));
+        }
+    }
+
+    // Check Affinity
+    let affinity_mask = cpu_indices_to_mask(&config.affinity_cpus);
+    if !config.affinity_cpus.is_empty() && affinity_mask != 0 {
+        let mut current_mask: usize = 0;
+        let mut system_mask: usize = 0;
+        if unsafe { GetProcessAffinityMask(h_prc, &mut current_mask, &mut system_mask) }.is_ok() {
+            if affinity_mask != current_mask {
+                changes.push(format!("Affinity: {:#X} -> {:#X}", current_mask, affinity_mask));
+            }
+        }
+    }
+
+    // Check CPU Set
+    if !config.cpu_set_cpus.is_empty() {
+        changes.push(format!("CPU Set: -> [{}]", format_cpu_indices(&config.cpu_set_cpus)));
+    }
+
+    // Check Prime CPUs
+    if !config.prime_cpus.is_empty() {
+        changes.push(format!("Prime CPUs: -> [{}]", format_cpu_indices(&config.prime_cpus)));
+    }
+
+    // Check IO Priority
+    if config.io_priority != priority::IOPriority::None {
+        changes.push(format!("IO Priority: -> {}", config.io_priority.as_str()));
+    }
+
+    // Check Memory Priority
+    if config.memory_priority != priority::MemoryPriority::None {
+        changes.push(format!("Memory Priority: -> {}", config.memory_priority.as_str()));
+    }
+
+    unsafe { CloseHandle(h_prc) }.ok();
+    changes
+}
 
 /// Applies all configured settings to a process: priority, affinity, CPU sets, IO/memory priority.
 ///
@@ -467,6 +525,8 @@ fn main() -> windows::core::Result<()> {
     let mut help_all_mode = false;
     let mut convert_mode = false;
     let mut find_mode = false;
+    let mut validate_mode = false;
+    let mut dry_run = false;
     let mut config_file_name = "config.ini".to_string();
     let mut blacklist_file_name: Option<String> = None;
     let mut in_file_name: Option<String> = None;
@@ -483,6 +543,8 @@ fn main() -> windows::core::Result<()> {
         &mut help_all_mode,
         &mut convert_mode,
         &mut find_mode,
+        &mut validate_mode,
+        &mut dry_run,
         &mut config_file_name,
         &mut blacklist_file_name,
         &mut in_file_name,
@@ -499,6 +561,11 @@ fn main() -> windows::core::Result<()> {
     }
     if help_all_mode {
         print_help_all();
+        return Ok(());
+    }
+    if validate_mode {
+        let result = validate_config(&config_file_name);
+        result.print_report();
         return Ok(());
     }
     if convert_mode {
@@ -573,14 +640,43 @@ fn main() -> windows::core::Result<()> {
         }
         match ProcessSnapshot::take() {
             Ok(mut processes) => {
-                prime_core_scheduler.reset_alive();
-                for i in 0..processes.pid_to_process.values().len() {
-                    let process = processes.pid_to_process.values().nth(i).unwrap();
-                    if let Some(config) = configs.get(process.get_name()) {
-                        apply_config(process.pid(), config, &mut prime_core_scheduler, &mut processes);
+                if dry_run {
+                    // Dry run mode: show what would be changed without applying
+                    println!(
+                        "[DRY RUN] Checking {} running processes against {} config rules...",
+                        processes.pid_to_process.len(),
+                        configs.len()
+                    );
+                    let mut total_changes = 0;
+                    for process in processes.pid_to_process.values() {
+                        if let Some(config) = configs.get(process.get_name()) {
+                            let changes = dry_run_check(process.pid(), config);
+                            if !changes.is_empty() {
+                                println!("  {} (PID {}):", config.name, process.pid());
+                                for change in &changes {
+                                    println!("    - {}", change);
+                                }
+                                total_changes += changes.len();
+                            }
+                        }
                     }
+                    if total_changes == 0 {
+                        println!("[DRY RUN] No changes would be made.");
+                    } else {
+                        println!("[DRY RUN] {} change(s) would be made. Run without -dryrun to apply.", total_changes);
+                    }
+                    // Exit after one dry run iteration
+                    should_continue = false;
+                } else {
+                    prime_core_scheduler.reset_alive();
+                    for i in 0..processes.pid_to_process.values().len() {
+                        let process = processes.pid_to_process.values().nth(i).unwrap();
+                        if let Some(config) = configs.get(process.get_name()) {
+                            apply_config(process.pid(), config, &mut prime_core_scheduler, &mut processes);
+                        }
+                    }
+                    prime_core_scheduler.close_dead_process_handles();
                 }
-                prime_core_scheduler.close_dead_process_handles();
                 drop(processes);
             }
             Err(err) => {

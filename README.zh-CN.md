@@ -67,6 +67,8 @@ AffinityServiceRust.exe -find
 | `-resolution <0.0001ms>` | 设置计时器分辨率 |
 | `-find` | 记录未管理的进程 |
 | `-convert` | 转换 Process Lasso 配置 |
+| `-validate` | 验证配置文件语法（不运行） |
+| `-dryrun` | 显示将会更改的内容（不实际应用） |
 
 ## 配置
 
@@ -128,6 +130,12 @@ dwm.exe,high,*p,0,0,high,normal
 ## 调试
 
 ```bash
+# 验证配置文件语法
+AffinityServiceRust.exe -validate -config config.ini
+
+# 试运行 - 查看将会更改的内容（不实际应用）
+AffinityServiceRust.exe -dryrun -noUAC -config config.ini
+
 # 非管理员，带控制台
 AffinityServiceRust.exe -console -noUAC -logloop -loop 3 -interval 2000
 

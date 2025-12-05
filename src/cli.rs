@@ -19,6 +19,8 @@ pub fn parse_args(
     help_all_mode: &mut bool,
     convert_mode: &mut bool,
     find_mode: &mut bool,
+    validate_mode: &mut bool,
+    dry_run: &mut bool,
     config_file_name: &mut String,
     blacklist_file_name: &mut Option<String>,
     in_file_name: &mut Option<String>,
@@ -49,6 +51,12 @@ pub fn parse_args(
             }
             "-find" => {
                 *find_mode = true;
+            }
+            "-validate" => {
+                *validate_mode = true;
+            }
+            "-dryrun" | "-dry-run" | "--dry-run" => {
+                *dry_run = true;
             }
             "-interval" if i + 1 < args.len() => {
                 *interval_ms = args[i + 1].parse().unwrap_or(5000).max(16);
@@ -107,6 +115,8 @@ pub fn print_help() {
     println!("  -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)");
     println!();
     println!("Modes:");
+    println!("  -validate            validate config file syntax without running");
+    println!("  -dryrun              show what would be changed without applying");
     println!("  -convert             convert Process Lasso config (-in <file> -out <file>)");
     println!();
     println!("Config Format: process_name,priority,affinity,cpuset,prime,io_priority,memory_priority");
@@ -134,6 +144,8 @@ pub fn print_help_all() {
     println!("  -interval <ms>       set interval for checking again (5000 by default, minimal 16)");
     println!();
     println!("Operating Modes:");
+    println!("  -validate            validate config file for syntax errors and undefined aliases");
+    println!("  -dryrun              simulate changes without applying (shows what would happen)");
     println!("  -convert             convert process configs from -in <file>(from process lasso) to -out <file>");
     println!("  -in <file>           input file for -convert");
     println!("  -out <file>          output file for -convert");

@@ -411,6 +411,7 @@ pub struct ConfigValidationResult {
     pub groups_count: usize,
     pub group_members_count: usize,
     pub configs_count: usize,
+    pub group_rules_count: usize,
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
 }
@@ -427,7 +428,8 @@ impl ConfigValidationResult {
             if self.groups_count > 0 {
                 println!("✓ Parsed {} process groups ({} processes)", self.groups_count, self.group_members_count);
             }
-            println!("✓ Parsed {} process rules", self.configs_count);
+            let total_rules = self.configs_count - self.group_rules_count + self.group_members_count;
+            println!("✓ Parsed {} process rules", total_rules);
             if !self.warnings.is_empty() {
                 for warning in &self.warnings {
                     println!("⚠ {}", warning);
@@ -658,6 +660,7 @@ pub fn validate_config<P: AsRef<Path>>(path: P) -> ConfigValidationResult {
             if !process_groups.contains_key(&group_name) {
                 result.errors.push(format!("Line {}: Undefined process group '&{}'", line_number, group_name));
             }
+            result.group_rules_count += 1;
         }
 
         // Validate priority
@@ -849,7 +852,6 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
 
     println!("Converted {} to {}", in_path, out_path);
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -48,34 +48,40 @@ Two privileges are requested at startup. Use `-noDebugPriv` and `-noIncBasePrior
 #### Test Commands
 
 ```bash
-# Normal (both privileges enabled)
+# Non-admin tests
 cargo run --release -- -console -noUAC -config test_privilege.ini -loop 1
-
-# Without SeDebugPrivilege
 cargo run --release -- -console -noUAC -noDebugPriv -config test_privilege.ini -loop 1
-
-# Without SeIncreaseBasePriorityPrivilege
 cargo run --release -- -console -noUAC -noIncBasePriority -config test_privilege.ini -loop 1
-
-# Without both privileges
 cargo run --release -- -console -noUAC -noDebugPriv -noIncBasePriority -config test_privilege.ini -loop 1
+
+# Admin tests (UAC prompt required, output goes to log file)
+powershell -Command "Start-Process -FilePath './target/release/AffinityServiceRust.exe' -ArgumentList '-config test_privilege.ini -loop 1 -logloop' -Verb RunAs -Wait"
+powershell -Command "Start-Process -FilePath './target/release/AffinityServiceRust.exe' -ArgumentList '-config test_privilege.ini -loop 1 -logloop -noDebugPriv' -Verb RunAs -Wait"
+powershell -Command "Start-Process -FilePath './target/release/AffinityServiceRust.exe' -ArgumentList '-config test_privilege.ini -loop 1 -logloop -noIncBasePriority' -Verb RunAs -Wait"
+powershell -Command "Start-Process -FilePath './target/release/AffinityServiceRust.exe' -ArgumentList '-config test_privilege.ini -loop 1 -logloop -noDebugPriv -noIncBasePriority' -Verb RunAs -Wait"
 ```
 
 #### Test Results
 
-| Scenario | SeDebugPriv | SeIncBasePriority | Same-user processes | System processes | IO High |
-|----------|-------------|-------------------|---------------------|------------------|---------|
-| No admin, both enabled | ✅ granted | ✅ granted | ✅ works | ❌ ACCESS_DENIED | ❌ 0xC0000061 |
-| No admin, -noDebugPriv | ❌ disabled | ✅ granted | ✅ works | ❌ ACCESS_DENIED | ❌ 0xC0000061 |
-| No admin, -noIncBasePriority | ✅ granted | ❌ disabled | ✅ works | ❌ ACCESS_DENIED | ❌ 0xC0000061 |
-| No admin, both disabled | ❌ disabled | ❌ disabled | ✅ works | ❌ ACCESS_DENIED | ❌ 0xC0000061 |
-| Admin, both enabled | ✅ granted | ✅ granted | ✅ works | ✅ works | ✅ works |
+| Scenario | SeDebugPriv | SeIncBasePriority | Same-user | SYSTEM procs | Protected (csrss) | IO High |
+|----------|-------------|-------------------|-----------|--------------|-------------------|---------|
+| **No admin** | | | | | | |
+| Both enabled | ✅ granted | ✅ granted | ✅ | ❌ | ❌ | ❌ |
+| -noDebugPriv | ❌ | ✅ granted | ✅ | ❌ | ❌ | ❌ |
+| -noIncBasePriority | ✅ granted | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Both disabled | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| **Admin** | | | | | | |
+| Both enabled | ✅ granted | ✅ granted | ✅ | ✅ | ❌ | ✅ |
+| -noDebugPriv | ❌ | ✅ granted | ✅ | ❌ | ❌ | ✅ |
+| -noIncBasePriority | ✅ granted | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Both disabled | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
 
 **Key findings:**
-- Without admin elevation, privileges are granted but have **no practical effect**
-- SeDebugPrivilege only helps when running as admin (enables access to SYSTEM processes)
-- SeIncreaseBasePriorityPrivilege only helps when running as admin (enables IO priority high)
-- For same-user processes, no privileges are needed at all
+- **Without admin**: Privileges are granted but have **no practical effect**
+- **With admin + SeDebugPrivilege**: Enables access to SYSTEM processes (dwm.exe, services, etc.)
+- **With admin + SeIncreaseBasePriorityPrivilege**: Enables IO priority `high`
+- **Protected processes** (csrss.exe, smss.exe): Always ACCESS_DENIED, even with admin
+- **Same-user processes**: Work without any privileges or elevation
 
 ### Summary
 

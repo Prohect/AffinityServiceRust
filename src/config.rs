@@ -141,7 +141,7 @@ pub fn cpu_indices_to_mask(cpus: &[u32]) -> usize {
 /// E.g., [0, 1, 2, 3, 8, 9, 10] -> "0-3,8-10"
 pub fn format_cpu_indices(cpus: &[u32]) -> String {
     if cpus.is_empty() {
-        return String::from("none");
+        return String::from("0");
     }
 
     let mut sorted: Vec<u32> = cpus.to_vec();
@@ -199,18 +199,15 @@ impl ConfigResult {
 
     pub fn print_report(&self) {
         if self.is_valid() {
-            log!("✓ Parsed {} constants", self.constants_count);
-            log!("✓ Parsed {} CPU aliases", self.aliases_count);
             if self.groups_count > 0 {
-                log!("✓ Parsed {} process groups ({} processes)", self.groups_count, self.group_members_count);
+                log!("Parsed {} process groups ({} processes)", self.groups_count, self.group_members_count);
             }
-            log!("✓ Parsed {} process rules", self.process_rules_count);
+            log!("Parsed {} process rules", self.process_rules_count);
             if !self.warnings.is_empty() {
                 for warning in &self.warnings {
                     log_to_find(&format!("⚠ {}", warning));
                 }
             }
-            log!("✓ Config is valid!");
         } else {
             for error in &self.errors {
                 log_to_find(&format!("✗ {}", error));
@@ -223,13 +220,209 @@ impl ConfigResult {
     }
 }
 
+/// Helper function to resolve a CPU spec field (handles aliases and direct specs).
+fn resolve_cpu_spec(spec: &str, field_name: &str, line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, errors: &mut Vec<String>) -> Vec<u32> {
+    let spec = spec.trim();
+    if spec.starts_with('*') {
+        let alias = spec.trim_start_matches('*').to_lowercase();
+        if !cpu_aliases.contains_key(&alias) {
+            errors.push(format!("Line {}: Undefined alias '*{}' in {} field", line_number, alias, field_name));
+        }
+        cpu_aliases.get(&alias).cloned().unwrap_or_default()
+    } else {
+        parse_cpu_spec(spec)
+    }
+}
+
+/// Collects process names from comma-separated text into a vector.
+fn collect_members(text: &str, members: &mut Vec<String>) {
+    for item in text.split(',') {
+        let item = item.trim().to_lowercase();
+        if !item.is_empty() && !item.starts_with('#') {
+            members.push(item);
+        }
+    }
+}
+
+/// Parses a constant definition and updates the result.
+fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut ConfigResult) {
+    match name {
+        "HYSTERESIS_RATIO" | "KEEP_THRESHOLD" | "ENTRY_THRESHOLD" => {
+            if let Ok(v) = value.parse::<f64>() {
+                match name {
+                    "HYSTERESIS_RATIO" => result.constants.hysteresis_ratio = v,
+                    "KEEP_THRESHOLD" => {
+                        result.constants.keep_threshold = v;
+                        log_message(&format!("Config: KEEP_THRESHOLD = {}", v));
+                    }
+                    "ENTRY_THRESHOLD" => {
+                        result.constants.entry_threshold = v;
+                        log_message(&format!("Config: ENTRY_THRESHOLD = {}", v));
+                    }
+                    _ => {}
+                }
+                result.constants_count += 1;
+            } else {
+                result
+                    .errors
+                    .push(format!("Line {}: Invalid value '{}' for constant '{}' - expected a number", line_number, value, name));
+            }
+        }
+        _ => {
+            result.warnings.push(format!("Line {}: Unknown constant '{}' - will be ignored", line_number, name));
+        }
+    }
+}
+
+/// Parses a CPU alias definition and adds it to the aliases map.
+fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut HashMap<String, Vec<u32>>, result: &mut ConfigResult) {
+    if name.is_empty() {
+        result.errors.push(format!("Line {}: Empty alias name", line_number));
+    } else {
+        let cpus = parse_cpu_spec(value);
+        if cpus.is_empty() && value != "0" {
+            result
+                .warnings
+                .push(format!("Line {}: Alias '*{}' has empty CPU set from '{}'", line_number, name, value));
+        }
+        cpu_aliases.insert(name.to_string(), cpus);
+        result.aliases_count += 1;
+    }
+}
+
+/// Collects group members from lines until closing brace is found.
+/// Returns (members, rule_suffix, next_line_index) or None if unclosed.
+fn collect_group_block(lines: &[String], start_index: usize, first_line_content: &str) -> Option<(Vec<String>, Option<String>, usize)> {
+    let mut members = Vec::new();
+    let mut i = start_index;
+
+    // Collect from first line (content after '{')
+    if !first_line_content.is_empty() && !first_line_content.starts_with('#') {
+        collect_members(first_line_content, &mut members);
+    }
+
+    // Continue to subsequent lines
+    while i < lines.len() {
+        let block_line = lines[i].trim();
+
+        if let Some(pos) = block_line.find('}') {
+            // Found closing brace
+            let before = block_line[..pos].trim();
+            if !before.is_empty() && !before.starts_with('#') {
+                collect_members(before, &mut members);
+            }
+            let after = block_line[pos + 1..].trim();
+            let suffix = if after.starts_with(',') { Some(after[1..].to_string()) } else { None };
+            return Some((members, suffix, i + 1));
+        }
+
+        // Regular content line
+        if !block_line.is_empty() && !block_line.starts_with('#') {
+            collect_members(block_line, &mut members);
+        }
+        i += 1;
+    }
+
+    None // Unclosed block
+}
+
+/// Parses rule fields and creates ProcessConfig entries for all members.
+/// This is the unified logic for both group definitions and single-line process rules.
+///
+/// # Arguments
+/// * `members` - Process names to create configs for (single element for normal lines, multiple for groups)
+/// * `rule_parts` - The rule fields: [priority, affinity, cpuset, prime, io, memory]
+/// * `line_number` - For error reporting
+/// * `cpu_aliases` - Resolved CPU aliases
+/// * `result` - ConfigResult to add configs, errors, and warnings to
+fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, result: &mut ConfigResult) {
+    if rule_parts.len() < 2 {
+        result.errors.push(format!(
+            "Line {}: Too few fields ({}) - expected at least 2 (priority,affinity)",
+            line_number,
+            rule_parts.len()
+        ));
+        return;
+    }
+
+    // Parse priority
+    let priority_str = rule_parts[0].trim();
+    let priority = ProcessPriority::from_str(priority_str);
+    if priority == ProcessPriority::None && !priority_str.eq_ignore_ascii_case("none") {
+        result
+            .warnings
+            .push(format!("Line {}: Unknown priority '{}' - will be treated as 'none'", line_number, priority_str));
+    }
+
+    // Parse affinity
+    let affinity_cpus = resolve_cpu_spec(rule_parts[1], "affinity", line_number, cpu_aliases, &mut result.errors);
+
+    // Parse cpuset (optional, defaults to "0")
+    let cpu_set_cpus = if rule_parts.len() >= 3 {
+        resolve_cpu_spec(rule_parts[2], "cpuset", line_number, cpu_aliases, &mut result.errors)
+    } else {
+        Vec::new()
+    };
+
+    // Parse prime_cpus (optional, defaults to "0")
+    let prime_cpus = if rule_parts.len() >= 4 {
+        resolve_cpu_spec(rule_parts[3], "prime_cpus", line_number, cpu_aliases, &mut result.errors)
+    } else {
+        Vec::new()
+    };
+
+    // Parse io_priority (optional, defaults to None)
+    let io_priority = if rule_parts.len() >= 5 {
+        let io_str = rule_parts[4].trim();
+        let io_p = IOPriority::from_str(io_str);
+        if io_p == IOPriority::None && !io_str.eq_ignore_ascii_case("none") {
+            result
+                .warnings
+                .push(format!("Line {}: Unknown IO priority '{}' - will be treated as 'none'", line_number, io_str));
+        }
+        io_p
+    } else {
+        IOPriority::None
+    };
+
+    // Parse memory_priority (optional, defaults to None)
+    let memory_priority = if rule_parts.len() >= 6 {
+        let mem_str = rule_parts[5].trim();
+        let mem_p = MemoryPriority::from_str(mem_str);
+        if mem_p == MemoryPriority::None && !mem_str.eq_ignore_ascii_case("none") {
+            result
+                .warnings
+                .push(format!("Line {}: Unknown memory priority '{}' - will be treated as 'none'", line_number, mem_str));
+        }
+        mem_p
+    } else {
+        MemoryPriority::None
+    };
+
+    // Create ProcessConfig for each member
+    for name in members {
+        result.configs.insert(
+            name.clone(),
+            ProcessConfig {
+                name: name.clone(),
+                priority: priority.clone(),
+                affinity_cpus: affinity_cpus.clone(),
+                cpu_set_cpus: cpu_set_cpus.clone(),
+                prime_cpus: prime_cpus.clone(),
+                io_priority: io_priority.clone(),
+                memory_priority: memory_priority.clone(),
+            },
+        );
+    }
+    result.process_rules_count += members.len();
+}
+
 /// Reads and validates the main config file.
-/// Returns configs, constants, and validation results.
 /// Supports:
 /// - `@CONSTANT = value` - Define a constant
 /// - `*alias = cpu_spec` - Define a CPU alias
-/// - `&group { ... },priority,affinity,...` - Define a process group with inline rule
-/// - `name,priority,affinity,cpuset,prime,io,memory` - Process config (only first 3 required)
+/// - `[name] { ... },priority,affinity,...` - Process group (name optional)
+/// - `name,priority,affinity,cpuset,prime,io,memory` - Single process rule
 pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
     let mut result = ConfigResult::default();
 
@@ -243,8 +436,6 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
 
     let reader = io::BufReader::new(file);
     let mut cpu_aliases: HashMap<String, Vec<u32>> = HashMap::new();
-
-    // Collect all lines for multi-line block parsing
     let lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
     let mut i = 0;
 
@@ -258,405 +449,102 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
             continue;
         }
 
-        // Process group definition: &group_name { ... },rule
-        if line.starts_with('&') && line.contains('{') {
-            let brace_start = line.find('{').unwrap();
-            let group_name = line[1..brace_start].trim().to_lowercase();
-
-            if group_name.is_empty() {
-                result.errors.push(format!("Line {}: Empty group name", line_number));
-                i += 1;
-                continue;
-            }
-
-            let mut members: Vec<String> = Vec::new();
-            let mut inline_rule_suffix: Option<String> = None;
-
-            // Check if it's a single-line definition: &group { a.exe, b.exe },rule
-            if let Some(brace_end) = line.find('}') {
-                let content = &line[brace_start + 1..brace_end];
-                for item in content.split(',') {
-                    let item = item.trim().to_lowercase();
-                    if !item.is_empty() && !item.starts_with('#') {
-                        members.push(item);
-                    }
-                }
-                // Check for inline rule suffix after }
-                let after_close = line[brace_end + 1..].trim();
-                if after_close.starts_with(',') {
-                    inline_rule_suffix = Some(after_close[1..].to_string());
-                }
-                i += 1;
+        // Constant: @NAME = value
+        if line.starts_with('@') {
+            if let Some(eq_pos) = line.find('=') {
+                parse_constant(&line[1..eq_pos].trim().to_uppercase(), line[eq_pos + 1..].trim(), line_number, &mut result);
             } else {
-                // Multi-line block: collect until closing }
-                let after_brace = line[brace_start + 1..].trim();
-                if !after_brace.is_empty() && !after_brace.starts_with('#') {
-                    for item in after_brace.split(',') {
-                        let item = item.trim().to_lowercase();
-                        if !item.is_empty() && !item.starts_with('#') {
-                            members.push(item);
-                        }
-                    }
-                }
-
-                i += 1;
-                let mut found_closing = false;
-                while i < lines.len() {
-                    let block_line = lines[i].trim();
-
-                    // Check for closing brace
-                    if block_line.contains('}') {
-                        if let Some(pos) = block_line.find('}') {
-                            let before_brace = block_line[..pos].trim();
-                            if !before_brace.is_empty() && !before_brace.starts_with('#') {
-                                for item in before_brace.split(',') {
-                                    let item = item.trim().to_lowercase();
-                                    if !item.is_empty() && !item.starts_with('#') {
-                                        members.push(item);
-                                    }
-                                }
-                            }
-                            // Check for inline rule suffix after }
-                            let after_close = block_line[pos + 1..].trim();
-                            if after_close.starts_with(',') {
-                                inline_rule_suffix = Some(after_close[1..].to_string());
-                            }
-                        }
-                        found_closing = true;
-                        i += 1;
-                        break;
-                    }
-
-                    // Process line content
-                    if !block_line.is_empty() && !block_line.starts_with('#') {
-                        for item in block_line.split(',') {
-                            let item = item.trim().to_lowercase();
-                            if !item.is_empty() && !item.starts_with('#') {
-                                members.push(item);
-                            }
-                        }
-                    }
-                    i += 1;
-                }
-
-                if !found_closing {
-                    result
-                        .errors
-                        .push(format!("Line {}: Unclosed group block '&{}' - missing closing brace", line_number, group_name));
-                    continue;
-                }
+                result.errors.push(format!("Line {}: Invalid constant - expected '@NAME = value'", line_number));
             }
+            i += 1;
+            continue;
+        }
+
+        // Alias: *name = cpu_spec
+        if line.starts_with('*') {
+            if let Some(eq_pos) = line.find('=') {
+                parse_alias(
+                    &line[1..eq_pos].trim().to_lowercase(),
+                    line[eq_pos + 1..].trim(),
+                    line_number,
+                    &mut cpu_aliases,
+                    &mut result,
+                );
+            } else {
+                result.errors.push(format!("Line {}: Invalid alias - expected '*name = cpu_spec'", line_number));
+            }
+            i += 1;
+            continue;
+        }
+
+        // Group: [name] { members },rule  OR  Single: name,rule
+        if let Some(brace_start) = line.find('{') {
+            let group_name = line[..brace_start].trim();
+            let group_label = if group_name.is_empty() {
+                format!("anonymous@L{}", line_number)
+            } else {
+                group_name.to_lowercase()
+            };
+
+            // Single-line group: { a, b },rule
+            let (members, rule_suffix, next_i) = if let Some(brace_end) = line.find('}') {
+                let mut members = Vec::new();
+                collect_members(&line[brace_start + 1..brace_end], &mut members);
+                let after = line[brace_end + 1..].trim();
+                let suffix = after.strip_prefix(',').map(|s| s.to_string());
+                (members, suffix, i + 1)
+            } else {
+                // Multi-line group
+                let first_content = line[brace_start + 1..].trim();
+                match collect_group_block(&lines, i + 1, first_content) {
+                    Some((members, suffix, next)) => (members, suffix, next),
+                    None => {
+                        result.errors.push(format!("Line {}: Unclosed group '{}' - missing }}", line_number, group_label));
+                        i += 1;
+                        continue;
+                    }
+                }
+            };
+
+            i = next_i;
 
             if members.is_empty() {
-                result.warnings.push(format!("Line {}: Group '&{}' has no members", line_number, group_name));
+                result.warnings.push(format!("Line {}: Group '{}' has no members", line_number, group_label));
                 continue;
             }
 
             result.groups_count += 1;
             result.group_members_count += members.len();
 
-            // Process inline rule suffix - this is now required for groups
-            if let Some(ref suffix) = inline_rule_suffix {
-                let parts: Vec<&str> = suffix.split(',').collect();
-                if parts.len() >= 2 {
-                    let priority = ProcessPriority::from_str(parts[0]);
-
-                    // Validate priority
-                    let priority_str = parts[0].trim();
-                    if priority == ProcessPriority::None && !priority_str.eq_ignore_ascii_case("none") {
-                        result
-                            .warnings
-                            .push(format!("Line {}: Unknown priority '{}' - will be treated as 'none'", line_number, priority_str));
-                    }
-
-                    let affinity_def = parts[1].trim();
-                    let affinity_cpus = if affinity_def.starts_with('*') {
-                        let alias = affinity_def.trim_start_matches('*').to_lowercase();
-                        if !cpu_aliases.contains_key(&alias) {
-                            result.errors.push(format!("Line {}: Undefined alias '*{}' in affinity field", line_number, alias));
-                        }
-                        cpu_aliases.get(&alias).cloned().unwrap_or_default()
-                    } else {
-                        parse_cpu_spec(affinity_def)
-                    };
-
-                    let cpuset_def = if parts.len() >= 3 { parts[2].trim() } else { "0" };
-                    let cpu_set_cpus = if cpuset_def.starts_with('*') {
-                        let alias = cpuset_def.trim_start_matches('*').to_lowercase();
-                        if !cpu_aliases.contains_key(&alias) {
-                            result.errors.push(format!("Line {}: Undefined alias '*{}' in cpuset field", line_number, alias));
-                        }
-                        cpu_aliases.get(&alias).cloned().unwrap_or_default()
-                    } else {
-                        parse_cpu_spec(cpuset_def)
-                    };
-
-                    let prime_def = if parts.len() >= 4 { parts[3].trim() } else { "0" };
-                    let prime_cpus = if prime_def.starts_with('*') {
-                        let alias = prime_def.trim_start_matches('*').to_lowercase();
-                        if !cpu_aliases.contains_key(&alias) {
-                            result.errors.push(format!("Line {}: Undefined alias '*{}' in prime_cpus field", line_number, alias));
-                        }
-                        cpu_aliases.get(&alias).cloned().unwrap_or_default()
-                    } else {
-                        parse_cpu_spec(prime_def)
-                    };
-
-                    let io_priority = if parts.len() >= 5 {
-                        let io_str = parts[4].trim();
-                        let io_p = IOPriority::from_str(io_str);
-                        if io_p == IOPriority::None && !io_str.eq_ignore_ascii_case("none") {
-                            result
-                                .warnings
-                                .push(format!("Line {}: Unknown IO priority '{}' - will be treated as 'none'", line_number, io_str));
-                        }
-                        io_p
-                    } else {
-                        IOPriority::None
-                    };
-
-                    let memory_priority = if parts.len() >= 6 {
-                        let mem_str = parts[5].trim();
-                        let mem_p = MemoryPriority::from_str(mem_str);
-                        if mem_p == MemoryPriority::None && !mem_str.eq_ignore_ascii_case("none") {
-                            result
-                                .warnings
-                                .push(format!("Line {}: Unknown memory priority '{}' - will be treated as 'none'", line_number, mem_str));
-                        }
-                        mem_p
-                    } else {
-                        MemoryPriority::None
-                    };
-
-                    for name in &members {
-                        result.configs.insert(
-                            name.clone(),
-                            ProcessConfig {
-                                name: name.clone(),
-                                priority: priority.clone(),
-                                affinity_cpus: affinity_cpus.clone(),
-                                cpu_set_cpus: cpu_set_cpus.clone(),
-                                prime_cpus: prime_cpus.clone(),
-                                io_priority: io_priority.clone(),
-                                memory_priority: memory_priority.clone(),
-                            },
-                        );
-                    }
-                    result.process_rules_count += members.len();
-                    log_message(&format!("Config: Group '&{}' with {} processes", group_name, members.len()));
-                } else {
-                    result.errors.push(format!(
-                        "Line {}: Group '&{}' has invalid rule suffix - expected at least priority,affinity",
-                        line_number, group_name
-                    ));
-                }
-            } else {
-                result.errors.push(format!(
-                    "Line {}: Group '&{}' missing rule suffix - use }},priority,affinity,...",
-                    line_number, group_name
-                ));
-            }
-            continue;
-        }
-
-        // Constant definition: @NAME=VALUE
-        if line.starts_with('@') {
-            if let Some(eq_pos) = line.find('=') {
-                let const_name = line[1..eq_pos].trim().to_uppercase();
-                let const_value = line[eq_pos + 1..].trim();
-                match const_name.as_str() {
-                    "HYSTERESIS_RATIO" => {
-                        if let Ok(v) = const_value.parse::<f64>() {
-                            result.constants.hysteresis_ratio = v;
-                            result.constants_count += 1;
-                            log_message(&format!("Config: HYSTERESIS_RATIO = {}", v));
-                        } else {
-                            result.errors.push(format!(
-                                "Line {}: Invalid value '{}' for constant '{}' - expected a number",
-                                line_number, const_value, const_name
-                            ));
-                        }
-                    }
-                    "KEEP_THRESHOLD" => {
-                        if let Ok(v) = const_value.parse::<f64>() {
-                            result.constants.keep_threshold = v;
-                            result.constants_count += 1;
-                            log_message(&format!("Config: KEEP_THRESHOLD = {}", v));
-                        } else {
-                            result.errors.push(format!(
-                                "Line {}: Invalid value '{}' for constant '{}' - expected a number",
-                                line_number, const_value, const_name
-                            ));
-                        }
-                    }
-                    "ENTRY_THRESHOLD" => {
-                        if let Ok(v) = const_value.parse::<f64>() {
-                            result.constants.entry_threshold = v;
-                            result.constants_count += 1;
-                            log_message(&format!("Config: ENTRY_THRESHOLD = {}", v));
-                        } else {
-                            result.errors.push(format!(
-                                "Line {}: Invalid value '{}' for constant '{}' - expected a number",
-                                line_number, const_value, const_name
-                            ));
-                        }
-                    }
-                    _ => {
-                        result
-                            .warnings
-                            .push(format!("Line {}: Unknown constant '{}' - will be ignored", line_number, const_name));
-                    }
-                }
+            if let Some(suffix) = rule_suffix {
+                let rule_parts: Vec<&str> = suffix.split(',').collect();
+                parse_and_insert_rules(&members, &rule_parts, line_number, &cpu_aliases, &mut result);
             } else {
                 result
                     .errors
-                    .push(format!("Line {}: Invalid constant definition '{}' - expected '@NAME = value'", line_number, line));
+                    .push(format!("Line {}: Group '{}' missing rule - use }},priority,affinity,...", line_number, group_label));
             }
-            i += 1;
-            continue;
-        }
-
-        // CPU alias definition: *NAME=SPEC
-        if line.starts_with('*') {
-            if let Some(eq_pos) = line.find('=') {
-                let alias_name = line[1..eq_pos].trim().to_lowercase();
-                let alias_value = line[eq_pos + 1..].trim();
-
-                if alias_name.is_empty() {
-                    result.errors.push(format!("Line {}: Empty alias name", line_number));
-                } else {
-                    let cpus = parse_cpu_spec(alias_value);
-                    if cpus.is_empty() && alias_value != "0" {
-                        result
-                            .warnings
-                            .push(format!("Line {}: Alias '*{}' has empty CPU set from '{}'", line_number, alias_name, alias_value));
-                    }
-                    cpu_aliases.insert(alias_name, cpus);
-                    result.aliases_count += 1;
-                }
-            } else {
+        } else {
+            // Single process line
+            let parts: Vec<&str> = line.split(',').collect();
+            if parts.len() < 3 {
                 result
                     .errors
-                    .push(format!("Line {}: Invalid alias definition '{}' - expected '*name = cpu_spec'", line_number, line));
+                    .push(format!("Line {}: Too few fields - expected name,priority,affinity,...", line_number));
+                i += 1;
+                continue;
             }
+
+            let name = parts[0].trim();
+            if name.is_empty() {
+                result.errors.push(format!("Line {}: Empty process name", line_number));
+                i += 1;
+                continue;
+            }
+
+            parse_and_insert_rules(&[name.to_lowercase()], &parts[1..], line_number, &cpu_aliases, &mut result);
             i += 1;
-            continue;
         }
-
-        // Process configuration line
-        let parts: Vec<&str> = line.split(',').collect();
-        if parts.len() < 3 {
-            result.errors.push(format!(
-                "Line {}: Too few fields ({}) - expected at least 3 (name,priority,affinity)",
-                line_number,
-                parts.len()
-            ));
-            i += 1;
-            continue;
-        }
-
-        let name = parts[0].trim();
-        if name.is_empty() {
-            result.errors.push(format!("Line {}: Empty process name", line_number));
-            i += 1;
-            continue;
-        }
-
-        // Reject standalone group references (no longer supported)
-        if name.starts_with('&') {
-            result.errors.push(format!(
-                "Line {}: Standalone group reference '{}' not supported - use inline rule syntax: &group {{ ... }},rule",
-                line_number, name
-            ));
-            i += 1;
-            continue;
-        }
-
-        let priority = ProcessPriority::from_str(parts[1]);
-        let priority_str = parts[1].trim();
-        if priority == ProcessPriority::None && !priority_str.eq_ignore_ascii_case("none") {
-            result
-                .warnings
-                .push(format!("Line {}: Unknown priority '{}' - will be treated as 'none'", line_number, priority_str));
-        }
-
-        // Parse affinity
-        let affinity_def = parts[2].trim();
-        let affinity_cpus = if affinity_def.starts_with('*') {
-            let alias = affinity_def.trim_start_matches('*').to_lowercase();
-            if !cpu_aliases.contains_key(&alias) {
-                result.errors.push(format!("Line {}: Undefined alias '*{}' in affinity field", line_number, alias));
-            }
-            cpu_aliases.get(&alias).cloned().unwrap_or_default()
-        } else {
-            parse_cpu_spec(affinity_def)
-        };
-
-        // Parse CPU set
-        let cpuset_def = if parts.len() >= 4 { parts[3].trim() } else { "0" };
-        let cpu_set_cpus = if cpuset_def.starts_with('*') {
-            let alias = cpuset_def.trim_start_matches('*').to_lowercase();
-            if !cpu_aliases.contains_key(&alias) {
-                result.errors.push(format!("Line {}: Undefined alias '*{}' in cpuset field", line_number, alias));
-            }
-            cpu_aliases.get(&alias).cloned().unwrap_or_default()
-        } else {
-            parse_cpu_spec(cpuset_def)
-        };
-
-        // Parse prime CPU
-        let prime_def = if parts.len() >= 5 { parts[4].trim() } else { "0" };
-        let prime_cpus = if prime_def.starts_with('*') {
-            let alias = prime_def.trim_start_matches('*').to_lowercase();
-            if !cpu_aliases.contains_key(&alias) {
-                result.errors.push(format!("Line {}: Undefined alias '*{}' in prime_cpus field", line_number, alias));
-            }
-            cpu_aliases.get(&alias).cloned().unwrap_or_default()
-        } else {
-            parse_cpu_spec(prime_def)
-        };
-
-        let io_priority = if parts.len() >= 6 {
-            let io_str = parts[5].trim();
-            let io_p = IOPriority::from_str(io_str);
-            if io_p == IOPriority::None && !io_str.eq_ignore_ascii_case("none") {
-                result
-                    .warnings
-                    .push(format!("Line {}: Unknown IO priority '{}' - will be treated as 'none'", line_number, io_str));
-            }
-            io_p
-        } else {
-            IOPriority::None
-        };
-
-        let memory_priority = if parts.len() >= 7 {
-            let mem_str = parts[6].trim();
-            let mem_p = MemoryPriority::from_str(mem_str);
-            if mem_p == MemoryPriority::None && !mem_str.eq_ignore_ascii_case("none") {
-                result
-                    .warnings
-                    .push(format!("Line {}: Unknown memory priority '{}' - will be treated as 'none'", line_number, mem_str));
-            }
-            mem_p
-        } else {
-            MemoryPriority::None
-        };
-
-        result.configs.insert(
-            name.to_lowercase(),
-            ProcessConfig {
-                name: name.to_lowercase(),
-                priority,
-                affinity_cpus,
-                cpu_set_cpus,
-                prime_cpus,
-                io_priority,
-                memory_priority,
-            },
-        );
-        result.process_rules_count += 1;
-
-        i += 1;
     }
 
     result

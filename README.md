@@ -100,6 +100,27 @@ process_name,priority,affinity,cpu_set,prime_cpus,io_priority,memory_priority
 | I/O | `none`, `very low`, `low`, `normal`, `high` (admin required) |
 | Memory | `none`, `very low`, `low`, `medium`, `below normal`, `normal` |
 
+### Process Groups
+
+Define groups of processes to apply the same rules:
+
+```ini
+# Inline group definition
+&browsers { chrome.exe, firefox.exe, msedge.exe }
+
+# Multi-line group definition
+&asus_services {
+    asuscertservice.exe
+    armourycrate.exe
+    # Comments allowed inside
+    armourycrate.service.exe
+}
+
+# Apply rules to entire group
+&browsers,normal,*e,0,0,low,below normal
+&asus_services,none,*e,0,0,low,none
+```
+
 ### Example
 
 ```ini
@@ -113,15 +134,20 @@ process_name,priority,affinity,cpu_set,prime_cpus,io_priority,memory_priority
 *e = 8-19           # E-cores
 *pN01 = 2-7         # P-cores except 0-1
 
+# === PROCESS GROUPS ===
+&browsers { chrome.exe, firefox.exe, msedge.exe, opera.exe }
+
 # === RULES ===
 # process,priority,affinity,cpuset,prime,io,memory
+
+# Apply to group
+&browsers,normal,*e,0,0,low,below normal
 
 # Games - pin main threads to P-cores
 cs2.exe,normal,*a,*p,*pN01,normal,normal
 
 # Background apps - E-cores, low priority
 discord.exe,below normal,*e,0,0,low,low
-chrome.exe,normal,*e,0,0,low,below normal
 
 # System (admin required for high I/O)
 dwm.exe,high,*p,0,0,high,normal

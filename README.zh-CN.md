@@ -100,6 +100,27 @@ process_name,priority,affinity,cpu_set,prime_cpus,io_priority,memory_priority
 | I/O | `none`, `very low`, `low`, `normal`, `high`（需要管理员） |
 | 内存 | `none`, `very low`, `low`, `medium`, `below normal`, `normal` |
 
+### 进程组
+
+定义进程组以应用相同的规则：
+
+```ini
+# 单行组定义
+&browsers { chrome.exe, firefox.exe, msedge.exe }
+
+# 多行组定义
+&asus_services {
+    asuscertservice.exe
+    armourycrate.exe
+    # 内部允许注释
+    armourycrate.service.exe
+}
+
+# 对整个组应用规则
+&browsers,normal,*e,0,0,low,below normal
+&asus_services,none,*e,0,0,low,none
+```
+
 ### 示例
 
 ```ini
@@ -113,15 +134,20 @@ process_name,priority,affinity,cpu_set,prime_cpus,io_priority,memory_priority
 *e = 8-19           # E 核
 *pN01 = 2-7         # P 核除 0-1
 
+# === 进程组 ===
+&browsers { chrome.exe, firefox.exe, msedge.exe, opera.exe }
+
 # === 规则 ===
 # 进程,优先级,亲和性,cpuset,prime,io,memory
+
+# 对组应用规则
+&browsers,normal,*e,0,0,low,below normal
 
 # 游戏 - 将主线程固定到 P 核
 cs2.exe,normal,*a,*p,*pN01,normal,normal
 
 # 后台应用 - E 核，低优先级
 discord.exe,below normal,*e,0,0,low,low
-chrome.exe,normal,*e,0,0,low,below normal
 
 # 系统（高 I/O 需要管理员）
 dwm.exe,high,*p,0,0,high,normal

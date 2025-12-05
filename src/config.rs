@@ -417,7 +417,7 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
     result.process_rules_count += members.len();
 }
 
-/// Reads and validates the main config file.
+/// Reads and validates the config file.
 /// Supports:
 /// - `@CONSTANT = value` - Define a constant
 /// - `*alias = cpu_spec` - Define a CPU alias

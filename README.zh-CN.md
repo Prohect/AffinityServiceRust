@@ -102,23 +102,28 @@ process_name,priority,affinity,cpu_set,prime_cpus,io_priority,memory_priority
 
 ### 进程组
 
-定义进程组以应用相同的规则：
+使用 `{ }` 语法将多个进程组合使用相同规则。组名是可选的（仅用于文档/调试）：
 
 ```ini
-# 单行组定义
-&browsers { chrome.exe, firefox.exe, msedge.exe }
+# 命名组（单行）
+browsers { chrome.exe, firefox.exe, msedge.exe },normal,*e,0,0,low,below normal
 
-# 多行组定义
-&asus_services {
+# 命名组（多行）
+asus_services {
     asuscertservice.exe
     armourycrate.exe
     # 内部允许注释
     armourycrate.service.exe
-}
+},none,*e,0,0,low,none
 
-# 对整个组应用规则
-&browsers,normal,*e,0,0,low,below normal
-&asus_services,none,*e,0,0,low,none
+# 匿名组（无需名称）
+{
+    textinputhost.exe, ctfmon.exe
+    dllhost.exe, sihost.exe
+},none,*e,0,0,low,none
+
+# 匿名单行组
+{ taskmgr.exe, perfmon.exe },none,*a,0,0,none,none
 ```
 
 ### 示例
@@ -134,20 +139,19 @@ process_name,priority,affinity,cpu_set,prime_cpus,io_priority,memory_priority
 *e = 8-19           # E 核
 *pN01 = 2-7         # P 核除 0-1
 
-# === 进程组 ===
-&browsers { chrome.exe, firefox.exe, msedge.exe, opera.exe }
-
 # === 规则 ===
 # 进程,优先级,亲和性,cpuset,prime,io,memory
 
-# 对组应用规则
-&browsers,normal,*e,0,0,low,below normal
-
-# 游戏 - 将主线程固定到 P 核
+# 单进程规则
 cs2.exe,normal,*a,*p,*pN01,normal,normal
 
-# 后台应用 - E 核，低优先级
-discord.exe,below normal,*e,0,0,low,low
+# 命名组 - 浏览器运行在 E 核
+browsers { chrome.exe, firefox.exe, msedge.exe },normal,*e,0,0,low,below normal
+
+# 匿名组 - 后台应用
+{
+    discord.exe, telegram.exe, slack.exe
+},below normal,*e,0,0,low,low
 
 # 系统（高 I/O 需要管理员）
 dwm.exe,high,*p,0,0,high,normal

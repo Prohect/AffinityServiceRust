@@ -89,6 +89,43 @@ powershell -Command "Start-Process -FilePath './target/release/AffinityServiceRu
 - **Run with admin**: Can manage all user processes and services, I/O `high` works
 - **Run as SYSTEM**: Maximum compatibility, can manage most processes
 
+## Reading Log Files
+
+Log files are stored in the `logs/` folder with format `YYYYMMDD.log`.
+
+**Note:** The agent's `grep` tool respects `.gitignore`, so it **cannot search** the `logs/` folder directly. Use these alternatives:
+
+### Using Terminal grep
+
+```bash
+# Search today's log file
+grep "pattern" logs/20251205.log
+
+# Search all log files
+grep -r "AdjustTokenPrivileges" logs/
+
+# Search with context lines
+grep -B2 -A2 "ERROR" logs/*.log
+
+# Find affinity changes
+grep "affinity" logs/20251205.log
+```
+
+### Using read_file
+
+The agent can read log files directly with `read_file` - only `grep` and `find_path` respect `.gitignore`:
+
+```
+read_file("AffinityServiceRust/logs/20251205.log")
+```
+
+### Log File Types
+
+| File Pattern | Description |
+|--------------|-------------|
+| `YYYYMMDD.log` | Main application log |
+| `YYYYMMDD.find.log` | Process discovery log (if enabled) |
+
 ## Quick Debug Command
 
 **Non-admin (with console output):**

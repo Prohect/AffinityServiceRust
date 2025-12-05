@@ -2,8 +2,7 @@
 //!
 //! Handles parsing of command-line arguments and displays help messages.
 
-use crate::log;
-use crate::logging::use_console;
+use crate::{log, logging::use_console};
 
 /// Parses command-line arguments and sets the corresponding flags and values.
 ///

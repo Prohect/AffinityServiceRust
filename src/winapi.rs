@@ -3,8 +3,10 @@
 //! Provides wrappers for Windows system calls, privilege elevation,
 //! and CPU set information retrieval.
 
-use crate::log;
-use crate::logging::{FAIL_SET, error_from_code, log_to_find};
+use crate::{
+    log,
+    logging::{FAIL_SET, error_from_code, log_to_find},
+};
 use once_cell::sync::Lazy;
 use std::{collections::HashMap, env, io, mem::size_of, process::Command, sync::Mutex};
 use windows::Win32::{

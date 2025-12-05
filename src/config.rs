@@ -13,10 +13,12 @@
 //! - Multiple ranges: `0-7;64-71`
 //! - Mixed: `0-3;8;9;64-67`
 
-use crate::cli::get_config_help_lines;
-use crate::log;
-use crate::logging::{log_message, log_to_find};
-use crate::priority::{IOPriority, MemoryPriority, ProcessPriority};
+use crate::{
+    cli::get_config_help_lines,
+    log,
+    logging::{log_message, log_to_find},
+    priority::{IOPriority, MemoryPriority, ProcessPriority},
+};
 use std::{
     collections::HashMap,
     fs::{self, File},

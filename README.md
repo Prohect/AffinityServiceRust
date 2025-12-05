@@ -102,14 +102,14 @@ process_name,priority,affinity,cpu_set,prime_cpus,io_priority,memory_priority
 
 ### Process Groups
 
-Define groups of processes with inline rules (rule suffix after closing brace is required):
+Group multiple processes with the same rule using `{ }` syntax. Group name is optional (for documentation only):
 
 ```ini
-# Inline group definition with rule
-&browsers { chrome.exe, firefox.exe, msedge.exe },normal,*e,0,0,low,below normal
+# Named group (single-line)
+browsers { chrome.exe, firefox.exe, msedge.exe },normal,*e,0,0,low,below normal
 
-# Multi-line group definition with rule
-&sys_utils {
+# Named group (multi-line)
+sys_utils {
     # Process Lasso
     bitsumsessionagent.exe, processgovernor.exe, processlasso.exe
     # AffinityService
@@ -117,15 +117,14 @@ Define groups of processes with inline rules (rule suffix after closing brace is
     # Comments allowed inside groups
 },none,*e,0,0,low,none
 
-# Multi-line with subgroups using comments
-&windows {
-    # text input
+# Anonymous group (no name needed)
+{
     textinputhost.exe, ctfmon.exe, chsime.exe
-    # shell/UI
     dllhost.exe, sihost.exe, ShellHost.exe
-    # search
-    searchhost.exe, searchindexer.exe
 },none,*e,0,0,low,none
+
+# Anonymous single-line
+{ taskmgr.exe, perfmon.exe },none,*a,0,0,none,none
 ```
 
 ### Example
@@ -141,20 +140,19 @@ Define groups of processes with inline rules (rule suffix after closing brace is
 *e = 8-19           # E-cores
 *pN01 = 2-7         # P-cores except 0-1
 
-# === PROCESS GROUPS ===
-&browsers { chrome.exe, firefox.exe, msedge.exe, opera.exe }
-
 # === RULES ===
 # process,priority,affinity,cpuset,prime,io,memory
 
-# Apply to group
-&browsers,normal,*e,0,0,low,below normal
-
-# Games - pin main threads to P-cores
+# Single process rule
 cs2.exe,normal,*a,*p,*pN01,normal,normal
 
-# Background apps - E-cores, low priority
-discord.exe,below normal,*e,0,0,low,low
+# Named group - browsers on E-cores
+browsers { chrome.exe, firefox.exe, msedge.exe },normal,*e,0,0,low,below normal
+
+# Anonymous group - background apps
+{
+    discord.exe, telegram.exe, slack.exe
+},below normal,*e,0,0,low,low
 
 # System (admin required for high I/O)
 dwm.exe,high,*p,0,0,high,normal

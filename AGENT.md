@@ -12,45 +12,6 @@ This file documents CLI tools and workflows useful for AI agents (like Zed's Age
 
 The following tools enhance agent capabilities for bulk editing and automation:
 
-### Tesseract OCR
-
-**Version:** 5.4.0.20240606  
-**Installation Path:** `C:\Program Files\Tesseract-OCR\`  
-**Installed via:** winget (`UB-Mannheim.TesseractOCR`)
-
-#### Usage
-
-Extract text from an image:
-
-```sh
-tesseract image.png output       # outputs to output.txt
-tesseract image.png stdout       # outputs directly to console
-```
-
-#### Common Options
-
-- `-l <lang>` - Specify language (e.g., `-l eng`, `-l chi_sim` for Simplified Chinese)
-- `--psm <n>` - Page segmentation mode (0-13)
-- `--oem <n>` - OCR engine mode (0-3)
-
-#### Examples
-
-```sh
-# Basic OCR to text file
-tesseract screenshot.png result
-
-# Output to console with Chinese language
-tesseract image.png stdout -l chi_sim
-
-# PDF output
-tesseract document.png output pdf
-```
-
-#### Notes
-
-- May need to open a new terminal session for PATH to update after installation
-- Additional language packs can be installed separately
-
 ### sed / perl / awk (via Git for Windows)
 
 **Purpose:** Regex find/replace for text files  
@@ -105,17 +66,6 @@ awk -F',' '/\.exe,/ {print $0 ",testNone"; next} {print}' file.txt
 - `perl` has the most powerful regex (PCRE)
 - Prefer these over PowerShell for complex regex (avoids escaping issues)
 
-### Helix Editor
-
-**Version:** 25.07.1  
-**Installed via:** winget
-
-#### Notes
-
-- TUI editor (like Vim) - requires interactive terminal
-- Cannot be used programmatically via the agent's terminal tool
-- User must run manually: `hx filename.txt`
-
 ## Agent Workflow Tips
 
 ### Bulk Refactoring (grep + sed)
@@ -164,7 +114,7 @@ Found 2 matches:
 # ==================== PROCESS GROUPS ====================
 
 # Windows system processes (low IO)
-&windows {
+windows {
     # text input
 
 ### L298-306
@@ -188,3 +138,44 @@ Always safe to experiment - restore with:
 git checkout -- file.txt           # Single file
 git checkout -- src/ config.ini    # Multiple paths
 ```
+
+## Additional Tools
+
+### Tesseract OCR
+
+**Version:** 5.4.0.20240606  
+**Installation Path:** `C:\Program Files\Tesseract-OCR\`  
+**Installed via:** winget (`UB-Mannheim.TesseractOCR`)
+
+#### Usage
+
+Extract text from an image:
+
+```sh
+tesseract image.png output       # outputs to output.txt
+tesseract image.png stdout       # outputs directly to console
+```
+
+#### Common Options
+
+- `-l <lang>` - Specify language (e.g., `-l eng`, `-l chi_sim` for Simplified Chinese)
+- `--psm <n>` - Page segmentation mode (0-13)
+- `--oem <n>` - OCR engine mode (0-3)
+
+#### Examples
+
+```sh
+# Basic OCR to text file
+tesseract screenshot.png result
+
+# Output to console with Chinese language
+tesseract image.png stdout -l chi_sim
+
+# PDF output
+tesseract document.png output pdf
+```
+
+#### Notes
+
+- May need to open a new terminal session for PATH to update after installation
+- Additional language packs can be installed separately

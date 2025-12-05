@@ -153,6 +153,7 @@ pub fn print_help_all() {
     log!("  -find                find those whose affinity is same as system default which is all possible cores windows could use");
     log!("  -blacklist <file>    the blacklist for -find");
     log!("  -interval <ms>       set interval for checking again (5000 by default, minimal 16)");
+    log!("  -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)");
     log!("");
     log!("Operating Modes:");
     log!("  -validate            validate config file for syntax errors and undefined aliases");
@@ -163,10 +164,9 @@ pub fn print_help_all() {
     log!("");
     log!("Debug & Testing Options:");
     log!("  -loop <count>        number of loops to run (default: infinite) - for testing");
-    log!("  -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)");
     log!("  -logloop             log a message at the start of each loop for testing");
-    log!("  -noDebugPriv         disable SeDebugPrivilege (test access to other users' processes)");
-    log!("  -noIncBasePriority   disable SeIncreaseBasePriorityPrivilege (test high IO priority)");
+    log!("  -noDebugPriv         not request SeDebugPrivilege");
+    log!("  -noIncBasePriority   not request SeIncreaseBasePriorityPrivilege");
     log!("");
     log!("=== CONFIGURATION FORMAT ===");
     log!("");

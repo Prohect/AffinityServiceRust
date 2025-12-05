@@ -102,23 +102,30 @@ process_name,priority,affinity,cpu_set,prime_cpus,io_priority,memory_priority
 
 ### Process Groups
 
-Define groups of processes to apply the same rules:
+Define groups of processes with inline rules (rule suffix after closing brace is required):
 
 ```ini
-# Inline group definition
-&browsers { chrome.exe, firefox.exe, msedge.exe }
+# Inline group definition with rule
+&browsers { chrome.exe, firefox.exe, msedge.exe },normal,*e,0,0,low,below normal
 
-# Multi-line group definition
-&asus_services {
-    asuscertservice.exe
-    armourycrate.exe
-    # Comments allowed inside
-    armourycrate.service.exe
-}
+# Multi-line group definition with rule
+&sys_utils {
+    # Process Lasso
+    bitsumsessionagent.exe, processgovernor.exe, processlasso.exe
+    # AffinityService
+    affinityservicerust.exe, affinityserverc.exe
+    # Comments allowed inside groups
+},none,*e,0,0,low,none
 
-# Apply rules to entire group
-&browsers,normal,*e,0,0,low,below normal
-&asus_services,none,*e,0,0,low,none
+# Multi-line with subgroups using comments
+&windows {
+    # text input
+    textinputhost.exe, ctfmon.exe, chsime.exe
+    # shell/UI
+    dllhost.exe, sihost.exe, ShellHost.exe
+    # search
+    searchhost.exe, searchindexer.exe
+},none,*e,0,0,low,none
 ```
 
 ### Example

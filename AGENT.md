@@ -136,6 +136,44 @@ sed -i 's/^\([^#@*][^,]*\),\([^,]*\),\([^,]*\),\([^,]*\),\([^,]*\),\([^,]*\),\([
 - **Prefer sed/perl/awk** over PowerShell for complex one-liners
 - For complex PowerShell, write a `.ps1` script file instead
 
+### Agent's Built-in Grep Tool
+
+The agent has a built-in `grep` tool that returns **line numbers** with matches, which is useful for locating code before editing.
+
+#### Features
+
+- Returns line number ranges like `L126-130` for each match
+- Shows surrounding context lines
+- Supports regex patterns
+- Can filter by file glob pattern with `include_pattern`
+
+#### Example Output
+
+```
+Found 2 matches:
+
+## Matches in AffinityServiceRust\config.ini
+
+### L126-130
+# ==================== PROCESS GROUPS ====================
+
+# Windows system processes (low IO)
+&windows {
+    # text input
+
+### L298-306
+# code language rust's code analyzer
+rust-analyzer.exe,none,*e,0,0,low,none
+# windows 错误报告收集器 - very low IO
+wermgr.exe,none,*e,0,0,very low,none
+```
+
+#### Workflow
+
+1. Use agent's grep to find patterns and get line numbers
+2. Use `read_file` with `start_line`/`end_line` to see more context
+3. Use `edit_file` to make targeted changes
+
 ### Git for Quick Restore
 
 Always safe to experiment - restore with:

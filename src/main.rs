@@ -38,12 +38,12 @@ mod winapi;
 
 use chrono::Local;
 use cli::{parse_args, print_help, print_help_all};
-use config::{ConfigConstants, ProcessConfig, convert, cpu_indices_to_mask, format_cpu_indices, read_config, read_list, validate_config};
+use config::{ProcessConfig, convert, cpu_indices_to_mask, format_cpu_indices, read_config, read_list};
 use logging::{FAIL_SET, LOCALTIME_BUFFER, error_from_code, find_logger, log_process_find, log_to_find, logger};
 use priority::MemoryPriorityInformation;
 use process::ProcessSnapshot;
 use scheduler::PrimeThreadScheduler;
-use std::{collections::HashMap, env, io::Write, mem::size_of, thread, time::Duration};
+use std::{env, io::Write, mem::size_of, thread, time::Duration};
 use winapi::{
     NtQueryInformationProcess, NtSetInformationProcess, NtSetTimerResolution, cpusetids_from_indices, enable_debug_privilege, filter_indices_by_mask,
     get_cpu_set_information, indices_from_cpusetids, is_affinity_unset, is_running_as_admin, request_uac_elevation,
@@ -563,9 +563,16 @@ fn main() -> windows::core::Result<()> {
         print_help_all();
         return Ok(());
     }
+    // Always validate config first
+    let config_result = read_config(&config_file_name);
+    config_result.print_report();
+
+    if !config_result.is_valid() {
+        return Ok(());
+    }
+
+    // -validate flag: just validate and exit (like loop=1 with dry_run)
     if validate_mode {
-        let result = validate_config(&config_file_name);
-        result.print_report();
         return Ok(());
     }
     if convert_mode {
@@ -576,10 +583,10 @@ fn main() -> windows::core::Result<()> {
         log!("Affinity Service started");
         log!("time interval: {}", interval_ms);
     }
-    let (configs, constants) = read_config(&config_file_name).unwrap_or_else(|e| {
-        log!("Failed to read config: {}", e);
-        (HashMap::new(), ConfigConstants::default())
-    });
+
+    // Use configs and constants from the already-validated result
+    let configs = config_result.configs;
+    let constants = config_result.constants;
     let blacklist = if let Some(bf) = blacklist_file_name {
         read_list(bf).unwrap_or_default()
     } else {

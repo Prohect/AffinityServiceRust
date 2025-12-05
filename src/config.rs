@@ -13,7 +13,7 @@
 //! - Multiple ranges: `0-7;64-71`
 //! - Mixed: `0-3;8;9;64-67`
 
-use crate::logging::{log_message, log_to_find};
+use crate::logging::log_message;
 use crate::priority::{IOPriority, MemoryPriority, ProcessPriority};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -177,246 +177,21 @@ pub fn format_cpu_indices(cpus: &[u32]) -> String {
 /// - `# comment` - Lines starting with `#` are ignored
 /// - `@CONSTANT=value` - Set scheduler constants (KEEP_THRESHOLD, ENTRY_THRESHOLD)
 /// - `*alias=spec` - Define a reusable CPU spec alias (e.g., `*pcore=0-7;64-71`)
-/// - `&group { ... }` - Define a process group (multi-line with `{}`)
-/// - `&group,priority,affinity,...` - Apply config to all processes in a group
-/// - `name,priority,affinity,cpuset,prime,io,memory` - Process config (only first 3 required)
-pub fn read_config<P: AsRef<Path>>(path: P) -> io::Result<(HashMap<String, ProcessConfig>, ConfigConstants)> {
-    let file = File::open(path)?;
-    let reader = io::BufReader::new(file);
-    let mut configs = HashMap::new();
-    let mut cpu_aliases: HashMap<String, Vec<u32>> = HashMap::new();
-    let mut process_groups: HashMap<String, Vec<String>> = HashMap::new();
-    let mut constants = ConfigConstants::default();
-
-    // Collect all lines for multi-line block parsing
-    let lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
-    let mut i = 0;
-
-    while i < lines.len() {
-        let line = lines[i].trim();
-
-        // Skip empty lines and comments
-        if line.is_empty() || line.starts_with('#') {
-            i += 1;
-            continue;
-        }
-
-        // Process group definition: &group_name { ... }
-        // Check if this is a group definition (has { before any comma, or no comma at all)
-        if line.starts_with('&') {
-            let brace_pos = line.find('{');
-            let comma_pos = line.find(',');
-            let is_group_def = match (brace_pos, comma_pos) {
-                (Some(b), Some(c)) => b < c, // { comes before ,
-                (Some(_), None) => true,     // has { but no ,
-                _ => false,                  // no { means it's a group reference
-            };
-
-            if is_group_def {
-                if let Some(brace_start) = brace_pos {
-                    let group_name = line[1..brace_start].trim().to_lowercase();
-                    let mut members: Vec<String> = Vec::new();
-
-                    // Check if it's a single-line definition: &group { a.exe, b.exe }
-                    if let Some(brace_end) = line.find('}') {
-                        // Single line: &group { a.exe, b.exe }
-                        let content = &line[brace_start + 1..brace_end];
-                        for item in content.split(',') {
-                            let item = item.trim().to_lowercase();
-                            if !item.is_empty() && !item.starts_with('#') {
-                                members.push(item);
-                            }
-                        }
-                        i += 1;
-                    } else {
-                        // Multi-line block: collect until closing }
-                        // First, check for content after { on the same line
-                        let after_brace = line[brace_start + 1..].trim();
-                        if !after_brace.is_empty() && !after_brace.starts_with('#') {
-                            for item in after_brace.split(',') {
-                                let item = item.trim().to_lowercase();
-                                if !item.is_empty() && !item.starts_with('#') {
-                                    members.push(item);
-                                }
-                            }
-                        }
-
-                        i += 1;
-                        while i < lines.len() {
-                            let block_line = lines[i].trim();
-
-                            // Check for closing brace
-                            if block_line.contains('}') {
-                                // Check for content before }
-                                if let Some(pos) = block_line.find('}') {
-                                    let before_brace = block_line[..pos].trim();
-                                    if !before_brace.is_empty() && !before_brace.starts_with('#') {
-                                        for item in before_brace.split(',') {
-                                            let item = item.trim().to_lowercase();
-                                            if !item.is_empty() && !item.starts_with('#') {
-                                                members.push(item);
-                                            }
-                                        }
-                                    }
-                                }
-                                i += 1;
-                                break;
-                            }
-
-                            // Process line content
-                            if !block_line.is_empty() && !block_line.starts_with('#') {
-                                for item in block_line.split(',') {
-                                    let item = item.trim().to_lowercase();
-                                    if !item.is_empty() && !item.starts_with('#') {
-                                        members.push(item);
-                                    }
-                                }
-                            }
-                            i += 1;
-                        }
-                    }
-
-                    if !group_name.is_empty() && !members.is_empty() {
-                        log_message(&format!("Config: Group '&{}' with {} processes", group_name, members.len()));
-                        process_groups.insert(group_name, members);
-                    }
-                    continue;
-                }
-            }
-            // If no brace found, fall through to process as potential group reference
-        }
-
-        // Constant definition: @NAME=VALUE
-        if line.starts_with('@') {
-            if let Some(eq_pos) = line.find('=') {
-                let const_name = line[1..eq_pos].trim().to_uppercase();
-                let const_value = line[eq_pos + 1..].trim();
-                match const_name.as_str() {
-                    "HYSTERESIS_RATIO" => {
-                        if let Ok(v) = const_value.parse::<f64>() {
-                            constants.hysteresis_ratio = v;
-                            log_message(&format!("Config: HYSTERESIS_RATIO = {}", v));
-                        }
-                    }
-                    "KEEP_THRESHOLD" => {
-                        if let Ok(v) = const_value.parse::<f64>() {
-                            constants.keep_threshold = v;
-                            log_message(&format!("Config: KEEP_THRESHOLD = {}", v));
-                        }
-                    }
-                    "ENTRY_THRESHOLD" => {
-                        if let Ok(v) = const_value.parse::<f64>() {
-                            constants.entry_threshold = v;
-                            log_message(&format!("Config: ENTRY_THRESHOLD = {}", v));
-                        }
-                    }
-                    _ => {
-                        log_to_find(&format!("Unknown constant: {}", const_name));
-                    }
-                }
-            }
-            i += 1;
-            continue;
-        }
-
-        // CPU alias definition: *NAME=SPEC
-        if line.starts_with('*') {
-            if let Some(eq_pos) = line.find('=') {
-                let alias_name = line[1..eq_pos].trim().to_lowercase();
-                let alias_value = line[eq_pos + 1..].trim();
-                let cpus = parse_cpu_spec(alias_value);
-                cpu_aliases.insert(alias_name, cpus);
-            }
-            i += 1;
-            continue;
-        }
-
-        // Process configuration line (or group reference)
-        let parts: Vec<&str> = line.split(',').collect();
-        if parts.len() >= 3 {
-            let name_or_group = parts[0].trim();
-
-            // Check if this is a group reference: &group_name,priority,affinity,...
-            let process_names: Vec<String> = if name_or_group.starts_with('&') {
-                let group_name = name_or_group[1..].to_lowercase();
-                process_groups.get(&group_name).cloned().unwrap_or_else(|| {
-                    log_to_find(&format!("Unknown process group: &{}", group_name));
-                    Vec::new()
-                })
-            } else {
-                vec![name_or_group.to_lowercase()]
-            };
-
-            let priority = ProcessPriority::from_str(parts[1]);
-
-            // Parse affinity
-            let affinity_def = parts[2].trim();
-            let affinity_cpus = if affinity_def.starts_with('*') {
-                cpu_aliases.get(&affinity_def.trim_start_matches('*').to_lowercase()).cloned().unwrap_or_default()
-            } else {
-                parse_cpu_spec(affinity_def)
-            };
-
-            // Parse CPU set
-            let cpuset_def = if parts.len() >= 4 { parts[3].trim() } else { "0" };
-            let cpu_set_cpus = if cpuset_def.starts_with('*') {
-                cpu_aliases.get(&cpuset_def.trim_start_matches('*').to_lowercase()).cloned().unwrap_or_default()
-            } else {
-                parse_cpu_spec(cpuset_def)
-            };
-
-            // Parse prime CPU
-            let prime_def = if parts.len() >= 5 { parts[4].trim() } else { "0" };
-            let prime_cpus = if prime_def.starts_with('*') {
-                cpu_aliases.get(&prime_def.trim_start_matches('*').to_lowercase()).cloned().unwrap_or_default()
-            } else {
-                parse_cpu_spec(prime_def)
-            };
-
-            let io_priority = if parts.len() >= 6 { IOPriority::from_str(parts[5]) } else { IOPriority::None };
-            let memory_priority = if parts.len() >= 7 {
-                MemoryPriority::from_str(parts[6])
-            } else {
-                MemoryPriority::None
-            };
-
-            // Insert config for each process name (single or from group)
-            for name in process_names {
-                configs.insert(
-                    name.clone(),
-                    ProcessConfig {
-                        name,
-                        priority: priority.clone(),
-                        affinity_cpus: affinity_cpus.clone(),
-                        cpu_set_cpus: cpu_set_cpus.clone(),
-                        prime_cpus: prime_cpus.clone(),
-                        io_priority: io_priority.clone(),
-                        memory_priority: memory_priority.clone(),
-                    },
-                );
-            }
-        }
-
-        i += 1;
-    }
-
-    Ok((configs, constants))
-}
-
-/// Result of config validation
+/// Result of config parsing and validation
 #[derive(Debug, Default)]
-pub struct ConfigValidationResult {
+pub struct ConfigResult {
+    pub configs: HashMap<String, ProcessConfig>,
+    pub constants: ConfigConstants,
     pub constants_count: usize,
     pub aliases_count: usize,
     pub groups_count: usize,
     pub group_members_count: usize,
-    pub configs_count: usize,
-    pub group_rules_count: usize,
+    pub process_rules_count: usize,
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
 }
 
-impl ConfigValidationResult {
+impl ConfigResult {
     pub fn is_valid(&self) -> bool {
         self.errors.is_empty()
     }
@@ -428,8 +203,7 @@ impl ConfigValidationResult {
             if self.groups_count > 0 {
                 println!("✓ Parsed {} process groups ({} processes)", self.groups_count, self.group_members_count);
             }
-            let total_rules = self.configs_count - self.group_rules_count + self.group_members_count;
-            println!("✓ Parsed {} process rules", total_rules);
+            println!("✓ Parsed {} process rules", self.process_rules_count);
             if !self.warnings.is_empty() {
                 for warning in &self.warnings {
                     println!("⚠ {}", warning);
@@ -449,10 +223,15 @@ impl ConfigValidationResult {
     }
 }
 
-/// Validates a config file without applying any changes.
-/// Returns detailed information about parsing results and any errors found.
-pub fn validate_config<P: AsRef<Path>>(path: P) -> ConfigValidationResult {
-    let mut result = ConfigValidationResult::default();
+/// Reads and validates the main config file.
+/// Returns configs, constants, and validation results.
+/// Supports:
+/// - `@CONSTANT = value` - Define a constant
+/// - `*alias = cpu_spec` - Define a CPU alias
+/// - `&group { ... },priority,affinity,...` - Define a process group with inline rule
+/// - `name,priority,affinity,cpuset,prime,io,memory` - Process config (only first 3 required)
+pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
+    let mut result = ConfigResult::default();
 
     let file = match File::open(&path) {
         Ok(f) => f,
@@ -463,10 +242,10 @@ pub fn validate_config<P: AsRef<Path>>(path: P) -> ConfigValidationResult {
     };
 
     let reader = io::BufReader::new(file);
-    let lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
-
     let mut cpu_aliases: HashMap<String, Vec<u32>> = HashMap::new();
-    let mut process_groups: HashMap<String, Vec<String>> = HashMap::new();
+
+    // Collect all lines for multi-line block parsing
+    let lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
     let mut i = 0;
 
     while i < lines.len() {
@@ -479,118 +258,247 @@ pub fn validate_config<P: AsRef<Path>>(path: P) -> ConfigValidationResult {
             continue;
         }
 
-        // Process group definition: &group_name { ... }
-        // Check if this is a group definition (has { before any comma, or no comma at all)
-        if line.starts_with('&') {
-            let brace_pos = line.find('{');
-            let comma_pos = line.find(',');
-            let is_group_def = match (brace_pos, comma_pos) {
-                (Some(b), Some(c)) => b < c, // { comes before ,
-                (Some(_), None) => true,     // has { but no ,
-                _ => false,                  // no { means it's a group reference
-            };
+        // Process group definition: &group_name { ... },rule
+        if line.starts_with('&') && line.contains('{') {
+            let brace_start = line.find('{').unwrap();
+            let group_name = line[1..brace_start].trim().to_lowercase();
 
-            if is_group_def {
-                if let Some(brace_start) = brace_pos {
-                    let group_name = line[1..brace_start].trim().to_lowercase();
-                    let mut members: Vec<String> = Vec::new();
+            if group_name.is_empty() {
+                result.errors.push(format!("Line {}: Empty group name", line_number));
+                i += 1;
+                continue;
+            }
 
-                    if group_name.is_empty() {
-                        result.errors.push(format!("Line {}: Empty group name", line_number));
-                        i += 1;
-                        continue;
+            let mut members: Vec<String> = Vec::new();
+            let mut inline_rule_suffix: Option<String> = None;
+
+            // Check if it's a single-line definition: &group { a.exe, b.exe },rule
+            if let Some(brace_end) = line.find('}') {
+                let content = &line[brace_start + 1..brace_end];
+                for item in content.split(',') {
+                    let item = item.trim().to_lowercase();
+                    if !item.is_empty() && !item.starts_with('#') {
+                        members.push(item);
                     }
-
-                    // Check if it's a single-line definition
-                    if let Some(brace_end) = line.find('}') {
-                        let content = &line[brace_start + 1..brace_end];
-                        for item in content.split(',') {
-                            let item = item.trim().to_lowercase();
-                            if !item.is_empty() && !item.starts_with('#') {
-                                members.push(item);
-                            }
+                }
+                // Check for inline rule suffix after }
+                let after_close = line[brace_end + 1..].trim();
+                if after_close.starts_with(',') {
+                    inline_rule_suffix = Some(after_close[1..].to_string());
+                }
+                i += 1;
+            } else {
+                // Multi-line block: collect until closing }
+                let after_brace = line[brace_start + 1..].trim();
+                if !after_brace.is_empty() && !after_brace.starts_with('#') {
+                    for item in after_brace.split(',') {
+                        let item = item.trim().to_lowercase();
+                        if !item.is_empty() && !item.starts_with('#') {
+                            members.push(item);
                         }
-                        i += 1;
-                    } else {
-                        // Multi-line block
-                        let after_brace = line[brace_start + 1..].trim();
-                        if !after_brace.is_empty() && !after_brace.starts_with('#') {
-                            for item in after_brace.split(',') {
-                                let item = item.trim().to_lowercase();
-                                if !item.is_empty() && !item.starts_with('#') {
-                                    members.push(item);
-                                }
-                            }
-                        }
+                    }
+                }
 
-                        i += 1;
-                        let mut found_closing = false;
-                        while i < lines.len() {
-                            let block_line = lines[i].trim();
+                i += 1;
+                let mut found_closing = false;
+                while i < lines.len() {
+                    let block_line = lines[i].trim();
 
-                            if block_line.contains('}') {
-                                if let Some(pos) = block_line.find('}') {
-                                    let before_brace = block_line[..pos].trim();
-                                    if !before_brace.is_empty() && !before_brace.starts_with('#') {
-                                        for item in before_brace.split(',') {
-                                            let item = item.trim().to_lowercase();
-                                            if !item.is_empty() && !item.starts_with('#') {
-                                                members.push(item);
-                                            }
-                                        }
-                                    }
-                                }
-                                found_closing = true;
-                                i += 1;
-                                break;
-                            }
-
-                            if !block_line.is_empty() && !block_line.starts_with('#') {
-                                for item in block_line.split(',') {
+                    // Check for closing brace
+                    if block_line.contains('}') {
+                        if let Some(pos) = block_line.find('}') {
+                            let before_brace = block_line[..pos].trim();
+                            if !before_brace.is_empty() && !before_brace.starts_with('#') {
+                                for item in before_brace.split(',') {
                                     let item = item.trim().to_lowercase();
                                     if !item.is_empty() && !item.starts_with('#') {
                                         members.push(item);
                                     }
                                 }
                             }
-                            i += 1;
+                            // Check for inline rule suffix after }
+                            let after_close = block_line[pos + 1..].trim();
+                            if after_close.starts_with(',') {
+                                inline_rule_suffix = Some(after_close[1..].to_string());
+                            }
                         }
-
-                        if !found_closing {
-                            result
-                                .errors
-                                .push(format!("Line {}: Unclosed group block '&{}' - missing closing braces", line_number, group_name));
-                        }
+                        found_closing = true;
+                        i += 1;
+                        break;
                     }
 
-                    if members.is_empty() {
-                        result.warnings.push(format!("Line {}: Group '&{}' has no members", line_number, group_name));
-                    } else {
-                        result.groups_count += 1;
-                        result.group_members_count += members.len();
-                        process_groups.insert(group_name, members);
+                    // Process line content
+                    if !block_line.is_empty() && !block_line.starts_with('#') {
+                        for item in block_line.split(',') {
+                            let item = item.trim().to_lowercase();
+                            if !item.is_empty() && !item.starts_with('#') {
+                                members.push(item);
+                            }
+                        }
                     }
+                    i += 1;
+                }
+
+                if !found_closing {
+                    result
+                        .errors
+                        .push(format!("Line {}: Unclosed group block '&{}' - missing closing brace", line_number, group_name));
                     continue;
                 }
             }
-            // If no brace found, fall through to process as potential group reference
+
+            if members.is_empty() {
+                result.warnings.push(format!("Line {}: Group '&{}' has no members", line_number, group_name));
+                continue;
+            }
+
+            result.groups_count += 1;
+            result.group_members_count += members.len();
+
+            // Process inline rule suffix - this is now required for groups
+            if let Some(ref suffix) = inline_rule_suffix {
+                let parts: Vec<&str> = suffix.split(',').collect();
+                if parts.len() >= 2 {
+                    let priority = ProcessPriority::from_str(parts[0]);
+
+                    // Validate priority
+                    let priority_str = parts[0].trim();
+                    if priority == ProcessPriority::None && !priority_str.eq_ignore_ascii_case("none") {
+                        result
+                            .warnings
+                            .push(format!("Line {}: Unknown priority '{}' - will be treated as 'none'", line_number, priority_str));
+                    }
+
+                    let affinity_def = parts[1].trim();
+                    let affinity_cpus = if affinity_def.starts_with('*') {
+                        let alias = affinity_def.trim_start_matches('*').to_lowercase();
+                        if !cpu_aliases.contains_key(&alias) {
+                            result.errors.push(format!("Line {}: Undefined alias '*{}' in affinity field", line_number, alias));
+                        }
+                        cpu_aliases.get(&alias).cloned().unwrap_or_default()
+                    } else {
+                        parse_cpu_spec(affinity_def)
+                    };
+
+                    let cpuset_def = if parts.len() >= 3 { parts[2].trim() } else { "0" };
+                    let cpu_set_cpus = if cpuset_def.starts_with('*') {
+                        let alias = cpuset_def.trim_start_matches('*').to_lowercase();
+                        if !cpu_aliases.contains_key(&alias) {
+                            result.errors.push(format!("Line {}: Undefined alias '*{}' in cpuset field", line_number, alias));
+                        }
+                        cpu_aliases.get(&alias).cloned().unwrap_or_default()
+                    } else {
+                        parse_cpu_spec(cpuset_def)
+                    };
+
+                    let prime_def = if parts.len() >= 4 { parts[3].trim() } else { "0" };
+                    let prime_cpus = if prime_def.starts_with('*') {
+                        let alias = prime_def.trim_start_matches('*').to_lowercase();
+                        if !cpu_aliases.contains_key(&alias) {
+                            result.errors.push(format!("Line {}: Undefined alias '*{}' in prime_cpus field", line_number, alias));
+                        }
+                        cpu_aliases.get(&alias).cloned().unwrap_or_default()
+                    } else {
+                        parse_cpu_spec(prime_def)
+                    };
+
+                    let io_priority = if parts.len() >= 5 {
+                        let io_str = parts[4].trim();
+                        let io_p = IOPriority::from_str(io_str);
+                        if io_p == IOPriority::None && !io_str.eq_ignore_ascii_case("none") {
+                            result
+                                .warnings
+                                .push(format!("Line {}: Unknown IO priority '{}' - will be treated as 'none'", line_number, io_str));
+                        }
+                        io_p
+                    } else {
+                        IOPriority::None
+                    };
+
+                    let memory_priority = if parts.len() >= 6 {
+                        let mem_str = parts[5].trim();
+                        let mem_p = MemoryPriority::from_str(mem_str);
+                        if mem_p == MemoryPriority::None && !mem_str.eq_ignore_ascii_case("none") {
+                            result
+                                .warnings
+                                .push(format!("Line {}: Unknown memory priority '{}' - will be treated as 'none'", line_number, mem_str));
+                        }
+                        mem_p
+                    } else {
+                        MemoryPriority::None
+                    };
+
+                    for name in &members {
+                        result.configs.insert(
+                            name.clone(),
+                            ProcessConfig {
+                                name: name.clone(),
+                                priority: priority.clone(),
+                                affinity_cpus: affinity_cpus.clone(),
+                                cpu_set_cpus: cpu_set_cpus.clone(),
+                                prime_cpus: prime_cpus.clone(),
+                                io_priority: io_priority.clone(),
+                                memory_priority: memory_priority.clone(),
+                            },
+                        );
+                    }
+                    result.process_rules_count += members.len();
+                    log_message(&format!("Config: Group '&{}' with {} processes", group_name, members.len()));
+                } else {
+                    result.errors.push(format!(
+                        "Line {}: Group '&{}' has invalid rule suffix - expected at least priority,affinity",
+                        line_number, group_name
+                    ));
+                }
+            } else {
+                result.errors.push(format!(
+                    "Line {}: Group '&{}' missing rule suffix - use }},priority,affinity,...",
+                    line_number, group_name
+                ));
+            }
+            continue;
         }
 
-        // Constant definition
+        // Constant definition: @NAME=VALUE
         if line.starts_with('@') {
             if let Some(eq_pos) = line.find('=') {
                 let const_name = line[1..eq_pos].trim().to_uppercase();
                 let const_value = line[eq_pos + 1..].trim();
-
                 match const_name.as_str() {
-                    "HYSTERESIS_RATIO" | "KEEP_THRESHOLD" | "ENTRY_THRESHOLD" => {
-                        if const_value.parse::<f64>().is_err() {
+                    "HYSTERESIS_RATIO" => {
+                        if let Ok(v) = const_value.parse::<f64>() {
+                            result.constants.hysteresis_ratio = v;
+                            result.constants_count += 1;
+                            log_message(&format!("Config: HYSTERESIS_RATIO = {}", v));
+                        } else {
                             result.errors.push(format!(
                                 "Line {}: Invalid value '{}' for constant '{}' - expected a number",
                                 line_number, const_value, const_name
                             ));
-                        } else {
+                        }
+                    }
+                    "KEEP_THRESHOLD" => {
+                        if let Ok(v) = const_value.parse::<f64>() {
+                            result.constants.keep_threshold = v;
                             result.constants_count += 1;
+                            log_message(&format!("Config: KEEP_THRESHOLD = {}", v));
+                        } else {
+                            result.errors.push(format!(
+                                "Line {}: Invalid value '{}' for constant '{}' - expected a number",
+                                line_number, const_value, const_name
+                            ));
+                        }
+                    }
+                    "ENTRY_THRESHOLD" => {
+                        if let Ok(v) = const_value.parse::<f64>() {
+                            result.constants.entry_threshold = v;
+                            result.constants_count += 1;
+                            log_message(&format!("Config: ENTRY_THRESHOLD = {}", v));
+                        } else {
+                            result.errors.push(format!(
+                                "Line {}: Invalid value '{}' for constant '{}' - expected a number",
+                                line_number, const_value, const_name
+                            ));
                         }
                     }
                     _ => {
@@ -608,7 +516,7 @@ pub fn validate_config<P: AsRef<Path>>(path: P) -> ConfigValidationResult {
             continue;
         }
 
-        // CPU alias definition
+        // CPU alias definition: *NAME=SPEC
         if line.starts_with('*') {
             if let Some(eq_pos) = line.find('=') {
                 let alias_name = line[1..eq_pos].trim().to_lowercase();
@@ -654,59 +562,100 @@ pub fn validate_config<P: AsRef<Path>>(path: P) -> ConfigValidationResult {
             continue;
         }
 
-        // Check for group reference
+        // Reject standalone group references (no longer supported)
         if name.starts_with('&') {
-            let group_name = name[1..].to_lowercase();
-            if !process_groups.contains_key(&group_name) {
-                result.errors.push(format!("Line {}: Undefined process group '&{}'", line_number, group_name));
-            }
-            result.group_rules_count += 1;
+            result.errors.push(format!(
+                "Line {}: Standalone group reference '{}' not supported - use inline rule syntax: &group {{ ... }},rule",
+                line_number, name
+            ));
+            i += 1;
+            continue;
         }
 
-        // Validate priority
+        let priority = ProcessPriority::from_str(parts[1]);
         let priority_str = parts[1].trim();
-        if ProcessPriority::from_str(priority_str) == ProcessPriority::None && !priority_str.eq_ignore_ascii_case("none") {
+        if priority == ProcessPriority::None && !priority_str.eq_ignore_ascii_case("none") {
             result
                 .warnings
                 .push(format!("Line {}: Unknown priority '{}' - will be treated as 'none'", line_number, priority_str));
         }
 
-        // Validate CPU specs (affinity, cpuset, prime)
-        for (field_idx, field_name) in [(2, "affinity"), (3, "cpuset"), (4, "prime_cpus")].iter() {
-            if parts.len() > *field_idx {
-                let spec = parts[*field_idx].trim();
-                if spec.starts_with('*') {
-                    let alias = spec.trim_start_matches('*').to_lowercase();
-                    if !cpu_aliases.contains_key(&alias) {
-                        result
-                            .errors
-                            .push(format!("Line {}: Undefined alias '*{}' in {} field", line_number, alias, field_name));
-                    }
-                }
+        // Parse affinity
+        let affinity_def = parts[2].trim();
+        let affinity_cpus = if affinity_def.starts_with('*') {
+            let alias = affinity_def.trim_start_matches('*').to_lowercase();
+            if !cpu_aliases.contains_key(&alias) {
+                result.errors.push(format!("Line {}: Undefined alias '*{}' in affinity field", line_number, alias));
             }
-        }
+            cpu_aliases.get(&alias).cloned().unwrap_or_default()
+        } else {
+            parse_cpu_spec(affinity_def)
+        };
 
-        // Validate IO priority
-        if parts.len() >= 6 {
+        // Parse CPU set
+        let cpuset_def = if parts.len() >= 4 { parts[3].trim() } else { "0" };
+        let cpu_set_cpus = if cpuset_def.starts_with('*') {
+            let alias = cpuset_def.trim_start_matches('*').to_lowercase();
+            if !cpu_aliases.contains_key(&alias) {
+                result.errors.push(format!("Line {}: Undefined alias '*{}' in cpuset field", line_number, alias));
+            }
+            cpu_aliases.get(&alias).cloned().unwrap_or_default()
+        } else {
+            parse_cpu_spec(cpuset_def)
+        };
+
+        // Parse prime CPU
+        let prime_def = if parts.len() >= 5 { parts[4].trim() } else { "0" };
+        let prime_cpus = if prime_def.starts_with('*') {
+            let alias = prime_def.trim_start_matches('*').to_lowercase();
+            if !cpu_aliases.contains_key(&alias) {
+                result.errors.push(format!("Line {}: Undefined alias '*{}' in prime_cpus field", line_number, alias));
+            }
+            cpu_aliases.get(&alias).cloned().unwrap_or_default()
+        } else {
+            parse_cpu_spec(prime_def)
+        };
+
+        let io_priority = if parts.len() >= 6 {
             let io_str = parts[5].trim();
-            if IOPriority::from_str(io_str) == IOPriority::None && !io_str.eq_ignore_ascii_case("none") {
+            let io_p = IOPriority::from_str(io_str);
+            if io_p == IOPriority::None && !io_str.eq_ignore_ascii_case("none") {
                 result
                     .warnings
                     .push(format!("Line {}: Unknown IO priority '{}' - will be treated as 'none'", line_number, io_str));
             }
-        }
+            io_p
+        } else {
+            IOPriority::None
+        };
 
-        // Validate Memory priority
-        if parts.len() >= 7 {
+        let memory_priority = if parts.len() >= 7 {
             let mem_str = parts[6].trim();
-            if MemoryPriority::from_str(mem_str) == MemoryPriority::None && !mem_str.eq_ignore_ascii_case("none") {
+            let mem_p = MemoryPriority::from_str(mem_str);
+            if mem_p == MemoryPriority::None && !mem_str.eq_ignore_ascii_case("none") {
                 result
                     .warnings
                     .push(format!("Line {}: Unknown memory priority '{}' - will be treated as 'none'", line_number, mem_str));
             }
-        }
+            mem_p
+        } else {
+            MemoryPriority::None
+        };
 
-        result.configs_count += 1;
+        result.configs.insert(
+            name.to_lowercase(),
+            ProcessConfig {
+                name: name.to_lowercase(),
+                priority,
+                affinity_cpus,
+                cpu_set_cpus,
+                prime_cpus,
+                io_priority,
+                memory_priority,
+            },
+        );
+        result.process_rules_count += 1;
+
         i += 1;
     }
 

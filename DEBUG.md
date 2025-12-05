@@ -2,6 +2,63 @@
 
 Quick reference for debugging this Windows process affinity/priority management service.
 
+## Privilege Capability Table
+
+What rules can be applied with different privilege levels:
+
+### Target Process Types
+
+| Target Process | No Admin | Admin | SYSTEM |
+|----------------|----------|-------|--------|
+| User processes (same user) | ✅ Full access | ✅ Full access | ✅ Full access |
+| Elevated user processes | ❌ ACCESS_DENIED | ✅ Full access | ✅ Full access |
+| SYSTEM processes (services) | ❌ ACCESS_DENIED | ✅ Full access | ✅ Full access |
+| Protected processes (csrss, smss) | ❌ ACCESS_DENIED | ❌ ACCESS_DENIED | ⚠️ Limited |
+
+### Rule Capabilities by Privilege
+
+| Rule | No Admin | Admin | Notes |
+|------|----------|-------|-------|
+| **Process Priority** | | | |
+| ├ idle | ✅ | ✅ | |
+| ├ below normal | ✅ | ✅ | |
+| ├ normal | ✅ | ✅ | |
+| ├ above normal | ✅ | ✅ | |
+| ├ high | ✅ | ✅ | |
+| └ real time | ✅ | ✅ | Works on user processes |
+| **CPU Affinity** | ✅ | ✅ | ≤64 cores only |
+| **CPU Set** | ✅ | ✅ | Works on >64 cores |
+| **Prime Scheduling** | ✅ | ✅ | Thread-level CPU sets |
+| **I/O Priority** | | | |
+| ├ very low | ✅ | ✅ | |
+| ├ low | ✅ | ✅ | |
+| ├ normal | ✅ | ✅ | |
+| └ high | ❌ 0xC0000061 | ✅ | STATUS_PRIVILEGE_NOT_HELD |
+| **Memory Priority** | ✅ | ✅ | All levels work |
+
+### Test Results
+
+Tested with: `notepad.exe`, `notepad++.exe`, `everything.exe`, `MeasureSleep.exe`, `AffinityServiceRust.exe` (SYSTEM)
+
+```
+# Non-admin test command:
+cargo run --release -- -console -noUAC -config test_privilege.ini -loop 1
+
+# Example output:
+[08:34:46] 8344-notepad.exe -> Priority: above normal
+[08:34:46] 8344-notepad.exe affinity 0xFFF00 -> 0xFF
+[08:34:46]apply_config: [SET_IO_PRIORITY][0xC0000061]  8344-notepad.exe -> high  # FAILED - needs admin
+[08:34:46] 8344-notepad.exe -> Memory: normal
+[08:34:46]apply_config: [OPEN][ACCESS_DENIED]  1804-dwm.exe  # FAILED - system process
+[08:34:46]apply_config: [OPEN][ACCESS_DENIED]  7052-everything.exe  # FAILED - elevated process
+```
+
+### Summary
+
+- **Run without admin**: Can manage same-user processes, but I/O priority `high` fails
+- **Run with admin**: Can manage all user processes and services, I/O `high` works
+- **Run as SYSTEM**: Maximum compatibility, can manage most processes
+
 ## Quick Debug Command
 
 **Non-admin (with console output):**

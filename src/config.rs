@@ -13,7 +13,8 @@
 //! - Multiple ranges: `0-7;64-71`
 //! - Mixed: `0-3;8;9;64-67`
 
-use crate::logging::log_message;
+use crate::log;
+use crate::logging::{log_message, log_to_find};
 use crate::priority::{IOPriority, MemoryPriority, ProcessPriority};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -198,27 +199,26 @@ impl ConfigResult {
 
     pub fn print_report(&self) {
         if self.is_valid() {
-            println!("✓ Parsed {} constants", self.constants_count);
-            println!("✓ Parsed {} CPU aliases", self.aliases_count);
+            log!("✓ Parsed {} constants", self.constants_count);
+            log!("✓ Parsed {} CPU aliases", self.aliases_count);
             if self.groups_count > 0 {
-                println!("✓ Parsed {} process groups ({} processes)", self.groups_count, self.group_members_count);
+                log!("✓ Parsed {} process groups ({} processes)", self.groups_count, self.group_members_count);
             }
-            println!("✓ Parsed {} process rules", self.process_rules_count);
+            log!("✓ Parsed {} process rules", self.process_rules_count);
             if !self.warnings.is_empty() {
                 for warning in &self.warnings {
-                    println!("⚠ {}", warning);
+                    log_to_find(&format!("⚠ {}", warning));
                 }
             }
-            println!("✓ Config is valid!");
+            log!("✓ Config is valid!");
         } else {
             for error in &self.errors {
-                println!("✗ {}", error);
+                log_to_find(&format!("✗ {}", error));
             }
             for warning in &self.warnings {
-                println!("⚠ {}", warning);
+                log_to_find(&format!("⚠ {}", warning));
             }
-            println!();
-            println!("Found {} error(s). Fix them before running.", self.errors.len());
+            log_to_find(&format!("Found {} error(s). Fix them before running.", self.errors.len()));
         }
     }
 }

@@ -61,96 +61,63 @@ use windows::Win32::{
     },
 };
 
-/// Checks what changes would be applied to a process without actually applying them (dry run mode).
-/// Returns a vector of strings describing what would be changed.
-fn dry_run_check(pid: u32, config: &ProcessConfig) -> Vec<String> {
-    let mut changes = Vec::new();
-
-    let open_result = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) };
-    let h_prc = match open_result {
-        Err(_) => return vec![format!("[SKIP] Cannot open process (access denied)")],
-        Ok(h_prc) => h_prc,
-    };
-    if h_prc.is_invalid() {
-        return vec![format!("[SKIP] Invalid handle")];
-    }
-
-    // Check Priority
-    if let Some(priority_flag) = config.priority.as_win_const() {
-        let current_priority = unsafe { GetPriorityClass(h_prc) };
-        if current_priority != priority_flag.0 {
-            changes.push(format!("Priority: current -> {}", config.priority.as_str()));
-        }
-    }
-
-    // Check Affinity
-    let affinity_mask = cpu_indices_to_mask(&config.affinity_cpus);
-    if !config.affinity_cpus.is_empty() && affinity_mask != 0 {
-        let mut current_mask: usize = 0;
-        let mut system_mask: usize = 0;
-        if unsafe { GetProcessAffinityMask(h_prc, &mut current_mask, &mut system_mask) }.is_ok() {
-            if affinity_mask != current_mask {
-                changes.push(format!("Affinity: {:#X} -> {:#X}", current_mask, affinity_mask));
-            }
-        }
-    }
-
-    // Check CPU Set
-    if !config.cpu_set_cpus.is_empty() {
-        changes.push(format!("CPU Set: -> [{}]", format_cpu_indices(&config.cpu_set_cpus)));
-    }
-
-    // Check Prime CPUs
-    if !config.prime_cpus.is_empty() {
-        changes.push(format!("Prime CPUs: -> [{}]", format_cpu_indices(&config.prime_cpus)));
-    }
-
-    // Check IO Priority
-    if config.io_priority != priority::IOPriority::None {
-        changes.push(format!("IO Priority: -> {}", config.io_priority.as_str()));
-    }
-
-    // Check Memory Priority
-    if config.memory_priority != priority::MemoryPriority::None {
-        changes.push(format!("Memory Priority: -> {}", config.memory_priority.as_str()));
-    }
-
-    unsafe { CloseHandle(h_prc) }.ok();
-    changes
-}
-
 /// Applies all configured settings to a process: priority, affinity, CPU sets, IO/memory priority.
+/// When `dry_run` is true, returns a list of changes that would be made without applying them.
 ///
 /// For processes with `prime_cpus` set, also runs the Prime Thread Scheduler algorithm:
 /// 1. Sort threads by CPU time delta to find candidates
 /// 2. Query CPU cycles (frequency-independent) for accurate comparison
 /// 3. Apply hysteresis to determine which threads should be "prime"
 /// 4. Pin prime threads to preferred cores, demote inactive ones
-fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut PrimeThreadScheduler, processes: &mut ProcessSnapshot) {
-    let open_result = unsafe { OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) };
+fn apply_config(
+    pid: u32,
+    config: &ProcessConfig,
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    mut processes: Option<&mut ProcessSnapshot>,
+    dry_run: bool,
+) -> Vec<String> {
+    let mut changes: Vec<String> = Vec::new();
+
+    let access_flags = if dry_run {
+        PROCESS_QUERY_INFORMATION
+    } else {
+        PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION
+    };
+
+    let open_result = unsafe { OpenProcess(access_flags, false, pid) };
     let h_prc = match open_result {
         Err(_) => {
+            if dry_run {
+                return vec![format!("[SKIP] Cannot open process (access denied)")];
+            }
             let error_code = unsafe { GetLastError().0 };
             log_to_find(&format!("apply_config: [OPEN][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
-            return;
+            return changes;
         }
         Ok(h_prc) => h_prc,
     };
     if h_prc.is_invalid() {
+        if dry_run {
+            return vec![format!("[SKIP] Invalid handle")];
+        }
         log_to_find(&format!("apply_config: [INVALID_HANDLE] {:>5}-{}", pid, config.name));
-        return;
+        return changes;
     }
 
     // Priority
     if let Some(priority_flag) = config.priority.as_win_const() {
         let current_priority = unsafe { GetPriorityClass(h_prc) };
         if current_priority != priority_flag.0 {
-            let set_result = unsafe { SetPriorityClass(h_prc, priority_flag) };
-            if set_result.is_ok() {
-                log!("{:>5}-{} -> Priority: {}", pid, config.name, config.priority.as_str());
+            if dry_run {
+                changes.push(format!("Priority: current -> {}", config.priority.as_str()));
             } else {
-                let error_code = unsafe { GetLastError().0 };
-                log_to_find(&format!("apply_config: [SET_PRIORITY][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
+                let set_result = unsafe { SetPriorityClass(h_prc, priority_flag) };
+                if set_result.is_ok() {
+                    log!("{:>5}-{} -> Priority: {}", pid, config.name, config.priority.as_str());
+                } else {
+                    let error_code = unsafe { GetLastError().0 };
+                    log_to_find(&format!("apply_config: [SET_PRIORITY][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
+                }
             }
         }
     }
@@ -166,20 +133,26 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
         let query_result = unsafe { GetProcessAffinityMask(h_prc, &mut current_mask, &mut system_mask) };
         match query_result {
             Err(_) => {
-                let error_code = unsafe { GetLastError().0 };
-                log_to_find(&format!("apply_config: [QUERY_AFFINITY][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
+                if !dry_run {
+                    let error_code = unsafe { GetLastError().0 };
+                    log_to_find(&format!("apply_config: [QUERY_AFFINITY][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
+                }
             }
             Ok(_) => {
                 if has_affinity && affinity_mask != 0 && affinity_mask != current_mask {
-                    let set_result = unsafe { SetProcessAffinityMask(h_prc, affinity_mask) };
-                    match set_result {
-                        Err(_) => {
-                            let error_code = unsafe { GetLastError().0 };
-                            log_to_find(&format!("apply_config: [SET_AFFINITY][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
-                        }
-                        Ok(_) => {
-                            log!("{:>5}-{} affinity {:#X} -> {:#X}", pid, config.name, current_mask, affinity_mask);
-                            current_mask = affinity_mask;
+                    if dry_run {
+                        changes.push(format!("Affinity: {:#X} -> {:#X}", current_mask, affinity_mask));
+                    } else {
+                        let set_result = unsafe { SetProcessAffinityMask(h_prc, affinity_mask) };
+                        match set_result {
+                            Err(_) => {
+                                let error_code = unsafe { GetLastError().0 };
+                                log_to_find(&format!("apply_config: [SET_AFFINITY][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
+                            }
+                            Ok(_) => {
+                                log!("{:>5}-{} affinity {:#X} -> {:#X}", pid, config.name, current_mask, affinity_mask);
+                                current_mask = affinity_mask;
+                            }
                         }
                     }
                 }
@@ -189,238 +162,217 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
 
     // Process default CPU Set (supports >64 cores)
     if !config.cpu_set_cpus.is_empty() && !get_cpu_set_information().lock().unwrap().is_empty() {
-        let target_cpusetids = cpusetids_from_indices(&config.cpu_set_cpus);
-        if !target_cpusetids.is_empty() {
-            let mut toset: bool = false;
-            let mut requiredidcount: u32 = 0;
-            let query_result = unsafe { GetProcessDefaultCpuSets(h_prc, None, &mut requiredidcount) }.as_bool();
-            if query_result {
-                // 0 is large enough, meaning there are no default CPU sets for this process
-                toset = true;
-            } else {
-                let code = unsafe { GetLastError().0 };
-                if code != 122 {
-                    log_to_find(&format!(
-                        "apply_config: [QUERY_CPUSET][{}] {:>5}-{}-{}",
-                        error_from_code(code),
-                        pid,
-                        config.name,
-                        requiredidcount
-                    ));
+        if dry_run {
+            changes.push(format!("CPU Set: -> [{}]", format_cpu_indices(&config.cpu_set_cpus)));
+        } else {
+            let target_cpusetids = cpusetids_from_indices(&config.cpu_set_cpus);
+            if !target_cpusetids.is_empty() {
+                let mut toset: bool = false;
+                let mut requiredidcount: u32 = 0;
+                let query_result = unsafe { GetProcessDefaultCpuSets(h_prc, None, &mut requiredidcount) }.as_bool();
+                if query_result {
+                    // 0 is large enough, meaning there are no default CPU sets for this process
+                    toset = true;
                 } else {
-                    let mut current_cpusetids: Vec<u32> = vec![0u32; requiredidcount as usize];
-                    let second_query = unsafe { GetProcessDefaultCpuSets(h_prc, Some(&mut current_cpusetids[..]), &mut requiredidcount) }.as_bool();
-                    if !second_query {
-                        let error_code = unsafe { GetLastError().0 };
+                    let code = unsafe { GetLastError().0 };
+                    if code != 122 {
                         log_to_find(&format!(
                             "apply_config: [QUERY_CPUSET][{}] {:>5}-{}-{}",
-                            error_from_code(error_code),
+                            error_from_code(code),
                             pid,
                             config.name,
                             requiredidcount
                         ));
                     } else {
-                        toset = current_cpusetids != target_cpusetids;
+                        let mut current_cpusetids: Vec<u32> = vec![0u32; requiredidcount as usize];
+                        let second_query = unsafe { GetProcessDefaultCpuSets(h_prc, Some(&mut current_cpusetids[..]), &mut requiredidcount) }.as_bool();
+                        if !second_query {
+                            let error_code = unsafe { GetLastError().0 };
+                            log_to_find(&format!(
+                                "apply_config: [QUERY_CPUSET][{}] {:>5}-{}-{}",
+                                error_from_code(error_code),
+                                pid,
+                                config.name,
+                                requiredidcount
+                            ));
+                        } else {
+                            toset = current_cpusetids != target_cpusetids;
+                        }
                     }
                 }
-            }
-            if toset {
-                let set_result = unsafe { SetProcessDefaultCpuSets(h_prc, Some(&target_cpusetids)) }.as_bool();
-                if !set_result {
-                    let error_code = unsafe { GetLastError().0 };
-                    log_to_find(&format!("apply_config: [SET_CPUSET][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
-                } else {
-                    log!("{:>5}-{} -> (cpu set) [{}]", pid, config.name, format_cpu_indices(&config.cpu_set_cpus));
+                if toset {
+                    let set_result = unsafe { SetProcessDefaultCpuSets(h_prc, Some(&target_cpusetids)) }.as_bool();
+                    if !set_result {
+                        let error_code = unsafe { GetLastError().0 };
+                        log_to_find(&format!("apply_config: [SET_CPUSET][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
+                    } else {
+                        log!("{:>5}-{} -> (cpu set) [{}]", pid, config.name, format_cpu_indices(&config.cpu_set_cpus));
+                    }
                 }
             }
         }
     }
 
     // Prime thread Scheduling (supports >64 cores via CPU Set APIs)
-    if !config.prime_cpus.is_empty() {
-        // Filter prime CPUs to those allowed by current process affinity
-        // Per MSDN: GetProcessAffinityMask returns 0 when process has threads in multiple
-        // processor groups (systems with >64 cores where threads span groups), so we use
-        // all specified prime CPUs since the affinity mask is meaningless in that case
-        let effective_prime_cpus = if current_mask != 0 {
-            filter_indices_by_mask(&config.prime_cpus, current_mask)
-        } else {
-            config.prime_cpus.clone()
-        };
+    if !config.prime_cpus.is_empty() && !dry_run {
+        // For dry run, just report prime CPUs would be set
+        if !config.prime_cpus.is_empty() && dry_run {
+            changes.push(format!("Prime CPUs: -> [{}]", format_cpu_indices(&config.prime_cpus)));
+        }
 
-        let cpu_setids = cpusetids_from_indices(&effective_prime_cpus);
-        if !cpu_setids.is_empty() {
-            prime_core_scheduler.set_alive(pid);
-            let process = processes.pid_to_process.get_mut(&pid).unwrap();
-            let thread_count = process.thread_count() as usize;
-            let candidate_count = get_cpu_set_information().lock().unwrap().len().min(thread_count);
-            let mut candidate_tids: Vec<u32> = vec![0u32; candidate_count];
-            let mut tid_with_delta_cycles: Vec<(u32, u64, bool)> = vec![(0u32, 0u64, false); candidate_count];
+        // Prime thread Scheduling actual logic (only when not dry run)
+        if !config.prime_cpus.is_empty() && !dry_run {
+            // Filter prime CPUs to those allowed by current process affinity
+            // Per MSDN: GetProcessAffinityMask returns 0 when process has threads in multiple
+            // processor groups (systems with >64 cores where threads span groups), so we use
+            // all specified prime CPUs since the affinity mask is meaningless in that case
+            let effective_prime_cpus = if current_mask != 0 {
+                filter_indices_by_mask(&config.prime_cpus, current_mask)
+            } else {
+                config.prime_cpus.clone()
+            };
 
-            // Step 1: Sort threads by delta time and select top candidates
-            {
-                let mut tid_with_delta_time: Vec<(u32, i64)> = Vec::with_capacity(thread_count);
-                process.get_threads().iter().for_each(|(tid, thread)| {
-                    let total_time = unsafe { thread.KernelTime.QuadPart() + thread.UserTime.QuadPart() };
-                    let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
-                    tid_with_delta_time.push((*tid, total_time - thread_stats.last_total_time));
-                    thread_stats.last_total_time = total_time;
-                });
-                tid_with_delta_time.sort_by_key(|&(_, delta)| delta);
-                let precandidate_len = tid_with_delta_time.len();
+            let cpu_setids = cpusetids_from_indices(&effective_prime_cpus);
+            if !cpu_setids.is_empty() {
+                prime_core_scheduler.set_alive(pid);
+                let process = processes.as_mut().unwrap().pid_to_process.get_mut(&pid).unwrap();
+                let thread_count = process.thread_count() as usize;
+                let candidate_count = get_cpu_set_information().lock().unwrap().len().min(thread_count);
+                let mut candidate_tids: Vec<u32> = vec![0u32; candidate_count];
+                let mut tid_with_delta_cycles: Vec<(u32, u64, bool)> = vec![(0u32, 0u64, false); candidate_count];
+
+                // Step 1: Sort threads by delta time and select top candidates
+                {
+                    let mut tid_with_delta_time: Vec<(u32, i64)> = Vec::with_capacity(thread_count);
+                    process.get_threads().iter().for_each(|(tid, thread)| {
+                        let total_time = unsafe { thread.KernelTime.QuadPart() + thread.UserTime.QuadPart() };
+                        let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
+                        tid_with_delta_time.push((*tid, total_time - thread_stats.last_total_time));
+                        thread_stats.last_total_time = total_time;
+                    });
+                    tid_with_delta_time.sort_by_key(|&(_, delta)| delta);
+                    let precandidate_len = tid_with_delta_time.len();
+                    for i in 0..candidate_count {
+                        candidate_tids[i] = tid_with_delta_time[precandidate_len - i - 1].0;
+                    }
+                }
+
+                // Step 2: Open thread handles and query cycle times
                 for i in 0..candidate_count {
-                    candidate_tids[i] = tid_with_delta_time[precandidate_len - i - 1].0;
-                }
-            }
-
-            // Step 2: Open thread handles and query cycle times
-            for i in 0..candidate_count {
-                let tid = candidate_tids[i];
-                let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
-                let process_name = &config.name;
-                match thread_stats.handle {
-                    None => {
-                        let open_result = unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION, false, tid) };
-                        match open_result {
-                            Err(_) => {
-                                let error_code = unsafe { GetLastError().0 };
-                                log_to_find(&format!(
-                                    "apply_config: [OPEN_THREAD][{}] {:>5}-{}-{}",
-                                    error_from_code(error_code),
-                                    pid,
-                                    tid,
-                                    process_name
-                                ));
-                            }
-                            Ok(handle) => {
-                                let mut cycles: u64 = 0;
-                                let query_result = unsafe { QueryThreadCycleTime(handle, &mut cycles) };
-                                match query_result {
-                                    Err(_) => {
-                                        let error_code = unsafe { GetLastError().0 };
-                                        log_to_find(&format!(
-                                            "apply_config: [QUERY_THREAD_CYCLE][{}] {:>5}-{}-{}",
-                                            error_from_code(error_code),
-                                            pid,
-                                            tid,
-                                            process_name
-                                        ));
-                                    }
-                                    Ok(_) => {
-                                        tid_with_delta_cycles[i] = (tid, cycles, false);
-                                    }
-                                };
-                                thread_stats.handle = Some(handle);
-                            }
-                        };
-                    }
-                    Some(handle) => {
-                        let mut cycles: u64 = 0;
-                        let query_result = unsafe { QueryThreadCycleTime(handle, &mut cycles) };
-                        match query_result {
-                            Err(_) => {
-                                let error_code = unsafe { GetLastError().0 };
-                                log_to_find(&format!(
-                                    "apply_config: [QUERY_THREAD_CYCLE][{}] {:>5}-{}-{}",
-                                    error_from_code(error_code),
-                                    pid,
-                                    tid,
-                                    process_name
-                                ));
-                            }
-                            Ok(_) => {
-                                tid_with_delta_cycles[i] = (tid, cycles - thread_stats.last_cycles, false);
-                                thread_stats.last_cycles = cycles;
-                            }
-                        };
-                    }
-                }
-            }
-
-            // Step 3: Sort by delta_cycles descending and calculate thresholds
-            tid_with_delta_cycles.sort_by_key(|&(_, delta_cycles, _)| std::cmp::Reverse(delta_cycles));
-            let max_cycles = tid_with_delta_cycles.first().map(|&(_, c, _)| c).unwrap_or(0u64);
-            let entry_min_cycles = (max_cycles as f64 * prime_core_scheduler.constants.entry_threshold) as u64;
-            let keep_min_cycles = (max_cycles as f64 * prime_core_scheduler.constants.keep_threshold) as u64;
-            let prime_count = cpu_setids.len().min(candidate_count);
-            // Update active_streak for all candidate threads
-            for &(tid, delta_cycles, _) in &tid_with_delta_cycles {
-                if tid == 0 {
-                    continue;
-                }
-                let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
-                if delta_cycles >= entry_min_cycles {
-                    thread_stats.active_streak = thread_stats.active_streak.saturating_add(1).min(254);
-                } else {
-                    thread_stats.active_streak = 0;
-                }
-            }
-            let mut new_prime_count: usize = 0;
-            // First pass: mark protected prime threads
-            for (tid, delta_cycles, is_prime) in tid_with_delta_cycles.iter_mut() {
-                if *tid == 0 || new_prime_count >= prime_count {
-                    continue;
-                }
-                if !prime_core_scheduler.get_thread_stats(pid, *tid).cpu_set_ids.is_empty() && *delta_cycles >= keep_min_cycles {
-                    *is_prime = true;
-                    new_prime_count += 1;
-                }
-            }
-            // Second pass: mark new candidates
-            for (tid, delta_cycles, is_prime) in tid_with_delta_cycles.iter_mut() {
-                if new_prime_count >= prime_count {
-                    break;
-                }
-                if *tid == 0 || *is_prime {
-                    continue;
-                }
-                if *delta_cycles >= entry_min_cycles && prime_core_scheduler.get_thread_stats(pid, *tid).active_streak >= 2 {
-                    *is_prime = true;
-                    new_prime_count += 1;
-                }
-            }
-
-            // Step 4: Promote new threads
-            for &(tid, delta_cycles, is_prime) in &tid_with_delta_cycles {
-                if !is_prime {
-                    continue;
-                }
-                let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
-                if let Some(handle) = thread_stats.handle {
-                    if !handle.is_invalid() && thread_stats.cpu_set_ids.is_empty() {
-                        let set_result = unsafe { SetThreadSelectedCpuSets(handle, &cpu_setids) }.as_bool();
-                        if !set_result {
-                            let error_code = unsafe { GetLastError().0 };
-                            log_to_find(&format!(
-                                "apply_config: [SET_THREAD_CPU_SETS][{}] {:>5}-{}-{}",
-                                error_from_code(error_code),
-                                pid,
-                                tid,
-                                config.name
-                            ));
-                        } else {
-                            thread_stats.cpu_set_ids = cpu_setids.clone();
-                            let promoted_cpus = indices_from_cpusetids(&cpu_setids);
-                            log!(
-                                "{:>5}-{}-{} -> (promoted, [{}], cycles={})",
-                                pid,
-                                tid,
-                                config.name,
-                                format_cpu_indices(&promoted_cpus),
-                                delta_cycles
-                            );
+                    let tid = candidate_tids[i];
+                    let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
+                    let process_name = &config.name;
+                    match thread_stats.handle {
+                        None => {
+                            let open_result = unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION, false, tid) };
+                            match open_result {
+                                Err(_) => {
+                                    let error_code = unsafe { GetLastError().0 };
+                                    log_to_find(&format!(
+                                        "apply_config: [OPEN_THREAD][{}] {:>5}-{}-{}",
+                                        error_from_code(error_code),
+                                        pid,
+                                        tid,
+                                        process_name
+                                    ));
+                                }
+                                Ok(handle) => {
+                                    let mut cycles: u64 = 0;
+                                    let query_result = unsafe { QueryThreadCycleTime(handle, &mut cycles) };
+                                    match query_result {
+                                        Err(_) => {
+                                            let error_code = unsafe { GetLastError().0 };
+                                            log_to_find(&format!(
+                                                "apply_config: [QUERY_THREAD_CYCLE][{}] {:>5}-{}-{}",
+                                                error_from_code(error_code),
+                                                pid,
+                                                tid,
+                                                process_name
+                                            ));
+                                        }
+                                        Ok(_) => {
+                                            tid_with_delta_cycles[i] = (tid, cycles, false);
+                                        }
+                                    };
+                                    thread_stats.handle = Some(handle);
+                                }
+                            };
+                        }
+                        Some(handle) => {
+                            let mut cycles: u64 = 0;
+                            let query_result = unsafe { QueryThreadCycleTime(handle, &mut cycles) };
+                            match query_result {
+                                Err(_) => {
+                                    let error_code = unsafe { GetLastError().0 };
+                                    log_to_find(&format!(
+                                        "apply_config: [QUERY_THREAD_CYCLE][{}] {:>5}-{}-{}",
+                                        error_from_code(error_code),
+                                        pid,
+                                        tid,
+                                        process_name
+                                    ));
+                                }
+                                Ok(_) => {
+                                    tid_with_delta_cycles[i] = (tid, cycles - thread_stats.last_cycles, false);
+                                    thread_stats.last_cycles = cycles;
+                                }
+                            };
                         }
                     }
                 }
-            }
 
-            // Step 5: Demote threads that are no longer prime
-            process.get_threads().iter().for_each(|(tid, _)| {
-                let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
-                if !tid_with_delta_cycles.iter().any(|&(t, _, p)| t == *tid && p) && !thread_stats.cpu_set_ids.is_empty() {
+                // Step 3: Sort by delta_cycles descending and calculate thresholds
+                tid_with_delta_cycles.sort_by_key(|&(_, delta_cycles, _)| std::cmp::Reverse(delta_cycles));
+                let max_cycles = tid_with_delta_cycles.first().map(|&(_, c, _)| c).unwrap_or(0u64);
+                let entry_min_cycles = (max_cycles as f64 * prime_core_scheduler.constants.entry_threshold) as u64;
+                let keep_min_cycles = (max_cycles as f64 * prime_core_scheduler.constants.keep_threshold) as u64;
+                let prime_count = cpu_setids.len().min(candidate_count);
+                // Update active_streak for all candidate threads
+                for &(tid, delta_cycles, _) in &tid_with_delta_cycles {
+                    if tid == 0 {
+                        continue;
+                    }
+                    let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
+                    if delta_cycles >= entry_min_cycles {
+                        thread_stats.active_streak = thread_stats.active_streak.saturating_add(1).min(254);
+                    } else {
+                        thread_stats.active_streak = 0;
+                    }
+                }
+                let mut new_prime_count: usize = 0;
+                // First pass: mark protected prime threads
+                for (tid, delta_cycles, is_prime) in tid_with_delta_cycles.iter_mut() {
+                    if *tid == 0 || new_prime_count >= prime_count {
+                        continue;
+                    }
+                    if !prime_core_scheduler.get_thread_stats(pid, *tid).cpu_set_ids.is_empty() && *delta_cycles >= keep_min_cycles {
+                        *is_prime = true;
+                        new_prime_count += 1;
+                    }
+                }
+                // Second pass: mark new candidates
+                for (tid, delta_cycles, is_prime) in tid_with_delta_cycles.iter_mut() {
+                    if new_prime_count >= prime_count {
+                        break;
+                    }
+                    if *tid == 0 || *is_prime {
+                        continue;
+                    }
+                    if *delta_cycles >= entry_min_cycles && prime_core_scheduler.get_thread_stats(pid, *tid).active_streak >= 2 {
+                        *is_prime = true;
+                        new_prime_count += 1;
+                    }
+                }
+
+                // Step 4: Promote new threads
+                for &(tid, delta_cycles, is_prime) in &tid_with_delta_cycles {
+                    if !is_prime {
+                        continue;
+                    }
+                    let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
                     if let Some(handle) = thread_stats.handle {
-                        if !handle.is_invalid() {
-                            let set_result = unsafe { SetThreadSelectedCpuSets(handle, &[]) }.as_bool();
+                        if !handle.is_invalid() && thread_stats.cpu_set_ids.is_empty() {
+                            let set_result = unsafe { SetThreadSelectedCpuSets(handle, &cpu_setids) }.as_bool();
                             if !set_result {
                                 let error_code = unsafe { GetLastError().0 };
                                 log_to_find(&format!(
@@ -431,91 +383,141 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
                                     config.name
                                 ));
                             } else {
-                                log!("{:>5}-{}-{} -> (demoted)", pid, tid, config.name);
+                                thread_stats.cpu_set_ids = cpu_setids.clone();
+                                let promoted_cpus = indices_from_cpusetids(&cpu_setids);
+                                log!(
+                                    "{:>5}-{}-{} -> (promoted, [{}], cycles={})",
+                                    pid,
+                                    tid,
+                                    config.name,
+                                    format_cpu_indices(&promoted_cpus),
+                                    delta_cycles
+                                );
                             }
                         }
                     }
-                    thread_stats.cpu_set_ids = vec![];
-                };
-            });
+                }
+
+                // Step 5: Demote threads that are no longer prime
+                processes
+                    .as_mut()
+                    .unwrap()
+                    .pid_to_process
+                    .get_mut(&pid)
+                    .unwrap()
+                    .get_threads()
+                    .iter()
+                    .for_each(|(tid, _)| {
+                        let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
+                        if !tid_with_delta_cycles.iter().any(|&(t, _, p)| t == *tid && p) && !thread_stats.cpu_set_ids.is_empty() {
+                            if let Some(handle) = thread_stats.handle {
+                                if !handle.is_invalid() {
+                                    let set_result = unsafe { SetThreadSelectedCpuSets(handle, &[]) }.as_bool();
+                                    if !set_result {
+                                        let error_code = unsafe { GetLastError().0 };
+                                        log_to_find(&format!(
+                                            "apply_config: [SET_THREAD_CPU_SETS][{}] {:>5}-{}-{}",
+                                            error_from_code(error_code),
+                                            pid,
+                                            tid,
+                                            config.name
+                                        ));
+                                    } else {
+                                        log!("{:>5}-{}-{} -> (demoted)", pid, tid, config.name);
+                                    }
+                                }
+                            }
+                            thread_stats.cpu_set_ids = vec![];
+                        };
+                    });
+            }
         }
     }
 
     // IO Priority
-    if let Some(io_priority_flag) = config.io_priority.as_win_const() {
-        const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
-        let mut current_io_priority: u32 = 0;
-        let mut return_length: u32 = 0;
-        let query_result = unsafe {
-            NtQueryInformationProcess(
-                h_prc,
-                PROCESS_INFORMATION_IO_PRIORITY,
-                &mut current_io_priority as *mut _ as *mut std::ffi::c_void,
-                size_of::<u32>() as u32,
-                &mut return_length,
-            )
-        }
-        .0;
-        if query_result < 0 {
-            log_to_find(&format!(
-                "apply_config: [QUERY_IO_PRIORITY][0x{:08X}] {:>5}-{} -> {}",
-                query_result,
-                pid,
-                config.name,
-                config.io_priority.as_str()
-            ));
-        } else if current_io_priority != io_priority_flag {
-            let set_result = unsafe {
-                NtSetInformationProcess(
+    if config.io_priority != priority::IOPriority::None {
+        if dry_run {
+            changes.push(format!("IO Priority: -> {}", config.io_priority.as_str()));
+        } else if let Some(io_priority_flag) = config.io_priority.as_win_const() {
+            const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
+            let mut current_io_priority: u32 = 0;
+            let mut return_length: u32 = 0;
+            let query_result = unsafe {
+                NtQueryInformationProcess(
                     h_prc,
                     PROCESS_INFORMATION_IO_PRIORITY,
-                    &io_priority_flag as *const _ as *const std::ffi::c_void,
+                    &mut current_io_priority as *mut _ as *mut std::ffi::c_void,
                     size_of::<u32>() as u32,
+                    &mut return_length,
                 )
             }
             .0;
-            if set_result < 0 {
+            if query_result < 0 {
                 log_to_find(&format!(
-                    "apply_config: [SET_IO_PRIORITY][0x{:08X}] {:>5}-{} -> {}",
-                    set_result,
+                    "apply_config: [QUERY_IO_PRIORITY][0x{:08X}] {:>5}-{} -> {}",
+                    query_result,
                     pid,
                     config.name,
                     config.io_priority.as_str()
                 ));
-            } else {
-                log!("{:>5}-{} -> IO: {}", pid, config.name, config.io_priority.as_str());
+            } else if current_io_priority != io_priority_flag {
+                let set_result = unsafe {
+                    NtSetInformationProcess(
+                        h_prc,
+                        PROCESS_INFORMATION_IO_PRIORITY,
+                        &io_priority_flag as *const _ as *const std::ffi::c_void,
+                        size_of::<u32>() as u32,
+                    )
+                }
+                .0;
+                if set_result < 0 {
+                    log_to_find(&format!(
+                        "apply_config: [SET_IO_PRIORITY][0x{:08X}] {:>5}-{} -> {}",
+                        set_result,
+                        pid,
+                        config.name,
+                        config.io_priority.as_str()
+                    ));
+                } else {
+                    log!("{:>5}-{} -> IO: {}", pid, config.name, config.io_priority.as_str());
+                }
             }
         }
     }
 
     // Memory Priority
-    if let Some(memory_priority_flag) = config.memory_priority.as_win_const() {
-        let mem_prio_info = MemoryPriorityInformation(memory_priority_flag.0);
-        let set_result = unsafe {
-            SetProcessInformation(
-                h_prc,
-                ProcessMemoryPriority,
-                &mem_prio_info as *const _ as *const std::ffi::c_void,
-                size_of::<MemoryPriorityInformation>() as u32,
-            )
-        };
-        match set_result {
-            Ok(_) => {
-                log!("{:>5}-{} -> Memory: {}", pid, config.name, config.memory_priority.as_str());
-            }
-            Err(e) => {
-                log_to_find(&format!(
-                    "apply_config: [SET_MEMORY_PRIORITY][0x{:08X}] {:>5}-{} -> {}",
-                    e.code().0 as u32,
-                    pid,
-                    config.name,
-                    config.memory_priority.as_str()
-                ));
+    if config.memory_priority != priority::MemoryPriority::None {
+        if dry_run {
+            changes.push(format!("Memory Priority: -> {}", config.memory_priority.as_str()));
+        } else if let Some(memory_priority_flag) = config.memory_priority.as_win_const() {
+            let mem_prio_info = MemoryPriorityInformation(memory_priority_flag.0);
+            let set_result = unsafe {
+                SetProcessInformation(
+                    h_prc,
+                    ProcessMemoryPriority,
+                    &mem_prio_info as *const _ as *const std::ffi::c_void,
+                    size_of::<MemoryPriorityInformation>() as u32,
+                )
+            };
+            match set_result {
+                Ok(_) => {
+                    log!("{:>5}-{} -> Memory: {}", pid, config.name, config.memory_priority.as_str());
+                }
+                Err(e) => {
+                    log_to_find(&format!(
+                        "apply_config: [SET_MEMORY_PRIORITY][0x{:08X}] {:>5}-{} -> {}",
+                        e.code().0 as u32,
+                        pid,
+                        config.name,
+                        config.memory_priority.as_str()
+                    ));
+                }
             }
         }
     }
 
     let _ = unsafe { CloseHandle(h_prc) };
+    changes
 }
 
 fn main() -> windows::core::Result<()> {
@@ -649,37 +651,38 @@ fn main() -> windows::core::Result<()> {
             Ok(mut processes) => {
                 if dry_run {
                     // Dry run mode: show what would be changed without applying
-                    println!(
+                    log!(
                         "[DRY RUN] Checking {} running processes against {} config rules...",
                         processes.pid_to_process.len(),
                         configs.len()
                     );
                     let mut total_changes = 0;
-                    for process in processes.pid_to_process.values() {
-                        if let Some(config) = configs.get(process.get_name()) {
-                            let changes = dry_run_check(process.pid(), config);
+                    let pids_and_names: Vec<(u32, String)> = processes.pid_to_process.values().map(|p| (p.pid(), p.get_name().to_string())).collect();
+                    for (pid, name) in pids_and_names {
+                        if let Some(config) = configs.get(&name) {
+                            let changes = apply_config(pid, config, &mut prime_core_scheduler, None, true);
                             if !changes.is_empty() {
-                                println!("  {} (PID {}):", config.name, process.pid());
+                                log!("  {} (PID {}):", config.name, pid);
                                 for change in &changes {
-                                    println!("    - {}", change);
+                                    log!("    - {}", change);
                                 }
                                 total_changes += changes.len();
                             }
                         }
                     }
                     if total_changes == 0 {
-                        println!("[DRY RUN] No changes would be made.");
+                        log!("[DRY RUN] No changes would be made.");
                     } else {
-                        println!("[DRY RUN] {} change(s) would be made. Run without -dryrun to apply.", total_changes);
+                        log!("[DRY RUN] {} change(s) would be made. Run without -dryrun to apply.", total_changes);
                     }
                     // Exit after one dry run iteration
                     should_continue = false;
                 } else {
                     prime_core_scheduler.reset_alive();
-                    for i in 0..processes.pid_to_process.values().len() {
-                        let process = processes.pid_to_process.values().nth(i).unwrap();
-                        if let Some(config) = configs.get(process.get_name()) {
-                            apply_config(process.pid(), config, &mut prime_core_scheduler, &mut processes);
+                    let pids_and_names: Vec<(u32, String)> = processes.pid_to_process.values().map(|p| (p.pid(), p.get_name().to_string())).collect();
+                    for (pid, name) in pids_and_names {
+                        if let Some(config) = configs.get(&name) {
+                            apply_config(pid, config, &mut prime_core_scheduler, Some(&mut processes), false);
                         }
                     }
                     prime_core_scheduler.close_dead_process_handles();

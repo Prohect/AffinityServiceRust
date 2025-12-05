@@ -695,14 +695,14 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
     let in_path = match in_file {
         Some(p) => p,
         None => {
-            println!("Error: -in <file> is required for -convert");
+            log!("Error: -in <file> is required for -convert");
             return;
         }
     };
     let out_path = match out_file {
         Some(p) => p,
         None => {
-            println!("Error: -out <file> is required for -convert");
+            log!("Error: -out <file> is required for -convert");
             return;
         }
     };
@@ -710,7 +710,7 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
     let content = match read_utf16le_file(&in_path) {
         Ok(c) => c,
         Err(e) => {
-            println!("Failed to read {}: {}", in_path, e);
+            log!("Failed to read {}: {}", in_path, e);
             return;
         }
     };
@@ -787,19 +787,19 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
     let mut out = match File::create(&out_path) {
         Ok(f) => f,
         Err(e) => {
-            println!("Failed to create {}: {}", out_path, e);
+            log!("Failed to create {}: {}", out_path, e);
             return;
         }
     };
 
     for line in output_lines {
         if writeln!(out, "{}", line).is_err() {
-            println!("Failed to write to {}", out_path);
+            log!("Failed to write to {}", out_path);
             return;
         }
     }
 
-    println!("Converted {} to {}", in_path, out_path);
+    log!("Converted {} to {}", in_path, out_path);
 }
 
 #[cfg(test)]

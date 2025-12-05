@@ -565,6 +565,10 @@ fn main() -> windows::core::Result<()> {
         print_help_all();
         return Ok(());
     }
+    if convert_mode {
+        convert(in_file_name, out_file_name);
+        return Ok(());
+    }
     // Always validate config first
     let config_result = read_config(&config_file_name);
     config_result.print_report();
@@ -572,18 +576,9 @@ fn main() -> windows::core::Result<()> {
     if !config_result.is_valid() {
         return Ok(());
     }
-
     // -validate flag: just validate and exit (like loop=1 with dry_run)
     if validate_mode {
         return Ok(());
-    }
-    if convert_mode {
-        convert(in_file_name, out_file_name);
-        return Ok(());
-    }
-    if !skip_log_before_elevation {
-        log!("Affinity Service started");
-        log!("time interval: {}", interval_ms);
     }
 
     // Use configs and constants from the already-validated result
@@ -604,8 +599,11 @@ fn main() -> windows::core::Result<()> {
             return Ok(());
         }
     } else {
-        log!("{} configs load", configs.len());
         log!("{} blacklist items load", blacklist.len());
+    }
+    if !skip_log_before_elevation {
+        log!("Affinity Service started");
+        log!("time interval: {}", interval_ms);
     }
     if !is_running_as_admin() {
         if no_uac {

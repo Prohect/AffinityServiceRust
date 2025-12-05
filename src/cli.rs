@@ -199,7 +199,7 @@ pub fn get_config_help_lines() -> Vec<&'static str> {
         "----------------------------------------------------------------------------",
         "SCHEDULER CONSTANTS",
         "----------------------------------------------------------------------------",
-        "  @HYSTERESIS_RATIO  = 1.259  # candidate must exceed this * lowest prime",
+        "  @MIN_ACTIVE_STREAK = 2      # consecutive active intervals before promotion",
         "  @KEEP_THRESHOLD    = 0.69   # keep prime when above this * highest",
         "  @ENTRY_THRESHOLD   = 0.42   # become prime when above this * highest",
         "",

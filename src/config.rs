@@ -44,8 +44,8 @@ pub struct ProcessConfig {
 /// their CPU activity levels.
 #[derive(Debug, Clone)]
 pub struct ConfigConstants {
-    /// Multiplier for hysteresis between promotion and demotion thresholds
-    pub hysteresis_ratio: f64,
+    /// Minimum consecutive active intervals before a thread can be promoted (default: 2)
+    pub min_active_streak: u8,
     /// Fraction of max cycles below which a prime thread is demoted (default: 69%)
     pub keep_threshold: f64,
     /// Fraction of max cycles above which a thread becomes prime candidate (default: 42%)
@@ -55,7 +55,7 @@ pub struct ConfigConstants {
 impl Default for ConfigConstants {
     fn default() -> Self {
         ConfigConstants {
-            hysteresis_ratio: 1.259,
+            min_active_streak: 2,
             keep_threshold: 0.69,
             entry_threshold: 0.42,
         }
@@ -248,10 +248,20 @@ fn collect_members(text: &str, members: &mut Vec<String>) {
 /// Parses a constant definition and updates the result.
 fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut ConfigResult) {
     match name {
-        "HYSTERESIS_RATIO" | "KEEP_THRESHOLD" | "ENTRY_THRESHOLD" => {
+        "MIN_ACTIVE_STREAK" => {
+            if let Ok(v) = value.parse::<u8>() {
+                result.constants.min_active_streak = v;
+                log_message(&format!("Config: MIN_ACTIVE_STREAK = {}", v));
+                result.constants_count += 1;
+            } else {
+                result
+                    .errors
+                    .push(format!("Line {}: Invalid constant value '{}' for '{}' (expected u8)", line_number, value, name));
+            }
+        }
+        "KEEP_THRESHOLD" | "ENTRY_THRESHOLD" => {
             if let Ok(v) = value.parse::<f64>() {
                 match name {
-                    "HYSTERESIS_RATIO" => result.constants.hysteresis_ratio = v,
                     "KEEP_THRESHOLD" => {
                         result.constants.keep_threshold = v;
                         log_message(&format!("Config: KEEP_THRESHOLD = {}", v));
@@ -264,9 +274,7 @@ fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut Conf
                 }
                 result.constants_count += 1;
             } else {
-                result
-                    .errors
-                    .push(format!("Line {}: Invalid value '{}' for constant '{}' - expected a number", line_number, value, name));
+                result.errors.push(format!("Line {}: Invalid constant value '{}' for '{}'", line_number, value, name));
             }
         }
         _ => {

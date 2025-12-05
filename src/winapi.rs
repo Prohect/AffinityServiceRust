@@ -6,6 +6,7 @@
 use crate::log;
 use crate::logging::{FAIL_SET, error_from_code, log_to_find};
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::env;
 use std::io;
 use std::mem::size_of;
@@ -16,8 +17,11 @@ use windows::Win32::Security::{
     AdjustTokenPrivileges, GetTokenInformation, LookupPrivilegeValueW, SE_DEBUG_NAME, SE_INC_BASE_PRIORITY_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_ELEVATION,
     TOKEN_PRIVILEGES, TOKEN_QUERY, TokenElevation,
 };
+use windows::Win32::System::ProcessStatus::{EnumProcessModulesEx, GetModuleBaseNameW, GetModuleInformation, LIST_MODULES_ALL, MODULEINFO};
 use windows::Win32::System::SystemInformation::{GetSystemCpuSetInformation, SYSTEM_CPU_SET_INFORMATION};
-use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessAffinityMask, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION};
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, GetProcessAffinityMask, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_VM_READ,
+};
 
 // Undocumented NTDLL imports for IO priority and timer resolution control.
 // These APIs are stable but not officially documented by Microsoft.
@@ -367,4 +371,122 @@ pub fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
         }
         result
     }
+}
+
+/// Cached module information for processes.
+/// Key: PID, Value: Vec of (base_address, size, module_name)
+static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Resolves a memory address to a module name for a given process.
+/// Returns the module name + offset (e.g., "ntdll.dll+0x1C320") or just the hex address if not found.
+///
+/// # Arguments
+/// * `pid` - Process ID
+/// * `address` - Memory address to resolve (e.g., thread start address)
+///
+/// # Returns
+/// A string like "ntdll.dll+0x1C320" or "0x00007FFC36BDC320" if module not found.
+pub fn resolve_address_to_module(pid: u32, address: usize) -> String {
+    if address == 0 {
+        return "0x0".to_string();
+    }
+
+    // Check cache first
+    {
+        let cache = MODULE_CACHE.lock().unwrap();
+        if let Some(modules) = cache.get(&pid) {
+            for (base, size, name) in modules {
+                if address >= *base && address < base + size {
+                    let offset = address - base;
+                    return format!("{}+0x{:X}", name, offset);
+                }
+            }
+            // Already cached but address not in any known module
+            return format!("0x{:X}", address);
+        }
+    }
+
+    // Not cached, enumerate modules
+    let modules = enumerate_process_modules(pid);
+
+    // Store in cache
+    {
+        let mut cache = MODULE_CACHE.lock().unwrap();
+        cache.insert(pid, modules.clone());
+    }
+
+    // Search for the address
+    for (base, size, name) in &modules {
+        if address >= *base && address < base + size {
+            let offset = address - base;
+            return format!("{}+0x{:X}", name, offset);
+        }
+    }
+
+    format!("0x{:X}", address)
+}
+
+/// Clears the module cache for a specific process (call when process exits).
+#[allow(dead_code)]
+pub fn clear_module_cache(pid: u32) {
+    MODULE_CACHE.lock().unwrap().remove(&pid);
+}
+
+/// Enumerates all modules in a process and returns their base addresses, sizes, and names.
+fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> {
+    let mut result = Vec::new();
+
+    unsafe {
+        // Need PROCESS_QUERY_INFORMATION | PROCESS_VM_READ for module enumeration
+        let h_proc = match OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) {
+            Ok(h) if !h.is_invalid() => h,
+            _ => return result,
+        };
+
+        // First call to get the number of modules
+        let mut modules: [windows::Win32::Foundation::HMODULE; 1024] = [windows::Win32::Foundation::HMODULE::default(); 1024];
+        let mut cb_needed: u32 = 0;
+
+        if EnumProcessModulesEx(
+            h_proc,
+            modules.as_mut_ptr(),
+            (modules.len() * size_of::<windows::Win32::Foundation::HMODULE>()) as u32,
+            &mut cb_needed,
+            LIST_MODULES_ALL,
+        )
+        .is_err()
+        {
+            let _ = CloseHandle(h_proc);
+            return result;
+        }
+
+        let module_count = (cb_needed as usize) / size_of::<windows::Win32::Foundation::HMODULE>();
+
+        for i in 0..module_count.min(modules.len()) {
+            let h_module = modules[i];
+
+            // Get module info (base address and size)
+            let mut mod_info = MODULEINFO::default();
+            if GetModuleInformation(h_proc, h_module, &mut mod_info, size_of::<MODULEINFO>() as u32).is_err() {
+                continue;
+            }
+
+            // Get module name
+            let mut name_buf: [u16; 260] = [0; 260];
+            let name_len = GetModuleBaseNameW(h_proc, Some(h_module), &mut name_buf);
+            if name_len == 0 {
+                continue;
+            }
+
+            let name = String::from_utf16_lossy(&name_buf[..name_len as usize]);
+            let base = mod_info.lpBaseOfDll as usize;
+            let size = mod_info.SizeOfImage as usize;
+
+            result.push((base, size, name));
+        }
+
+        let _ = CloseHandle(h_proc);
+    }
+
+    result
 }

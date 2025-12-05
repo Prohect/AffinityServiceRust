@@ -139,6 +139,8 @@ AffinityServiceRust.exe -logloop -loop 3 -interval 2000
 
 详见 [DEBUG.md](DEBUG.md)。
 
+使用 AI 代理（Zed、Cursor 等）的贡献者，请参阅 [AGENT.md](AGENT.md) 了解 CLI 工具和工作流程技巧。
+
 ## 编译
 
 ```bash
@@ -151,3 +153,5 @@ cargo build --release
 ## 参与贡献
 
 欢迎提交 issue 和 pull request。
+
+使用 AI 代理的开发者，请参阅 [AGENT.md](AGENT.md) 了解实用 CLI 工具和批量编辑工作流程。

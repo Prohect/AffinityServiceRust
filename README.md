@@ -139,6 +139,8 @@ AffinityServiceRust.exe -logloop -loop 3 -interval 2000
 
 See [DEBUG.md](DEBUG.md) for more details.
 
+For AI agent contributors (Zed, Cursor, etc.), see [AGENT.md](AGENT.md) for CLI tools and workflow tips.
+
 ## Building
 
 ```bash
@@ -151,3 +153,5 @@ For rust-analyzer support, also install MSBuild and Windows 11 SDK.
 ## Contributing
 
 Issues and pull requests are welcome.
+
+For developers using AI agents, see [AGENT.md](AGENT.md) for useful CLI tools and bulk editing workflows.

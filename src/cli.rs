@@ -31,6 +31,8 @@ pub fn parse_args(
     time_resolution: &mut u32,
     log_loop: &mut bool,
     skip_log_before_elevation: &mut bool,
+    no_debug_priv: &mut bool,
+    no_inc_base_priority: &mut bool,
 ) -> windows::core::Result<()> {
     let mut i = 1;
     while i < args.len() {
@@ -92,6 +94,12 @@ pub fn parse_args(
             }
             "-skip_log_before_elevation" => {
                 *skip_log_before_elevation = true;
+            }
+            "-noDebugPriv" | "-nodebugpriv" => {
+                *no_debug_priv = true;
+            }
+            "-noIncBasePriority" | "-noincbasepriority" => {
+                *no_inc_base_priority = true;
             }
             _ => {}
         }
@@ -157,6 +165,8 @@ pub fn print_help_all() {
     log!("  -loop <count>        number of loops to run (default: infinite) - for testing");
     log!("  -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)");
     log!("  -logloop             log a message at the start of each loop for testing");
+    log!("  -noDebugPriv         disable SeDebugPrivilege (test access to other users' processes)");
+    log!("  -noIncBasePriority   disable SeIncreaseBasePriorityPrivilege (test high IO priority)");
     log!("");
     log!("=== CONFIGURATION FORMAT ===");
     log!("");

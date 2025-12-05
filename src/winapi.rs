@@ -251,9 +251,8 @@ pub fn request_uac_elevation() -> io::Result<()> {
     }
 }
 
-/// Enables SeDebugPrivilege and SeIncreaseBasePriorityPrivilege for the current process.
+/// Enables SeDebugPrivilege for the current process.
 /// SeDebugPrivilege is required to open handles to system processes and processes owned by other users.
-/// SeIncreaseBasePriorityPrivilege is required to set high IO priority.
 pub fn enable_debug_privilege() {
     unsafe {
         let mut token: HANDLE = HANDLE::default();
@@ -262,7 +261,6 @@ pub fn enable_debug_privilege() {
                 log!("enable_debug_privilege: self OpenProcessToken failed");
             }
             Ok(_) => {
-                // Enable SeDebugPrivilege
                 let mut l_uid = LUID::default();
                 match LookupPrivilegeValueW(None, SE_DEBUG_NAME, &mut l_uid) {
                     Err(_) => {
@@ -286,10 +284,24 @@ pub fn enable_debug_privilege() {
                         }
                     }
                 }
+                let _ = CloseHandle(token);
+            }
+        }
+    }
+}
 
-                // Enable SeIncreaseBasePriorityPrivilege (required for high IO priority)
-                let mut l_uid_priority = LUID::default();
-                match LookupPrivilegeValueW(None, SE_INC_BASE_PRIORITY_NAME, &mut l_uid_priority) {
+/// Enables SeIncreaseBasePriorityPrivilege for the current process.
+/// Required to set high IO priority.
+pub fn enable_inc_base_priority_privilege() {
+    unsafe {
+        let mut token: HANDLE = HANDLE::default();
+        match OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token) {
+            Err(_) => {
+                log!("enable_inc_base_priority_privilege: self OpenProcessToken failed");
+            }
+            Ok(_) => {
+                let mut l_uid = LUID::default();
+                match LookupPrivilegeValueW(None, SE_INC_BASE_PRIORITY_NAME, &mut l_uid) {
                     Err(_) => {
                         log!("enable_inc_base_priority_privilege: LookupPrivilegeValueW failed");
                     }
@@ -297,7 +309,7 @@ pub fn enable_debug_privilege() {
                         let tp = TOKEN_PRIVILEGES {
                             PrivilegeCount: 1,
                             Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
-                                Luid: l_uid_priority,
+                                Luid: l_uid,
                                 Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
                             }],
                         };
@@ -311,7 +323,6 @@ pub fn enable_debug_privilege() {
                         }
                     }
                 }
-
                 let _ = CloseHandle(token);
             }
         }

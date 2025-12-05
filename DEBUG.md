@@ -33,25 +33,49 @@ What rules can be applied with different privilege levels:
 | ├ very low | ✅ | ✅ | |
 | ├ low | ✅ | ✅ | |
 | ├ normal | ✅ | ✅ | |
-| └ high | ❌ 0xC0000061 | ✅ | STATUS_PRIVILEGE_NOT_HELD |
+| └ high | ❌ 0xC0000061 | ✅ | Requires admin elevation |
 | **Memory Priority** | ✅ | ✅ | All levels work |
 
-### Test Results
+### Windows Privileges Effect
 
-Tested with: `notepad.exe`, `notepad++.exe`, `everything.exe`, `MeasureSleep.exe`, `AffinityServiceRust.exe` (SYSTEM)
+Two privileges are requested at startup. Use `-noDebugPriv` and `-noIncBasePriority` flags to test their effects:
 
-```
-# Non-admin test command:
+| Privilege | Purpose | Without Admin | With Admin |
+|-----------|---------|---------------|------------|
+| **SeDebugPrivilege** | Access other users' processes | Granted but no effect | Enables cross-user access |
+| **SeIncreaseBasePriorityPrivilege** | Set high IO priority | Granted but no effect | Required for IO high |
+
+#### Test Commands
+
+```bash
+# Normal (both privileges enabled)
 cargo run --release -- -console -noUAC -config test_privilege.ini -loop 1
 
-# Example output:
-[08:34:46] 8344-notepad.exe -> Priority: above normal
-[08:34:46] 8344-notepad.exe affinity 0xFFF00 -> 0xFF
-[08:34:46]apply_config: [SET_IO_PRIORITY][0xC0000061]  8344-notepad.exe -> high  # FAILED - needs admin
-[08:34:46] 8344-notepad.exe -> Memory: normal
-[08:34:46]apply_config: [OPEN][ACCESS_DENIED]  1804-dwm.exe  # FAILED - system process
-[08:34:46]apply_config: [OPEN][ACCESS_DENIED]  7052-everything.exe  # FAILED - elevated process
+# Without SeDebugPrivilege
+cargo run --release -- -console -noUAC -noDebugPriv -config test_privilege.ini -loop 1
+
+# Without SeIncreaseBasePriorityPrivilege
+cargo run --release -- -console -noUAC -noIncBasePriority -config test_privilege.ini -loop 1
+
+# Without both privileges
+cargo run --release -- -console -noUAC -noDebugPriv -noIncBasePriority -config test_privilege.ini -loop 1
 ```
+
+#### Test Results
+
+| Scenario | SeDebugPriv | SeIncBasePriority | Same-user processes | System processes | IO High |
+|----------|-------------|-------------------|---------------------|------------------|---------|
+| No admin, both enabled | ✅ granted | ✅ granted | ✅ works | ❌ ACCESS_DENIED | ❌ 0xC0000061 |
+| No admin, -noDebugPriv | ❌ disabled | ✅ granted | ✅ works | ❌ ACCESS_DENIED | ❌ 0xC0000061 |
+| No admin, -noIncBasePriority | ✅ granted | ❌ disabled | ✅ works | ❌ ACCESS_DENIED | ❌ 0xC0000061 |
+| No admin, both disabled | ❌ disabled | ❌ disabled | ✅ works | ❌ ACCESS_DENIED | ❌ 0xC0000061 |
+| Admin, both enabled | ✅ granted | ✅ granted | ✅ works | ✅ works | ✅ works |
+
+**Key findings:**
+- Without admin elevation, privileges are granted but have **no practical effect**
+- SeDebugPrivilege only helps when running as admin (enables access to SYSTEM processes)
+- SeIncreaseBasePriorityPrivilege only helps when running as admin (enables IO priority high)
+- For same-user processes, no privileges are needed at all
 
 ### Summary
 

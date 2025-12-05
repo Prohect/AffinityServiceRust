@@ -45,8 +45,8 @@ use process::ProcessSnapshot;
 use scheduler::PrimeThreadScheduler;
 use std::{env, io::Write, mem::size_of, thread, time::Duration};
 use winapi::{
-    NtQueryInformationProcess, NtSetInformationProcess, NtSetTimerResolution, cpusetids_from_indices, enable_debug_privilege, filter_indices_by_mask,
-    get_cpu_set_information, indices_from_cpusetids, is_affinity_unset, is_running_as_admin, request_uac_elevation,
+    NtQueryInformationProcess, NtSetInformationProcess, NtSetTimerResolution, cpusetids_from_indices, enable_debug_privilege, enable_inc_base_priority_privilege,
+    filter_indices_by_mask, get_cpu_set_information, indices_from_cpusetids, is_affinity_unset, is_running_as_admin, request_uac_elevation,
 };
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError},
@@ -538,6 +538,8 @@ fn main() -> windows::core::Result<()> {
     let mut time_resolution: u32 = 0;
     let mut log_loop = false;
     let mut skip_log_before_elevation = false;
+    let mut no_debug_priv = false;
+    let mut no_inc_base_priority = false;
     parse_args(
         &args,
         &mut interval_ms,
@@ -556,6 +558,8 @@ fn main() -> windows::core::Result<()> {
         &mut time_resolution,
         &mut log_loop,
         &mut skip_log_before_elevation,
+        &mut no_debug_priv,
+        &mut no_inc_base_priority,
     )?;
     if help_mode {
         print_help();
@@ -621,7 +625,16 @@ fn main() -> windows::core::Result<()> {
             }
         }
     }
-    enable_debug_privilege();
+    if !no_debug_priv {
+        enable_debug_privilege();
+    } else {
+        log!("SeDebugPrivilege disabled by -noDebugPriv flag");
+    }
+    if !no_inc_base_priority {
+        enable_inc_base_priority_privilege();
+    } else {
+        log!("SeIncreaseBasePriorityPrivilege disabled by -noIncBasePriority flag");
+    }
     if time_resolution != 0 {
         unsafe {
             let mut current_resolution = 0u32;

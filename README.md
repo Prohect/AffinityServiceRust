@@ -27,9 +27,12 @@ For multi-threaded applications (e.g., games), this feature identifies CPU-inten
 - Monitors thread CPU cycle consumption over time
 - Filters low-activity threads (entry threshold: 42% of max)
 - Protects promoted threads from premature demotion (keep threshold: 69% of max)
-- Requires consistent activity (2+ intervals) before promotion
+- Requires consistent activity (configurable via `@MIN_ACTIVE_STREAK`, default: 2 intervals) before promotion
+- Logs thread start address with module resolution (e.g., `ntdll.dll+0x3C320`) when running elevated
 
 Useful for games where main/render threads should prefer P-cores while avoiding cores 0/1 (hardware interrupt handlers).
+
+> **Note:** Thread start address resolution requires admin elevation with SeDebugPrivilege. Without elevation, start addresses show as `0x0`.
 
 ## Quick Start
 
@@ -131,8 +134,9 @@ sys_utils {
 
 ```ini
 # === CONSTANTS ===
-@ENTRY_THRESHOLD = 0.42
-@KEEP_THRESHOLD = 0.69
+@MIN_ACTIVE_STREAK = 2   # Consecutive active intervals before promotion
+@ENTRY_THRESHOLD = 0.42  # Fraction of max cycles to become candidate
+@KEEP_THRESHOLD = 0.69   # Fraction of max cycles to stay prime
 
 # === ALIASES ===
 *a = 0-19           # All cores (8P+12E)

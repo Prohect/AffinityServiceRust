@@ -2,7 +2,7 @@
 
 This file documents CLI tools and workflows useful for AI agents (like Zed's Agent Panel, Cursor, etc.) working on this project.
 
-> **Important:** When running AffinityServiceRust via the terminal tool, always use `-console` to see output directly. Without it, output goes to log files only.
+> **Important:** When running AffinityServiceRust via the terminal tool, always use `-console` and `-noUAC` to see output directly. Without `-console`, output goes to log files only. Except the project needs admin elevation, you will need to use PowerShell to run the project with out `-noUAC` flag, this requires user to check UAC.
 >
 > ```sh
 > cargo run --release -- -console -noUAC -validate -config config.ini

@@ -61,6 +61,8 @@ use windows::Win32::{
     },
 };
 
+use crate::logging::log_message;
+
 /// Result of applying configuration to a process
 #[derive(Debug, Default)]
 struct ApplyConfigResult {
@@ -689,19 +691,15 @@ fn main() -> windows::core::Result<()> {
         convert(in_file_name, out_file_name);
         return Ok(());
     }
-    // Always validate config first
     let config_result = read_config(&config_file_name);
     config_result.print_report();
-
-    if !config_result.is_valid() {
+    if !config_result.errors.is_empty() {
+        log!("Configuration file has errors, please fix them before running the service.");
         return Ok(());
     }
-    // -validate flag: just validate and exit (like loop=1 with dry_run)
     if validate_mode {
         return Ok(());
     }
-
-    // Use configs and constants from the already-validated result
     let configs = config_result.configs;
     let constants = config_result.constants;
     let blacklist = if let Some(bf) = blacklist_file_name {
@@ -720,26 +718,6 @@ fn main() -> windows::core::Result<()> {
         }
     } else {
         log!("{} blacklist items load", blacklist.len());
-    }
-    if !skip_log_before_elevation {
-        log!("Affinity Service started");
-        log!("time interval: {}", interval_ms);
-    }
-    if !is_running_as_admin() {
-        if no_uac {
-            log!("Not running as administrator. UAC elevation disabled by -noUAC flag.");
-            log!("Warning: May not be able to manage all processes without admin privileges.");
-        } else {
-            log!("Not running as administrator. Requesting UAC elevation...");
-            match request_uac_elevation() {
-                Ok(_) => {
-                    log!("Running with administrator privileges.");
-                }
-                Err(e) => {
-                    log!("Failed to request elevation: {}, may not manage all processes", e);
-                }
-            }
-        }
     }
     if !no_debug_priv {
         enable_debug_privilege();
@@ -766,6 +744,25 @@ fn main() -> windows::core::Result<()> {
             };
         }
     }
+    if !skip_log_before_elevation {
+        log!("Affinity Service started with time interval: {}", interval_ms);
+    }
+    if !is_running_as_admin() {
+        if no_uac {
+            log!("Not running as administrator. UAC elevation disabled by -noUAC flag.");
+            log!("Warning: May not be able to manage all processes without admin privileges.");
+        } else {
+            log!("Not running as administrator. Requesting UAC elevation...");
+            match request_uac_elevation() {
+                Ok(_) => {
+                    log!("Running with administrator privileges.");
+                }
+                Err(e) => {
+                    log!("Failed to request elevation: {}, may not manage all processes", e);
+                }
+            }
+        }
+    }
     let mut prime_core_scheduler = PrimeThreadScheduler::new(constants);
     let mut current_loop = 0u32;
     let mut should_continue = true;
@@ -789,12 +786,15 @@ fn main() -> windows::core::Result<()> {
                             }
                             // Log changes to main log
                             if !result.changes.is_empty() {
-                                log!("{:>5}::{}", pid, config.name);
-                                for change in &result.changes {
-                                    log!("     ::{}", change);
+                                let first = format!("{:>5}::{} {}", pid, config.name, result.changes[0]);
+                                log_message(&first);
+                                let padding = " ".repeat(first.len() - result.changes[0].len());
+                                for change in &result.changes[1..] {
+                                    log!("{}{}", padding, change);
                                 }
-                                total_changes += result.changes.len();
                             }
+
+                            total_changes += result.changes.len();
                         }
                     }
                 }

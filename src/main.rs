@@ -49,7 +49,7 @@ use winapi::{
     resolve_address_to_module,
 };
 use windows::Win32::{
-    Foundation::{CloseHandle, GetLastError},
+    Foundation::{CloseHandle, GetLastError, HANDLE},
     System::{
         Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
         Threading::{
@@ -89,52 +89,7 @@ impl ApplyConfigResult {
     }
 }
 
-/// Applies all configured settings to a process: priority, affinity, CPU sets, IO/memory priority.
-/// When `dry_run` is true, returns a list of changes that would be made without applying them.
-///
-/// For processes with `prime_cpus` set, also runs the Prime Thread Scheduler algorithm:
-/// 1. Sort threads by CPU time delta to find candidates
-/// 2. Query CPU cycles (frequency-independent) for accurate comparison
-/// 3. Apply hysteresis to determine which threads should be "prime"
-/// 4. Pin prime threads to preferred cores, demote inactive ones
-fn apply_config(
-    pid: u32,
-    config: &ProcessConfig,
-    prime_core_scheduler: &mut PrimeThreadScheduler,
-    mut processes: Option<&mut ProcessSnapshot>,
-    dry_run: bool,
-) -> ApplyConfigResult {
-    let mut apply_config_result = ApplyConfigResult::new();
-
-    let access_flags = if dry_run {
-        PROCESS_QUERY_INFORMATION
-    } else {
-        PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION
-    };
-
-    let open_result = unsafe { OpenProcess(access_flags, false, pid) };
-    let h_prc = match open_result {
-        Err(_) => {
-            let error_code = unsafe { GetLastError().0 };
-            if dry_run {
-                apply_config_result.add_change(format!("[SKIP] OpenProcess failed"));
-            } else {
-                apply_config_result.add_error(format!("apply_config: [OPEN][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
-            }
-            return apply_config_result;
-        }
-        Ok(h_prc) => h_prc,
-    };
-    if h_prc.is_invalid() {
-        if dry_run {
-            apply_config_result.add_change(format!("[SKIP] Invalid handle"));
-            return apply_config_result;
-        }
-        apply_config_result.add_error(format!("apply_config: [INVALID_HANDLE] {:>5}-{}", pid, config.name));
-        return apply_config_result;
-    }
-
-    // Priority
+fn apply_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) {
     if let Some(priority_flag) = config.priority.as_win_const() {
         let current_priority = unsafe { GetPriorityClass(h_prc) };
         if current_priority != priority_flag.0 {
@@ -159,16 +114,15 @@ fn apply_config(
             }
         }
     }
+}
 
-    // Affinity (legacy mask-based API, only for CPUs < 64)
-    let mut current_mask: usize = 0;
+fn apply_affinity(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, current_mask: &mut usize, apply_config_result: &mut ApplyConfigResult) {
     let mut system_mask: usize = 0;
     let affinity_mask = cpu_indices_to_mask(&config.affinity_cpus);
     let has_affinity = !config.affinity_cpus.is_empty();
     let has_prime = !config.prime_cpus.is_empty();
-
     if has_affinity || has_prime {
-        let query_result = unsafe { GetProcessAffinityMask(h_prc, &mut current_mask, &mut system_mask) };
+        let query_result = unsafe { GetProcessAffinityMask(h_prc, &mut *current_mask, &mut system_mask) };
         match query_result {
             Err(_) => {
                 if !dry_run {
@@ -177,7 +131,7 @@ fn apply_config(
                 }
             }
             Ok(_) => {
-                if has_affinity && affinity_mask != 0 && affinity_mask != current_mask {
+                if has_affinity && affinity_mask != 0 && affinity_mask != *current_mask {
                     if dry_run {
                         apply_config_result.add_change(format!("Affinity: {:#X} -> {:#X}", current_mask, affinity_mask));
                     } else {
@@ -189,7 +143,7 @@ fn apply_config(
                             }
                             Ok(_) => {
                                 apply_config_result.add_change(format!("Affinity: {:#X} -> {:#X}", current_mask, affinity_mask));
-                                current_mask = affinity_mask;
+                                *current_mask = affinity_mask;
                             }
                         }
                     }
@@ -197,8 +151,9 @@ fn apply_config(
             }
         }
     }
+}
 
-    // Process default CPU Set (supports >64 cores)
+fn apply_process_default_cpuset(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) {
     if !config.cpu_set_cpus.is_empty() && !get_cpu_set_information().lock().unwrap().is_empty() {
         if dry_run {
             apply_config_result.add_change(format!("CPU Set: -> [{}]", format_cpu_indices(&config.cpu_set_cpus)));
@@ -255,8 +210,17 @@ fn apply_config(
             }
         }
     }
+}
 
-    // Prime thread Scheduling (supports >64 cores via CPU Set APIs)
+fn apply_prime_threads(
+    pid: u32,
+    config: &ProcessConfig,
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    mut processes: Option<&mut ProcessSnapshot>,
+    dry_run: bool,
+    current_mask: &mut usize,
+    apply_config_result: &mut ApplyConfigResult,
+) {
     // For dry run, just report prime CPUs would be set
     if !config.prime_cpus.is_empty() {
         if dry_run {
@@ -266,12 +230,11 @@ fn apply_config(
             // Per MSDN: GetProcessAffinityMask returns 0 when process has threads in multiple
             // processor groups (systems with >64 cores where threads span groups), so we use
             // all specified prime CPUs since the affinity mask is meaningless in that case
-            let effective_prime_cpus = if current_mask != 0 {
-                filter_indices_by_mask(&config.prime_cpus, current_mask)
+            let effective_prime_cpus = if *current_mask != 0 {
+                filter_indices_by_mask(&config.prime_cpus, *current_mask)
             } else {
                 config.prime_cpus.clone()
             };
-
             let cpu_setids = cpusetids_from_indices(&effective_prime_cpus);
             if !cpu_setids.is_empty() {
                 prime_core_scheduler.set_alive(pid);
@@ -363,13 +326,12 @@ fn apply_config(
                     }
                 }
 
-                // Step 3: Sort by delta_cycles descending and calculate thresholds
+                // Step 3: Sort by delta_cycles descending, calculate thresholds then update active_streak
                 tid_with_delta_cycles.sort_by_key(|&(_, delta_cycles, _)| std::cmp::Reverse(delta_cycles));
                 let max_cycles = tid_with_delta_cycles.first().map(|&(_, c, _)| c).unwrap_or(0u64);
                 let entry_min_cycles = (max_cycles as f64 * prime_core_scheduler.constants.entry_threshold) as u64;
                 let keep_min_cycles = (max_cycles as f64 * prime_core_scheduler.constants.keep_threshold) as u64;
                 let prime_count = cpu_setids.len().min(candidate_count);
-                // Update active_streak for all candidate threads
                 for &(tid, delta_cycles, _) in &tid_with_delta_cycles {
                     if tid == 0 {
                         continue;
@@ -439,7 +401,7 @@ fn apply_config(
                                     start_module
                                 ));
                             }
-                            // Boost priority: increase by one tier using priority::ThreadPriority helper
+                            // Boost priority by one tier
                             let current_prio = unsafe { GetThreadPriority(handle) };
                             if current_prio != 0x7FFFFFFF_i32 {
                                 let current_prio = priority::ThreadPriority::from_win_const(current_prio);
@@ -505,8 +467,9 @@ fn apply_config(
             }
         }
     }
+}
 
-    // IO Priority
+fn apply_io_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) {
     if let Some(io_priority_flag) = config.io_priority.as_win_const() {
         const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
         let mut current_io_priority: u32 = 0;
@@ -564,7 +527,9 @@ fn apply_config(
             }
         }
     }
-    // Memory Priority
+}
+
+fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) {
     if let Some(memory_priority_flag) = config.memory_priority.as_win_const() {
         let mut current_mem_prio = priority::MemoryPriorityInformation(0);
         let query_result = unsafe {
@@ -622,7 +587,51 @@ fn apply_config(
             }
         }
     }
+}
 
+/// Applies all configured settings to a process: priority, affinity, CPU sets, IO/memory priority.
+/// When `dry_run` is true, returns a list of changes that would be made without applying them.
+fn apply_config(
+    pid: u32,
+    config: &ProcessConfig,
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    processes: Option<&mut ProcessSnapshot>,
+    dry_run: bool,
+) -> ApplyConfigResult {
+    let mut apply_config_result = ApplyConfigResult::new();
+    let access_flags = if dry_run {
+        PROCESS_QUERY_INFORMATION
+    } else {
+        PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION
+    };
+    let open_result = unsafe { OpenProcess(access_flags, false, pid) };
+    let h_prc = match open_result {
+        Err(_) => {
+            let error_code = unsafe { GetLastError().0 };
+            if dry_run {
+                apply_config_result.add_change(format!("[SKIP] OpenProcess failed"));
+            } else {
+                apply_config_result.add_error(format!("apply_config: [OPEN][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
+            }
+            return apply_config_result;
+        }
+        Ok(h_prc) => h_prc,
+    };
+    if h_prc.is_invalid() {
+        if dry_run {
+            apply_config_result.add_change(format!("[SKIP] Invalid handle"));
+            return apply_config_result;
+        }
+        apply_config_result.add_error(format!("apply_config: [INVALID_HANDLE] {:>5}-{}", pid, config.name));
+        return apply_config_result;
+    }
+    apply_priority(pid, config, dry_run, h_prc, &mut apply_config_result);
+    let mut current_mask: usize = 0;
+    apply_affinity(pid, config, dry_run, h_prc, &mut current_mask, &mut apply_config_result);
+    apply_process_default_cpuset(pid, config, dry_run, h_prc, &mut apply_config_result);
+    apply_prime_threads(pid, config, prime_core_scheduler, processes, dry_run, &mut current_mask, &mut apply_config_result);
+    apply_io_priority(pid, config, dry_run, h_prc, &mut apply_config_result);
+    apply_memory_priority(pid, config, dry_run, h_prc, &mut apply_config_result);
     let _ = unsafe { CloseHandle(h_prc) };
     apply_config_result
 }

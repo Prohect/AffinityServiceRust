@@ -175,7 +175,7 @@ The `process_logs.ps1` PowerShell script helps discover new processes from daily
 **Requirements:**
 - PowerShell (Windows)
 - Everything search tool with `es.exe` in PATH
-- `temp/logs` symlink pointing to your daily log directory
+- `temp/logs` symlink pointing to your daily log directory, or modify the script to point to your log location
 
 **Usage:**
 Run from the project root:

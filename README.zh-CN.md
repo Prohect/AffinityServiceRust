@@ -174,7 +174,7 @@ dwm.exe,high,*p,0,0,high,normal
 **要求：**
 - PowerShell (Windows)
 - Everything 搜索工具，`es.exe` 在 PATH 中
-- `temp/logs` 符号链接指向您的每日日志目录
+- `temp/logs` 符号链接指向您的每日日志目录，或修改脚本以指向您的日志位置
 
 **用法：**
 从项目根目录运行：

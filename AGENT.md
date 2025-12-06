@@ -146,19 +146,6 @@ tesseract image.png stdout       # outputs directly to console
 - `--psm <n>` - Page segmentation mode (0-13)
 - `--oem <n>` - OCR engine mode (0-3)
 
-#### Examples
-
-```sh
-# Basic OCR to text file
-tesseract screenshot.png result
-
-# Output to console with Chinese language
-tesseract image.png stdout -l chi_sim
-
-# PDF output
-tesseract document.png output pdf
-```
-
 #### Notes
 
 - May need to open a new terminal session for PATH to update after installation

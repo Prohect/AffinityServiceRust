@@ -65,13 +65,22 @@ macro_rules! log {
     };
 }
 
-/// Logs a message to either console or log file based on current mode.
+/// Logs a message with prefix added to either console or log file based on current mode.
 pub fn log_message(args: &str) {
     let time_prefix = LOCALTIME_BUFFER.lock().unwrap().format("%H:%M:%S").to_string();
     if *use_console().lock().unwrap() {
         println!("[{}]{}", time_prefix, args);
     } else {
         let _ = writeln!(logger().lock().unwrap(), "[{}]{}", time_prefix, args);
+    }
+}
+
+/// Logs a pure message to either console or log file based on current mode.
+pub fn log_pure_message(args: &str) {
+    if *use_console().lock().unwrap() {
+        println!("{}", args);
+    } else {
+        let _ = writeln!(logger().lock().unwrap(), "{}", args);
     }
 }
 

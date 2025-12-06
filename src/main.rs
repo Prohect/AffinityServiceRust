@@ -39,7 +39,7 @@ mod winapi;
 use chrono::Local;
 use cli::{parse_args, print_help, print_help_all};
 use config::{ProcessConfig, convert, cpu_indices_to_mask, format_cpu_indices, read_config, read_list};
-use logging::{FAIL_SET, LOCALTIME_BUFFER, error_from_code, find_logger, log_process_find, log_to_find, logger};
+use logging::{FAIL_SET, LOCALTIME_BUFFER, error_from_code, find_logger, log_process_find, log_pure_message, log_to_find, logger};
 use process::ProcessSnapshot;
 use scheduler::PrimeThreadScheduler;
 use std::{env, io::Write, mem::size_of, thread, time::Duration};
@@ -786,11 +786,11 @@ fn main() -> windows::core::Result<()> {
                             }
                             // Log changes to main log
                             if !result.changes.is_empty() {
-                                let first = format!("{:>5}::{} {}", pid, config.name, result.changes[0]);
+                                let first = format!("{:>5}::{}::{}", pid, config.name, result.changes[0]);
                                 log_message(&first);
-                                let padding = " ".repeat(first.len() - result.changes[0].len());
+                                let padding = " ".repeat(first.len() - result.changes[0].len() + 10);
                                 for change in &result.changes[1..] {
-                                    log!("{}{}", padding, change);
+                                    log_pure_message(&format!("{}{}", padding, change));
                                 }
                             }
 

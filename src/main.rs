@@ -122,7 +122,7 @@ fn apply_affinity(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE
     let mut system_mask: usize = 0;
     let affinity_mask = cpu_indices_to_mask(&config.affinity_cpus);
     let has_affinity = !config.affinity_cpus.is_empty();
-    let has_prime = !config.prime_cpus.is_empty();
+    let has_prime = !config.prime_threads_cpus.is_empty();
     if has_affinity || has_prime {
         let query_result = unsafe { GetProcessAffinityMask(h_prc, &mut *current_mask, &mut system_mask) };
         match query_result {
@@ -224,18 +224,18 @@ fn apply_prime_threads(
     apply_config_result: &mut ApplyConfigResult,
 ) {
     // For dry run, just report prime CPUs would be set
-    if !config.prime_cpus.is_empty() {
+    if !config.prime_threads_cpus.is_empty() {
         if dry_run {
-            apply_config_result.add_change(format!("Prime CPUs: -> [{}]", format_cpu_indices(&config.prime_cpus)));
+            apply_config_result.add_change(format!("Prime CPUs: -> [{}]", format_cpu_indices(&config.prime_threads_cpus)));
         } else {
             // Filter prime CPUs to those allowed by current process affinity
             // Per MSDN: GetProcessAffinityMask returns 0 when process has threads in multiple
             // processor groups (systems with >64 cores where threads span groups), so we use
             // all specified prime CPUs since the affinity mask is meaningless in that case
             let effective_prime_cpus = if *current_mask != 0 {
-                filter_indices_by_mask(&config.prime_cpus, *current_mask)
+                filter_indices_by_mask(&config.prime_threads_cpus, *current_mask)
             } else {
-                config.prime_cpus.clone()
+                config.prime_threads_cpus.clone()
             };
             let cpu_setids = cpusetids_from_indices(&effective_prime_cpus);
             if !cpu_setids.is_empty() {

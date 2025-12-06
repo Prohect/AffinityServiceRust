@@ -19,6 +19,7 @@ use crate::{
     logging::{log_message, log_to_find},
     priority::{IOPriority, MemoryPriority, ProcessPriority},
 };
+use regex::Regex;
 use std::{
     collections::HashMap,
     fs::{self, File},
@@ -37,7 +38,8 @@ pub struct ProcessConfig {
     /// CPU indices for CPU sets (SetProcessDefaultCpuSets, unlimited cores)
     pub cpu_set_cpus: Vec<u32>,
     /// CPU indices for prime thread scheduling (high-priority threads)
-    pub prime_cpus: Vec<u32>,
+    pub prime_threads_cpus: Vec<u32>,
+    // pub prime_cpus_: Vec<Regex>,
     pub io_priority: IOPriority,
     pub memory_priority: MemoryPriority,
 }
@@ -378,7 +380,7 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
     };
 
     // Parse prime_cpus (optional, defaults to "0")
-    let prime_cpus = if rule_parts.len() >= 4 {
+    let prime_threads_cpus = if rule_parts.len() >= 4 {
         resolve_cpu_spec(rule_parts[3], "prime_cpus", line_number, cpu_aliases, &mut result.errors)
     } else {
         Vec::new()
@@ -421,7 +423,7 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
                 priority: priority.clone(),
                 affinity_cpus: affinity_cpus.clone(),
                 cpu_set_cpus: cpu_set_cpus.clone(),
-                prime_cpus: prime_cpus.clone(),
+                prime_threads_cpus: prime_threads_cpus.clone(),
                 io_priority: io_priority.clone(),
                 memory_priority: memory_priority.clone(),
             },

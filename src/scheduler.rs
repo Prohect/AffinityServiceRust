@@ -3,7 +3,7 @@
 //! This module implements a scheduler that dynamically assigns the most
 //! CPU-intensive threads to preferred "prime" cores on hybrid CPUs.
 
-use crate::config::ConfigConstants;
+use crate::{config::ConfigConstants, priority::ThreadPriority};
 use std::collections::HashMap;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 
@@ -113,7 +113,7 @@ pub struct ThreadStats {
     /// Cached start address of the thread.
     pub start_address: usize,
     /// Original thread priority before promotion. None if not promoted.
-    pub original_priority: Option<i32>,
+    pub original_priority: Option<ThreadPriority>,
 }
 
 impl ThreadStats {

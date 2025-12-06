@@ -40,7 +40,6 @@ use chrono::Local;
 use cli::{parse_args, print_help, print_help_all};
 use config::{ProcessConfig, convert, cpu_indices_to_mask, format_cpu_indices, read_config, read_list};
 use logging::{FAIL_SET, LOCALTIME_BUFFER, error_from_code, find_logger, log_process_find, log_to_find, logger};
-use priority::MemoryPriorityInformation;
 use process::ProcessSnapshot;
 use scheduler::PrimeThreadScheduler;
 use std::{env, io::Write, mem::size_of, thread, time::Duration};
@@ -54,9 +53,9 @@ use windows::Win32::{
     System::{
         Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
         Threading::{
-            GetPriorityClass, GetProcessAffinityMask, GetProcessDefaultCpuSets, GetThreadPriority, OpenProcess, OpenThread, PROCESS_QUERY_INFORMATION,
-            PROCESS_SET_INFORMATION, ProcessMemoryPriority, SetPriorityClass, SetProcessAffinityMask, SetProcessDefaultCpuSets, SetProcessInformation, SetThreadPriority,
-            SetThreadSelectedCpuSets, THREAD_PRIORITY, THREAD_QUERY_INFORMATION, THREAD_SET_INFORMATION, THREAD_SET_LIMITED_INFORMATION,
+            GetPriorityClass, GetProcessAffinityMask, GetProcessDefaultCpuSets, GetProcessInformation, GetThreadPriority, OpenProcess, OpenThread,
+            PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION, ProcessMemoryPriority, SetPriorityClass, SetProcessAffinityMask, SetProcessDefaultCpuSets,
+            SetProcessInformation, SetThreadPriority, SetThreadSelectedCpuSets, THREAD_QUERY_INFORMATION, THREAD_SET_INFORMATION, THREAD_SET_LIMITED_INFORMATION,
         },
         WindowsProgramming::QueryThreadCycleTime,
     },
@@ -76,10 +75,11 @@ impl ApplyConfigResult {
         Self::default()
     }
 
+    /// pid & name will be logged in main loop
     fn add_change(&mut self, change: String) {
         self.changes.push(change);
     }
-
+    /// pid & name will not be logged in main loop
     fn add_error(&mut self, error: String) {
         self.errors.push(error);
     }
@@ -115,12 +115,12 @@ fn apply_config(
     let open_result = unsafe { OpenProcess(access_flags, false, pid) };
     let h_prc = match open_result {
         Err(_) => {
-            if dry_run {
-                apply_config_result.add_change(format!("[SKIP] Cannot open process (access denied)"));
-                return apply_config_result;
-            }
             let error_code = unsafe { GetLastError().0 };
-            apply_config_result.add_error(format!("apply_config: [OPEN][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
+            if dry_run {
+                apply_config_result.add_change(format!("[SKIP] OpenProcess failed"));
+            } else {
+                apply_config_result.add_error(format!("apply_config: [OPEN][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
+            }
             return apply_config_result;
         }
         Ok(h_prc) => h_prc,
@@ -416,6 +416,7 @@ fn apply_config(
                     let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
                     if let Some(handle) = thread_stats.handle {
                         if !handle.is_invalid() && thread_stats.cpu_set_ids.is_empty() {
+                            // Set the thread selected CPU sets
                             let set_result = unsafe { SetThreadSelectedCpuSets(handle, &cpu_setids) }.as_bool();
                             if !set_result {
                                 let error_code = unsafe { GetLastError().0 };
@@ -427,22 +428,6 @@ fn apply_config(
                                     config.name
                                 ));
                             } else {
-                                // Boost priority
-                                let current_prio = unsafe { GetThreadPriority(handle) };
-                                if current_prio != 0x7FFFFFFF {
-                                    thread_stats.original_priority = Some(current_prio);
-                                    let new_prio = if current_prio < 2 { current_prio + 1 } else { current_prio };
-                                    if let Err(e) = unsafe { SetThreadPriority(handle, THREAD_PRIORITY(new_prio)) } {
-                                        apply_config_result.add_error(format!(
-                                            "apply_config: [SET_THREAD_PRIORITY][{}] {:>5}-{}-{}",
-                                            error_from_code(e.code().0 as u32),
-                                            pid,
-                                            tid,
-                                            config.name
-                                        ));
-                                    }
-                                }
-
                                 thread_stats.cpu_set_ids = cpu_setids.clone();
                                 let promoted_cpus = indices_from_cpusetids(&cpu_setids);
                                 let start_module = resolve_address_to_module(pid, thread_stats.start_address);
@@ -453,6 +438,26 @@ fn apply_config(
                                     delta_cycles,
                                     start_module
                                 ));
+                            }
+                            // Boost priority: increase by one tier using priority::ThreadPriority helper
+                            let current_prio = unsafe { GetThreadPriority(handle) };
+                            if current_prio != 0x7FFFFFFF_i32 {
+                                let current_prio = priority::ThreadPriority::from_win_const(current_prio);
+                                thread_stats.original_priority = Some(current_prio.clone());
+                                let new_prio = current_prio.boost_one();
+                                if let Err(e) = unsafe { SetThreadPriority(handle, new_prio.to_thread_priority_struct()) } {
+                                    apply_config_result.add_error(format!(
+                                        "apply_config: [SET_THREAD_PRIORITY][{}] {:>5}-{}-{}",
+                                        error_from_code(e.code().0 as u32),
+                                        pid,
+                                        tid,
+                                        config.name
+                                    ));
+                                } else {
+                                    let old_name = current_prio.as_str();
+                                    let new_name = new_prio.as_str();
+                                    apply_config_result.add_change(format!("Thread {} -> (priority boosted: {} -> {})", tid, old_name, new_name));
+                                }
                             }
                         }
                     }
@@ -481,8 +486,8 @@ fn apply_config(
                             }
 
                             // Restore priority
-                            if let Some(orig_prio) = thread_stats.original_priority {
-                                if let Err(e) = unsafe { SetThreadPriority(handle, THREAD_PRIORITY(orig_prio)) } {
+                            if thread_stats.original_priority.is_some() {
+                                if let Err(e) = unsafe { SetThreadPriority(handle, thread_stats.original_priority.as_mut().unwrap().to_thread_priority_struct()) } {
                                     apply_config_result.add_error(format!(
                                         "apply_config: [RESTORE_THREAD_PRIORITY][{}] {:>5}-{}-{}",
                                         error_from_code(e.code().0 as u32),
@@ -502,32 +507,36 @@ fn apply_config(
     }
 
     // IO Priority
-    if config.io_priority != priority::IOPriority::None {
-        if dry_run {
-            apply_config_result.add_change(format!("IO Priority: -> {}", config.io_priority.as_str()));
-        } else if let Some(io_priority_flag) = config.io_priority.as_win_const() {
-            const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
-            let mut current_io_priority: u32 = 0;
-            let mut return_length: u32 = 0;
-            let query_result = unsafe {
-                NtQueryInformationProcess(
-                    h_prc,
-                    PROCESS_INFORMATION_IO_PRIORITY,
-                    &mut current_io_priority as *mut _ as *mut std::ffi::c_void,
-                    size_of::<u32>() as u32,
-                    &mut return_length,
-                )
-            }
-            .0;
-            if query_result < 0 {
-                apply_config_result.add_error(format!(
-                    "apply_config: [QUERY_IO_PRIORITY][0x{:08X}] {:>5}-{} -> {}",
-                    query_result,
-                    pid,
-                    config.name,
+    if let Some(io_priority_flag) = config.io_priority.as_win_const() {
+        const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
+        let mut current_io_priority: u32 = 0;
+        let mut return_length: u32 = 0;
+        let query_result = unsafe {
+            NtQueryInformationProcess(
+                h_prc,
+                PROCESS_INFORMATION_IO_PRIORITY,
+                &mut current_io_priority as *mut _ as *mut std::ffi::c_void,
+                size_of::<u32>() as u32,
+                &mut return_length,
+            )
+        }
+        .0;
+        if query_result < 0 {
+            apply_config_result.add_error(format!(
+                "apply_config: [QUERY_IO_PRIORITY][0x{:08X}] {:>5}-{} -> {}",
+                query_result,
+                pid,
+                config.name,
+                config.io_priority.as_str()
+            ));
+        } else if current_io_priority != io_priority_flag {
+            if dry_run {
+                apply_config_result.add_change(format!(
+                    "IO Priority: {} -> {}",
+                    priority::IOPriority::from_win_const(current_io_priority),
                     config.io_priority.as_str()
                 ));
-            } else if current_io_priority != io_priority_flag {
+            } else {
                 let set_result = unsafe {
                     NtSetInformationProcess(
                         h_prc,
@@ -555,33 +564,60 @@ fn apply_config(
             }
         }
     }
-
     // Memory Priority
-    if config.memory_priority != priority::MemoryPriority::None {
-        if dry_run {
-            apply_config_result.add_change(format!("Memory Priority: -> {}", config.memory_priority.as_str()));
-        } else if let Some(memory_priority_flag) = config.memory_priority.as_win_const() {
-            let mem_prio_info = MemoryPriorityInformation(memory_priority_flag.0);
-            let set_result = unsafe {
-                SetProcessInformation(
-                    h_prc,
-                    ProcessMemoryPriority,
-                    &mem_prio_info as *const _ as *const std::ffi::c_void,
-                    size_of::<MemoryPriorityInformation>() as u32,
-                )
-            };
-            match set_result {
-                Ok(_) => {
-                    apply_config_result.add_change(format!("Memory Priority: {}", config.memory_priority.as_str()));
-                }
-                Err(e) => {
-                    apply_config_result.add_error(format!(
-                        "apply_config: [SET_MEMORY_PRIORITY][0x{:08X}] {:>5}-{} -> {}",
-                        e.code().0 as u32,
-                        pid,
-                        config.name,
-                        config.memory_priority.as_str()
-                    ));
+    if let Some(memory_priority_flag) = config.memory_priority.as_win_const() {
+        let mut current_mem_prio = priority::MemoryPriorityInformation(0);
+        let query_result = unsafe {
+            GetProcessInformation(
+                h_prc,
+                ProcessMemoryPriority,
+                &mut current_mem_prio as *mut _ as *mut std::ffi::c_void,
+                size_of::<priority::MemoryPriorityInformation>() as u32,
+            )
+        };
+        match query_result {
+            Err(_) => {
+                let err = unsafe { GetLastError().0 };
+                apply_config_result.add_error(format!(
+                    "apply_config: [QUERY_MEMORY_PRIORITY][{}] {:>5}-{}",
+                    logging::error_from_code(err),
+                    pid,
+                    config.name
+                ));
+            }
+            Ok(_) => {
+                if current_mem_prio.0 != memory_priority_flag.0 {
+                    if dry_run {
+                        apply_config_result.add_change(format!("Memory Priority: -> {}", config.io_priority.as_str()));
+                    } else {
+                        let mem_prio_info = priority::MemoryPriorityInformation(memory_priority_flag.0);
+                        let set_result = unsafe {
+                            SetProcessInformation(
+                                h_prc,
+                                ProcessMemoryPriority,
+                                &mem_prio_info as *const _ as *const std::ffi::c_void,
+                                size_of::<priority::MemoryPriorityInformation>() as u32,
+                            )
+                        };
+                        match set_result {
+                            Err(e) => {
+                                apply_config_result.add_error(format!(
+                                    "apply_config: [SET_MEMORY_PRIORITY][0x{:08X}] {:>5}-{} -> {}",
+                                    e.code().0 as u32,
+                                    pid,
+                                    config.name,
+                                    config.memory_priority.as_str()
+                                ));
+                            }
+                            Ok(_) => {
+                                apply_config_result.add_change(format!(
+                                    "Memory Priority: {} -> {}",
+                                    priority::MemoryPriority::from_win_const(current_mem_prio.0),
+                                    config.memory_priority.as_str()
+                                ));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -744,9 +780,9 @@ fn main() -> windows::core::Result<()> {
                             }
                             // Log changes to main log
                             if !result.changes.is_empty() {
-                                log!("{:>5}-{}:", pid, config.name);
+                                log!("{:>5}::{}", pid, config.name);
                                 for change in &result.changes {
-                                    log!("     : {}", change);
+                                    log!("     ::{}", change);
                                 }
                                 total_changes += result.changes.len();
                             }

@@ -4,7 +4,7 @@
 /Links
 /.idea
 /.Cargo
-/index.crates.io
+/src/index.crates.io
 
 # Test files and directories
 test_*.ps1

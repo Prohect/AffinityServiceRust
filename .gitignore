@@ -3,6 +3,7 @@
 /temp
 /Links
 /.idea
+/.Cargo
 /index.crates.io
 
 # Test files and directories

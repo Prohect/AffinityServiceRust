@@ -10,7 +10,6 @@ This file documents CLI tools and workflows useful for AI agents (like Zed's Age
 
 ## Repository-Specific Tool Usage Notes
 
-
 Important notes for agents when using those tools in this repository:
 - `grep` and `find_path` respect `.gitignore` and do not show files or directories that are gitignored (for example `/logs`, `/target`, `/temp`). Symlinks can also be ignored by git on Windows.
 - `read_file` can read files that are .gitignored; for very large files it may return a symbol outline — use `start_line`/`end_line` to fetch regions.
@@ -28,64 +27,13 @@ Summary of best practices
 - Use the panel's built-in tools for quick lookups and diagnostics.
 - For searching crate sources under `index.crates.io`, prefer terminal grep or `read_file` with explicit paths.
 - Always find and confirm the full file path before making edits; use `read_file`'s outline to identify line ranges for large files.
+- Use `temp/` for temporary files (e.g., OCR outputs, preprocessed images) to keep the repository clean, as it is gitignored.
 
 ## Recommended CLI Tools
 
 The following tools enhance agent capabilities for bulk editing and automation:
 
-### sed / perl / awk (via Git for Windows)
-
-**Purpose:** Regex find/replace for text files  
-**Source:** Bundled with Git for Windows (available in Git Bash or any shell after Git install)
-
-#### sed (Stream Editor)
-
-```sh
-# Find lines matching pattern
-sed -n '/pattern/p' file.txt
-
-# Replace in-place
-sed -i 's/old/new/g' file.txt
-
-# Replace with capture groups
-sed -i 's/^\(.*\.exe,.*\)$/\1,suffix/' file.txt
-
-# Delete lines matching pattern
-sed -i '/pattern/d' file.txt
-```
-
-#### perl (One-liner regex)
-
-```sh
-# Replace in-place (best regex support)
-perl -i -pe 's/old/new/g' file.txt
-
-# With UTF-8 support
-perl -i -CSD -pe 's/old/new/g' file.txt
-
-# Multi-line patterns
-perl -i -0pe 's/start.*?end/replacement/gs' file.txt
-```
-
-#### awk (Pattern processing)
-
-```sh
-# Print lines matching pattern
-awk '/pattern/' file.txt
-
-# Replace and print
-awk '{gsub(/old/, "new"); print}' file.txt > output.txt
-
-# Conditional processing
-awk -F',' '/\.exe,/ {print $0 ",testNone"; next} {print}' file.txt
-```
-
-#### Notes
-
-- Available via Git Bash (included with Git for Windows)
-- `sed -i` modifies files in-place
-- `perl` has the most powerful regex (PCRE)
-- Prefer these over PowerShell for complex regex (avoids escaping issues)
+- See [docs/sed-perl-awk.md](docs/sed-perl-awk.md) for detailed usage of sed, perl, and awk.
 
 ## Agent Workflow Tips
 
@@ -124,28 +72,5 @@ git checkout -- src/ config.ini    # Multiple paths
 
 ## Additional Tools
 
-### Tesseract OCR
-
-**Version:** 5.4.0.20240606  
-**Installation Path:** `C:\Program Files\Tesseract-OCR\`  
-**Installed via:** winget (`UB-Mannheim.TesseractOCR`)
-
-#### Usage
-
-Extract text from an image:
-
-```sh
-tesseract image.png output       # outputs to output.txt
-tesseract image.png stdout       # outputs directly to console
-```
-
-#### Common Options
-
-- `-l <lang>` - Specify language (e.g., `-l eng`, `-l chi_sim` for Simplified Chinese)
-- `--psm <n>` - Page segmentation mode (0-13)
-- `--oem <n>` - OCR engine mode (0-3)
-
-#### Notes
-
-- May need to open a new terminal session for PATH to update after installation
-- Additional language packs can be installed separately
+- See [docs/tesseract.md](docs/tesseract.md) for detailed Tesseract OCR usage and preprocessing.
+- See [docs/imagemagick.md](docs/imagemagick.md) for detailed ImageMagick usage.

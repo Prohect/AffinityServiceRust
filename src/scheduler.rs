@@ -112,6 +112,8 @@ pub struct ThreadStats {
     pub active_streak: u8,
     /// Cached start address of the thread.
     pub start_address: usize,
+    /// Original thread priority before promotion. None if not promoted.
+    pub original_priority: Option<i32>,
 }
 
 impl ThreadStats {
@@ -123,6 +125,7 @@ impl ThreadStats {
             cpu_set_ids: vec![],
             active_streak: 0,
             start_address: 0,
+            original_priority: None,
         }
     }
 }

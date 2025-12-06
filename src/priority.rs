@@ -47,6 +47,16 @@ impl ProcessPriority {
             .map(|(v, _, _)| *v)
             .unwrap_or(Self::None)
     }
+
+    /// Converts a Windows priority class constant (from GetPriorityClass) to a string name.
+    /// Returns "unknown" if the constant doesn't match any known priority class.
+    pub fn from_win_const(val: u32) -> &'static str {
+        Self::TABLE
+            .iter()
+            .find(|(_, _, const_opt)| const_opt.map(|c| c.0) == Some(val))
+            .map(|(_, name, _)| *name)
+            .unwrap_or("unknown")
+    }
 }
 
 /// IO priority levels for process I/O operations.
@@ -91,6 +101,13 @@ impl IOPriority {
             .map(|(v, _, _)| *v)
             .unwrap_or(Self::None)
     }
+    pub fn from_win_const(val: u32) -> &'static str {
+        Self::TABLE
+            .iter()
+            .find(|(_, _, const_opt)| const_opt.map(|c| c) == Some(val))
+            .map(|(_, name, _)| *name)
+            .unwrap_or("unknown")
+    }
 }
 
 /// Memory priority information structure for SetProcessInformation.
@@ -112,11 +129,11 @@ pub enum MemoryPriority {
 impl MemoryPriority {
     const TABLE: &'static [(Self, &'static str, Option<MEMORY_PRIORITY>)] = &[
         (Self::None, "none", None),
-        (Self::VeryLow, "very low", Some(MEMORY_PRIORITY_VERY_LOW)),
-        (Self::Low, "low", Some(MEMORY_PRIORITY_LOW)),
-        (Self::Medium, "medium", Some(MEMORY_PRIORITY_MEDIUM)),
-        (Self::BelowNormal, "below normal", Some(MEMORY_PRIORITY_BELOW_NORMAL)),
-        (Self::Normal, "normal", Some(MEMORY_PRIORITY_NORMAL)),
+        (Self::VeryLow, "very low", Some(MEMORY_PRIORITY_VERY_LOW)),             //1
+        (Self::Low, "low", Some(MEMORY_PRIORITY_LOW)),                           //2
+        (Self::Medium, "medium", Some(MEMORY_PRIORITY_MEDIUM)),                  //3
+        (Self::BelowNormal, "below normal", Some(MEMORY_PRIORITY_BELOW_NORMAL)), //4
+        (Self::Normal, "normal", Some(MEMORY_PRIORITY_NORMAL)),                  //5
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -129,5 +146,12 @@ impl MemoryPriority {
 
     pub fn from_str(s: &str) -> Self {
         Self::TABLE.iter().find(|(_, str, _)| *str == s).map(|(v, _, _)| *v).unwrap_or(Self::None)
+    }
+    pub fn from_win_const(val: u32) -> &'static str {
+        Self::TABLE
+            .iter()
+            .find(|(_, _, const_opt)| const_opt.map(|c| c.0) == Some(val))
+            .map(|(_, name, _)| *name)
+            .unwrap_or("unknown")
     }
 }

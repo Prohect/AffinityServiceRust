@@ -54,13 +54,40 @@ use windows::Win32::{
     System::{
         Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
         Threading::{
-            GetPriorityClass, GetProcessAffinityMask, GetProcessDefaultCpuSets, OpenProcess, OpenThread, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION,
-            ProcessMemoryPriority, SetPriorityClass, SetProcessAffinityMask, SetProcessDefaultCpuSets, SetProcessInformation, SetThreadSelectedCpuSets,
-            THREAD_QUERY_INFORMATION, THREAD_SET_LIMITED_INFORMATION,
+            GetPriorityClass, GetProcessAffinityMask, GetProcessDefaultCpuSets, GetThreadPriority, OpenProcess, OpenThread, PROCESS_QUERY_INFORMATION,
+            PROCESS_SET_INFORMATION, ProcessMemoryPriority, SetPriorityClass, SetProcessAffinityMask, SetProcessDefaultCpuSets, SetProcessInformation, SetThreadPriority,
+            SetThreadSelectedCpuSets, THREAD_PRIORITY, THREAD_QUERY_INFORMATION, THREAD_SET_INFORMATION, THREAD_SET_LIMITED_INFORMATION,
         },
         WindowsProgramming::QueryThreadCycleTime,
     },
 };
+
+/// Result of applying configuration to a process
+#[derive(Debug, Default)]
+struct ApplyConfigResult {
+    /// Successful changes made (e.g., "Priority: high", "Affinity: 0xFF -> 0x3")
+    changes: Vec<String>,
+    /// Error/warning messages that should be logged to find log
+    errors: Vec<String>,
+}
+
+impl ApplyConfigResult {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn add_change(&mut self, change: String) {
+        self.changes.push(change);
+    }
+
+    fn add_error(&mut self, error: String) {
+        self.errors.push(error);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.changes.is_empty() && self.errors.is_empty()
+    }
+}
 
 /// Applies all configured settings to a process: priority, affinity, CPU sets, IO/memory priority.
 /// When `dry_run` is true, returns a list of changes that would be made without applying them.
@@ -76,8 +103,8 @@ fn apply_config(
     prime_core_scheduler: &mut PrimeThreadScheduler,
     mut processes: Option<&mut ProcessSnapshot>,
     dry_run: bool,
-) -> Vec<String> {
-    let mut changes: Vec<String> = Vec::new();
+) -> ApplyConfigResult {
+    let mut apply_config_result = ApplyConfigResult::new();
 
     let access_flags = if dry_run {
         PROCESS_QUERY_INFORMATION
@@ -89,20 +116,22 @@ fn apply_config(
     let h_prc = match open_result {
         Err(_) => {
             if dry_run {
-                return vec![format!("[SKIP] Cannot open process (access denied)")];
+                apply_config_result.add_change(format!("[SKIP] Cannot open process (access denied)"));
+                return apply_config_result;
             }
             let error_code = unsafe { GetLastError().0 };
-            log_to_find(&format!("apply_config: [OPEN][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
-            return changes;
+            apply_config_result.add_error(format!("apply_config: [OPEN][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
+            return apply_config_result;
         }
         Ok(h_prc) => h_prc,
     };
     if h_prc.is_invalid() {
         if dry_run {
-            return vec![format!("[SKIP] Invalid handle")];
+            apply_config_result.add_change(format!("[SKIP] Invalid handle"));
+            return apply_config_result;
         }
-        log_to_find(&format!("apply_config: [INVALID_HANDLE] {:>5}-{}", pid, config.name));
-        return changes;
+        apply_config_result.add_error(format!("apply_config: [INVALID_HANDLE] {:>5}-{}", pid, config.name));
+        return apply_config_result;
     }
 
     // Priority
@@ -110,14 +139,22 @@ fn apply_config(
         let current_priority = unsafe { GetPriorityClass(h_prc) };
         if current_priority != priority_flag.0 {
             if dry_run {
-                changes.push(format!("Priority: current -> {}", config.priority.as_str()));
+                apply_config_result.add_change(format!(
+                    "Priority: {} -> {}",
+                    priority::ProcessPriority::from_win_const(current_priority),
+                    config.priority.as_str()
+                ));
             } else {
                 let set_result = unsafe { SetPriorityClass(h_prc, priority_flag) };
                 if set_result.is_ok() {
-                    log!("{:>5}-{} -> Priority: {}", pid, config.name, config.priority.as_str());
+                    apply_config_result.add_change(format!(
+                        "Priority: {} -> {}",
+                        priority::ProcessPriority::from_win_const(current_priority),
+                        config.priority.as_str()
+                    ));
                 } else {
                     let error_code = unsafe { GetLastError().0 };
-                    log_to_find(&format!("apply_config: [SET_PRIORITY][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
+                    apply_config_result.add_error(format!("apply_config: [SET_PRIORITY][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
                 }
             }
         }
@@ -136,22 +173,22 @@ fn apply_config(
             Err(_) => {
                 if !dry_run {
                     let error_code = unsafe { GetLastError().0 };
-                    log_to_find(&format!("apply_config: [QUERY_AFFINITY][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
+                    apply_config_result.add_error(format!("apply_config: [QUERY_AFFINITY][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
                 }
             }
             Ok(_) => {
                 if has_affinity && affinity_mask != 0 && affinity_mask != current_mask {
                     if dry_run {
-                        changes.push(format!("Affinity: {:#X} -> {:#X}", current_mask, affinity_mask));
+                        apply_config_result.add_change(format!("Affinity: {:#X} -> {:#X}", current_mask, affinity_mask));
                     } else {
                         let set_result = unsafe { SetProcessAffinityMask(h_prc, affinity_mask) };
                         match set_result {
                             Err(_) => {
                                 let error_code = unsafe { GetLastError().0 };
-                                log_to_find(&format!("apply_config: [SET_AFFINITY][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
+                                apply_config_result.add_error(format!("apply_config: [SET_AFFINITY][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
                             }
                             Ok(_) => {
-                                log!("{:>5}-{} affinity {:#X} -> {:#X}", pid, config.name, current_mask, affinity_mask);
+                                apply_config_result.add_change(format!("Affinity: {:#X} -> {:#X}", current_mask, affinity_mask));
                                 current_mask = affinity_mask;
                             }
                         }
@@ -164,9 +201,10 @@ fn apply_config(
     // Process default CPU Set (supports >64 cores)
     if !config.cpu_set_cpus.is_empty() && !get_cpu_set_information().lock().unwrap().is_empty() {
         if dry_run {
-            changes.push(format!("CPU Set: -> [{}]", format_cpu_indices(&config.cpu_set_cpus)));
+            apply_config_result.add_change(format!("CPU Set: -> [{}]", format_cpu_indices(&config.cpu_set_cpus)));
         } else {
             let target_cpusetids = cpusetids_from_indices(&config.cpu_set_cpus);
+            let mut current_cpusetids: Vec<u32> = vec![];
             if !target_cpusetids.is_empty() {
                 let mut toset: bool = false;
                 let mut requiredidcount: u32 = 0;
@@ -177,7 +215,7 @@ fn apply_config(
                 } else {
                     let code = unsafe { GetLastError().0 };
                     if code != 122 {
-                        log_to_find(&format!(
+                        apply_config_result.add_error(format!(
                             "apply_config: [QUERY_CPUSET][{}] {:>5}-{}-{}",
                             error_from_code(code),
                             pid,
@@ -185,11 +223,11 @@ fn apply_config(
                             requiredidcount
                         ));
                     } else {
-                        let mut current_cpusetids: Vec<u32> = vec![0u32; requiredidcount as usize];
+                        current_cpusetids = vec![0u32; requiredidcount as usize];
                         let second_query = unsafe { GetProcessDefaultCpuSets(h_prc, Some(&mut current_cpusetids[..]), &mut requiredidcount) }.as_bool();
                         if !second_query {
                             let error_code = unsafe { GetLastError().0 };
-                            log_to_find(&format!(
+                            apply_config_result.add_error(format!(
                                 "apply_config: [QUERY_CPUSET][{}] {:>5}-{}-{}",
                                 error_from_code(error_code),
                                 pid,
@@ -205,9 +243,13 @@ fn apply_config(
                     let set_result = unsafe { SetProcessDefaultCpuSets(h_prc, Some(&target_cpusetids)) }.as_bool();
                     if !set_result {
                         let error_code = unsafe { GetLastError().0 };
-                        log_to_find(&format!("apply_config: [SET_CPUSET][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
+                        apply_config_result.add_error(format!("apply_config: [SET_CPUSET][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
                     } else {
-                        log!("{:>5}-{} -> (cpu set) [{}]", pid, config.name, format_cpu_indices(&config.cpu_set_cpus));
+                        apply_config_result.add_change(format!(
+                            "CPU Set: [{}] -> [{}]",
+                            format_cpu_indices(&current_cpusetids),
+                            format_cpu_indices(&config.cpu_set_cpus)
+                        ));
                     }
                 }
             }
@@ -218,7 +260,7 @@ fn apply_config(
     // For dry run, just report prime CPUs would be set
     if !config.prime_cpus.is_empty() {
         if dry_run {
-            changes.push(format!("Prime CPUs: -> [{}]", format_cpu_indices(&config.prime_cpus)));
+            apply_config_result.add_change(format!("Prime CPUs: -> [{}]", format_cpu_indices(&config.prime_cpus)));
         } else {
             // Filter prime CPUs to those allowed by current process affinity
             // Per MSDN: GetProcessAffinityMask returns 0 when process has threads in multiple
@@ -263,11 +305,11 @@ fn apply_config(
                     let process_name = &config.name;
                     match thread_stats.handle {
                         None => {
-                            let open_result = unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION, false, tid) };
+                            let open_result = unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION | THREAD_SET_INFORMATION, false, tid) };
                             match open_result {
                                 Err(_) => {
                                     let error_code = unsafe { GetLastError().0 };
-                                    log_to_find(&format!(
+                                    apply_config_result.add_error(format!(
                                         "apply_config: [OPEN_THREAD][{}] {:>5}-{}-{}",
                                         error_from_code(error_code),
                                         pid,
@@ -281,7 +323,7 @@ fn apply_config(
                                     match query_result {
                                         Err(_) => {
                                             let error_code = unsafe { GetLastError().0 };
-                                            log_to_find(&format!(
+                                            apply_config_result.add_error(format!(
                                                 "apply_config: [QUERY_THREAD_CYCLE][{}] {:>5}-{}-{}",
                                                 error_from_code(error_code),
                                                 pid,
@@ -304,7 +346,7 @@ fn apply_config(
                             match query_result {
                                 Err(_) => {
                                     let error_code = unsafe { GetLastError().0 };
-                                    log_to_find(&format!(
+                                    apply_config_result.add_error(format!(
                                         "apply_config: [QUERY_THREAD_CYCLE][{}] {:>5}-{}-{}",
                                         error_from_code(error_code),
                                         pid,
@@ -377,7 +419,7 @@ fn apply_config(
                             let set_result = unsafe { SetThreadSelectedCpuSets(handle, &cpu_setids) }.as_bool();
                             if !set_result {
                                 let error_code = unsafe { GetLastError().0 };
-                                log_to_find(&format!(
+                                apply_config_result.add_error(format!(
                                     "apply_config: [SET_THREAD_CPU_SETS][{}] {:>5}-{}-{}",
                                     error_from_code(error_code),
                                     pid,
@@ -385,18 +427,32 @@ fn apply_config(
                                     config.name
                                 ));
                             } else {
+                                // Boost priority
+                                let current_prio = unsafe { GetThreadPriority(handle) };
+                                if current_prio != 0x7FFFFFFF {
+                                    thread_stats.original_priority = Some(current_prio);
+                                    let new_prio = if current_prio < 2 { current_prio + 1 } else { current_prio };
+                                    if let Err(e) = unsafe { SetThreadPriority(handle, THREAD_PRIORITY(new_prio)) } {
+                                        apply_config_result.add_error(format!(
+                                            "apply_config: [SET_THREAD_PRIORITY][{}] {:>5}-{}-{}",
+                                            error_from_code(e.code().0 as u32),
+                                            pid,
+                                            tid,
+                                            config.name
+                                        ));
+                                    }
+                                }
+
                                 thread_stats.cpu_set_ids = cpu_setids.clone();
                                 let promoted_cpus = indices_from_cpusetids(&cpu_setids);
                                 let start_module = resolve_address_to_module(pid, thread_stats.start_address);
-                                log!(
-                                    "{:>5}-{}-{} -> (promoted, [{}], cycles={}, start={})",
-                                    pid,
+                                apply_config_result.add_change(format!(
+                                    "Thread {} -> (promoted, [{}], cycles={}, start={})",
                                     tid,
-                                    config.name,
                                     format_cpu_indices(&promoted_cpus),
                                     delta_cycles,
                                     start_module
-                                );
+                                ));
                             }
                         }
                     }
@@ -411,7 +467,7 @@ fn apply_config(
                                 let set_result = unsafe { SetThreadSelectedCpuSets(handle, &[]) }.as_bool();
                                 if !set_result {
                                     let error_code = unsafe { GetLastError().0 };
-                                    log_to_find(&format!(
+                                    apply_config_result.add_error(format!(
                                         "apply_config: [SET_THREAD_CPU_SETS][{}] {:>5}-{}-{}",
                                         error_from_code(error_code),
                                         pid,
@@ -420,8 +476,22 @@ fn apply_config(
                                     ));
                                 } else {
                                     let start_module = resolve_address_to_module(pid, thread_stats.start_address);
-                                    log!("{:>5}-{}-{} -> (demoted, start={})", pid, tid, config.name, start_module);
+                                    apply_config_result.add_change(format!("Thread {} -> (demoted, start={})", tid, start_module));
                                 }
+                            }
+
+                            // Restore priority
+                            if let Some(orig_prio) = thread_stats.original_priority {
+                                if let Err(e) = unsafe { SetThreadPriority(handle, THREAD_PRIORITY(orig_prio)) } {
+                                    apply_config_result.add_error(format!(
+                                        "apply_config: [RESTORE_THREAD_PRIORITY][{}] {:>5}-{}-{}",
+                                        error_from_code(e.code().0 as u32),
+                                        pid,
+                                        tid,
+                                        config.name
+                                    ));
+                                }
+                                thread_stats.original_priority = None;
                             }
                         }
                         thread_stats.cpu_set_ids = vec![];
@@ -434,7 +504,7 @@ fn apply_config(
     // IO Priority
     if config.io_priority != priority::IOPriority::None {
         if dry_run {
-            changes.push(format!("IO Priority: -> {}", config.io_priority.as_str()));
+            apply_config_result.add_change(format!("IO Priority: -> {}", config.io_priority.as_str()));
         } else if let Some(io_priority_flag) = config.io_priority.as_win_const() {
             const PROCESS_INFORMATION_IO_PRIORITY: u32 = 33;
             let mut current_io_priority: u32 = 0;
@@ -450,7 +520,7 @@ fn apply_config(
             }
             .0;
             if query_result < 0 {
-                log_to_find(&format!(
+                apply_config_result.add_error(format!(
                     "apply_config: [QUERY_IO_PRIORITY][0x{:08X}] {:>5}-{} -> {}",
                     query_result,
                     pid,
@@ -468,7 +538,7 @@ fn apply_config(
                 }
                 .0;
                 if set_result < 0 {
-                    log_to_find(&format!(
+                    apply_config_result.add_error(format!(
                         "apply_config: [SET_IO_PRIORITY][0x{:08X}] {:>5}-{} -> {}",
                         set_result,
                         pid,
@@ -476,7 +546,11 @@ fn apply_config(
                         config.io_priority.as_str()
                     ));
                 } else {
-                    log!("{:>5}-{} -> IO: {}", pid, config.name, config.io_priority.as_str());
+                    apply_config_result.add_change(format!(
+                        "IO Priority: {} -> {}",
+                        priority::IOPriority::from_win_const(current_io_priority),
+                        config.io_priority.as_str()
+                    ));
                 }
             }
         }
@@ -485,7 +559,7 @@ fn apply_config(
     // Memory Priority
     if config.memory_priority != priority::MemoryPriority::None {
         if dry_run {
-            changes.push(format!("Memory Priority: -> {}", config.memory_priority.as_str()));
+            apply_config_result.add_change(format!("Memory Priority: -> {}", config.memory_priority.as_str()));
         } else if let Some(memory_priority_flag) = config.memory_priority.as_win_const() {
             let mem_prio_info = MemoryPriorityInformation(memory_priority_flag.0);
             let set_result = unsafe {
@@ -498,10 +572,10 @@ fn apply_config(
             };
             match set_result {
                 Ok(_) => {
-                    log!("{:>5}-{} -> Memory: {}", pid, config.name, config.memory_priority.as_str());
+                    apply_config_result.add_change(format!("Memory Priority: {}", config.memory_priority.as_str()));
                 }
                 Err(e) => {
-                    log_to_find(&format!(
+                    apply_config_result.add_error(format!(
                         "apply_config: [SET_MEMORY_PRIORITY][0x{:08X}] {:>5}-{} -> {}",
                         e.code().0 as u32,
                         pid,
@@ -514,7 +588,7 @@ fn apply_config(
     }
 
     let _ = unsafe { CloseHandle(h_prc) };
-    changes
+    apply_config_result
 }
 
 fn main() -> windows::core::Result<()> {
@@ -657,44 +731,39 @@ fn main() -> windows::core::Result<()> {
         }
         match ProcessSnapshot::take() {
             Ok(mut processes) => {
+                let mut total_changes = 0;
+                let pids_and_names: Vec<(u32, String)> = processes.pid_to_process.values().map(|p| (p.pid(), p.get_name().to_string())).collect();
+                prime_core_scheduler.reset_alive();
+                for (pid, name) in pids_and_names {
+                    if let Some(config) = configs.get(&name) {
+                        let result = apply_config(pid, config, &mut prime_core_scheduler, Some(&mut processes), dry_run);
+                        if !result.is_empty() {
+                            // Log errors to find log
+                            for error in &result.errors {
+                                log_to_find(error);
+                            }
+                            // Log changes to main log
+                            if !result.changes.is_empty() {
+                                log!("{:>5}-{}:", pid, config.name);
+                                for change in &result.changes {
+                                    log!("     : {}", change);
+                                }
+                                total_changes += result.changes.len();
+                            }
+                        }
+                    }
+                }
+                prime_core_scheduler.close_dead_process_handles();
                 if dry_run {
-                    // Dry run mode: show what would be changed without applying
                     log!(
                         "[DRY RUN] Checking {} running processes against {} config rules...",
                         processes.pid_to_process.len(),
                         configs.len()
                     );
-                    let mut total_changes = 0;
-                    let pids_and_names: Vec<(u32, String)> = processes.pid_to_process.values().map(|p| (p.pid(), p.get_name().to_string())).collect();
-                    for (pid, name) in pids_and_names {
-                        if let Some(config) = configs.get(&name) {
-                            let changes = apply_config(pid, config, &mut prime_core_scheduler, None, true);
-                            if !changes.is_empty() {
-                                log!("  {} (PID {}):", config.name, pid);
-                                for change in &changes {
-                                    log!("    - {}", change);
-                                }
-                                total_changes += changes.len();
-                            }
-                        }
-                    }
-                    if total_changes == 0 {
-                        log!("[DRY RUN] No changes would be made.");
-                    } else {
-                        log!("[DRY RUN] {} change(s) would be made. Run without -dryrun to apply.", total_changes);
-                    }
-                    // Exit after one dry run iteration
+                    log!("[DRY RUN] {} change(s) would be made. Run without -dryrun to apply.", total_changes);
                     should_continue = false;
-                } else {
-                    prime_core_scheduler.reset_alive();
-                    let pids_and_names: Vec<(u32, String)> = processes.pid_to_process.values().map(|p| (p.pid(), p.get_name().to_string())).collect();
-                    for (pid, name) in pids_and_names {
-                        if let Some(config) = configs.get(&name) {
-                            apply_config(pid, config, &mut prime_core_scheduler, Some(&mut processes), false);
-                        }
-                    }
-                    prime_core_scheduler.close_dead_process_handles();
                 }
+
                 drop(processes);
             }
             Err(err) => {

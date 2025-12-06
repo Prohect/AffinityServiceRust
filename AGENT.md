@@ -18,11 +18,11 @@ Important notes for agents when using those tools in this repository:
 - For gitignored files, always refer to project files using the project root prefix, e.g. `AffinityServiceRust/...`, and find the full path before editing — do not guess paths.
 
 Cargo index symlink (project-specific)
-- There is a symbolic link in the src directory named `index.crates.io` that points to a local Cargo index directory (for example: `C:\Users\FSOS\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f`). This exposes local crate source under `AffinityServiceRust/src/index.crates.io/...`.
+- There is a symbolic link in the src directory named `index.crates.io` that points to a local Cargo index directory (for example: `C:\Users\FSOS\.cargo\registry\src`). This exposes local crate source under `AffinityServiceRust/src/index.crates.io/...`.
 - Because some built-in search tools respect .gitignore or git symlink rules, you may not find these files with `find_path`/`grep` in the panel. Recommended ways to access the crate source:
   - Use the terminal with an explicit path to search the symlinked index (this follows the filesystem regardless of git ignore rules). Example:
     cd AffinityServiceRust && grep -nR --color=never "PATTERN" src/index.crates.io || true
-  - Or use `read_file` with the exact path to the file (for example `AffinityServiceRust/src/index.crates.io/ntapi-0.4.1/src/ntexapi.rs`) — `read_file` can access .gitignored files and symlinked content.
+  - Or use `read_file` with the exact path to the file (for example `AffinityServiceRust/src/index.crates.io/index.crates.io-1949cf8c6b5b557f/ntapi-0.4.1/src/ntexapi.rs`) — `read_file` can access .gitignored files and symlinked content.
 - When giving paths to tools, always start paths with one of the repository root directories (e.g., `AffinityServiceRust/src/index.crates.io/...`).
 
 Summary of best practices

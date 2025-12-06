@@ -8,9 +8,8 @@ This file documents CLI tools and workflows useful for AI agents (like Zed's Age
 > cargo run --release -- -console -noUAC -validate -config config.ini
 > ```
 
-## Agent's Built-in Tools (brief)
+## Repository-Specific Tool Usage Notes
 
-The Zed Agent Panel provides built‑in tools such as grep, read_file, and diagnostics in its UI. Do not duplicate the panel's full help here — use the panel for exact behavior and outputs.
 
 Important notes for agents when using those tools in this repository:
 - `grep` and `find_path` respect `.gitignore` and do not show files or directories that are gitignored (for example `/logs`, `/target`, `/temp`). Symlinks can also be ignored by git on Windows.

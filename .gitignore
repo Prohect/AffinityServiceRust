@@ -3,6 +3,7 @@
 /temp
 /Links
 /.idea
+/index.crates.io
 
 # Test files and directories
 test_*.ps1

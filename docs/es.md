@@ -43,4 +43,7 @@ es "filename"
 - Supports wildcards (*, ?) without -r.
 - For full help: `es /?`
 - Requires "Everything" service running (install the full Everything tool if not).
+- Typical installation paths (based on search results):
+  - Everything.exe: Often in `C:\Program Files\Everything\` or `E:\Programme Files\Everything\`.
+  - es.exe: Portable, commonly placed in user PATH directories like `E:\Programme Files\commandLineInterface\` or `C:\Users\%USERNAME%\bin\`.
 ```

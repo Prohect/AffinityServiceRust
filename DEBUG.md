@@ -173,13 +173,13 @@ notepad.exe,normal,0,0,0,normal,low
 ### Config Format
 
 ```
-process_name,priority,affinity,cpuset,prime_cpus,io_priority,memory_priority
+process_name,priority,affinity,cpuset,prime_cpus[@regexes],io_priority,memory_priority
 ```
 
 - **priority**: `none`, `idle`, `below normal`, `normal`, `above normal`, `high`, `real time`
 - **affinity**: Hex mask (e.g., `0xFF`) or CPU range (e.g., `0-7;16-23`)
 - **cpuset**: Same format as affinity, for CPU sets
-- **prime_cpus**: CPUs for prime thread scheduling
+- **prime_cpus**: CPUs for prime thread scheduling (optionally @regex1;regex2 to filter by start module names, default .* matches all)
 - **io_priority**: `none`, `very low`, `low`, `normal`
 - **memory_priority**: `none`, `very low`, `low`, `normal`
 

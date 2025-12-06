@@ -102,8 +102,8 @@ For large-scale code changes across multiple files:
 
 ```sh
 # Reorder fields: move field 2 to position 5
-# Before: name,priority,affinity,cpuset,prime,io,memory
-# After:  name,affinity,cpuset,prime,priority,io,memory
+# Before: name,priority,affinity,cpuset,prime[@regexes],io,memory
+# After:  name,affinity,cpuset,prime[@regexes],priority,io,memory
 sed -i 's/^\([^#@*][^,]*\),\([^,]*\),\([^,]*\),\([^,]*\),\([^,]*\),\([^,]*\),\([^,]*\)$/\1,\3,\4,\5,\2,\6,\7/' config.ini
 ```
 

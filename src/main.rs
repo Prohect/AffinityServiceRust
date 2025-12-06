@@ -41,6 +41,7 @@ use cli::{parse_args, print_help, print_help_all};
 use config::{ProcessConfig, convert, cpu_indices_to_mask, format_cpu_indices, read_config, read_list};
 use logging::{FAIL_SET, LOCALTIME_BUFFER, error_from_code, find_logger, log_process_find, log_pure_message, log_to_find, logger};
 use process::ProcessSnapshot;
+
 use scheduler::PrimeThreadScheduler;
 use std::{env, io::Write, mem::size_of, thread, time::Duration};
 use winapi::{
@@ -228,6 +229,7 @@ fn apply_prime_threads(
         if dry_run {
             apply_config_result.add_change(format!("Prime CPUs: -> [{}]", format_cpu_indices(&config.prime_threads_cpus)));
         } else {
+            let compiled_regexes = &config.prime_threads_regexes;
             // Filter prime CPUs to those allowed by current process affinity
             // Per MSDN: GetProcessAffinityMask returns 0 when process has threads in multiple
             // processor groups (systems with >64 cores where threads span groups), so we use
@@ -380,6 +382,10 @@ fn apply_prime_threads(
                     let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
                     if let Some(handle) = thread_stats.handle {
                         if !handle.is_invalid() && thread_stats.cpu_set_ids.is_empty() {
+                            let start_module = resolve_address_to_module(pid, thread_stats.start_address);
+                            if !compiled_regexes.is_empty() && !compiled_regexes.iter().any(|re| re.is_match(&start_module)) {
+                                continue;
+                            }
                             // Set the thread selected CPU sets
                             let set_result = unsafe { SetThreadSelectedCpuSets(handle, &cpu_setids) }.as_bool();
                             if !set_result {
@@ -394,7 +400,6 @@ fn apply_prime_threads(
                             } else {
                                 thread_stats.cpu_set_ids = cpu_setids.clone();
                                 let promoted_cpus = indices_from_cpusetids(&cpu_setids);
-                                let start_module = resolve_address_to_module(pid, thread_stats.start_address);
                                 apply_config_result.add_change(format!(
                                     "Thread {} -> (promoted, [{}], cycles={}, start={})",
                                     tid,

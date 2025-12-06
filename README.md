@@ -28,6 +28,7 @@ For multi-threaded applications (e.g., games), this feature identifies CPU-inten
 - Filters low-activity threads (entry threshold: 42% of max)
 - Protects promoted threads from premature demotion (keep threshold: 69% of max)
 - Requires consistent activity (configurable via `@MIN_ACTIVE_STREAK`, default: 2 intervals) before promotion
+- Optionally filters threads by start module name using regex patterns (syntax: `prime_cpus@regex1;regex2`, default: `.*` matches all)
 - Logs thread start address with module resolution (e.g., `ntdll.dll+0x3C320`) when running elevated
 
 Useful for games where main/render threads should prefer P-cores while avoiding cores 0/1 (hardware interrupt handlers).
@@ -78,7 +79,7 @@ AffinityServiceRust.exe -find
 ### Format
 
 ```
-process_name,priority,affinity,cpu_set,prime_cpus,io_priority,memory_priority
+process_name,priority,affinity,cpu_set,prime_cpus[@regexes],io_priority,memory_priority
 ```
 
 ### CPU Specification
@@ -145,10 +146,13 @@ sys_utils {
 *pN01 = 2-7         # P-cores except 0-1
 
 # === RULES ===
-# process,priority,affinity,cpuset,prime,io,memory
+# process,priority,affinity,cpuset,prime[@regexes],io,memory
 
 # Single process rule
 cs2.exe,normal,*a,*p,*pN01,normal,normal
+
+# Prime with module filtering - only Unity threads
+game.exe,normal,*a,*p,*pN01@UnityPlayer.dll;GameModule.dll,normal,normal
 
 # Named group - browsers on E-cores
 browsers { chrome.exe, firefox.exe, msedge.exe },normal,*e,0,0,low,below normal

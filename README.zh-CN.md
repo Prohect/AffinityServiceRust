@@ -28,6 +28,7 @@
 - 过滤低活跃线程（入场阈值：最大值的 42%）
 - 保护已提升线程不被过早降级（保持阈值：最大值的 69%）
 - 要求持续活跃（可通过 `@MIN_ACTIVE_STREAK` 配置，默认：2 个间隔）才能提升
+- 可选择通过正则表达式按起始模块名称过滤线程（语法：`prime_cpus@regex1;regex2`，默认：`.*` 匹配所有模块）
 - 以管理员运行时记录线程起始地址及模块解析（如 `ntdll.dll+0x3C320`）
 
 适用于游戏中主线程/渲染线程需要优先运行在 P 核，同时避开核心 0/1（硬件中断处理器）的场景。
@@ -78,7 +79,7 @@ AffinityServiceRust.exe -find
 ### 格式
 
 ```
-process_name,priority,affinity,cpu_set,prime_cpus,io_priority,memory_priority
+process_name,priority,affinity,cpu_set,prime_cpus[@regexes],io_priority,memory_priority
 ```
 
 ### CPU 规格
@@ -144,10 +145,13 @@ asus_services {
 *pN01 = 2-7         # P 核除 0-1
 
 # === 规则 ===
-# 进程,优先级,亲和性,cpuset,prime,io,memory
+# 进程,优先级,亲和性,cpuset,prime[@regexes],io,memory
 
 # 单进程规则
 cs2.exe,normal,*a,*p,*pN01,normal,normal
+
+# Prime 带模块过滤 - 仅 Unity 线程
+game.exe,normal,*a,*p,*pN01@UnityPlayer.dll;GameModule.dll,normal,normal
 
 # 命名组 - 浏览器运行在 E 核
 browsers { chrome.exe, firefox.exe, msedge.exe },normal,*e,0,0,low,below normal

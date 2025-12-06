@@ -39,7 +39,7 @@ pub struct ProcessConfig {
     pub cpu_set_cpus: Vec<u32>,
     /// CPU indices for prime thread scheduling (high-priority threads)
     pub prime_threads_cpus: Vec<u32>,
-    // pub prime_cpus_: Vec<Regex>,
+    pub prime_threads_regexes: Vec<Regex>,
     pub io_priority: IOPriority,
     pub memory_priority: MemoryPriority,
 }
@@ -379,11 +379,44 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
         Vec::new()
     };
 
-    // Parse prime_cpus (optional, defaults to "0")
-    let prime_threads_cpus = if rule_parts.len() >= 4 {
-        resolve_cpu_spec(rule_parts[3], "prime_cpus", line_number, cpu_aliases, &mut result.errors)
+    // Parse prime_cpus (optional, defaults to "0") and prime_threads_regexes (optional, defaults to ".*")
+    let (prime_threads_cpus, prime_threads_regexes) = if rule_parts.len() >= 4 {
+        let prime_spec = rule_parts[3].trim();
+        if let Some(at_pos) = prime_spec.find('@') {
+            let cpu_part = &prime_spec[..at_pos];
+            let regex_part = &prime_spec[at_pos + 1..];
+            let cpus = resolve_cpu_spec(cpu_part.trim(), "prime_cpus", line_number, cpu_aliases, &mut result.errors);
+            let mut regexes: Vec<Regex> = if regex_part.trim().is_empty() {
+                vec![Regex::new(".*").unwrap()]
+            } else {
+                regex_part
+                    .split(';')
+                    .filter_map(|s| {
+                        let s = s.trim();
+                        if s.is_empty() {
+                            None
+                        } else {
+                            match Regex::new(s) {
+                                Ok(re) => Some(re),
+                                Err(e) => {
+                                    result.warnings.push(format!("Line {}: Invalid regex '{}' in prime_cpus: {}", line_number, s, e));
+                                    None
+                                }
+                            }
+                        }
+                    })
+                    .collect()
+            };
+            if regexes.is_empty() {
+                regexes.push(Regex::new(".*").unwrap());
+            }
+            (cpus, regexes)
+        } else {
+            let cpus = resolve_cpu_spec(prime_spec, "prime_cpus", line_number, cpu_aliases, &mut result.errors);
+            (cpus, vec![Regex::new(".*").unwrap()])
+        }
     } else {
-        Vec::new()
+        (Vec::new(), vec![Regex::new(".*").unwrap()])
     };
 
     // Parse io_priority (optional, defaults to None)
@@ -424,6 +457,7 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
                 affinity_cpus: affinity_cpus.clone(),
                 cpu_set_cpus: cpu_set_cpus.clone(),
                 prime_threads_cpus: prime_threads_cpus.clone(),
+                prime_threads_regexes: prime_threads_regexes.clone(),
                 io_priority: io_priority.clone(),
                 memory_priority: memory_priority.clone(),
             },
@@ -437,7 +471,7 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
 /// - `@CONSTANT = value` - Define a constant
 /// - `*alias = cpu_spec` - Define a CPU alias
 /// - `[name] { ... },priority,affinity,...` - Process group (name optional)
-/// - `name,priority,affinity,cpuset,prime,io,memory` - Single process rule
+/// - `name,priority,affinity,cpuset,prime[@regexes],io,memory` - Single process rule
 pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
     let mut result = ConfigResult::default();
 

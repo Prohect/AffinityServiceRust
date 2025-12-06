@@ -110,6 +110,8 @@ pub struct ThreadStats {
     pub cpu_set_ids: Vec<u32>,
     /// Consecutive intervals this thread exceeded entry_threshold. Must reach 2 to be promoted.
     pub active_streak: u8,
+    /// Cached start address of the thread.
+    pub start_address: usize,
 }
 
 impl ThreadStats {
@@ -120,6 +122,7 @@ impl ThreadStats {
             handle: None,
             cpu_set_ids: vec![],
             active_streak: 0,
+            start_address: 0,
         }
     }
 }

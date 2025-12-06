@@ -46,7 +46,8 @@ use scheduler::PrimeThreadScheduler;
 use std::{env, io::Write, mem::size_of, thread, time::Duration};
 use winapi::{
     NtQueryInformationProcess, NtSetInformationProcess, NtSetTimerResolution, cpusetids_from_indices, enable_debug_privilege, enable_inc_base_priority_privilege,
-    filter_indices_by_mask, get_cpu_set_information, indices_from_cpusetids, is_affinity_unset, is_running_as_admin, request_uac_elevation, resolve_address_to_module,
+    filter_indices_by_mask, get_cpu_set_information, get_thread_start_address, indices_from_cpusetids, is_affinity_unset, is_running_as_admin, request_uac_elevation,
+    resolve_address_to_module,
 };
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError},
@@ -240,8 +241,6 @@ fn apply_config(
                 let mut tid_with_delta_cycles: Vec<(u32, u64, bool)> = vec![(0u32, 0u64, false); candidate_count];
 
                 // Step 1: Sort threads by delta time and select top candidates
-                // Also collect start addresses for logging
-                let mut tid_to_start_address: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
                 {
                     let mut tid_with_delta_time: Vec<(u32, i64)> = Vec::with_capacity(thread_count);
                     process.get_threads().iter().for_each(|(tid, thread)| {
@@ -249,8 +248,6 @@ fn apply_config(
                         let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
                         tid_with_delta_time.push((*tid, total_time - thread_stats.last_total_time));
                         thread_stats.last_total_time = total_time;
-                        // Store start address for later use (only populated when running elevated)
-                        tid_to_start_address.insert(*tid, thread.StartAddress as usize);
                     });
                     tid_with_delta_time.sort_by_key(|&(_, delta)| delta);
                     let precandidate_len = tid_with_delta_time.len();
@@ -294,6 +291,7 @@ fn apply_config(
                                         }
                                         Ok(_) => {
                                             tid_with_delta_cycles[i] = (tid, cycles, false);
+                                            thread_stats.start_address = get_thread_start_address(handle);
                                         }
                                     };
                                     thread_stats.handle = Some(handle);
@@ -389,7 +387,7 @@ fn apply_config(
                             } else {
                                 thread_stats.cpu_set_ids = cpu_setids.clone();
                                 let promoted_cpus = indices_from_cpusetids(&cpu_setids);
-                                let start_module = resolve_address_to_module(pid, process.get_thread(tid).unwrap().StartAddress as usize);
+                                let start_module = resolve_address_to_module(pid, thread_stats.start_address);
                                 log!(
                                     "{:>5}-{}-{} -> (promoted, [{}], cycles={}, start={})",
                                     pid,
@@ -405,7 +403,7 @@ fn apply_config(
                 }
 
                 // Step 5: Demote threads that are no longer prime
-                process.get_threads().iter().for_each(|(tid, thread)| {
+                process.get_threads().iter().for_each(|(tid, _)| {
                     let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
                     if !tid_with_delta_cycles.iter().any(|&(t, _, p)| t == *tid && p) && !thread_stats.cpu_set_ids.is_empty() {
                         if let Some(handle) = thread_stats.handle {
@@ -421,7 +419,7 @@ fn apply_config(
                                         config.name
                                     ));
                                 } else {
-                                    let start_module = resolve_address_to_module(pid, thread.StartAddress as usize);
+                                    let start_module = resolve_address_to_module(pid, thread_stats.start_address);
                                     log!("{:>5}-{}-{} -> (demoted, start={})", pid, tid, config.name, start_module);
                                 }
                             }

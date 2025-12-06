@@ -29,6 +29,15 @@ unsafe extern "system" {
     /// Queries process information including IO priority (class 33).
     pub fn NtQueryInformationProcess(h_prc: HANDLE, process_information_class: u32, p_out: *mut std::ffi::c_void, out_length: u32, return_length: *mut u32) -> NTSTATUS;
 
+    /// Queries thread information including start address (class 9).
+    pub fn NtQueryInformationThread(
+        thread_handle: HANDLE,
+        thread_information_class: u32,
+        thread_information: *mut std::ffi::c_void,
+        thread_information_length: u32,
+        return_length: *mut u32,
+    ) -> NTSTATUS;
+
     /// Sets process information including IO priority (class 33).
     pub fn NtSetInformationProcess(
         process_handle: HANDLE,
@@ -431,6 +440,26 @@ pub fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
     let _ = unsafe { CloseHandle(h_proc) };
 
     result
+}
+
+/// Gets the start address of a thread using NtQueryInformationThread.
+/// This is more reliable than the StartAddress in SYSTEM_THREAD_INFORMATION
+/// which may be null or incorrect for some threads.
+pub fn get_thread_start_address(thread_handle: HANDLE) -> usize {
+    let mut start_address: usize = 0;
+    let mut return_len: u32 = 0;
+    // ThreadQuerySetWin32StartAddress = 9
+    let status = unsafe {
+        NtQueryInformationThread(
+            thread_handle,
+            9,
+            &mut start_address as *mut _ as *mut std::ffi::c_void,
+            size_of::<usize>() as u32,
+            &mut return_len,
+        )
+    };
+
+    if status.is_ok() { start_address } else { 0 }
 }
 
 /// Cached module information for processes.

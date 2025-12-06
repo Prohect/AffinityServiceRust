@@ -11,6 +11,7 @@ This file documents CLI tools and workflows useful for AI agents (like Zed's Age
 ## Repository-Specific Tool Usage Notes
 
 Important notes for agents when using those tools in this repository:
+- check .gitignore before reading files.
 - `grep` and `find_path` respect `.gitignore` and do not show files or directories that are gitignored (for example `/logs`, `/target`, `/temp`). Symlinks can also be ignored by git on Windows.
 - `read_file` can read files that are .gitignored; for very large files it may return a symbol outline — use `start_line`/`end_line` to fetch regions.
 - For gitignored files, always refer to project files using the project root prefix, e.g. `AffinityServiceRust/...`, and find the full path before editing — do not guess paths.

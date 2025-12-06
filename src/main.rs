@@ -625,8 +625,8 @@ fn apply_config(
         apply_config_result.add_error(format!("apply_config: [INVALID_HANDLE] {:>5}-{}", pid, config.name));
         return apply_config_result;
     }
-    apply_priority(pid, config, dry_run, h_prc, &mut apply_config_result);
     let mut current_mask: usize = 0;
+    apply_priority(pid, config, dry_run, h_prc, &mut apply_config_result);
     apply_affinity(pid, config, dry_run, h_prc, &mut current_mask, &mut apply_config_result);
     apply_process_default_cpuset(pid, config, dry_run, h_prc, &mut apply_config_result);
     apply_prime_threads(pid, config, prime_core_scheduler, processes, dry_run, &mut current_mask, &mut apply_config_result);

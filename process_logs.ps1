@@ -120,16 +120,23 @@ Write-Host "Searching for new processes using es.exe..."
 $output = ""
 foreach ($proc in $newProcesses) {
     $output += "Process: $proc`n"
+    $tempFile = "temp\temp_$proc.txt"
     try {
-        $result = & es -r "^$proc$" 2>$null
+        & es -export-txt $tempFile -utf8-bom -r "^$proc$" 2>$null
+        if (Test-Path $tempFile) {
+            $result = Get-Content $tempFile -Encoding UTF8
+            Remove-Item $tempFile -ErrorAction SilentlyContinue
+            if ($result -and $result.Count -gt 0) {
+                $output += "Found:`n"
+                $result | ForEach-Object { $output += "  $_`n" }
+            } else {
+                $output += "Not found`n"
+            }
+        } else {
+            $output += "Not found`n"
+        }
     } catch {
         Write-Warning "es.exe not found or failed for $proc : $_"
-        $result = $null
-    }
-    if ($result) {
-        $output += "Found:`n"
-        $result | ForEach-Object { $output += "  $_`n" }
-    } else {
         $output += "Not found`n"
     }
     $output += "---`n"

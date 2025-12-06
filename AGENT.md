@@ -74,3 +74,4 @@ git checkout -- src/ config.ini    # Multiple paths
 
 - See [docs/tesseract.md](docs/tesseract.md) for detailed Tesseract OCR usage and preprocessing.
 - See [docs/imagemagick.md](docs/imagemagick.md) for detailed ImageMagick usage.
+- See [docs/es.md](docs/es.md) for detailed es (Everything CLI) usage.

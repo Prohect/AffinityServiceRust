@@ -36,6 +36,8 @@ es "filename"
 - Paths only: `es -p "cs2.exe"`
 - In specific folder: `es -path "C:\Program Files" "notepad.exe"`
 - Large files: `es -size >100MB`
+- Match start of filename: `es -r "^discord"`
+- Match end of filename: `es -r "\.exe$"`
 
 ## Notes
 

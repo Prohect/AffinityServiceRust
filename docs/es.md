@@ -43,6 +43,7 @@ es "filename"
 
 - Extremely fast due to real-time indexing.
 - Supports wildcards (*, ?) without -r.
+- For exact filename matches, use regex with anchors: `es -r "^filename$"`
 - For full help: `es /?`
 - Requires "Everything" service running (install the full Everything tool if not).
 - Typical installation paths (based on search results):

@@ -2,95 +2,33 @@
 
 This file documents CLI tools and workflows useful for AI agents (like Zed's Agent Panel, Cursor, etc.) working on this project.
 
-> **Important:** When running AffinityServiceRust via the terminal tool, always use `-console` and `-noUAC` to see output directly. Without `-console`, output goes to log files only. Except the project needs admin elevation, you will need to use PowerShell to run the project with out `-noUAC` flag, this requires user to check UAC.
+> **Important:** When running AffinityServiceRust via the terminal tool, always use `-console` and `-noUAC` to see output directly. Without `-console`, output goes to log files only. Except the project needs admin elevation, you will need to use PowerShell to directly run the project (not via cargo) with out `-noUAC` flag, this requires user to check UAC.
 >
 > ```sh
 > cargo run --release -- -console -noUAC -validate -config config.ini
 > ```
 
-## Agent's Built-in Tools
+## Agent's Built-in Tools (brief)
 
-The Zed Agent Panel provides several built-in tools. Here's how they work in this project:
+The Zed Agent Panel provides built‑in tools such as grep, read_file, and diagnostics in its UI. Do not duplicate the panel's full help here — use the panel for exact behavior and outputs.
 
-### grep (Built-in)
+Important notes for agents when using those tools in this repository:
+- `grep` and `find_path` respect `.gitignore` and may not show files or directories that are ignored (for example `/logs`, `/target`, `/temp`). Symlinks can be ignored by git on Windows.
+- `read_file` can read files that are .gitignored; for very large files it may return a symbol outline — use `start_line`/`end_line` to fetch regions.
+- Always refer to project files using the project root prefix, e.g. `AffinityServiceRust/...`, and find the full path before editing — do not guess paths.
 
-The agent has a built-in `grep` tool that returns **line numbers** with matches, which is useful for locating code before editing.
+Cargo index symlink (project-specific)
+- There is a symbolic link in the project root named `index.crates.io` that points to a local Cargo index directory (for example: `C:\Users\FSOS\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f`). This exposes local crate source under `AffinityServiceRust/index.crates.io/...`.
+- Because some built-in search tools respect .gitignore or git symlink rules, you may not find these files with `find_path`/`grep` in the panel. Recommended ways to access the crate source:
+  - Use the terminal with an explicit path to search the symlinked index (this follows the filesystem regardless of git ignore rules). Example:
+    cd AffinityServiceRust && grep -nR --color=never "PATTERN" index.crates.io || true
+  - Or use `read_file` with the exact path to the file (for example `AffinityServiceRust/index.crates.io/ntapi-0.4.1/src/ntexapi.rs`) — `read_file` can access .gitignored files and symlinked content.
+- When giving paths to tools, always start paths with one of the repository root directories (e.g., `AffinityServiceRust/index.crates.io/...`).
 
-#### Features
-
-- Returns line number ranges like `L126-130` for each match
-- Shows surrounding context lines
-- Supports regex patterns
-- Can filter by file glob pattern with `include_pattern`
-
-#### Example Output
-
-```
-Found 2 matches:
-
-## Matches in AffinityServiceRust\config.ini
-
-### L126-130
-# ==================== PROCESS GROUPS ====================
-
-# Windows system processes (low IO)
-windows {
-    # text input
-
-### L298-306
-# code language rust's code analyzer
-rust-analyzer.exe,none,*e,0,0,low,none
-# windows 错误报告收集器 - very low IO
-wermgr.exe,none,*e,0,0,very low,none
-```
-
-#### Workflow
-
-1. Use agent's grep to find patterns and get line numbers
-2. Use `read_file` with `start_line`/`end_line` to see more context
-3. Use `edit_file` to make targeted changes
-
-#### Limitations: .gitignore Respected
-
-The agent's `grep` and `find_path` tools **respect `.gitignore`** - they won't search folders like `/logs`, `/target`, `/temp` that are listed in `.gitignore`.
-
-**To search log files for debugging**, use the terminal with standard grep:
-
-```sh
-# Search today's log file
-grep "pattern" logs/20251205.log
-
-# Search all log files
-grep -r "AdjustTokenPrivileges" logs/
-
-# Search with context lines
-grep -B2 -A2 "ERROR" logs/*.log
-```
-
-Alternatively, use `read_file` directly if you know the log file path:
-- The agent can read `.gitignore`'d files with `read_file`
-- Only `grep` and `find_path` respect `.gitignore`
-
-### read_file (Built-in)
-
-For large code files, `read_file` returns a **file outline** with symbol names and line numbers instead of full content. This acts as an outline/symbol view.
-
-Example outline output:
-```
-pub struct ProcessConfig [L27-38]
- pub name [L28]
- pub priority [L29]
-pub fn parse_cpu_spec [L83-122]
-fn mask_to_cpu_indices [L124-126]
-```
-
-Use `start_line`/`end_line` parameters to read specific sections.
-
-### diagnostics (Built-in)
-
-Get compiler errors and warnings. Invoke after edits to check for issues:
-- With path: shows all diagnostics for that file
-- Without path: shows project-wide summary
+Summary of best practices
+- Use the panel's built-in tools for quick lookups and diagnostics.
+- For searching crate sources under `index.crates.io`, prefer terminal grep or `read_file` with explicit paths.
+- Always find and confirm the full file path before making edits; use `read_file`'s outline to identify line ranges for large files.
 
 ## Recommended CLI Tools
 

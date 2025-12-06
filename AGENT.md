@@ -26,7 +26,7 @@ Cargo index symlink (project-specific)
 Summary of best practices
 - Use the panel's built-in tools for quick lookups and diagnostics.
 - For searching crate sources under `index.crates.io`, prefer terminal grep or `read_file` with explicit paths.
-- Always find and confirm the full file path before making edits; use `read_file`'s outline to identify line ranges for large files.
+- Always find and confirm the full file path before making edits; use `read_file`'s outline to identify line ranges (or cli regex tools) for large files.
 - Use `temp/` for temporary files (e.g., OCR outputs, preprocessed images) to keep the repository clean, as it is gitignored.
 
 ## Recommended CLI Tools

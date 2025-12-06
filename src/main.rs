@@ -229,7 +229,7 @@ fn apply_prime_threads(
         if dry_run {
             apply_config_result.add_change(format!("Prime CPUs: -> [{}]", format_cpu_indices(&config.prime_threads_cpus)));
         } else {
-            let compiled_regexes = &config.prime_threads_regexes;
+            let prefixes = &config.prime_threads_prefixes;
             // Filter prime CPUs to those allowed by current process affinity
             // Per MSDN: GetProcessAffinityMask returns 0 when process has threads in multiple
             // processor groups (systems with >64 cores where threads span groups), so we use
@@ -383,7 +383,7 @@ fn apply_prime_threads(
                     if let Some(handle) = thread_stats.handle {
                         if !handle.is_invalid() && thread_stats.cpu_set_ids.is_empty() {
                             let start_module = resolve_address_to_module(pid, thread_stats.start_address);
-                            if !compiled_regexes.is_empty() && !compiled_regexes.iter().any(|re| re.is_match(&start_module)) {
+                            if !prefixes.is_empty() && !prefixes.iter().any(|p| start_module.to_lowercase().starts_with(&p.to_lowercase())) {
                                 continue;
                             }
                             // Set the thread selected CPU sets

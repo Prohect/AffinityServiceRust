@@ -173,7 +173,7 @@ notepad.exe,normal,0,0,0,normal,low
 ### Config Format
 
 ```
-process_name,priority,affinity,cpuset,prime_cpus[@regexes],io_priority,memory_priority
+process_name,priority,affinity,cpuset,prime_cpus[@prefixes],io_priority,memory_priority
 ```
 
 - **priority**: `none`, `idle`, `below normal`, `normal`, `above normal`, `high`, `real time`

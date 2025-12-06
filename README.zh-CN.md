@@ -165,6 +165,27 @@ browsers { chrome.exe, firefox.exe, msedge.exe },normal,*e,0,0,low,below normal
 dwm.exe,high,*p,0,0,high,normal
 ```
 
+## 工具
+
+### 进程发现脚本
+
+`process_logs.ps1` PowerShell 脚本帮助从每日日志中发现尚未在配置或黑名单中的新进程。
+
+**要求：**
+- PowerShell (Windows)
+- Everything 搜索工具，`es.exe` 在 PATH 中
+- `temp/logs` 符号链接指向您的每日日志目录
+
+**用法：**
+从项目根目录运行：
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File process_logs.ps1
+```
+
+这会扫描 `.find.log` 文件，提取进程名称，过滤掉已配置或黑名单中的进程，并使用 `es.exe` 搜索其余进程。结果保存到 `temp/new_processes_results.txt`，将每个进程与文件路径配对，便于审查和添加到配置中。
+
+适用于保持配置与新应用程序的同步更新。
+
 ## 调试
 
 ```bash

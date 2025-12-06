@@ -166,6 +166,27 @@ browsers { chrome.exe, firefox.exe, msedge.exe },normal,*e,0,0,low,below normal
 dwm.exe,high,*p,0,0,high,normal
 ```
 
+## Tools
+
+### Process Discovery Script
+
+The `process_logs.ps1` PowerShell script helps discover new processes from daily logs that aren't yet in your config or blacklist.
+
+**Requirements:**
+- PowerShell (Windows)
+- Everything search tool with `es.exe` in PATH
+- `temp/logs` symlink pointing to your daily log directory
+
+**Usage:**
+Run from the project root:
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File process_logs.ps1
+```
+
+This scans `.find.log` files, extracts process names, filters out configured/blacklisted ones, and searches for the rest using `es.exe`. Results are saved to `temp/new_processes_results.txt`, pairing each process with file paths for easy review and addition to config.
+
+Useful for keeping your config up-to-date with new applications.
+
 ## Debugging
 
 ```bash

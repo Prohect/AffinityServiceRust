@@ -130,7 +130,7 @@ pub fn print_help() {
     log!("");
     log!("Modes:");
     log!("  -validate            validate config file syntax without running");
-    log!("  -processlogs         process logs to find new processes and search paths (logs: logs, output: new_processes_results.txt)");
+    log!("  -processlogs         process logs (from -find mode) to find new processes and search paths (-config <file> -blacklist <file> -in <logs dir> -out <file>)");
     log!("  -dryrun              show what would be changed without applying");
     log!("  -convert             convert Process Lasso config (-in <file> -out <file>)");
     log!("");
@@ -272,7 +272,7 @@ pub fn print_cli_help() {
     log!("");
     log!("Operating Modes:");
     log!("  -validate            validate config file for syntax errors and undefined aliases");
-    log!("  -processlogs         process logs to find new processes and search paths (-in <logs dir> -out <file>)");
+    log!("  -processlogs         process logs (from -find mode) to find new processes and search paths (-config <file> -blacklist <file> -in <logs dir> -out <file>)");
     log!("  -dryrun              simulate changes without applying (shows what would happen)");
     log!("  -convert             convert process configs from -in <file>(from process lasso) to -out <file>");
     log!("  -in <file>           input file for -convert / logs directory for -processlogs (default: logs)");

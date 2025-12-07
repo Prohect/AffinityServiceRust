@@ -174,12 +174,22 @@ dwm.exe,high,*p,0,0,high,normal
 
 **要求：**
 - Everything 搜索工具，`es.exe` 在 PATH 中
-- 日志文件位于 `logs/` 目录（默认，可通过 `-in` 指定）
+- 日志文件位于 `logs/` 目录（默认，可通过 `-in` 指定），通常通过运行 `-find` 模式生成
+
+**工作流程：**
+1. 使用 `-find` 运行应用程序以扫描并记录未管理的进程到 `.find.log` 文件
+2. 运行 `-processlogs` 以处理这些日志，过滤掉已配置/黑名单中的进程，并搜索文件路径
 
 **用法：**
 ```bash
-# 使用默认设置
+# 首先，扫描未管理的进程（每天运行或根据需要）
+AffinityServiceRust.exe -find -console
+
+# 然后，处理日志以查找新进程
 AffinityServiceRust.exe -processlogs
+
+# 指定配置和黑名单文件（配置默认为 config.ini，黑名单无默认值）
+AffinityServiceRust.exe -processlogs -config my_config.ini -blacklist my_blacklist.ini
 
 # 指定日志目录和输出文件
 AffinityServiceRust.exe -processlogs -in mylogs -out results.txt

@@ -53,13 +53,13 @@ use winapi::{
 };
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE},
-    Globalization::GetACP,
     System::{
+        Console::GetConsoleOutputCP,
         Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
         Threading::{
             GetPriorityClass, GetProcessAffinityMask, GetProcessDefaultCpuSets, GetProcessInformation, GetThreadPriority, OpenProcess, OpenThread,
             PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION, ProcessMemoryPriority, SetPriorityClass, SetProcessAffinityMask, SetProcessDefaultCpuSets,
-            SetProcessInformation, SetThreadPriority, SetThreadSelectedCpuSets, THREAD_QUERY_INFORMATION, THREAD_SET_INFORMATION, THREAD_SET_LIMITED_INFORMATION,
+            SetProcessInformation, SetThreadPriority, SetThreadSelectedCpuSets, THREAD_QUERY_INFORMATION, THREAD_SET_LIMITED_INFORMATION,
         },
         WindowsProgramming::QueryThreadCycleTime,
     },
@@ -275,7 +275,7 @@ fn apply_prime_threads(
                     let process_name = &config.name;
                     match thread_stats.handle {
                         None => {
-                            let open_result = unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION | THREAD_SET_INFORMATION, false, tid) };
+                            let open_result = unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION, false, tid) };
                             match open_result {
                                 Err(_) => {
                                     let error_code = unsafe { GetLastError().0 };
@@ -736,6 +736,9 @@ fn process_logs(config_path: &str, blacklist_path: Option<&str>, logs_path: Opti
 
     // Search with es
     let mut output = String::new();
+    let acp = unsafe { GetConsoleOutputCP() };
+    let label = if acp == 936 { "gbk" } else { &format!("windows-{}", acp) };
+    let encoding = Encoding::for_label_no_replacement(label.as_bytes()).unwrap_or(encoding_rs::UTF_8);
     for proc in new_processes {
         output.push_str(&format!("Process: {}\n", proc));
         // Escape dots for regex
@@ -746,9 +749,7 @@ fn process_logs(config_path: &str, blacklist_path: Option<&str>, logs_path: Opti
                 let stdout = &output_result.stdout;
                 // Strip UTF-8 BOM if present
                 let ansi_bytes = if stdout.starts_with(&[0xEF, 0xBB, 0xBF]) { &stdout[3..] } else { stdout };
-                // Decode from ANSI to UTF-8
-                let acp = unsafe { GetACP() };
-                let encoding = Encoding::for_label_no_replacement(format!("windows-{}", acp).as_bytes()).unwrap_or(encoding_rs::UTF_8);
+                // Decode from console output codepage to UTF-8
                 let (result, _, _) = encoding.decode(ansi_bytes);
                 if !result.trim().is_empty() {
                     output.push_str("Found:\n");

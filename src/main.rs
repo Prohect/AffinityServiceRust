@@ -738,11 +738,9 @@ fn process_logs(config_path: &str, blacklist_path: Option<&str>, logs_path: Opti
         let es_output = Command::new("es").args(&["-utf8-bom", "-r", &format!("^{}$", proc)]).output();
         match es_output {
             Ok(output_result) if output_result.status.success() => {
-                let mut result = String::from_utf8_lossy(&output_result.stdout);
+                let result = String::from_utf8_lossy(&output_result.stdout);
                 // Strip UTF-8 BOM if present
-                if result.starts_with('\u{FEFF}') {
-                    result = result[3..].into();
-                }
+                let result = result.strip_prefix('\u{FEFF}').unwrap_or(&result);
                 if !result.trim().is_empty() {
                     output.push_str("Found:\n");
                     for line in result.lines() {

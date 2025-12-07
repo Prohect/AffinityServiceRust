@@ -167,24 +167,28 @@ dwm.exe,high,*p,0,0,high,normal
 
 ## 工具
 
-### 进程发现脚本
+### 进程发现
 
-`process_logs.ps1` PowerShell 脚本帮助从每日日志中发现尚未在配置或黑名单中的新进程。
+使用 `-processlogs` 模式从日志中发现尚未在配置或黑名单中的新进程。
 
 **要求：**
-- PowerShell (Windows)
 - Everything 搜索工具，`es.exe` 在 PATH 中
-- `temp/logs` 符号链接指向您的每日日志目录，或修改脚本以指向您的日志位置
+- 日志文件位于 `logs/` 目录（默认，可通过 `-in` 指定）
 
 **用法：**
-从项目根目录运行：
-```powershell
-powershell.exe -ExecutionPolicy Bypass -File process_logs.ps1
+```bash
+# 使用默认设置
+AffinityServiceRust.exe -processlogs
+
+# 指定日志目录和输出文件
+AffinityServiceRust.exe -processlogs -in mylogs -out results.txt
 ```
 
-这会扫描 `.find.log` 文件，提取进程名称，过滤掉已配置或黑名单中的进程，并使用 `es.exe` 搜索其余进程。结果保存到 `temp/new_processes_results.txt`，将每个进程与文件路径配对，便于审查和添加到配置中。
+这会扫描 `logs/` 目录中的 `.find.log` 文件，提取进程名称，过滤掉已配置或黑名单中的进程，并使用 `es.exe` 搜索其余进程。结果保存到 `new_processes_results.txt`，将每个进程与文件路径配对，便于审查和添加到配置中。
 
 适用于保持配置与新应用程序的同步更新。
+
+> **注意：** 也可以使用 `process_logs.ps1` PowerShell 脚本实现类似功能。
 
 ## 调试
 

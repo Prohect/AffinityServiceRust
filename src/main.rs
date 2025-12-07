@@ -39,7 +39,7 @@ mod winapi;
 use chrono::Local;
 use cli::{parse_args, print_help, print_help_all};
 use config::{ProcessConfig, convert, cpu_indices_to_mask, format_cpu_indices, read_config, read_list};
-use logging::{FAIL_SET, LOCALTIME_BUFFER, error_from_code, find_logger, log_process_find, log_pure_message, log_to_find, logger};
+use logging::{FAIL_SET, LOCALTIME_BUFFER, error_from_code, find_logger, log_process_find, log_pure_message, log_to_find, logger, use_console};
 use process::ProcessSnapshot;
 
 use scheduler::PrimeThreadScheduler;
@@ -61,6 +61,9 @@ use windows::Win32::{
         WindowsProgramming::QueryThreadCycleTime,
     },
 };
+
+use std::collections::HashSet;
+use std::process::Command;
 
 use crate::logging::log_message;
 
@@ -643,6 +646,114 @@ fn apply_config(
     apply_config_result
 }
 
+fn process_logs(config_path: &str, blacklist_path: Option<&str>, logs_path: Option<&str>, output_file: Option<&str>) {
+    *use_console().lock().unwrap() = true;
+    let logs_path = logs_path.unwrap_or("logs");
+    let blacklist_path = blacklist_path.unwrap_or("");
+    let output_file = output_file.unwrap_or("new_processes_results.txt");
+
+    // Get all unique processes from logs
+    let mut all_processes = HashSet::new();
+    if let Ok(entries) = std::fs::read_dir(logs_path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.file_name().and_then(|n| n.to_str()).map_or(false, |s| s.ends_with(".find.log")) {
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    for line in content.lines() {
+                        // find process.exe
+                        if let Some(idx) = line.find("find ") {
+                            let rest = &line[idx + 5..];
+                            let proc = if let Some(space_idx) = rest.find(' ') { &rest[..space_idx] } else { rest.trim() };
+                            if proc.ends_with(".exe") {
+                                all_processes.insert(proc.to_lowercase());
+                            }
+                        }
+                        // [OPEN][INVALID_PARAMETER] pid-process.exe
+                        if line.contains("[OPEN][INVALID_PARAMETER]") {
+                            if let Some(start) = line.find("[OPEN][INVALID_PARAMETER] ") {
+                                let after = &line[start + 27..];
+                                if let Some(dash_idx) = after.find('-') {
+                                    let after_dash = &after[dash_idx + 1..];
+                                    let proc = if let Some(space_idx) = after_dash.find(' ') {
+                                        &after_dash[..space_idx]
+                                    } else {
+                                        after_dash.trim()
+                                    };
+                                    if proc.ends_with(".exe") {
+                                        all_processes.insert(proc.to_lowercase());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Get from config
+    let mut config_processes = HashSet::new();
+    if let Ok(content) = std::fs::read_to_string(config_path) {
+        for line in content.lines() {
+            for word in line.split_whitespace() {
+                if word.ends_with(".exe") {
+                    config_processes.insert(word.to_lowercase());
+                }
+            }
+        }
+    }
+
+    // blacklist
+    let mut blacklist_processes = HashSet::new();
+    if !blacklist_path.is_empty() {
+        if let Ok(content) = std::fs::read_to_string(blacklist_path) {
+            for line in content.lines() {
+                for word in line.split_whitespace() {
+                    if word.ends_with(".exe") {
+                        blacklist_processes.insert(word.to_lowercase());
+                    }
+                }
+            }
+        }
+    }
+
+    // Filter new
+    let new_processes: Vec<String> = all_processes
+        .into_iter()
+        .filter(|p| !config_processes.contains(p) && !blacklist_processes.contains(p))
+        .collect();
+
+    // Search with es
+    let mut output = String::new();
+    for proc in new_processes {
+        output.push_str(&format!("Process: {}\n", proc));
+        let es_output = Command::new("es").args(&["-r", &format!("^{}$", proc)]).output();
+        match es_output {
+            Ok(output_result) if output_result.status.success() => {
+                let result = String::from_utf8_lossy(&output_result.stdout);
+                if !result.trim().is_empty() {
+                    output.push_str("Found:\n");
+                    for line in result.lines() {
+                        output.push_str(&format!("  {}\n", line));
+                    }
+                } else {
+                    output.push_str("Not found\n");
+                }
+            }
+            _ => {
+                output.push_str("Not found\n");
+            }
+        }
+        output.push_str("---\n");
+    }
+
+    if let Err(e) = std::fs::write(output_file, output) {
+        log!("Failed to write output: {}", e);
+    } else {
+        log!("Results saved to {}", output_file);
+    }
+}
+
 fn main() -> windows::core::Result<()> {
     let args: Vec<String> = env::args().collect();
     let mut interval_ms = 5000;
@@ -651,6 +762,7 @@ fn main() -> windows::core::Result<()> {
     let mut convert_mode = false;
     let mut find_mode = false;
     let mut validate_mode = false;
+    let mut process_logs_mode = false;
     let mut dry_run = false;
     let mut config_file_name = "config.ini".to_string();
     let mut blacklist_file_name: Option<String> = None;
@@ -671,6 +783,7 @@ fn main() -> windows::core::Result<()> {
         &mut convert_mode,
         &mut find_mode,
         &mut validate_mode,
+        &mut process_logs_mode,
         &mut dry_run,
         &mut config_file_name,
         &mut blacklist_file_name,
@@ -703,6 +816,10 @@ fn main() -> windows::core::Result<()> {
         return Ok(());
     }
     if validate_mode {
+        return Ok(());
+    }
+    if process_logs_mode {
+        process_logs(&config_file_name, blacklist_file_name.as_deref(), in_file_name.as_deref(), out_file_name.as_deref());
         return Ok(());
     }
     let configs = config_result.configs;

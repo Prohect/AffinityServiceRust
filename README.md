@@ -168,24 +168,28 @@ dwm.exe,high,*p,0,0,high,normal
 
 ## Tools
 
-### Process Discovery Script
+### Process Discovery
 
-The `process_logs.ps1` PowerShell script helps discover new processes from daily logs that aren't yet in your config or blacklist.
+Use the `-processlogs` mode to discover new processes from logs that aren't yet in your config or blacklist.
 
 **Requirements:**
-- PowerShell (Windows)
 - Everything search tool with `es.exe` in PATH
-- `temp/logs` symlink pointing to your daily log directory, or modify the script to point to your log location
+- Log files in `logs/` directory (default, can be specified with `-in`)
 
 **Usage:**
-Run from the project root:
-```powershell
-powershell.exe -ExecutionPolicy Bypass -File process_logs.ps1
+```bash
+# Use default settings
+AffinityServiceRust.exe -processlogs
+
+# Specify log directory and output file
+AffinityServiceRust.exe -processlogs -in mylogs -out results.txt
 ```
 
-This scans `.find.log` files, extracts process names, filters out configured/blacklisted ones, and searches for the rest using `es.exe`. Results are saved to `temp/new_processes_results.txt`, pairing each process with file paths for easy review and addition to config.
+This scans `.find.log` files in the `logs/` directory, extracts process names, filters out configured/blacklisted ones, and searches for the rest using `es.exe`. Results are saved to `new_processes_results.txt`, pairing each process with file paths for easy review and addition to config.
 
 Useful for keeping your config up-to-date with new applications.
+
+> **Note:** You can also use the `process_logs.ps1` PowerShell script for similar functionality.
 
 ## Debugging
 

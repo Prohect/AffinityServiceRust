@@ -47,6 +47,7 @@ Summary of best practices
 - For searching crate sources under `index.crates.io`, prefer terminal grep or `read_file` with explicit paths.
 - Always find and confirm the full file path before making edits; use `read_file`'s outline to identify line ranges (or cli regex tools) for large files.
 - Use `temp/` for temporary files (e.g., OCR outputs, preprocessed images) to keep the repository clean, as it is gitignored.
+- Logs are stored in `logs/` directory by default for `-processlogs` mode.
 
 ## Recommended CLI Tools
 

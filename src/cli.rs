@@ -20,6 +20,7 @@ pub fn parse_args(
     convert_mode: &mut bool,
     find_mode: &mut bool,
     validate_mode: &mut bool,
+    process_logs_mode: &mut bool,
     dry_run: &mut bool,
     config_file_name: &mut String,
     blacklist_file_name: &mut Option<String>,
@@ -56,6 +57,9 @@ pub fn parse_args(
             }
             "-validate" => {
                 *validate_mode = true;
+            }
+            "-processlogs" => {
+                *process_logs_mode = true;
             }
             "-dryrun" | "-dry-run" | "--dry-run" => {
                 *dry_run = true;
@@ -120,11 +124,13 @@ pub fn print_help() {
     log!("  -config <file>       config file to use (default: config.ini)");
     log!("  -find                find processes with default affinity (-blacklist <file>)");
     log!("  -interval <ms>       check interval in milliseconds (default: 5000)");
+    log!("");
     log!("  -noUAC               disable UAC elevation request");
     log!("  -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)");
     log!("");
     log!("Modes:");
     log!("  -validate            validate config file syntax without running");
+    log!("  -processlogs         process logs to find new processes and search paths (logs: logs, output: new_processes_results.txt)");
     log!("  -dryrun              show what would be changed without applying");
     log!("  -convert             convert Process Lasso config (-in <file> -out <file>)");
     log!("");
@@ -261,14 +267,16 @@ pub fn print_cli_help() {
     log!("  -find                find those whose affinity is same as system default which is all possible cores windows could use");
     log!("  -blacklist <file>    the blacklist for -find");
     log!("  -interval <ms>       set interval for checking again (5000 by default, minimal 16)");
+    log!("");
     log!("  -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)");
     log!("");
     log!("Operating Modes:");
     log!("  -validate            validate config file for syntax errors and undefined aliases");
+    log!("  -processlogs         process logs to find new processes and search paths (-in <logs dir> -out <file>)");
     log!("  -dryrun              simulate changes without applying (shows what would happen)");
     log!("  -convert             convert process configs from -in <file>(from process lasso) to -out <file>");
-    log!("  -in <file>           input file for -convert");
-    log!("  -out <file>          output file for -convert");
+    log!("  -in <file>           input file for -convert / logs directory for -processlogs (default: logs)");
+    log!("  -out <file>          output file for -convert / results file for -processlogs (default: new_processes_results.txt)");
     log!("");
     log!("Debug & Testing Options:");
     log!("  -loop <count>        number of loops to run (default: infinite) - for testing");

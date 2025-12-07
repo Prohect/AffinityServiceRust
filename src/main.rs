@@ -39,6 +39,7 @@ mod winapi;
 use chrono::Local;
 use cli::{parse_args, print_help, print_help_all};
 use config::{ProcessConfig, convert, cpu_indices_to_mask, format_cpu_indices, read_config, read_list};
+use encoding_rs::Encoding;
 use logging::{FAIL_SET, LOCALTIME_BUFFER, error_from_code, find_logger, log_process_find, log_pure_message, log_to_find, logger, use_console};
 use process::ProcessSnapshot;
 
@@ -51,6 +52,7 @@ use winapi::{
 };
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE},
+    Globalization::GetACP,
     System::{
         Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
         Threading::{
@@ -733,14 +735,18 @@ fn process_logs(config_path: &str, blacklist_path: Option<&str>, logs_path: Opti
 
     // Search with es
     let mut output = String::new();
+    let acp = unsafe { GetACP() };
+    let encoding = Encoding::for_label_no_replacement(format!("windows-{}", acp).as_bytes()).unwrap_or(encoding_rs::UTF_8);
     for proc in new_processes {
         output.push_str(&format!("Process: {}\n", proc));
-        let es_output = Command::new("es").args(&["-utf8-bom", "-r", &format!("^{}$", proc)]).output();
+        // Encode search pattern to ANSI
+        let proc_ansi = encoding.encode(&proc).0;
+        let proc_for_search = String::from_utf8_lossy(&proc_ansi);
+        let es_output = Command::new("es").args(&["-r", &format!("^{}$", proc_for_search)]).output();
         match es_output {
             Ok(output_result) if output_result.status.success() => {
-                let result = String::from_utf8_lossy(&output_result.stdout);
-                // Strip UTF-8 BOM if present
-                let result = result.strip_prefix('\u{FEFF}').unwrap_or(&result);
+                // Decode output from ANSI
+                let (result, _, _) = encoding.decode(&output_result.stdout);
                 if !result.trim().is_empty() {
                     output.push_str("Found:\n");
                     for line in result.lines() {

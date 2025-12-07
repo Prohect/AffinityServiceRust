@@ -72,6 +72,7 @@ AffinityServiceRust.exe -find
 | `-find` | 记录未管理的进程 |
 | `-convert` | 转换 Process Lasso 配置 |
 | `-validate` | 验证配置文件语法（不运行） |
+| `-processlogs` | 处理日志以查找新进程和搜索路径 |
 | `-dryrun` | 显示将会更改的内容（不实际应用） |
 
 ## 配置
@@ -188,7 +189,18 @@ AffinityServiceRust.exe -processlogs -in mylogs -out results.txt
 
 适用于保持配置与新应用程序的同步更新。
 
-> **注意：** 也可以使用 `process_logs.ps1` PowerShell 脚本实现类似功能。
+
+
+### 配置转换
+
+使用 `-convert` 模式将 Process Lasso 配置文件转换为 AffinityServiceRust 格式。
+
+**用法：**
+```bash
+AffinityServiceRust.exe -convert -in prolasso.ini -out my_config.ini
+```
+
+这将 Process Lasso 规则转换为 AffinityServiceRust 配置格式，便于从 Process Lasso 迁移到 AffinityServiceRust。
 
 ## 调试
 

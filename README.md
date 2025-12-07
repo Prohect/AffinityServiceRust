@@ -72,6 +72,7 @@ AffinityServiceRust.exe -find
 | `-find` | Log unmanaged processes |
 | `-convert` | Convert Process Lasso config |
 | `-validate` | Validate config file syntax without running |
+| `-processlogs` | Process logs to find new processes and search paths |
 | `-dryrun` | Show what would be changed without applying |
 
 ## Configuration
@@ -189,7 +190,16 @@ This scans `.find.log` files in the `logs/` directory, extracts process names, f
 
 Useful for keeping your config up-to-date with new applications.
 
-> **Note:** You can also use the `process_logs.ps1` PowerShell script for similar functionality.
+### Config Conversion
+
+Use the `-convert` mode to convert Process Lasso configuration files to AffinityServiceRust format.
+
+**Usage:**
+```bash
+AffinityServiceRust.exe -convert -in prolasso.ini -out my_config.ini
+```
+
+This converts Process Lasso rules to the AffinityServiceRust config format, allowing easy migration from Process Lasso to AffinityServiceRust.
 
 ## Debugging
 

@@ -43,7 +43,7 @@ use logging::{FAIL_SET, LOCALTIME_BUFFER, error_from_code, find_logger, log_proc
 use process::ProcessSnapshot;
 
 use scheduler::PrimeThreadScheduler;
-use std::{env, io::Write, mem::size_of, thread, time::Duration};
+use std::{collections::HashSet, env, io::Write, mem::size_of, process::Command, thread, time::Duration};
 use winapi::{
     NtQueryInformationProcess, NtSetInformationProcess, NtSetTimerResolution, cpusetids_from_indices, enable_debug_privilege, enable_inc_base_priority_privilege,
     filter_indices_by_mask, get_cpu_set_information, get_thread_start_address, indices_from_cpusetids, is_affinity_unset, is_running_as_admin, request_uac_elevation,
@@ -61,9 +61,6 @@ use windows::Win32::{
         WindowsProgramming::QueryThreadCycleTime,
     },
 };
-
-use std::collections::HashSet;
-use std::process::Command;
 
 use crate::logging::log_message;
 

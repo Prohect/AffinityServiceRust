@@ -3,7 +3,7 @@
 //! This module implements a scheduler that dynamically assigns the most
 //! CPU-intensive threads to preferred "prime" cores on hybrid CPUs.
 
-use crate::{config::ConfigConstants, priority::ThreadPriority};
+use crate::{config::ConfigConstants, priority::ThreadPriority, winapi::clear_module_cache};
 use std::collections::HashMap;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 
@@ -61,8 +61,9 @@ impl PrimeThreadScheduler {
 
     /// Closes thread handles and removes stats for dead processes.
     pub fn close_dead_process_handles(&mut self) {
-        self.pid_to_process_stats.retain(|_, process_stats| {
+        self.pid_to_process_stats.retain(|pid, process_stats| {
             if !process_stats.alive {
+                clear_module_cache(*pid);
                 for stats in process_stats.tid_to_thread_stats.values() {
                     if let Some(handle) = stats.handle {
                         unsafe {

@@ -516,7 +516,6 @@ pub fn resolve_address_to_module(pid: u32, address: usize) -> String {
 }
 
 /// Clears the module cache for a specific process (call when process exits).
-#[allow(dead_code)]
 pub fn clear_module_cache(pid: u32) {
     MODULE_CACHE.lock().unwrap().remove(&pid);
 }

@@ -1,8 +1,8 @@
 # Agent Environment Notes
 
-This file documents CLI tools and workflows useful for AI agents (like Zed's Agent Panel, Cursor, etc.) working on this project.
+Documents CLI tools and workflows useful for AI agents working on this project.
 
-> **Important:** When running AffinityServiceRust via the terminal tool, always use `-console` and `-noUAC` to see output directly. Without `-console`, output goes to log files only. Except the project needs admin elevation, you will need to use PowerShell to directly run the project (not via cargo) with out `-noUAC` flag, this requires user to check UAC.
+> **Important:** When running AffinityServiceRust via the terminal tool, always use `-console` and `-noUAC` to see output directly. Without `-console`, output goes to log files only. Except when the project needs admin elevation, you will need to use PowerShell to directly run the project (not via cargo) without `-noUAC` flag, this requires user to check UAC.
 >
 > ```sh
 > cargo run --release -- -console -noUAC -validate -config config.ini
@@ -12,7 +12,7 @@ This file documents CLI tools and workflows useful for AI agents (like Zed's Age
 
 Important notes for agents when using those tools in this repository:
 - check .gitignore before reading files. For reference, the current .gitignore contents are:
-```AffinityServiceRust/.gitignore#L1-13
+```AffinityServiceRust/.gitignore#L1-16
 /target
 /logs
 /temp
@@ -69,9 +69,9 @@ For large-scale code changes across multiple files:
 
 ```sh
 # Reorder fields: move field 2 to position 5
-# Before: name,priority,affinity,cpuset,prime[@regexes],io,memory
-# After:  name,affinity,cpuset,prime[@regexes],priority,io,memory
-sed -i 's/^\([^#@*][^,]*\),\([^,]*\),\([^,]*\),\([^,]*\),\([^,]*\),\([^,]*\),\([^,]*\)$/\1,\3,\4,\5,\2,\6,\7/' config.ini
+# Before: name:priority:affinity:cpuset:prime[@regexes]:io:memory
+# After:  name:affinity:cpuset:prime[@regexes]:priority:io:memory
+sed -i 's/^\([^#@*][^:]*\):\([^:]*\):\([^:]*\):\([^:]*\):\([^:]*\):\([^:]*\):\([^:]*\)$/\1:\3:\4:\5:\2:\6:\7/' config.ini
 ```
 
 ### Shell Escaping Issues

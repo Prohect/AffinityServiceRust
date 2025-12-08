@@ -80,7 +80,7 @@ AffinityServiceRust.exe -find
 ### 格式
 
 ```
-process_name,priority,affinity,cpu_set,prime_cpus[@prefixes],io_priority,memory_priority
+process_name:priority:affinity:cpu_set:prime_cpus[@prefixes]:io_priority:memory_priority
 ```
 
 ### CPU 规格
@@ -111,7 +111,7 @@ process_name,priority,affinity,cpu_set,prime_cpus[@prefixes],io_priority,memory_
 
 ```ini
 # 命名组（单行）
-browsers { chrome.exe, firefox.exe, msedge.exe },normal,*e,0,0,low,below normal
+browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal
 
 # 命名组（多行）
 asus_services {
@@ -119,16 +119,16 @@ asus_services {
     armourycrate.exe
     # 内部允许注释
     armourycrate.service.exe
-},none,*e,0,0,low,none
+}:none:*e:0:0:low:none
 
 # 匿名组（无需名称）
 {
-    textinputhost.exe, ctfmon.exe
-    dllhost.exe, sihost.exe
-},none,*e,0,0,low,none
+    textinputhost.exe: ctfmon.exe
+    dllhost.exe: sihost.exe
+}:none:*e:0:0:low:none
 
 # 匿名单行组
-{ taskmgr.exe, perfmon.exe },none,*a,0,0,none,none
+{ taskmgr.exe: perfmon.exe }:none:*a:0:0:none:none
 ```
 
 ### 示例
@@ -146,24 +146,24 @@ asus_services {
 *pN01 = 2-7         # P 核除 0-1
 
 # === 规则 ===
-# 进程,优先级,亲和性,cpuset,prime[@prefixes],io,memory
+# 进程:优先级:亲和性:cpuset:prime[@prefixes]:io:memory
 
 # 单进程规则
-cs2.exe,normal,*a,*p,*pN01,normal,normal
+cs2.exe:normal:*a:*p:*pN01:normal:normal
 
 # Prime 带模块过滤 - 仅来自以 UnityPlayer.dll 或 GameModule.dll 开头的模块的线程
-game.exe,normal,*a,*p,*pN01@UnityPlayer.dll;GameModule.dll,normal,normal
+game.exe:normal:*a:*p:*pN01@UnityPlayer.dll;GameModule.dll:normal:normal
 
 # 命名组 - 浏览器运行在 E 核
-browsers { chrome.exe, firefox.exe, msedge.exe },normal,*e,0,0,low,below normal
+browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal
 
 # 匿名组 - 后台应用
 {
-    discord.exe, telegram.exe, slack.exe
-},below normal,*e,0,0,low,low
+    discord.exe: telegram.exe: slack.exe
+}:below normal:*e:0:0:low:low
 
 # 系统（高 I/O 需要管理员）
-dwm.exe,high,*p,0,0,high,normal
+dwm.exe:high:*p:0:0:high:normal
 ```
 
 ## 工具

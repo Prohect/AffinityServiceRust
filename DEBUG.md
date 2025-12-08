@@ -164,16 +164,16 @@ A minimal test config is provided at `test.ini`:
 
 ```ini
 # Test the program itself
-AffinityServiceRust.exe,normal,0,0,0,normal,low
+AffinityServiceRust.exe:normal:0:0:0:normal:low
 
 # Test common processes
-notepad.exe,normal,0,0,0,normal,low
+notepad.exe:normal:0:0:0:normal:low
 ```
 
 ### Config Format
 
 ```
-process_name,priority,affinity,cpuset,prime_cpus[@prefixes],io_priority,memory_priority
+process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority
 ```
 
 - **priority**: `none`, `idle`, `below normal`, `normal`, `above normal`, `high`, `real time`

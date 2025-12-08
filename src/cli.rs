@@ -134,9 +134,9 @@ pub fn print_help() {
     log!("  -dryrun              show what would be changed without applying");
     log!("  -convert             convert Process Lasso config (-in <file> -out <file>)");
     log!("");
-    log!("Config Format: process_name,priority,affinity,cpuset,prime,io_priority,memory_priority");
-    log!("  Example: notepad.exe,above normal,0-7,0,0,low,normal");
-    log!("  Example: game.exe,high,*pcore,0,*pcore,normal,low");
+    log!("Config Format: process_name:priority:affinity:cpuset:prime:io_priority:memory_priority");
+    log!("  Example: notepad.exe:above normal:0-7:0:0:low:normal");
+    log!("  Example: game.exe:high:*pcore:0:*pcore:normal:low");
     log!("");
     log!("Use -helpall for detailed options and debugging features.");
 }
@@ -148,7 +148,7 @@ pub fn get_config_help_lines() -> Vec<&'static str> {
         "AffinityServiceRust Configuration Format",
         "============================================================================",
         "",
-        "Config file format: process_name,priority,affinity,cpuset,prime[@prefixes],io_priority,memory_priority",
+        "Config file format: process_name:priority:affinity:cpuset:prime[@prefixes]:io_priority:memory_priority",
         "",
         "----------------------------------------------------------------------------",
         "PRIORITY OPTIONS",
@@ -181,7 +181,7 @@ pub fn get_config_help_lines() -> Vec<&'static str> {
         "    *ecore = 8-15;72-79     # E-cores in both CPU groups",
         "    *allcores = 0-127       # All 128 cores",
         "    *legacy = 0xFF          # Old hex mask still works",
-        "  Then use: game.exe,high,*pcore,0,*pcore,normal,normal",
+        "  Then use: game.exe:high:*pcore:0:*pcore:normal:normal",
         "",
         "----------------------------------------------------------------------------",
         "PROCESS GROUPS",
@@ -190,16 +190,16 @@ pub fn get_config_help_lines() -> Vec<&'static str> {
         "",
         "  # Named group (multi-line)",
         "  group_name {",
-        "      process1.exe, process2.exe",
+        "      process1.exe: process2.exe",
         "      # Comments allowed inside",
         "      process3.exe",
-        "  },priority,affinity,cpuset,prime_cpus[@prefixes],io_priority,memory_priority",
+        "  }:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority",
         "",
         "  # Named group (single-line)",
-        "  browsers { chrome.exe, firefox.exe },normal,*e,0,0,low,none",
+        "  browsers { chrome.exe: firefox.exe }:normal:*e:0:0:low:none",
         "",
         "  # Anonymous group (no name)",
-        "  { notepad.exe, calc.exe },none,*e,0,0,low,none",
+        "  { notepad.exe: calc.exe }:none:*e:0:0:low:none",
         "",
         "----------------------------------------------------------------------------",
         "SCHEDULER CONSTANTS (for Prime Thread Scheduling)",

@@ -80,7 +80,7 @@ AffinityServiceRust.exe -find
 ### Format
 
 ```
-process_name,priority,affinity,cpu_set,prime_cpus[@prefixes],io_priority,memory_priority
+process_name:priority:affinity:cpu_set:prime_cpus[@prefixes]:io_priority:memory_priority
 ```
 
 ### CPU Specification
@@ -111,25 +111,25 @@ Group multiple processes with the same rule using `{ }` syntax. Group name is op
 
 ```ini
 # Named group (single-line)
-browsers { chrome.exe, firefox.exe, msedge.exe },normal,*e,0,0,low,below normal
+browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal
 
 # Named group (multi-line)
 sys_utils {
     # Process Lasso
-    bitsumsessionagent.exe, processgovernor.exe, processlasso.exe
+    bitsumsessionagent.exe: processgovernor.exe: processlasso.exe
     # AffinityService
-    affinityservicerust.exe, affinityserverc.exe
+    affinityservicerust.exe: affinityserverc.exe
     # Comments allowed inside groups
-},none,*e,0,0,low,none
+}:none:*e:0:0:low:none
 
 # Anonymous group (no name needed)
 {
-    textinputhost.exe, ctfmon.exe, chsime.exe
-    dllhost.exe, sihost.exe, ShellHost.exe
-},none,*e,0,0,low,none
+    textinputhost.exe: ctfmon.exe: chsime.exe
+    dllhost.exe: sihost.exe: ShellHost.exe
+}:none:*e:0:0:low:none
 
 # Anonymous single-line
-{ taskmgr.exe, perfmon.exe },none,*a,0,0,none,none
+{ taskmgr.exe: perfmon.exe }:none:*a:0:0:none:none
 ```
 
 ### Example
@@ -147,24 +147,24 @@ sys_utils {
 *pN01 = 2-7         # P-cores except 0-1
 
 # === RULES ===
-# process,priority,affinity,cpuset,prime[@prefixes],io,memory
+# process:priority:affinity:cpuset:prime[@prefixes]:io:memory
 
 # Single process rule
-cs2.exe,normal,*a,*p,*pN01,normal,normal
+cs2.exe:normal:*a:*p:*pN01:normal:normal
 
 # Prime with module filtering - only threads from modules starting with UnityPlayer.dll or GameModule.dll
-game.exe,normal,*a,*p,*pN01@UnityPlayer.dll;GameModule.dll,normal,normal
+game.exe:normal:*a:*p:*pN01@UnityPlayer.dll;GameModule.dll:normal:normal
 
 # Named group - browsers on E-cores
-browsers { chrome.exe, firefox.exe, msedge.exe },normal,*e,0,0,low,below normal
+browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal
 
 # Anonymous group - background apps
 {
-    discord.exe, telegram.exe, slack.exe
-},below normal,*e,0,0,low,low
+    discord.exe: telegram.exe: slack.exe
+}:below normal:*e:0:0:low:low
 
 # System (admin required for high I/O)
-dwm.exe,high,*p,0,0,high,normal
+dwm.exe:high:*p:0:0:high:normal
 ```
 
 ## Tools

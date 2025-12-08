@@ -244,7 +244,7 @@ fn resolve_cpu_spec(spec: &str, field_name: &str, line_number: usize, cpu_aliase
 
 /// Collects process names from comma-separated text into a vector.
 fn collect_members(text: &str, members: &mut Vec<String>) {
-    for item in text.split(',') {
+    for item in text.split(':') {
         let item = item.trim().to_lowercase();
         if !item.is_empty() && !item.starts_with('#') {
             members.push(item);
@@ -328,7 +328,7 @@ fn collect_group_block(lines: &[String], start_index: usize, first_line_content:
                 collect_members(before, &mut members);
             }
             let after = block_line[pos + 1..].trim();
-            let suffix = if after.starts_with(',') { Some(after[1..].to_string()) } else { None };
+            let suffix = if after.starts_with(':') { Some(after[1..].to_string()) } else { None };
             return Some((members, suffix, i + 1));
         }
 
@@ -515,7 +515,7 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
             continue;
         }
 
-        // Group: [name] { members },rule  OR  Single: name,rule
+        // Group: [name] { members }:rule  OR  Single: name:rule
         if let Some(brace_start) = line.find('{') {
             let group_name = line[..brace_start].trim();
             let group_label = if group_name.is_empty() {
@@ -524,12 +524,12 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
                 group_name.to_lowercase()
             };
 
-            // Single-line group: { a, b },rule
+            // Single-line group: { a: b }:rule
             let (members, rule_suffix, next_i) = if let Some(brace_end) = line.find('}') {
                 let mut members = Vec::new();
                 collect_members(&line[brace_start + 1..brace_end], &mut members);
                 let after = line[brace_end + 1..].trim();
-                let suffix = after.strip_prefix(',').map(|s| s.to_string());
+                let suffix = after.strip_prefix(':').map(|s| s.to_string());
                 (members, suffix, i + 1)
             } else {
                 // Multi-line group
@@ -555,20 +555,20 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
             result.group_members_count += members.len();
 
             if let Some(suffix) = rule_suffix {
-                let rule_parts: Vec<&str> = suffix.split(',').collect();
+                let rule_parts: Vec<&str> = suffix.split(':').collect();
                 parse_and_insert_rules(&members, &rule_parts, line_number, &cpu_aliases, &mut result);
             } else {
                 result
                     .errors
-                    .push(format!("Line {}: Group '{}' missing rule - use }},priority,affinity,...", line_number, group_label));
+                    .push(format!("Line {}: Group '{}' missing rule - use }}:priority:affinity,...", line_number, group_label));
             }
         } else {
             // Single process line
-            let parts: Vec<&str> = line.split(',').collect();
+            let parts: Vec<&str> = line.split(':').collect();
             if parts.len() < 3 {
                 result
                     .errors
-                    .push(format!("Line {}: Too few fields - expected name,priority,affinity,...", line_number));
+                    .push(format!("Line {}: Too few fields - expected name:priority:affinity,...", line_number));
                 i += 1;
                 continue;
             }
@@ -764,7 +764,7 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
             _ => "none",
         };
 
-        output_lines.push(format!("{},{},{},0,0,none,none", name, priority_str, affinity));
+        output_lines.push(format!("{}:{}:{}:0:0:none:none", name, priority_str, affinity));
     }
 
     log!(

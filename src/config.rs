@@ -27,9 +27,19 @@ use std::{
     path::Path,
 };
 
-/// Configuration for a single process, parsed from config.ini.
-/// Format: `name,priority,affinity,cpu_set,prime_cpu,io_priority,memory_priority`
+/// Represents a module prefix filter for prime thread scheduling with optional CPU set override.
 #[derive(Debug, Clone)]
+pub struct PrimePrefix {
+    /// Module name prefix to match (e.g., "cs2.exe", "nvwgf2umx.dll")
+    pub prefix: String,
+    /// Optional CPU set for threads matching this prefix (falls back to prime_threads_cpus if None)
+    pub cpus: Option<Vec<u32>>,
+}
+
+/// Configuration for a single process, parsed from config.ini.
+/// Format: `name:priority:affinity:cpu_set:prime_cpu:io_priority:memory_priority`
+#[derive(Debug, Clone)]
+
 pub struct ProcessConfig {
     pub name: String,
     pub priority: ProcessPriority,
@@ -39,8 +49,8 @@ pub struct ProcessConfig {
     pub cpu_set_cpus: Vec<u32>,
     /// CPU indices for prime thread scheduling (high-priority threads)
     pub prime_threads_cpus: Vec<u32>,
-    /// Module name prefixes for filtering prime threads (optional, defaults to all)
-    pub prime_threads_prefixes: Vec<String>,
+    /// Module name prefixes for filtering prime threads with optional CPU overrides
+    pub prime_threads_prefixes: Vec<PrimePrefix>,
     pub io_priority: IOPriority,
     pub memory_priority: MemoryPriority,
 }
@@ -388,24 +398,64 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
             let prefix_part = &prime_spec[at_pos + 1..];
             let cpus = resolve_cpu_spec(cpu_part.trim(), "prime_cpus", line_number, cpu_aliases, &mut result.errors);
             let prefixes = if prefix_part.trim().is_empty() {
-                vec!["".to_string()]
+                vec![PrimePrefix {
+                    prefix: "".to_string(),
+                    cpus: None,
+                }]
             } else {
-                let temp: Vec<String> = prefix_part
+                let temp: Vec<PrimePrefix> = prefix_part
                     .split(';')
                     .filter_map(|s| {
                         let s = s.trim();
-                        if s.is_empty() { None } else { Some(s.to_string()) }
+                        if s.is_empty() {
+                            None
+                        } else {
+                            if let Some(star_pos) = s.find('*') {
+                                let prefix = s[..star_pos].to_string();
+                                let alias = &s[star_pos + 1..];
+                                let prefix_cpus = if alias.is_empty() {
+                                    None
+                                } else {
+                                    Some(resolve_cpu_spec(alias, "prime_prefix_cpus", line_number, cpu_aliases, &mut result.errors))
+                                };
+                                Some(PrimePrefix { prefix, cpus: prefix_cpus })
+                            } else {
+                                Some(PrimePrefix {
+                                    prefix: s.to_string(),
+                                    cpus: None,
+                                })
+                            }
+                        }
                     })
                     .collect();
-                if temp.is_empty() { vec!["".to_string()] } else { temp }
+                if temp.is_empty() {
+                    vec![PrimePrefix {
+                        prefix: "".to_string(),
+                        cpus: None,
+                    }]
+                } else {
+                    temp
+                }
             };
             (cpus, prefixes)
         } else {
             let cpus = resolve_cpu_spec(prime_spec, "prime_cpus", line_number, cpu_aliases, &mut result.errors);
-            (cpus, vec!["".to_string()])
+            (
+                cpus,
+                vec![PrimePrefix {
+                    prefix: "".to_string(),
+                    cpus: None,
+                }],
+            )
         }
     } else {
-        (Vec::new(), vec!["".to_string()])
+        (
+            Vec::new(),
+            vec![PrimePrefix {
+                prefix: "".to_string(),
+                cpus: None,
+            }],
+        )
     };
 
     // Parse io_priority (optional, defaults to None)

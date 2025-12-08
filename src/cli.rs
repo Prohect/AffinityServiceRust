@@ -136,7 +136,8 @@ pub fn print_help() {
     log!("");
     log!("Config Format: process_name:priority:affinity:cpuset:prime:io_priority:memory_priority");
     log!("  Example: notepad.exe:above normal:0-7:0:0:low:normal");
-    log!("  Example: game.exe:high:*pcore:0:*pcore:normal:low");
+    log!("  Example: game.exe:high:*pcore:0:*pcore@module.dll:normal:low");
+    log!("  Example: cs2.exe:high:*pcore:0:*pcore@cs2.exe*p;nvidia.dll*e:normal:low");
     log!("");
     log!("Use -helpall for detailed options and debugging features.");
 }
@@ -149,6 +150,9 @@ pub fn get_config_help_lines() -> Vec<&'static str> {
         "============================================================================",
         "",
         "Config file format: process_name:priority:affinity:cpuset:prime[@prefixes]:io_priority:memory_priority",
+        "",
+        "  prime[@prefixes] supports per-module CPU overrides:",
+        "    prime_cpus@module1*alias1;module2*alias2",
         "",
         "----------------------------------------------------------------------------",
         "PRIORITY OPTIONS",
@@ -197,6 +201,9 @@ pub fn get_config_help_lines() -> Vec<&'static str> {
         "",
         "  # Named group (single-line)",
         "  browsers { chrome.exe: firefox.exe }:normal:*e:0:0:low:none",
+        "",
+        "  # Prime with per-module CPU assignment",
+        "  cs2.exe:high:*pcore:0:*pcore@cs2.exe*p;nvidia.dll*e:high:none",
         "",
         "  # Anonymous group (no name)",
         "  { notepad.exe: calc.exe }:none:*e:0:0:low:none",

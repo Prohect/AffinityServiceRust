@@ -132,6 +132,19 @@ sys_utils {
 { taskmgr.exe: perfmon.exe }:none:*a:0:0:none:none
 ```
 
+### Prime Thread Scheduling
+
+The `prime_cpus` field supports optional module-based filtering and per-module CPU assignments:
+
+- `prime_cpus` - Base CPU set for prime threads
+- `prime_cpus@prefix1;prefix2` - Only promote threads from modules starting with specified prefixes
+- `prime_cpus@prefix1*alias1;prefix2*alias2` - Assign specific CPU sets per module prefix
+
+Examples:
+- `*pN01` - All prime threads use P-cores except 0-1
+- `*pN01@cs2.exe;nvwgf2umx.dll` - Only CS2 and NVIDIA threads, using *pN01 CPUs
+- `*pN01@cs2.exe*p;nvwgf2umx.dll*e` - CS2 threads use P-cores (*p), NVIDIA threads use E-cores (*e)
+
 ### Example
 
 ```ini
@@ -154,6 +167,9 @@ cs2.exe:normal:*a:*p:*pN01:normal:normal
 
 # Prime with module filtering - only threads from modules starting with UnityPlayer.dll or GameModule.dll
 game.exe:normal:*a:*p:*pN01@UnityPlayer.dll;GameModule.dll:normal:normal
+
+# Per-module CPU assignment - CS2 main threads on P-cores, NVIDIA on E-cores
+cs2.exe:normal:*a:*p:*pN01@cs2.exe*p;nvwgf2umx.dll*e:normal:normal
 
 # Named group - browsers on E-cores
 browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal

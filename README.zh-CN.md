@@ -131,6 +131,19 @@ asus_services {
 { taskmgr.exe: perfmon.exe }:none:*a:0:0:none:none
 ```
 
+### Prime 线程调度
+
+`prime_cpus` 字段支持可选的基于模块的过滤和每模块 CPU 分配：
+
+- `prime_cpus` - Prime 线程的基础 CPU 集
+- `prime_cpus@prefix1;prefix2` - 仅提升来自以指定前缀开头的模块的线程
+- `prime_cpus@prefix1*alias1;prefix2*alias2` - 为每个模块前缀分配特定的 CPU 集
+
+示例：
+- `*pN01` - 所有 prime 线程使用除 0-1 外的 P 核
+- `*pN01@cs2.exe;nvwgf2umx.dll` - 仅 CS2 和 NVIDIA 线程，使用 *pN01 CPU
+- `*pN01@cs2.exe*p;nvwgf2umx.dll*e` - CS2 线程使用 P 核 (*p)，NVIDIA 线程使用 E 核 (*e)
+
 ### 示例
 
 ```ini
@@ -153,6 +166,9 @@ cs2.exe:normal:*a:*p:*pN01:normal:normal
 
 # Prime 带模块过滤 - 仅来自以 UnityPlayer.dll 或 GameModule.dll 开头的模块的线程
 game.exe:normal:*a:*p:*pN01@UnityPlayer.dll;GameModule.dll:normal:normal
+
+# 每模块 CPU 分配 - CS2 主线程在 P 核，NVIDIA 在 E 核
+cs2.exe:normal:*a:*p:*pN01@cs2.exe*p;nvwgf2umx.dll*e:normal:normal
 
 # 命名组 - 浏览器运行在 E 核
 browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal

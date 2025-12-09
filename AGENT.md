@@ -43,6 +43,7 @@ Cargo index symlink (project-specific)
 - When giving paths to tools, always start paths with one of the repository root directories (e.g., `AffinityServiceRust/src/index.crates.io/...`).
 
 Summary of best practices
+- See [src_outline.md](src_outline.md) for a quick outline of the src code structure.
 - Use the panel's built-in tools for quick lookups and diagnostics.
 - For searching crate sources under `index.crates.io`, prefer terminal grep or `read_file` with explicit paths.
 - Always find and confirm the full file path before making edits; use `read_file`'s outline to identify line ranges (or cli regex tools) for large files.
@@ -53,6 +54,7 @@ Summary of best practices
 
 The following tools enhance agent capabilities for bulk editing and automation:
 
+- See [scripts/generate_outline.sh](scripts/generate_outline.sh) for generating the src code outline. Usage: `./scripts/generate_outline.sh > src_outline.md`
 - See [docs/sed-perl-awk.md](docs/sed-perl-awk.md) for detailed usage of sed, perl, and awk.
 
 ## Agent Workflow Tips

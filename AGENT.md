@@ -54,7 +54,7 @@ Summary of best practices
 
 The following tools enhance agent capabilities for bulk editing and automation:
 
-- See [scripts/generate_outline.sh](scripts/generate_outline.sh) for generating the src code outline. Usage: `./scripts/generate_outline.sh > src_outline.md`
+- **Important:** Use [scripts/generate_outline.sh](scripts/generate_outline.sh) to generate the src code outline. This script provides a comprehensive overview of the project's structure and is essential for understanding the codebase. Usage: `./scripts/generate_outline.sh > src_outline.md`
 - See [docs/sed-perl-awk.md](docs/sed-perl-awk.md) for detailed usage of sed, perl, and awk.
 
 ## Agent Workflow Tips

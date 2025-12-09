@@ -74,6 +74,16 @@ For large-scale code changes across multiple files:
 sed -i 's/^\([^#@*][^:]*\):\([^:]*\):\([^:]*\):\([^:]*\):\([^:]*\):\([^:]*\):\([^:]*\)$/\1:\3:\4:\5:\2:\6:\7/' config.ini
 ```
 
+### Finding Rust Function Doc Ranges
+
+To find the full range of a Rust function including its documentation (/// comments), use `awk` to locate the doc start based on Rust's syntax rules. Docs appear immediately after the previous top-level item's closing `}` or `;` and before the function declaration.
+
+#### Example: Find doc start for `parse_cpu_spec`
+
+```sh
+cd AffinityServiceRust && awk '/^pub fn parse_cpu_spec/ { print "Doc starts at " (last_end + 1); exit } /^}/ || /;$/ { last_end = NR }' src/config.rs
+```
+
 ### Shell Escaping Issues
 
 - The terminal runs through `sh` (Git Bash)

@@ -110,6 +110,32 @@
     current_mask: &mut usize,
     apply_config_result: &mut ApplyConfigResult,
 )
+- fn apply_prime_threads_select_candidates(process: &mut process::ProcessEntry, candidate_tids: &mut [u32], prime_core_scheduler: &mut PrimeThreadScheduler, pid: u32)
+- fn apply_prime_threads_query_cycles(
+    candidate_tids: &[u32],
+    tid_with_delta_cycles: &mut [(u32, u64, bool)],
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    pid: u32,
+    process_name: &str,
+    apply_config_result: &mut ApplyConfigResult,
+)
+- fn apply_prime_threads_update_streaks(tid_with_delta_cycles: &mut [(u32, u64, bool)], prime_core_scheduler: &mut PrimeThreadScheduler, pid: u32, prime_count: usize)
+- fn apply_prime_threads_promote(
+    tid_with_delta_cycles: &[(u32, u64, bool)],
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    pid: u32,
+    config: &ProcessConfig,
+    current_mask: &mut usize,
+    apply_config_result: &mut ApplyConfigResult,
+)
+- fn apply_prime_threads_demote(
+    process: &mut process::ProcessEntry,
+    tid_with_delta_cycles: &[(u32, u64, bool)],
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    pid: u32,
+    config: &ProcessConfig,
+    apply_config_result: &mut ApplyConfigResult,
+)
 - fn apply_io_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult)
 - fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult)
 - fn apply_config(

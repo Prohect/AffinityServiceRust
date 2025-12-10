@@ -12,20 +12,34 @@ for file in src/*.rs; do
 
     # Use awk to parse and accumulate multi-line declarations
     awk '
+    function count_braces(line) {
+        split(line, chars, "")
+        for (i in chars) {
+            if (chars[i] == "{") brace_count++
+            else if (chars[i] == "}") brace_count--
+        }
+    }
     {
         if (in_decl) {
             if ($0 ~ /\/\/\// || $0 ~ /#/) next
             decl = decl "\n" $0
-            if (is_fn && $0 ~ /\{/) {
-                # Function signature complete at {
-                processed = decl
-                sub(/^pub /, "", processed)
-                sub(/ \{.*/, "", processed)
-                print "- [L" start_line ":L" NR "]" processed
-                in_decl = 0
-                is_fn = 0
-                decl = ""
-                doc_start = 0
+            count_braces($0)
+            if (is_fn) {
+                if (brace_count == 0 && initial_brace_found) {
+                    # Function ends when braces balance
+                    processed = decl
+                    sub(/^pub /, "", processed)
+                    sub(/ \{.*/, "", processed)
+                    print "- [L" start_line ":L" NR "]" processed
+                    in_decl = 0
+                    is_fn = 0
+                    decl = ""
+                    doc_start = 0
+                    brace_count = 0
+                    initial_brace_found = 0
+                } else if ($0 ~ /\{/ && !initial_brace_found) {
+                    initial_brace_found = 1
+                }
             } else if (!is_fn && ($0 ~ /;|\}/)) {
                 # For structs/enums, stop at ; or }
                 processed = decl
@@ -41,10 +55,16 @@ for file in src/*.rs; do
             in_decl = 1
             start_line = doc_start ? doc_start : NR
             decl = $0
+            brace_count = 0
+            initial_brace_found = 0
             if (/^pub fn|^fn/) {
                 is_fn = 1
+                count_braces($0)
                 if ($0 ~ /\{/) {
-                    # Function signature on single line
+                    initial_brace_found = 1
+                }
+                if (brace_count == 0 && initial_brace_found) {
+                    # Single-line function
                     processed = $0
                     sub(/^pub /, "", processed)
                     sub(/ \{.*/, "", processed)
@@ -53,6 +73,8 @@ for file in src/*.rs; do
                     is_fn = 0
                     decl = ""
                     doc_start = 0
+                    brace_count = 0
+                    initial_brace_found = 0
                 }
             } else {
                 # For structs/enums, check if complete on first line

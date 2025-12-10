@@ -7,7 +7,7 @@ mod scheduler;
 mod winapi;
 
 use chrono::Local;
-use cli::{parse_args, print_help, print_help_all};
+use cli::{CliArgs, parse_args, print_help, print_help_all};
 use config::{ProcessConfig, convert, cpu_indices_to_mask, format_cpu_indices, read_config, read_list};
 use encoding_rs::Encoding;
 use logging::{FAIL_SET, LOCALTIME_BUFFER, error_from_code, find_logger, log_message, log_process_find, log_pure_message, log_to_find, logger, use_console};
@@ -732,84 +732,45 @@ fn process_logs(configs: &HashMap<String, ProcessConfig>, blacklist: &Vec<String
 
 fn main() -> windows::core::Result<()> {
     let args: Vec<String> = env::args().collect();
-    let mut interval_ms = 5000;
-    let mut help_mode = false;
-    let mut help_all_mode = false;
-    let mut convert_mode = false;
-    let mut find_mode = false;
-    let mut validate_mode = false;
-    let mut process_logs_mode = false;
-    let mut dry_run = false;
-    let mut config_file_name = "config.ini".to_string();
-    let mut blacklist_file_name: Option<String> = None;
-    let mut in_file_name: Option<String> = None;
-    let mut out_file_name: Option<String> = None;
-    let mut no_uac = false;
-    let mut loop_count: Option<u32> = None;
-    let mut time_resolution: u32 = 0;
-    let mut log_loop = false;
-    let mut skip_log_before_elevation = false;
-    let mut no_debug_priv = false;
-    let mut no_inc_base_priority = false;
-    parse_args(
-        &args,
-        &mut interval_ms,
-        &mut help_mode,
-        &mut help_all_mode,
-        &mut convert_mode,
-        &mut find_mode,
-        &mut validate_mode,
-        &mut process_logs_mode,
-        &mut dry_run,
-        &mut config_file_name,
-        &mut blacklist_file_name,
-        &mut in_file_name,
-        &mut out_file_name,
-        &mut no_uac,
-        &mut loop_count,
-        &mut time_resolution,
-        &mut log_loop,
-        &mut skip_log_before_elevation,
-        &mut no_debug_priv,
-        &mut no_inc_base_priority,
-    )?;
-    if help_mode {
+    let mut cli = CliArgs::new();
+    parse_args(&args, &mut cli)?;
+    if cli.help_mode {
         print_help();
         return Ok(());
     }
-    if help_all_mode {
+    if cli.help_all_mode {
         print_help_all();
         return Ok(());
     }
-    if convert_mode {
-        convert(in_file_name, out_file_name);
+    if cli.convert_mode {
+        convert(cli.in_file_name, cli.out_file_name);
         return Ok(());
     }
-    let config_result = read_config(&config_file_name);
+    let config_result = read_config(&cli.config_file_name);
     config_result.print_report();
     if !config_result.errors.is_empty() {
         log!("Configuration file has errors, please fix them before running the service.");
         return Ok(());
     }
-    if validate_mode {
+    if cli.validate_mode {
         return Ok(());
     }
     let configs = config_result.configs;
     let constants = config_result.constants;
-    let blacklist = if let Some(bf) = blacklist_file_name {
+    let blacklist = if let Some(bf) = cli.blacklist_file_name {
         read_list(bf).unwrap_or_default()
     } else {
         Vec::new()
     };
     let is_config_empty = configs.is_empty();
     let is_blacklist_empty = blacklist.is_empty();
-    if process_logs_mode {
-        process_logs(&configs, &blacklist, in_file_name.as_deref(), out_file_name.as_deref());
+    if cli.process_logs_mode {
+        process_logs(&configs, &blacklist, cli.in_file_name.as_deref(), cli.out_file_name.as_deref());
         return Ok(());
     }
     if is_config_empty && is_blacklist_empty {
-        if !find_mode {
-            if skip_log_before_elevation {
+        if !cli.find_mode {
+            if cli.skip_log_before_elevation {
                 log!("not even a single config, existing");
             }
             return Ok(());
@@ -817,36 +778,36 @@ fn main() -> windows::core::Result<()> {
     } else {
         log!("{} blacklist items load", blacklist.len());
     }
-    if !no_debug_priv {
+    if !cli.no_debug_priv {
         enable_debug_privilege();
     } else {
         log!("SeDebugPrivilege disabled by -noDebugPriv flag");
     }
-    if !no_inc_base_priority {
+    if !cli.no_inc_base_priority {
         enable_inc_base_priority_privilege();
     } else {
         log!("SeIncreaseBasePriorityPrivilege disabled by -noIncBasePriority flag");
     }
-    if time_resolution != 0 {
+    if cli.time_resolution != 0 {
         unsafe {
             let mut current_resolution = 0u32;
-            match NtSetTimerResolution(time_resolution, true, &mut current_resolution as *mut _ as *mut std::ffi::c_void).0 {
+            match NtSetTimerResolution(cli.time_resolution, true, &mut current_resolution as *mut _ as *mut std::ffi::c_void).0 {
                 ntstatus if ntstatus < 0 => {
                     log!("Failed to set timer resolution: 0x{:08X}", ntstatus);
                 }
                 ntstatus if ntstatus >= 0 => {
-                    log!("Succeed to set timer resolution: {:.4}ms", time_resolution as f64 / 10000f64);
+                    log!("Succeed to set timer resolution: {:.4}ms", cli.time_resolution as f64 / 10000f64);
                     log!("elder timer resolution: {:.4}ms", current_resolution);
                 }
                 _ => {}
             };
         }
     }
-    if !skip_log_before_elevation {
-        log!("Affinity Service started with time interval: {}", interval_ms);
+    if !cli.skip_log_before_elevation {
+        log!("Affinity Service started with time interval: {}", cli.interval_ms);
     }
     if !is_running_as_admin() {
-        if no_uac {
+        if cli.no_uac {
             log!("Not running as administrator. UAC elevation disabled by -noUAC flag.");
             log!("Warning: May not be able to manage all processes without admin privileges.");
         } else {
@@ -866,7 +827,7 @@ fn main() -> windows::core::Result<()> {
     let mut should_continue = true;
 
     while should_continue {
-        if log_loop {
+        if cli.log_loop {
             log!("Loop {} started", current_loop + 1);
         }
         match ProcessSnapshot::take() {
@@ -876,7 +837,7 @@ fn main() -> windows::core::Result<()> {
                 prime_core_scheduler.reset_alive();
                 for (pid, name) in pids_and_names {
                     if let Some(config) = configs.get(&name) {
-                        let result = apply_config(pid, config, &mut prime_core_scheduler, Some(&mut processes), dry_run);
+                        let result = apply_config(pid, config, &mut prime_core_scheduler, Some(&mut processes), cli.dry_run);
                         if !result.is_empty() {
                             // Log errors to find log
                             for error in &result.errors {
@@ -897,7 +858,7 @@ fn main() -> windows::core::Result<()> {
                     }
                 }
                 prime_core_scheduler.close_dead_process_handles();
-                if dry_run {
+                if cli.dry_run {
                     log!(
                         "[DRY RUN] Checking {} running processes against {} config rules...",
                         processes.pid_to_process.len(),
@@ -913,7 +874,7 @@ fn main() -> windows::core::Result<()> {
                 log!("Failed to take process snapshot: {}", err);
             }
         };
-        if find_mode {
+        if cli.find_mode {
             unsafe {
                 let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
                 let mut pe32 = PROCESSENTRY32W::default();
@@ -937,16 +898,16 @@ fn main() -> windows::core::Result<()> {
         let _ = find_logger().lock().unwrap().flush();
         let _ = logger().lock().unwrap().flush();
         current_loop += 1;
-        if let Some(max_loops) = loop_count {
+        if let Some(max_loops) = cli.loop_count {
             if current_loop >= max_loops {
-                if log_loop {
+                if cli.log_loop {
                     log!("Completed {} loops, exiting", max_loops);
                 }
                 should_continue = false;
             }
         }
         if should_continue {
-            thread::sleep(Duration::from_millis(interval_ms));
+            thread::sleep(Duration::from_millis(cli.interval_ms));
             *LOCALTIME_BUFFER.lock().unwrap() = Local::now();
         }
     }

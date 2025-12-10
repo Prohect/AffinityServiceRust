@@ -4,105 +4,120 @@
 
 use crate::{log, logging::use_console};
 
+/// Configuration struct for CLI arguments.
+/// Defaults are set here; `parse_args` will override them based on user input.
+#[derive(Debug, Default)]
+pub struct CliArgs {
+    pub interval_ms: u64,
+    pub help_mode: bool,
+    pub help_all_mode: bool,
+    pub convert_mode: bool,
+    pub find_mode: bool,
+    pub validate_mode: bool,
+    pub process_logs_mode: bool,
+    pub dry_run: bool,
+    pub config_file_name: String,
+    pub blacklist_file_name: Option<String>,
+    pub in_file_name: Option<String>,
+    pub out_file_name: Option<String>,
+    pub no_uac: bool,
+    pub loop_count: Option<u32>,
+    pub time_resolution: u32,
+    pub log_loop: bool,
+    pub skip_log_before_elevation: bool,
+    pub no_debug_priv: bool,
+    pub no_inc_base_priority: bool,
+}
+
+impl CliArgs {
+    /// Creates a new `CliArgs` with sensible defaults.
+    pub fn new() -> Self {
+        Self {
+            interval_ms: 5000,                          // Default from the original code
+            config_file_name: "config.ini".to_string(), // Default
+            ..Default::default()
+        }
+    }
+}
+
 /// Parses command-line arguments and sets the corresponding flags and values.
 ///
 /// # Arguments
 /// * `args` - The command-line arguments
-/// * Various mutable references for output values
+/// * `cli` - Mutable reference to the CLI config struct
 ///
 /// # Returns
 /// `Ok(())` on success, or a Windows error on failure.
-pub fn parse_args(
-    args: &[String],
-    interval_ms: &mut u64,
-    help_mode: &mut bool,
-    help_all_mode: &mut bool,
-    convert_mode: &mut bool,
-    find_mode: &mut bool,
-    validate_mode: &mut bool,
-    process_logs_mode: &mut bool,
-    dry_run: &mut bool,
-    config_file_name: &mut String,
-    blacklist_file_name: &mut Option<String>,
-    in_file_name: &mut Option<String>,
-    out_file_name: &mut Option<String>,
-    no_uac: &mut bool,
-    loop_count: &mut Option<u32>,
-    time_resolution: &mut u32,
-    log_loop: &mut bool,
-    skip_log_before_elevation: &mut bool,
-    no_debug_priv: &mut bool,
-    no_inc_base_priority: &mut bool,
-) -> windows::core::Result<()> {
+pub fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<()> {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "-help" | "--help" | "-?" | "/?" | "?" => {
-                *help_mode = true;
+                cli.help_mode = true;
             }
             "-helpall" | "--helpall" => {
-                *help_all_mode = true;
+                cli.help_all_mode = true;
             }
             "-console" => {
                 *use_console().lock().unwrap() = true;
             }
             "-noUAC" | "-nouac" => {
-                *no_uac = true;
+                cli.no_uac = true;
             }
             "-convert" => {
-                *convert_mode = true;
+                cli.convert_mode = true;
             }
             "-find" => {
-                *find_mode = true;
+                cli.find_mode = true;
             }
             "-validate" => {
-                *validate_mode = true;
+                cli.validate_mode = true;
             }
             "-processlogs" => {
-                *process_logs_mode = true;
+                cli.process_logs_mode = true;
             }
             "-dryrun" | "-dry-run" | "--dry-run" => {
-                *dry_run = true;
+                cli.dry_run = true;
             }
             "-interval" if i + 1 < args.len() => {
-                *interval_ms = args[i + 1].parse().unwrap_or(5000).max(16);
+                cli.interval_ms = args[i + 1].parse().unwrap_or(5000).max(16);
                 i += 1;
             }
             "-loop" if i + 1 < args.len() => {
-                *loop_count = Some(args[i + 1].parse().unwrap_or(1).max(1));
+                cli.loop_count = Some(args[i + 1].parse().unwrap_or(1).max(1));
                 i += 1;
             }
             "-resolution" if i + 1 < args.len() => {
-                *time_resolution = args[i + 1].parse().unwrap_or(0).max(0);
+                cli.time_resolution = args[i + 1].parse().unwrap_or(0).max(0);
                 i += 1;
             }
             "-logloop" => {
-                *log_loop = true;
+                cli.log_loop = true;
             }
             "-config" if i + 1 < args.len() => {
-                *config_file_name = args[i + 1].clone();
+                cli.config_file_name = args[i + 1].clone();
                 i += 1;
             }
             "-blacklist" if i + 1 < args.len() => {
-                *blacklist_file_name = Some(args[i + 1].clone());
+                cli.blacklist_file_name = Some(args[i + 1].clone());
                 i += 1;
             }
             "-in" if i + 1 < args.len() => {
-                *in_file_name = Some(args[i + 1].clone());
+                cli.in_file_name = Some(args[i + 1].clone());
                 i += 1;
             }
             "-out" if i + 1 < args.len() => {
-                *out_file_name = Some(args[i + 1].clone());
+                cli.out_file_name = Some(args[i + 1].clone());
                 i += 1;
             }
             "-skip_log_before_elevation" => {
-                *skip_log_before_elevation = true;
+                cli.skip_log_before_elevation = true;
             }
             "-noDebugPriv" | "-nodebugpriv" => {
-                *no_debug_priv = true;
+                cli.no_debug_priv = true;
             }
             "-noIncBasePriority" | "-noincbasepriority" => {
-                *no_inc_base_priority = true;
+                cli.no_inc_base_priority = true;
             }
             _ => {}
         }

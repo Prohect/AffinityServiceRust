@@ -1,33 +1,33 @@
 # AffinityServiceRust Src Code Structure Outline
 
 ## cli.rs
-- [L7:L36]fn parse_args(
-    args: &[String],
-    interval_ms: &mut u64,
-    help_mode: &mut bool,
-    help_all_mode: &mut bool,
-    convert_mode: &mut bool,
-    find_mode: &mut bool,
-    validate_mode: &mut bool,
-    process_logs_mode: &mut bool,
-    dry_run: &mut bool,
-    config_file_name: &mut String,
-    blacklist_file_name: &mut Option<String>,
-    in_file_name: &mut Option<String>,
-    out_file_name: &mut Option<String>,
-    no_uac: &mut bool,
-    loop_count: &mut Option<u32>,
-    time_resolution: &mut u32,
-    log_loop: &mut bool,
-    skip_log_before_elevation: &mut bool,
-    no_debug_priv: &mut bool,
-    no_inc_base_priority: &mut bool,
-) -> windows::core::Result<()>
-- [L114:L115]fn print_help()
-- [L145:L146]fn get_config_help_lines() -> Vec<&'static str>
-- [L254:L255]fn print_config_help()
-- [L261:L262]fn print_cli_help()
-- [L308:L309]fn print_help_all()
+- [L7:L30]struct CliArgs {
+    pub interval_ms: u64,
+    pub help_mode: bool,
+    pub help_all_mode: bool,
+    pub convert_mode: bool,
+    pub find_mode: bool,
+    pub validate_mode: bool,
+    pub process_logs_mode: bool,
+    pub dry_run: bool,
+    pub config_file_name: String,
+    pub blacklist_file_name: Option<String>,
+    pub in_file_name: Option<String>,
+    pub out_file_name: Option<String>,
+    pub no_uac: bool,
+    pub loop_count: Option<u32>,
+    pub time_resolution: u32,
+    pub log_loop: bool,
+    pub skip_log_before_elevation: bool,
+    pub no_debug_priv: bool,
+    pub no_inc_base_priority: bool,
+}
+- [L43:L51]fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<()>
+- [L129:L130]fn print_help()
+- [L160:L161]fn get_config_help_lines() -> Vec<&'static str>
+- [L269:L270]fn print_config_help()
+- [L276:L277]fn print_cli_help()
+- [L323:L324]fn print_help_all()
 
 ## config.rs
 - [L30:L37]struct PrimePrefix {

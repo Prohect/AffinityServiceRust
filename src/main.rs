@@ -236,7 +236,7 @@ fn apply_prime_threads_select_candidates(process: &mut process::ProcessEntry, ca
         tid_with_delta_time.push((*tid, total_time - thread_stats.last_total_time));
         thread_stats.last_total_time = total_time;
     });
-    tid_with_delta_time.sort_by_key(|&(_, delta)| delta);
+    tid_with_delta_time.sort_unstable_by_key(|&(_, delta)| delta);
     let precandidate_len = tid_with_delta_time.len();
     for i in 0..candidate_count {
         candidate_tids[i] = tid_with_delta_time[precandidate_len - i - 1].0;
@@ -316,7 +316,7 @@ fn apply_prime_threads_query_cycles(
 }
 
 fn apply_prime_threads_update_streaks(tid_with_delta_cycles: &mut [(u32, u64, bool)], prime_core_scheduler: &mut PrimeThreadScheduler, pid: u32, prime_count: usize) {
-    tid_with_delta_cycles.sort_by_key(|&(_, delta_cycles, _)| std::cmp::Reverse(delta_cycles));
+    tid_with_delta_cycles.sort_unstable_by_key(|&(_, delta_cycles, _)| std::cmp::Reverse(delta_cycles));
     let max_cycles = tid_with_delta_cycles.first().map(|&(_, c, _)| c).unwrap_or(0u64);
     let entry_min_cycles = (max_cycles as f64 * prime_core_scheduler.constants.entry_threshold) as u64;
     let keep_min_cycles = (max_cycles as f64 * prime_core_scheduler.constants.keep_threshold) as u64;

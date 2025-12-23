@@ -240,4 +240,5 @@
 - [L467:L467]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 - [L465:L516]fn resolve_address_to_module(pid: u32, address: usize) -> String 
 - [L518:L521]fn clear_module_cache(pid: u32) 
-- [L523:L585]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)>
+- [L523:L585]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
+

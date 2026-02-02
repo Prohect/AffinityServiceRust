@@ -30,11 +30,12 @@
 - [L323:L329]fn print_help_all() 
 
 ## src/config.rs
-- [L30:L37]struct PrimePrefix {
+- [L30:L39]struct PrimePrefix {
     pub prefix: String,
     pub cpus: Option<Vec<u32>>,
+    pub thread_priority: ThreadPriority,
 }
-- [L39:L56]struct ProcessConfig {
+- [L41:L58]struct ProcessConfig {
     pub name: String,
     pub priority: ProcessPriority,
     pub affinity_cpus: Vec<u32>,
@@ -44,16 +45,16 @@
     pub io_priority: IOPriority,
     pub memory_priority: MemoryPriority,
 }
-- [L58:L70]struct ConfigConstants {
+- [L60:L72]struct ConfigConstants {
     pub min_active_streak: u8,
     pub keep_threshold: f64,
     pub entry_threshold: f64,
 }
-- [L82:L140]fn parse_cpu_spec(s: &str) -> Vec<u32> 
-- [L142:L144]fn mask_to_cpu_indices(mask: u64) -> Vec<u32> 
-- [L146:L156]fn cpu_indices_to_mask(cpus: &[u32]) -> usize 
-- [L158:L191]fn format_cpu_indices(cpus: &[u32]) -> String 
-- [L193:L211]struct ConfigResult {
+- [L84:L142]fn parse_cpu_spec(s: &str) -> Vec<u32> 
+- [L144:L146]fn mask_to_cpu_indices(mask: u64) -> Vec<u32> 
+- [L148:L158]fn cpu_indices_to_mask(cpus: &[u32]) -> usize 
+- [L160:L193]fn format_cpu_indices(cpus: &[u32]) -> String 
+- [L195:L213]struct ConfigResult {
     pub configs: HashMap<String, ProcessConfig>,
     pub constants: ConfigConstants,
     pub constants_count: usize,
@@ -64,17 +65,17 @@
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
 }
-- [L241:L253]fn resolve_cpu_spec(spec: &str, field_name: &str, line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, errors: &mut Vec<String>) -> Vec<u32> 
-- [L255:L262]fn collect_members(text: &str, members: &mut Vec<String>) 
-- [L265:L301]fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut ConfigResult) 
-- [L303:L317]fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut HashMap<String, Vec<u32>>, result: &mut ConfigResult) 
-- [L319:L343]fn collect_group_block(lines: &[String], start_index: usize, first_line_content: &str) -> Option<(Vec<String>, Option<String>, usize)> 
-- [L355:L506]fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, result: &mut ConfigResult) 
-- [L508:L595]fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult 
-- [L641:L651]fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> 
-- [L653:L658]fn read_utf16le_file(path: &str) -> io::Result<String> 
-- [L660:L666]fn parse_mask(s: &str) -> usize 
-- [L668:L844]fn convert(in_file: Option<String>, out_file: Option<String>) 
+- [L243:L255]fn resolve_cpu_spec(spec: &str, field_name: &str, line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, errors: &mut Vec<String>) -> Vec<u32> 
+- [L257:L264]fn collect_members(text: &str, members: &mut Vec<String>) 
+- [L267:L303]fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut ConfigResult) 
+- [L305:L319]fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut HashMap<String, Vec<u32>>, result: &mut ConfigResult) 
+- [L321:L345]fn collect_group_block(lines: &[String], start_index: usize, first_line_content: &str) -> Option<(Vec<String>, Option<String>, usize)> 
+- [L357:L566]fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, result: &mut ConfigResult) 
+- [L568:L655]fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult 
+- [L701:L711]fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> 
+- [L713:L718]fn read_utf16le_file(path: &str) -> io::Result<String> 
+- [L720:L726]fn parse_mask(s: &str) -> usize 
+- [L728:L904]fn convert(in_file: Option<String>, out_file: Option<String>) 
 
 ## src/logging.rs
 - [L16:L16]static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
@@ -120,7 +121,7 @@
     apply_config_result: &mut ApplyConfigResult,
 ) 
 - [L318:L358]fn apply_prime_threads_update_streaks(tid_with_delta_cycles: &mut [(u32, u64, bool)], prime_core_scheduler: &mut PrimeThreadScheduler, pid: u32, prime_count: usize) 
-- [L360:L446]fn apply_prime_threads_promote(
+- [L360:L459]fn apply_prime_threads_promote(
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
     pid: u32,
@@ -128,7 +129,7 @@
     current_mask: &mut usize,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L448:L494]fn apply_prime_threads_demote(
+- [L461:L507]fn apply_prime_threads_demote(
     process: &mut process::ProcessEntry,
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
@@ -136,17 +137,17 @@
     config: &ProcessConfig,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L496:L554]fn apply_io_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
-- [L556:L614]fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
-- [L616:L659]fn apply_config(
+- [L509:L567]fn apply_io_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
+- [L569:L627]fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
+- [L629:L672]fn apply_config(
     pid: u32,
     config: &ProcessConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
     processes: Option<&mut ProcessSnapshot>,
     dry_run: bool,
 ) -> ApplyConfigResult 
-- [L661:L731]fn process_logs(configs: &HashMap<String, ProcessConfig>, blacklist: &Vec<String>, logs_path: Option<&str>, output_file: Option<&str>) 
-- [L733:L915]fn main() -> windows::core::Result<()> 
+- [L674:L744]fn process_logs(configs: &HashMap<String, ProcessConfig>, blacklist: &Vec<String>, logs_path: Option<&str>, output_file: Option<&str>) 
+- [L746:L928]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L17:L27]enum ProcessPriority {
@@ -175,6 +176,7 @@
     Normal,
 }
 - [L156:L183]enum ThreadPriority {
+    None,
     ErrorReturn,
     ModeBackgroundBegin,
     ModeBackgroundEnd,
@@ -185,7 +187,6 @@
     AboveNormal,
     Highest,
     TimeCritical,
-    Unknown(i32),
 }
 
 ## src/process.rs

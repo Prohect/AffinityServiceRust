@@ -161,15 +161,26 @@ Examples:
 
 # === RULES ===
 # process:priority:affinity:cpuset:prime[@prefixes]:io:memory
+# Prime syntax supports multiple segments: *alias1@prefix1[!priority];prefix2;*alias2@prefix3[!priority];...
+# Each segment can specify a different CPU alias for its prefixes
 
 # Single process rule
 cs2.exe:normal:*a:*p:*pN01:normal:normal
 
-# Prime with module filtering - only threads from modules starting with UnityPlayer.dll or GameModule.dll
+# Prime with module filtering - all on P-cores except 0-1
 game.exe:normal:*a:*p:*pN01@UnityPlayer.dll;GameModule.dll:normal:normal
 
-# Per-module CPU assignment - CS2 main threads on P-cores, NVIDIA on E-cores
-cs2.exe:normal:*a:*p:*pN01@cs2.exe*p;nvwgf2umx.dll*e:normal:normal
+# Multi-segment: cs2.exe on P-cores, NVIDIA on E-cores (different CPU sets per module)
+cs2.exe:normal:*a:*p:*p@cs2.exe;*e@nvwgf2umx.dll:normal:normal
+
+# Per-module thread priority - CS2 at highest, NVIDIA at above normal
+cs2.exe:normal:*a:*p:*pN01@cs2.exe!highest;nvwgf2umx.dll!above normal:normal:normal
+
+# Multi-segment with priorities: P-cores at time critical, E-cores at normal
+game.exe:normal:*a:*p:*p@engine.dll!time critical;*e@background.dll!normal:normal:normal
+
+# Mixed: some modules with explicit priority, others use auto-boost
+game.exe:normal:*a:*p:*pN01@UnityPlayer.dll!time critical;GameModule.dll:normal:normal
 
 # Named group - browsers on E-cores
 browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal

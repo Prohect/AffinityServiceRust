@@ -167,8 +167,9 @@ impl MemoryPriority {
 /// - THREAD_PRIORITY_TIME_CRITICAL= 15
 ///
 /// Note: `GetThreadPriority` returns THREAD_PRIORITY_ERROR_RETURN (0x7FFFFFFF) on error.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadPriority {
+    None,
     ErrorReturn,         // 0x7FFFFFFF
     ModeBackgroundBegin, // 0x00010000 (use only for current thread)
     ModeBackgroundEnd,   // 0x00020000 (use only for current thread)
@@ -179,65 +180,53 @@ pub enum ThreadPriority {
     AboveNormal,         // 1
     Highest,             // 2
     TimeCritical,        // 15
-    Unknown(i32),
 }
 
 impl ThreadPriority {
+    const TABLE: &'static [(Self, &'static str, Option<i32>)] = &[
+        (Self::None, "none", None),
+        (Self::ErrorReturn, "error", Some(0x7FFFFFFF_i32)),
+        (Self::ModeBackgroundBegin, "background begin", Some(0x00010000_i32)),
+        (Self::ModeBackgroundEnd, "background end", Some(0x00020000_i32)),
+        (Self::Idle, "idle", Some(-15)),
+        (Self::Lowest, "lowest", Some(-2)),
+        (Self::BelowNormal, "below normal", Some(-1)),
+        (Self::Normal, "normal", Some(0)),
+        (Self::AboveNormal, "above normal", Some(1)),
+        (Self::Highest, "highest", Some(2)),
+        (Self::TimeCritical, "time critical", Some(15)),
+    ];
+
+    /// Human-readable name.
+    pub fn as_str(&self) -> &'static str {
+        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, name, _)| *name).unwrap_or("unknown")
+    }
+
     /// Convert enum to raw Win32 thread priority integer.
-    pub fn as_win_const(&self) -> i32 {
-        match self {
-            ThreadPriority::ErrorReturn => 0x7FFFFFFF_i32,
-            ThreadPriority::ModeBackgroundBegin => 0x00010000_i32,
-            ThreadPriority::ModeBackgroundEnd => 0x00020000_i32,
-            ThreadPriority::Idle => -15,
-            ThreadPriority::Lowest => -2,
-            ThreadPriority::BelowNormal => -1,
-            ThreadPriority::Normal => 0,
-            ThreadPriority::AboveNormal => 1,
-            ThreadPriority::Highest => 2,
-            ThreadPriority::TimeCritical => 15,
-            ThreadPriority::Unknown(v) => *v,
-        }
+    pub fn as_win_const(&self) -> Option<i32> {
+        Self::TABLE.iter().find(|(v, _, _)| v == self).and_then(|(_, _, val)| *val)
+    }
+
+    /// Parse from string (case-insensitive match against known names).
+    pub fn from_str(s: &str) -> Self {
+        let s = s.to_lowercase();
+        Self::TABLE.iter().find(|(_, name, _)| *name == s.as_str()).map(|(v, _, _)| *v).unwrap_or(Self::None)
     }
 
     /// Create enum from raw GetThreadPriority/SetThreadPriority value.
     pub fn from_win_const(val: i32) -> Self {
-        match val {
-            0x7FFFFFFF_i32 => ThreadPriority::ErrorReturn,
-            0x00010000_i32 => ThreadPriority::ModeBackgroundBegin,
-            0x00020000_i32 => ThreadPriority::ModeBackgroundEnd,
-            -15 => ThreadPriority::Idle,
-            -2 => ThreadPriority::Lowest,
-            -1 => ThreadPriority::BelowNormal,
-            0 => ThreadPriority::Normal,
-            1 => ThreadPriority::AboveNormal,
-            2 => ThreadPriority::Highest,
-            15 => ThreadPriority::TimeCritical,
-            v => ThreadPriority::Unknown(v),
-        }
-    }
-
-    /// Human-readable name.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ThreadPriority::ErrorReturn => "error",
-            ThreadPriority::ModeBackgroundBegin => "background_begin",
-            ThreadPriority::ModeBackgroundEnd => "background_end",
-            ThreadPriority::Idle => "idle",
-            ThreadPriority::Lowest => "lowest",
-            ThreadPriority::BelowNormal => "below normal",
-            ThreadPriority::Normal => "normal",
-            ThreadPriority::AboveNormal => "above normal",
-            ThreadPriority::Highest => "highest",
-            ThreadPriority::TimeCritical => "time critical",
-            ThreadPriority::Unknown(_) => "unknown",
-        }
+        Self::TABLE
+            .iter()
+            .find(|(_, _, const_opt)| *const_opt == Some(val))
+            .map(|(v, _, _)| *v)
+            .unwrap_or(Self::None)
     }
 
     /// Return the next higher priority tier, capping at `Highest`.
     /// We intentionally avoid promoting to `TimeCritical` automatically.
     pub fn boost_one(&self) -> Self {
         match self {
+            ThreadPriority::None => ThreadPriority::None,
             ThreadPriority::ErrorReturn => ThreadPriority::ErrorReturn,
             ThreadPriority::ModeBackgroundBegin => ThreadPriority::ModeBackgroundBegin,
             ThreadPriority::ModeBackgroundEnd => ThreadPriority::ModeBackgroundEnd,
@@ -248,29 +237,11 @@ impl ThreadPriority {
             ThreadPriority::AboveNormal => ThreadPriority::Highest,
             ThreadPriority::Highest => ThreadPriority::Highest,
             ThreadPriority::TimeCritical => ThreadPriority::TimeCritical,
-            ThreadPriority::Unknown(v) => {
-                // Best-effort: move toward known tiers where reasonable.
-                if *v <= -15 {
-                    ThreadPriority::Lowest
-                } else if *v < -2 {
-                    ThreadPriority::Lowest
-                } else if *v == -2 {
-                    ThreadPriority::BelowNormal
-                } else if *v == -1 {
-                    ThreadPriority::Normal
-                } else if *v == 0 {
-                    ThreadPriority::AboveNormal
-                } else if *v == 1 {
-                    ThreadPriority::Highest
-                } else {
-                    ThreadPriority::Unknown(*v)
-                }
-            }
         }
     }
 
     /// Convert to `THREAD_PRIORITY` wrapper used by `SetThreadPriority`.
     pub fn to_thread_priority_struct(&self) -> THREAD_PRIORITY {
-        THREAD_PRIORITY(self.as_win_const())
+        THREAD_PRIORITY(self.as_win_const().unwrap_or(0))
     }
 }

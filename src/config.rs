@@ -17,7 +17,7 @@ use crate::{
     cli::get_config_help_lines,
     log,
     logging::{log_message, log_to_find},
-    priority::{IOPriority, MemoryPriority, ProcessPriority},
+    priority::{IOPriority, MemoryPriority, ProcessPriority, ThreadPriority},
 };
 
 use std::{
@@ -27,13 +27,15 @@ use std::{
     path::Path,
 };
 
-/// Represents a module prefix filter for prime thread scheduling with optional CPU set override.
+/// Represents a module prefix filter for prime thread scheduling with optional CPU set override and thread priority.
 #[derive(Debug, Clone)]
 pub struct PrimePrefix {
     /// Module name prefix to match (e.g., "cs2.exe", "nvwgf2umx.dll")
     pub prefix: String,
     /// Optional CPU set for threads matching this prefix (falls back to prime_threads_cpus if None)
     pub cpus: Option<Vec<u32>>,
+    /// Optional thread priority for threads matching this prefix (uses boost_one if None)
+    pub thread_priority: ThreadPriority,
 }
 
 /// Configuration for a single process, parsed from config.ini.
@@ -391,60 +393,117 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
     };
 
     // Parse prime_cpus (optional, defaults to "0") and prime_threads_prefixes (optional, defaults to "")
+    // Supports multiple segments: *alias1@prefix1;prefix2;*alias2@prefix3!priority;...
     let (prime_threads_cpus, prime_threads_prefixes) = if rule_parts.len() >= 4 {
         let prime_spec = rule_parts[3].trim();
-        if let Some(at_pos) = prime_spec.find('@') {
-            let cpu_part = &prime_spec[..at_pos];
-            let prefix_part = &prime_spec[at_pos + 1..];
-            let cpus = resolve_cpu_spec(cpu_part.trim(), "prime_cpus", line_number, cpu_aliases, &mut result.errors);
-            let prefixes = if prefix_part.trim().is_empty() {
-                vec![PrimePrefix {
+        if let Some(_) = prime_spec.find('@') {
+            // Parse segments separated by '*' (each segment can have its own CPU alias)
+            let mut all_prefixes: Vec<PrimePrefix> = Vec::new();
+            let mut base_cpus: Vec<u32> = Vec::new();
+
+            // Split by '*' to get segments, but keep track of positions
+            let mut segments: Vec<&str> = Vec::new();
+
+            if prime_spec.starts_with('*') {
+                // First segment starts with '*'
+                segments.push("");
+            }
+
+            for (idx, part) in prime_spec.split('*').enumerate() {
+                if idx == 0 && !prime_spec.starts_with('*') {
+                    // Handle case where spec doesn't start with '*'
+                    segments.push(part);
+                } else if !part.is_empty() {
+                    segments.push(part);
+                }
+            }
+
+            // Process each segment
+            for segment in segments {
+                if segment.is_empty() {
+                    continue;
+                }
+
+                // Each segment format: alias@prefix1[!priority];prefix2[!priority];...
+                if let Some(at_pos) = segment.find('@') {
+                    let alias = segment[..at_pos].trim();
+
+                    // Find the end of this segment's prefix list (before next '*' or end)
+                    let remaining = &segment[at_pos + 1..];
+
+                    // Resolve CPU alias for this segment (stored without '*' prefix, lowercase)
+                    let segment_cpus = if alias.is_empty() {
+                        Vec::new()
+                    } else {
+                        let alias_lower = alias.to_lowercase();
+                        if let Some(alias_cpus) = cpu_aliases.get(alias_lower.as_str()) {
+                            alias_cpus.clone()
+                        } else {
+                            result
+                                .errors
+                                .push(format!("Line {}: Unknown CPU alias '*{}' in prime specification", line_number, alias));
+                            Vec::new()
+                        }
+                    };
+
+                    // Use first segment's CPUs as base
+                    if base_cpus.is_empty() {
+                        base_cpus = segment_cpus.clone();
+                    }
+
+                    // Parse prefixes for this segment
+                    for prefix_str in remaining.split(';') {
+                        let prefix_str = prefix_str.trim();
+                        if prefix_str.is_empty() {
+                            continue;
+                        }
+
+                        // Check for !priority suffix
+                        if let Some(bang_pos) = prefix_str.find('!') {
+                            let prefix = prefix_str[..bang_pos].to_string();
+                            let prio_str = &prefix_str[bang_pos + 1..];
+                            let thread_prio = ThreadPriority::from_str(prio_str.trim());
+                            if thread_prio == ThreadPriority::None && !prio_str.trim().eq_ignore_ascii_case("none") {
+                                result.warnings.push(format!(
+                                    "Line {}: Unknown thread priority '{}' in prefix - will be treated as 'none' (auto-boost)",
+                                    line_number, prio_str
+                                ));
+                            }
+                            all_prefixes.push(PrimePrefix {
+                                prefix,
+                                cpus: Some(segment_cpus.clone()),
+                                thread_priority: thread_prio,
+                            });
+                        } else {
+                            // No priority suffix, just prefix name
+                            all_prefixes.push(PrimePrefix {
+                                prefix: prefix_str.to_string(),
+                                cpus: Some(segment_cpus.clone()),
+                                thread_priority: ThreadPriority::None,
+                            });
+                        }
+                    }
+                }
+            }
+
+            if all_prefixes.is_empty() {
+                all_prefixes.push(PrimePrefix {
                     prefix: "".to_string(),
                     cpus: None,
-                }]
-            } else {
-                let temp: Vec<PrimePrefix> = prefix_part
-                    .split(';')
-                    .filter_map(|s| {
-                        let s = s.trim();
-                        if s.is_empty() {
-                            None
-                        } else {
-                            if let Some(star_pos) = s.find('*') {
-                                let prefix = s[..star_pos].to_string();
-                                let alias = &s[star_pos + 1..];
-                                let prefix_cpus = if alias.is_empty() {
-                                    None
-                                } else {
-                                    Some(resolve_cpu_spec(alias, "prime_prefix_cpus", line_number, cpu_aliases, &mut result.errors))
-                                };
-                                Some(PrimePrefix { prefix, cpus: prefix_cpus })
-                            } else {
-                                Some(PrimePrefix {
-                                    prefix: s.to_string(),
-                                    cpus: None,
-                                })
-                            }
-                        }
-                    })
-                    .collect();
-                if temp.is_empty() {
-                    vec![PrimePrefix {
-                        prefix: "".to_string(),
-                        cpus: None,
-                    }]
-                } else {
-                    temp
-                }
-            };
-            (cpus, prefixes)
+                    thread_priority: ThreadPriority::None,
+                });
+            }
+
+            (base_cpus, all_prefixes)
         } else {
+            // No '@' found, treat as simple CPU spec
             let cpus = resolve_cpu_spec(prime_spec, "prime_cpus", line_number, cpu_aliases, &mut result.errors);
             (
                 cpus,
                 vec![PrimePrefix {
                     prefix: "".to_string(),
                     cpus: None,
+                    thread_priority: ThreadPriority::None,
                 }],
             )
         }
@@ -454,6 +513,7 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
             vec![PrimePrefix {
                 prefix: "".to_string(),
                 cpus: None,
+                thread_priority: ThreadPriority::None,
             }],
         )
     };

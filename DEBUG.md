@@ -179,7 +179,19 @@ process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_p
 - **priority**: `none`, `idle`, `below normal`, `normal`, `above normal`, `high`, `real time`
 - **affinity**: Hex mask (e.g., `0xFF`) or CPU range (e.g., `0-7;16-23`)
 - **cpuset**: Same format as affinity, for CPU sets
-- **prime_cpus**: CPUs for prime thread scheduling (optionally @regex1;regex2 to filter by start module names, default .* matches all)
+- **prime_cpus**: CPUs for prime thread scheduling with multi-segment support
+  - Syntax: `*alias1@prefix1[!priority];prefix2;*alias2@prefix3[!priority];...`
+  - Each segment (separated by `*`) specifies a CPU alias and its associated module prefixes
+  - Only CPU aliases (`*p`, `*e`, `*pN01`, etc.) are allowed in multi-segment mode
+  - Each prefix can have optional `!priority` suffix for explicit thread priority
+  - Examples:
+    - `0-7` - All prime threads on CPUs 0-7, auto-boost priority
+    - `*p@cs2.exe!highest;main.dll` - cs2.exe at highest priority, main.dll auto-boost, both on P-cores
+    - `*p@cs2.exe;*e@nvwgf2umx.dll` - cs2.exe on P-cores, nvwgf2umx.dll on E-cores
+    - `*p@engine.dll!time critical;*pN01@render.dll!highest;*e@background.dll!normal`
+- **thread_priority** (in prefixes): `none`, `idle`, `lowest`, `below normal`, `normal`, `above normal`, `highest`, `time critical`
+  - When specified: Sets explicit thread priority
+  - When omitted: Uses auto-boost (current priority + 1 tier, capped at highest)
 - **io_priority**: `none`, `very low`, `low`, `normal`
 - **memory_priority**: `none`, `very low`, `low`, `normal`
 

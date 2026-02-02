@@ -373,15 +373,17 @@ fn apply_prime_threads_promote(
         if let Some(handle) = thread_stats.handle {
             if !handle.is_invalid() && thread_stats.cpu_set_ids.is_empty() {
                 let start_module = resolve_address_to_module(pid, thread_stats.start_address);
-                // Find effective prime CPUs for this thread based on prefix matching
+                // Find effective prime CPUs and thread priority for this thread based on prefix matching
                 let mut matched = false;
                 let mut effective_prime_cpus = &config.prime_threads_cpus;
+                let mut effective_thread_priority = priority::ThreadPriority::None;
                 for prefix in &config.prime_threads_prefixes {
                     if start_module.to_lowercase().starts_with(&prefix.prefix.to_lowercase()) {
                         matched = true;
                         if let Some(ref cpus) = prefix.cpus {
                             effective_prime_cpus = cpus;
                         }
+                        effective_thread_priority = prefix.thread_priority;
                         break;
                     }
                 }
@@ -419,12 +421,18 @@ fn apply_prime_threads_promote(
                             start_module
                         ));
                     }
-                    // Boost priority by one tier
+                    // Set thread priority (use explicit priority from config or boost by one tier)
                     let current_prio = unsafe { GetThreadPriority(handle) };
                     if current_prio != 0x7FFFFFFF_i32 {
                         let current_prio = priority::ThreadPriority::from_win_const(current_prio);
-                        thread_stats.original_priority = Some(current_prio.clone());
-                        let new_prio = current_prio.boost_one();
+                        thread_stats.original_priority = Some(current_prio);
+
+                        let new_prio = if effective_thread_priority != priority::ThreadPriority::None {
+                            effective_thread_priority
+                        } else {
+                            current_prio.boost_one()
+                        };
+
                         if let Err(e) = unsafe { SetThreadPriority(handle, new_prio.to_thread_priority_struct()) } {
                             apply_config_result.add_error(format!(
                                 "apply_config: [SET_THREAD_PRIORITY][{}] {:>5}-{}-{}",
@@ -436,7 +444,12 @@ fn apply_prime_threads_promote(
                         } else {
                             let old_name = current_prio.as_str();
                             let new_name = new_prio.as_str();
-                            apply_config_result.add_change(format!("Thread {} -> (priority boosted: {} -> {})", tid, old_name, new_name));
+                            let action = if effective_thread_priority != priority::ThreadPriority::None {
+                                "priority set"
+                            } else {
+                                "priority boosted"
+                            };
+                            apply_config_result.add_change(format!("Thread {} -> ({}: {} -> {})", tid, action, old_name, new_name));
                         }
                     }
                 }

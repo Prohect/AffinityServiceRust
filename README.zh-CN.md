@@ -131,18 +131,32 @@ asus_services {
 { taskmgr.exe: perfmon.exe }:none:*a:0:0:none:none
 ```
 
-### Prime 线程调度
+### Prime 线程调度与线程优先级
 
-`prime_cpus` 字段支持可选的基于模块的过滤和每模块 CPU 分配：
+`prime_cpus` 字段支持多段式 CPU 分配和每前缀线程优先级控制：
 
-- `prime_cpus` - Prime 线程的基础 CPU 集
-- `prime_cpus@prefix1;prefix2` - 仅提升来自以指定前缀开头的模块的线程
-- `prime_cpus@prefix1*alias1;prefix2*alias2` - 为每个模块前缀分配特定的 CPU 集
+#### 多段式语法
+```
+*alias1@prefix1[!priority];prefix2;*alias2@prefix3[!priority];...
+```
 
-示例：
+- 每个段（以 `*` 开始）指定一个 CPU 别名及其关联的模块前缀
+- 只允许使用 CPU 别名（如 `*p`、`*e`、`*pN01`），不允许直接指定如 "0-7"
+- 每个前缀可以有可选的 `!priority` 后缀来设置显式线程优先级
+- 省略 `!priority` 时使用自动提升（当前优先级 + 1 级，上限为 highest）
+
+#### 线程优先级等级
+- `none` - 使用自动提升（默认）
+- `idle`, `lowest`, `below normal`, `normal`
+- `above normal`, `highest`, `time critical`
+- 不区分大小写
+
+#### 示例
 - `*pN01` - 所有 prime 线程使用除 0-1 外的 P 核
 - `*pN01@cs2.exe;nvwgf2umx.dll` - 仅 CS2 和 NVIDIA 线程，使用 *pN01 CPU
-- `*pN01@cs2.exe*p;nvwgf2umx.dll*e` - CS2 线程使用 P 核 (*p)，NVIDIA 线程使用 E 核 (*e)
+- `*p@cs2.exe;*e@nvwgf2umx.dll` - CS2 线程在 P 核，NVIDIA 线程在 E 核
+- `*p@cs2.exe!time critical;main.dll!highest` - CS2 在 P 核设为 time critical 优先级，main.dll 设为 highest
+- `*p@engine.dll!time critical;*pN01@render.dll!highest;*e@background.dll!normal` - 三段式：引擎在 P 核（time critical），渲染在除 0-1 的 P 核（highest），后台在 E 核（normal）
 
 ### 示例
 
@@ -160,15 +174,25 @@ asus_services {
 
 # === 规则 ===
 # 进程:优先级:亲和性:cpuset:prime[@prefixes]:io:memory
+# Prime 支持多段式: *alias1@prefix1[!priority];prefix2;*alias2@prefix3[!priority];...
 
 # 单进程规则
 cs2.exe:normal:*a:*p:*pN01:normal:normal
 
-# Prime 带模块过滤 - 仅来自以 UnityPlayer.dll 或 GameModule.dll 开头的模块的线程
+# Prime 带模块过滤 - 所有模块在除 0-1 外的 P 核
 game.exe:normal:*a:*p:*pN01@UnityPlayer.dll;GameModule.dll:normal:normal
 
-# 每模块 CPU 分配 - CS2 主线程在 P 核，NVIDIA 在 E 核
-cs2.exe:normal:*a:*p:*pN01@cs2.exe*p;nvwgf2umx.dll*e:normal:normal
+# 多段式：每模块不同 CPU 集 - cs2.exe 在 P 核，NVIDIA 在 E 核
+cs2.exe:normal:*a:*p:*p@cs2.exe;*e@nvwgf2umx.dll:normal:normal
+
+# 每模块线程优先级 - CS2 设为 highest，NVIDIA 设为 above normal
+cs2.exe:normal:*a:*p:*pN01@cs2.exe!highest;nvwgf2umx.dll!above normal:normal:normal
+
+# 多段式带优先级：P 核设为 time critical，E 核设为 normal
+game.exe:normal:*a:*p:*p@engine.dll!time critical;*e@background.dll!normal:normal:normal
+
+# 混合：部分显式优先级，部分自动提升
+game.exe:normal:*a:*p:*pN01@UnityPlayer.dll!time critical;GameModule.dll:normal:normal
 
 # 命名组 - 浏览器运行在 E 核
 browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal

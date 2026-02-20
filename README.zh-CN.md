@@ -11,9 +11,11 @@
 | 功能 | 说明 |
 |------|------|
 | **进程优先级** | 设置优先级类别（Idle → Real-time） |
-| **CPU 亲和性** | 限制进程到指定核心（硬性限制，仅 ≤64 核心,子进程继承） |
+| **CPU 亲和性** | 限制进程到指定核心（硬性限制，仅 ≤64 核心，子进程继承） |
 | **CPU 集** | 通过 Windows CPU 集分配首选核心（软性偏好，支持 >64 核心） |
 | **Prime Core 调度** | 将最活跃的线程分配到指定核心（软性偏好） |
+| **自动重载** | 当检测到 `config.ini` 或 `blacklist.ini` 更改时自动重新加载 |
+| **后置报告** | 在受监控进程退出时记录前 X 个高负载线程的详细统计信息 |
 | **I/O 优先级** | 控制 I/O 优先级（Very Low → High，High 需要管理员） |
 | **内存优先级** | 控制内存页面优先级（Very Low → Normal） |
 | **计时器分辨率** | 调整 Windows 计时器分辨率 |
@@ -24,16 +26,28 @@
 
 针对多线程应用（如游戏），此功能识别 CPU 密集型线程并通过 Windows CPU 集将其分配到指定核心（软性偏好，非硬性固定）：
 
-- 监控线程 CPU 周期消耗
-- 过滤低活跃线程（入场阈值：最大值的 42%）
-- 保护已提升线程不被过早降级（保持阈值：最大值的 69%）
-- 要求持续活跃（可通过 `@MIN_ACTIVE_STREAK` 配置，默认：2 个间隔）才能提升
-- 可选择通过前缀模式按起始模块名称过滤线程（语法：`prime_cpus@prefix1;prefix2`，默认：空匹配所有模块）
-- 以管理员运行时记录线程起始地址及模块解析（如 `ntdll.dll+0x3C320`）
+- 监控线程 CPU 周期消耗。
+- 过滤低活跃线程（入场阈值：最大值的 42%）。
+- 保护已提升线程不被过早降级（保持阈值：最大值的 69%）。
+- 要求持续活跃（可通过 `@MIN_ACTIVE_STREAK` 配置，默认：2 个间隔）才能提升。
+- 可选择通过前缀模式按起始模块名称过滤线程（语法：`prime_cpus@prefix1;prefix2`）。
+- 以管理员运行时记录线程起始地址及模块解析（如 `ntdll.dll+0x3C320`）。
 
-适用于游戏中主线程/渲染线程需要优先运行在 P 核，同时避开核心 0/1（硬件中断处理器）的场景。
+#### 监控与后置报告
+通过在 `prime_cpus` 字段中使用 `?` 或 `??` 前缀，您可以跟踪线程性能并在进程退出时查看详细报告：
 
-> **注意：** 线程起始地址解析需要管理员权限和 SeDebugPrivilege。无提权时，起始地址显示为 `0x0`。
+- `?*alias`: **监控 + 应用**。正常应用规则，但在退出时记录“前 X”线程报告。
+- `??*alias`: **仅监控**。跳过所有核心/优先级更改，仅跟踪线程并在退出时记录报告。
+- `?10*alias`: 自定义前 X 统计数量（例如，显示前 10 个线程，默认为 `2 * 核心数`）。
+
+报告包含：**总周期 (Total Cycles)**、**上下文切换 (Context Switches)**、**线程状态**、**优先级**以及**起始模块地址**。
+
+### 配置自动重载
+服务会监控配置文件和黑名单文件的修改时间戳。当您保存 `config.ini` 时，服务将：
+1. 在下一个检查间隔（默认 5s）内检测到更改。
+2. 验证新配置。
+3. 如果有效，立即应用新规则。
+4. 如果新配置存在语法错误，则保留旧配置（安全重载）。
 
 ## 快速开始
 
@@ -56,8 +70,6 @@ AffinityServiceRust.exe -convert -in prolasso.ini -out my_config.ini
 AffinityServiceRust.exe -find
 ```
 
-> **注意：** 默认静默在后台运行，日志保存在 `logs\YYYYmmDD.log`。使用 `-console` 查看实时输出。管理员权限可启用高 I/O 优先级和系统进程管理。
-
 ## 命令行选项
 
 | 选项 | 说明 |
@@ -65,14 +77,14 @@ AffinityServiceRust.exe -find
 | `-help` | 显示基本帮助 |
 | `-helpall` | 显示详细帮助和示例 |
 | `-console` | 输出到控制台而非日志文件 |
-| `-config <file>` | 使用自定义配置文件（默认：`config.ini`） |
+| `-config <file>` | 使用自定义配置文件 |
 | `-noUAC` | 不请求管理员权限 |
-| `-interval <ms>` | 检查间隔，毫秒（默认：`5000`） |
+| `-interval <ms>` | 检查间隔（默认：`5000`） |
 | `-resolution <0.0001ms>` | 设置计时器分辨率 |
 | `-find` | 记录未管理的进程 |
 | `-convert` | 转换 Process Lasso 配置 |
-| `-validate` | 验证配置文件语法（不运行） |
-| `-processlogs` | 处理日志以查找新进程和搜索路径 |
+| `-validate` | 验证配置文件语法 |
+| `-processlogs` | 处理日志以查找新进程 |
 | `-dryrun` | 显示将会更改的内容（不实际应用） |
 
 ## 配置
@@ -83,208 +95,67 @@ AffinityServiceRust.exe -find
 process_name:priority:affinity:cpu_set:prime_cpus[@prefixes]:io_priority:memory_priority
 ```
 
-### CPU 规格
+### Prime 线程调度语法
 
-| 格式 | 示例 | 说明 |
-|------|------|------|
-| 范围 | `0-7` | 核心 0 到 7 |
-| 多范围 | `0-7;64-71` | 用于 >64 核心系统 |
-| 单独指定 | `0;2;4;6` | 指定核心 |
-| 单个 | `7` | 单个核心（不是掩码） |
-| 十六进制掩码 | `0xFF` | 旧格式（≤64 核心） |
-| 别名 | `*pcore` | 预定义别名 |
-| 不更改 | `0` | 不修改 |
+`prime_cpus` 字段支持监控模式和每前缀优先级控制：
 
-> **重要：** 纯数字如 `7` 表示核心 7，不是位掩码。使用 `0x7` 或 `0-2` 表示核心 0-2。
-
-### 优先级等级
-
-| 类型 | 等级 |
-|------|------|
-| 进程 | `none`, `idle`, `below normal`, `normal`, `above normal`, `high`, `real time` |
-| I/O | `none`, `very low`, `low`, `normal`, `high`（需要管理员） |
-| 内存 | `none`, `very low`, `low`, `medium`, `below normal`, `normal` |
-
-### 进程组
-
-使用 `{ }` 语法将多个进程组合使用相同规则。组名是可选的（仅用于文档/调试）：
-
-```ini
-# 命名组（单行）
-browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal
-
-# 命名组（多行）
-asus_services {
-    asuscertservice.exe
-    armourycrate.exe
-    # 内部允许注释
-    armourycrate.service.exe
-}:none:*e:0:0:low:none
-
-# 匿名组（无需名称）
-{
-    textinputhost.exe: ctfmon.exe
-    dllhost.exe: sihost.exe
-}:none:*e:0:0:low:none
-
-# 匿名单行组
-{ taskmgr.exe: perfmon.exe }:none:*a:0:0:none:none
-```
-
-### Prime 线程调度与线程优先级
-
-`prime_cpus` 字段支持多段式 CPU 分配和每前缀线程优先级控制：
-
-#### 多段式语法
-```
-*alias1@prefix1[!priority];prefix2;*alias2@prefix3[!priority];...
-```
-
-- 每个段（以 `*` 开始）指定一个 CPU 别名及其关联的模块前缀
-- 只允许使用 CPU 别名（如 `*p`、`*e`、`*pN01`），不允许直接指定如 "0-7"
-- 每个前缀可以有可选的 `!priority` 后缀来设置显式线程优先级
-- 省略 `!priority` 时使用自动提升（当前优先级 + 1 级，上限为 highest）
-
-#### 线程优先级等级
-- `none` - 使用自动提升（默认）
-- `idle`, `lowest`, `below normal`, `normal`
-- `above normal`, `highest`, `time critical`
-- 不区分大小写
+- `?*alias` - 监控所有线程并在退出时报告前 X 名（应用 + 监控）
+- `??*alias` - 监控所有线程并在退出时报告前 X 名（仅监控）
+- `*p@engine.dll!time critical` - 将引擎线程设为最高优先级并分配至 P 核
 
 #### 示例
-- `*pN01` - 所有 prime 线程使用除 0-1 外的 P 核
-- `*pN01@cs2.exe;nvwgf2umx.dll` - 仅 CS2 和 NVIDIA 线程，使用 *pN01 CPU
-- `*p@cs2.exe;*e@nvwgf2umx.dll` - CS2 线程在 P 核，NVIDIA 线程在 E 核
-- `*p@cs2.exe!time critical;main.dll!highest` - CS2 在 P 核设为 time critical 优先级，main.dll 设为 highest
-- `*p@engine.dll!time critical;*pN01@render.dll!highest;*e@background.dll!normal` - 三段式：引擎在 P 核（time critical），渲染在除 0-1 的 P 核（highest），后台在 E 核（normal）
+- `??*pN01@cs2.exe;nvwgf2umx.dll` - 监控 CS2/NVIDIA 线程而不应用任何更改
+- `?10*p@cs2.exe!highest` - 对 CS2 线程应用最高优先级/P 核，并在退出时报告前 10 名
 
-### 示例
+### 示例配置
 
 ```ini
 # === 常量 ===
 @MIN_ACTIVE_STREAK = 2   # 提升前需要的连续活跃间隔数
-@ENTRY_THRESHOLD = 0.42  # 成为候选的最大周期比例
-@KEEP_THRESHOLD = 0.69   # 保持 prime 状态的最大周期比例
 
 # === 别名 ===
-*a = 0-19           # 所有核心（8P+12E）
 *p = 0-7            # P 核
 *e = 8-19           # E 核
 *pN01 = 2-7         # P 核除 0-1
 
 # === 规则 ===
-# 进程:优先级:亲和性:cpuset:prime[@prefixes]:io:memory
-# Prime 支持多段式: *alias1@prefix1[!priority];prefix2;*alias2@prefix3[!priority];...
+# 监控模式 - 仅跟踪 CS2 线程而不应用核心绑定
+cs2.exe:normal:*a:*p:??*pN01:normal:normal
 
-# 单进程规则
-cs2.exe:normal:*a:*p:*pN01:normal:normal
-
-# Prime 带模块过滤 - 所有模块在除 0-1 外的 P 核
-game.exe:normal:*a:*p:*pN01@UnityPlayer.dll;GameModule.dll:normal:normal
-
-# 多段式：每模块不同 CPU 集 - cs2.exe 在 P 核，NVIDIA 在 E 核
-cs2.exe:normal:*a:*p:*p@cs2.exe;*e@nvwgf2umx.dll:normal:normal
-
-# 每模块线程优先级 - CS2 设为 highest，NVIDIA 设为 above normal
-cs2.exe:normal:*a:*p:*pN01@cs2.exe!highest;nvwgf2umx.dll!above normal:normal:normal
-
-# 多段式带优先级：P 核设为 time critical，E 核设为 normal
-game.exe:normal:*a:*p:*p@engine.dll!time critical;*e@background.dll!normal:normal:normal
-
-# 混合：部分显式优先级，部分自动提升
-game.exe:normal:*a:*p:*pN01@UnityPlayer.dll!time critical;GameModule.dll:normal:normal
+# 应用规则 + 退出时监控前 10 个高负载线程
+game.exe:normal:*a:*p:?10*pN01@UnityPlayer.dll;GameModule.dll:normal:normal
 
 # 命名组 - 浏览器运行在 E 核
 browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal
-
-# 匿名组 - 后台应用
-{
-    discord.exe: telegram.exe: slack.exe
-}:below normal:*e:0:0:low:low
-
-# 系统（高 I/O 需要管理员）
-dwm.exe:high:*p:0:0:high:normal
 ```
 
 ## 工具
 
 ### 进程发现
-
-使用 `-processlogs` 模式从日志中发现尚未在配置或黑名单中的新进程。
-
-**要求：**
-- Everything 搜索工具，`es.exe` 在 PATH 中
-- 日志文件位于 `logs/` 目录（默认，可通过 `-in` 指定），通常通过运行 `-find` 模式生成
-
-**工作流程：**
-1. 使用 `-find` 运行应用程序以扫描并记录未管理的进程到 `.find.log` 文件
-2. 运行 `-processlogs` 以处理这些日志，过滤掉已配置/黑名单中的进程，并搜索文件路径
-
-**用法：**
-```bash
-# 首先，扫描未管理的进程（每天运行或根据需要）
-AffinityServiceRust.exe -find -console
-
-# 然后，处理日志以查找新进程
-AffinityServiceRust.exe -processlogs
-
-# 指定配置和黑名单文件（配置默认为 config.ini，黑名单无默认值）
-AffinityServiceRust.exe -processlogs -config my_config.ini -blacklist my_blacklist.ini
-
-# 指定日志目录和输出文件
-AffinityServiceRust.exe -processlogs -in mylogs -out results.txt
-```
-
-这会扫描 `logs/` 目录中的 `.find.log` 文件，提取进程名称，过滤掉已配置或黑名单中的进程，并使用 `es.exe` 搜索其余进程。结果保存到 `new_processes_results.txt`，将每个进程与文件路径配对，便于审查和添加到配置中。
-
-适用于保持配置与新应用程序的同步更新。
-
-
+使用 `-find` 扫描系统并使用 `-processlogs` 分析日志，可以帮助您发现新的游戏或后台程序并获取它们的文件路径。
 
 ### 配置转换
-
-使用 `-convert` 模式将 Process Lasso 配置文件转换为 AffinityServiceRust 格式。
-
-**用法：**
-```bash
-AffinityServiceRust.exe -convert -in prolasso.ini -out my_config.ini
-```
-
-这将 Process Lasso 规则转换为 AffinityServiceRust 配置格式，便于从 Process Lasso 迁移到 AffinityServiceRust。
+使用 `-convert` 模式可以快速将 Process Lasso 的配置文件转换为此工具支持的格式。
 
 ## 调试
 
 ```bash
-# 验证配置文件语法
+# 验证语法
 AffinityServiceRust.exe -validate -config config.ini
 
-# 试运行 - 查看将会更改的内容（不实际应用）
-AffinityServiceRust.exe -dryrun -noUAC -config config.ini
-
-# 非管理员，带控制台
-AffinityServiceRust.exe -console -noUAC -logloop -loop 3 -interval 2000
-
-# 管理员（运行后查看 logs/YYYYMMDD.log）
-AffinityServiceRust.exe -logloop -loop 3 -interval 2000
+# 试运行
+AffinityServiceRust.exe -dryrun -config config.ini
 ```
 
-> 以管理员运行时避免使用 `-console`，因为 UAC 会启动新进程，窗口会立即关闭。
-
 详见 [DEBUG.md](DEBUG.md)。
-
-使用 AI 代理（Zed、Cursor 等）的贡献者，请参阅 [AGENT.md](AGENT.md) 了解 CLI 工具和工作流程技巧。
 
 ## 编译
 
 ```bash
-# 通过 rustup 安装 Rust（选择 MSVC 构建工具）
+# 安装 Rust 后运行
 cargo build --release
 ```
-
-如需 rust-analyzer 支持，还需安装 MSBuild 和 Windows 11 SDK。
 
 ## 参与贡献
 
 欢迎提交 issue 和 pull request。
-
-使用 AI 代理的开发者，请参阅 [AGENT.md](AGENT.md) 了解实用 CLI 工具和批量编辑工作流程。

@@ -14,7 +14,7 @@ A Windows process management tool written in Rust that automatically applies CPU
 | **CPU Affinity** | Restrict processes to specific cores (hard limit, inherited by child processes, ≤64 cores only) |
 | **CPU Sets** | Assign preferred cores via Windows CPU sets (soft preference, works on >64 cores) |
 | **Prime Core Scheduling** | Assign most active threads to designated cores (soft preference) |
-| **Auto-Reload** | Automatically reloads `config.ini` and `blacklist.ini` when changes are detected |
+| **Auto-Reload** | Automatically reloads `config` and `blacklist` when changes are detected |
 | **Post-Mortem Reporting** | Log detailed statistics of top threads when a monitored process exits |
 | **I/O Priority** | Control I/O priority (Very Low → High, High requires admin) |
 | **Memory Priority** | Control memory page priority (Very Low → Normal) |
@@ -44,8 +44,10 @@ You can track thread performance and see a detailed report when a process exits 
 
 The report includes **Total Cycles**, **Context Switches**, **Thread State**, **Priority**, and **Module-resolved Start Address**.
 
+**Note:** Thread start address resolution requires admin elevation with SeDebugPrivilege. Without elevation, start addresses show as `0x0`.
+
 ### Configuration Auto-Reload
-The service monitors the modification timestamps of your configuration and blacklist files. If you edit and save `config.ini`, the service will:
+The service monitors the modification timestamps of your configuration and blacklist files. If you edit and save `config`, the service will:
 1. Detect the change within the next interval (default 5s).
 2. Validate the new configuration.
 3. Apply the new rules immediately if valid.

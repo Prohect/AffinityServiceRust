@@ -204,7 +204,7 @@ fn apply_prime_threads(
             apply_config_result.add_change(format!("Prime CPUs: -> [{}]", format_cpu_indices(&config.prime_threads_cpus)));
             return;
         }
-        prime_core_scheduler.set_alive(pid);
+        prime_core_scheduler.set_alive(pid, &config.name);
         let process = processes.as_mut().unwrap().pid_to_process.get_mut(&pid).unwrap();
         let thread_count = process.thread_count() as usize;
         let candidate_count = get_cpu_set_information().lock().unwrap().len().min(thread_count);
@@ -233,6 +233,7 @@ fn apply_prime_threads_select_candidates(process: &mut process::ProcessEntry, ca
     process.get_threads().iter().for_each(|(tid, thread)| {
         let total_time = unsafe { thread.KernelTime.QuadPart() + thread.UserTime.QuadPart() };
         let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
+        thread_stats.update_from_info(thread, thread_stats.last_cycles, pid);
         tid_with_delta_time.push((*tid, total_time - thread_stats.last_total_time));
         thread_stats.last_total_time = total_time;
     });
@@ -284,7 +285,10 @@ fn apply_prime_threads_query_cycles(
                             }
                             Ok(_) => {
                                 tid_with_delta_cycles[i] = (tid, cycles, false);
-                                thread_stats.start_address = get_thread_start_address(handle);
+                                if thread_stats.start_address == 0 {
+                                    thread_stats.start_address = get_thread_start_address(handle);
+                                }
+                                thread_stats.total_cycles = cycles;
                             }
                         };
                         thread_stats.handle = Some(handle);
@@ -308,6 +312,7 @@ fn apply_prime_threads_query_cycles(
                     Ok(_) => {
                         tid_with_delta_cycles[i] = (tid, cycles - thread_stats.last_cycles, false);
                         thread_stats.last_cycles = cycles;
+                        thread_stats.total_cycles = cycles;
                     }
                 };
             }
@@ -372,7 +377,7 @@ fn apply_prime_threads_promote(
         let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
         if let Some(handle) = thread_stats.handle {
             if !handle.is_invalid() && thread_stats.cpu_set_ids.is_empty() {
-                let start_module = resolve_address_to_module(pid, thread_stats.start_address);
+                let start_module = &thread_stats.module_name;
                 // Find effective prime CPUs and thread priority for this thread based on prefix matching
                 let mut matched = false;
                 let mut effective_prime_cpus = &config.prime_threads_cpus;
@@ -391,6 +396,11 @@ fn apply_prime_threads_promote(
                 if !matched && !config.prime_threads_prefixes.is_empty() {
                     continue;
                 }
+
+                if config.prime_threads_monitor_only {
+                    continue;
+                }
+
                 // Filter by current process affinity mask
                 let filtered_cpus = if *current_mask != 0 {
                     filter_indices_by_mask(effective_prime_cpus, *current_mask)
@@ -872,7 +882,7 @@ fn main() -> windows::core::Result<()> {
                         }
                     }
                 }
-                prime_core_scheduler.close_dead_process_handles();
+                prime_core_scheduler.close_dead_process_handles(&configs);
                 if cli.dry_run {
                     log!(
                         "[DRY RUN] Checking {} running processes against {} config rules...",

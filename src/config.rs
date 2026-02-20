@@ -53,6 +53,9 @@ pub struct ProcessConfig {
     pub prime_threads_cpus: Vec<u32>,
     /// Module name prefixes for filtering prime threads with optional CPU overrides
     pub prime_threads_prefixes: Vec<PrimePrefix>,
+    pub prime_threads_monitor: bool,
+    pub prime_threads_monitor_only: bool,
+    pub prime_threads_top_x: Option<usize>,
     pub io_priority: IOPriority,
     pub memory_priority: MemoryPriority,
 }
@@ -394,8 +397,41 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
 
     // Parse prime_cpus (optional, defaults to "0") and prime_threads_prefixes (optional, defaults to "")
     // Supports multiple segments: *alias1@prefix1;prefix2;*alias2@prefix3!priority;...
+    let mut prime_threads_monitor = false;
+    let mut prime_threads_monitor_only = false;
+    let mut prime_threads_top_x = None;
+
     let (prime_threads_cpus, prime_threads_prefixes) = if rule_parts.len() >= 4 {
-        let prime_spec = rule_parts[3].trim();
+        let mut prime_spec = rule_parts[3].trim();
+
+        // Handle monitor flags: ?? (monitor only) or ? (monitor + apply)
+        if prime_spec.starts_with("??") {
+            prime_threads_monitor = true;
+            prime_threads_monitor_only = true;
+            prime_spec = &prime_spec[2..];
+        } else if prime_spec.starts_with('?') {
+            prime_threads_monitor = true;
+            prime_spec = &prime_spec[1..];
+        }
+
+        // Handle optional top X count
+        if prime_threads_monitor {
+            let mut num_str = String::new();
+            for c in prime_spec.chars() {
+                if c.is_ascii_digit() {
+                    num_str.push(c);
+                } else {
+                    break;
+                }
+            }
+            if !num_str.is_empty() {
+                if let Ok(val) = num_str.parse::<usize>() {
+                    prime_threads_top_x = Some(val);
+                    prime_spec = &prime_spec[num_str.len()..];
+                }
+            }
+        }
+
         if let Some(_) = prime_spec.find('@') {
             // Parse segments separated by '*' (each segment can have its own CPU alias)
             let mut all_prefixes: Vec<PrimePrefix> = Vec::new();
@@ -557,6 +593,9 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
                 cpu_set_cpus: cpu_set_cpus.clone(),
                 prime_threads_cpus: prime_threads_cpus.clone(),
                 prime_threads_prefixes: prime_threads_prefixes.clone(),
+                prime_threads_monitor,
+                prime_threads_monitor_only,
+                prime_threads_top_x,
                 io_priority: io_priority.clone(),
                 memory_priority: memory_priority.clone(),
             },

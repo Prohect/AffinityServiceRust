@@ -768,13 +768,15 @@ fn main() -> windows::core::Result<()> {
     if cli.validate_mode {
         return Ok(());
     }
-    let configs = config_result.configs;
-    let constants = config_result.constants;
-    let blacklist = if let Some(bf) = cli.blacklist_file_name {
+    let mut configs = config_result.configs;
+    let mut blacklist = if let Some(ref bf) = cli.blacklist_file_name {
         read_list(bf).unwrap_or_default()
     } else {
         Vec::new()
     };
+
+    let mut last_config_mod_time = std::fs::metadata(&cli.config_file_name).and_then(|m| m.modified()).ok();
+    let mut last_blacklist_mod_time = cli.blacklist_file_name.as_ref().and_then(|bf| std::fs::metadata(bf).and_then(|m| m.modified()).ok());
     let is_config_empty = configs.is_empty();
     let is_blacklist_empty = blacklist.is_empty();
     if cli.process_logs_mode {
@@ -835,7 +837,7 @@ fn main() -> windows::core::Result<()> {
             }
         }
     }
-    let mut prime_core_scheduler = PrimeThreadScheduler::new(constants);
+    let mut prime_core_scheduler = PrimeThreadScheduler::new(config_result.constants);
     let mut current_loop = 0u32;
     let mut should_continue = true;
 
@@ -922,6 +924,51 @@ fn main() -> windows::core::Result<()> {
         if should_continue {
             thread::sleep(Duration::from_millis(cli.interval_ms));
             *LOCALTIME_BUFFER.lock().unwrap() = Local::now();
+
+            // Check for config reload
+            if let Ok(metadata) = std::fs::metadata(&cli.config_file_name) {
+                if let Ok(mod_time) = metadata.modified() {
+                    if Some(mod_time) != last_config_mod_time {
+                        last_config_mod_time = Some(mod_time);
+                        log!("Configuration file '{}' changed, reloading...", cli.config_file_name);
+                        let new_config_result = read_config(&cli.config_file_name);
+                        if new_config_result.errors.is_empty() {
+                            new_config_result.print_report();
+                            configs = new_config_result.configs;
+                            prime_core_scheduler.constants = new_config_result.constants;
+                            log!("Configuration reload complete: {} rules loaded.", configs.len());
+                        } else {
+                            log!("Configuration file '{}' has errors, keeping previous configuration.", cli.config_file_name);
+                            for error in &new_config_result.errors {
+                                log!("  - {}", error);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Check for blacklist reload
+            if let Some(ref bf) = cli.blacklist_file_name {
+                match std::fs::metadata(bf) {
+                    Ok(metadata) => {
+                        if let Ok(mod_time) = metadata.modified() {
+                            if Some(mod_time) != last_blacklist_mod_time {
+                                last_blacklist_mod_time = Some(mod_time);
+                                log!("Blacklist file '{}' changed, reloading...", bf);
+                                blacklist = read_list(bf).unwrap_or_default();
+                                log!("Blacklist reload complete: {} items loaded.", blacklist.len());
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        if last_blacklist_mod_time.is_some() {
+                            last_blacklist_mod_time = None;
+                            log!("Blacklist file '{}' no longer accessible, clearing blacklist.", bf);
+                            blacklist.clear();
+                        }
+                    }
+                }
+            }
         }
     }
     Ok(())

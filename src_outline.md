@@ -147,7 +147,7 @@
     dry_run: bool,
 ) -> ApplyConfigResult 
 - [L674:L744]fn process_logs(configs: &HashMap<String, ProcessConfig>, blacklist: &Vec<String>, logs_path: Option<&str>, output_file: Option<&str>) 
-- [L746:L928]fn main() -> windows::core::Result<()> 
+- [L746:L975]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L17:L27]enum ProcessPriority {

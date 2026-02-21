@@ -14,8 +14,6 @@ A Windows process management tool written in Rust that automatically applies CPU
 | **CPU Affinity** | Restrict processes to specific cores (hard limit, inherited by child processes, ≤64 cores only) |
 | **CPU Sets** | Assign preferred cores via Windows CPU sets (soft preference, works on >64 cores) |
 | **Prime Core Scheduling** | Assign most active threads to designated cores (soft preference) |
-| **Auto-Reload** | Automatically reloads `config` and `blacklist` when changes are detected |
-| **Post-Mortem Reporting** | Log detailed statistics of top threads when a monitored process exits |
 | **I/O Priority** | Control I/O priority (Very Low → High, High requires admin) |
 | **Memory Priority** | Control memory page priority (Very Low → Normal) |
 | **Timer Resolution** | Adjust Windows timer resolution |
@@ -26,32 +24,16 @@ A Windows process management tool written in Rust that automatically applies CPU
 
 For multi-threaded applications (e.g., games), this feature identifies CPU-intensive threads and assigns them to designated cores using Windows CPU sets (soft preference, not hard pinning):
 
-- Monitors thread CPU cycle consumption over time.
-- Filters low-activity threads (entry threshold: 42% of max).
-- Protects promoted threads from premature demotion (keep threshold: 69% of max).
-- Requires consistent activity (configurable via `@MIN_ACTIVE_STREAK`, default: 2 intervals) before promotion.
-- Optionally filters threads by start module name using prefix patterns (syntax: `prime_cpus@prefix1;prefix2`, default: empty matches all).
-- Logs thread start address with module resolution (e.g., `ntdll.dll+0x3C320`) when running elevated.
+- Monitors thread CPU cycle consumption over time
+- Filters low-activity threads (entry threshold: 42% of max)
+- Protects promoted threads from premature demotion (keep threshold: 69% of max)
+- Requires consistent activity (configurable via `@MIN_ACTIVE_STREAK`, default: 2 intervals) before promotion
+- Optionally filters threads by start module name using prefix patterns (syntax: `prime_cpus@prefix1;prefix2`, default: empty matches all)
+- Logs thread start address with module resolution (e.g., `ntdll.dll+0x3C320`) when running elevated
 
 Useful for games where main/render threads should prefer P-cores while avoiding cores 0/1 (hardware interrupt handlers).
 
-#### Monitoring & Post-Mortem Reporting
-You can track thread performance and see a detailed report when a process exits by using the `?` or `??` prefixes in the `prime_cpus` field:
-
-- `?*alias`: **Monitor + Apply**. Apply rules as normal, but track all threads and log a "Top X" report on exit.
-- `??*alias`: **Monitor Only**. Skip applying any core/priority changes, but track threads and log the report.
-- `?10*alias`: Custom Top X count (e.g., show Top 10 instead of the default `2 * cores`).
-
-The report includes **Total Cycles**, **Context Switches**, **Thread State**, **Priority**, and **Module-resolved Start Address**.
-
-**Note:** Thread start address resolution requires admin elevation with SeDebugPrivilege. Without elevation, start addresses show as `0x0`.
-
-### Configuration Auto-Reload
-The service monitors the modification timestamps of your configuration and blacklist files. If you edit and save `config`, the service will:
-1. Detect the change within the next interval (default 5s).
-2. Validate the new configuration.
-3. Apply the new rules immediately if valid.
-4. Keep the old configuration if the new one has syntax errors (safe reload).
+> **Note:** Thread start address resolution requires admin elevation with SeDebugPrivilege. Without elevation, start addresses show as `0x0`.
 
 ## Quick Start
 
@@ -152,18 +134,20 @@ sys_utils {
 
 ### Prime Thread Scheduling
 
-The `prime_cpus` field supports optional module-based filtering and per-module CPU assignments:
+The `prime_cpus` field supports optional module-based filtering, per-module CPU assignments, and thread tracking:
 
 - `prime_cpus` - Base CPU set for prime threads
+- `?x*prime_cpus` - Track the top `x` threads by CPU cycles and log them on process exit, while applying rules
+- `??x*prime_cpus` - Monitor only: track and log the top `x` threads on process exit, but do not apply prime thread rules
 - `prime_cpus@prefix1;prefix2` - Only promote threads from modules starting with specified prefixes
 - `prime_cpus@prefix1*alias1;prefix2*alias2` - Assign specific CPU sets per module prefix
-- `?*alias` - Monitor all threads and report Top X on exit (Apply + Monitor)
-- `??*alias` - Monitor all threads and report Top X on exit (Monitor Only)
 
 Examples:
 - `*pN01` - All prime threads use P-cores except 0-1
-- `??*pN01@cs2.exe;nvwgf2umx.dll` - Monitor CS2/NVIDIA threads without applying changes
-- `?10*p@cs2.exe!highest` - Apply highest priority/P-cores to CS2 threads AND report Top 10 on exit
+- `?20*pN01` - Apply rules using *pN01 CPUs and log the top 20 threads on exit
+- `??20*pN01` - Monitor only: log the top 20 threads on exit without applying CPU sets
+- `*pN01@cs2.exe;nvwgf2umx.dll` - Only CS2 and NVIDIA threads, using *pN01 CPUs
+- `*pN01@cs2.exe*p;nvwgf2umx.dll*e` - CS2 threads use P-cores (*p), NVIDIA threads use E-cores (*e)
 
 ### Example
 
@@ -181,15 +165,34 @@ Examples:
 
 # === RULES ===
 # process:priority:affinity:cpuset:prime[@prefixes]:io:memory
+# Prime syntax supports multiple segments: *alias1@prefix1[!priority];prefix2;*alias2@prefix3[!priority];...
+# Each segment can specify a different CPU alias for its prefixes
 
-# Monitoring mode - track CS2 threads without applying pinning
-cs2.exe:normal:*a:*p:??*pN01:normal:normal
+# Single process rule
+cs2.exe:normal:*a:*p:*pN01:normal:normal
 
-# Apply rules + Monitor Top 10 threads on exit
-game.exe:normal:*a:*p:?10*pN01@UnityPlayer.dll;GameModule.dll:normal:normal
+# Prime with module filtering - all on P-cores except 0-1
+game.exe:normal:*a:*p:*pN01@UnityPlayer.dll;GameModule.dll:normal:normal
+
+# Multi-segment: cs2.exe on P-cores, NVIDIA on E-cores (different CPU sets per module)
+cs2.exe:normal:*a:*p:*p@cs2.exe;*e@nvwgf2umx.dll:normal:normal
+
+# Per-module thread priority - CS2 at highest, NVIDIA at above normal
+cs2.exe:normal:*a:*p:*pN01@cs2.exe!highest;nvwgf2umx.dll!above normal:normal:normal
+
+# Multi-segment with priorities: P-cores at time critical, E-cores at normal
+game.exe:normal:*a:*p:*p@engine.dll!time critical;*e@background.dll!normal:normal:normal
+
+# Mixed: some modules with explicit priority, others use auto-boost
+game.exe:normal:*a:*p:*pN01@UnityPlayer.dll!time critical;GameModule.dll:normal:normal
 
 # Named group - browsers on E-cores
 browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal
+
+# Anonymous group - background apps
+{
+    discord.exe: telegram.exe: slack.exe
+}:below normal:*e:0:0:low:low
 
 # System (admin required for high I/O)
 dwm.exe:high:*p:0:0:high:normal
@@ -201,18 +204,32 @@ dwm.exe:high:*p:0:0:high:normal
 
 Use the `-processlogs` mode to discover new processes from logs that aren't yet in your config or blacklist.
 
+**Requirements:**
+- Everything search tool with `es.exe` in PATH
+- Log files in `logs/` directory (default, can be specified with `-in`), typically generated by running with `-find` mode
+
 **Workflow:**
-1. Run the application with `-find` to scan and log unmanaged processes to `.find.log` files.
-2. Run `-processlogs` to process these logs, filter out configured/blacklisted processes, and search for file paths.
+1. Run the application with `-find` to scan and log unmanaged processes to `.find.log` files
+2. Run `-processlogs` to process these logs, filter out configured/blacklisted processes, and search for file paths
 
 **Usage:**
 ```bash
-# First, scan for unmanaged processes
+# First, scan for unmanaged processes (run daily or as needed)
 AffinityServiceRust.exe -find -console
 
 # Then, process the logs to find new processes
 AffinityServiceRust.exe -processlogs
+
+# Specify config and blacklist files (config defaults to config.ini, blacklist has no default)
+AffinityServiceRust.exe -processlogs -config my_config.ini -blacklist my_blacklist.ini
+
+# Specify log directory and output file
+AffinityServiceRust.exe -processlogs -in mylogs -out results.txt
 ```
+
+This scans `.find.log` files in the `logs/` directory, extracts process names, filters out configured/blacklisted ones, and searches for the rest using `es.exe`. Results are saved to `new_processes_results.txt`, pairing each process with file paths for easy review and addition to config.
+
+Useful for keeping your config up-to-date with new applications.
 
 ### Config Conversion
 
@@ -223,6 +240,8 @@ Use the `-convert` mode to convert Process Lasso configuration files to Affinity
 AffinityServiceRust.exe -convert -in prolasso.ini -out my_config.ini
 ```
 
+This converts Process Lasso rules to the AffinityServiceRust config format, allowing easy migration from Process Lasso to AffinityServiceRust.
+
 ## Debugging
 
 ```bash
@@ -231,9 +250,19 @@ AffinityServiceRust.exe -validate -config config.ini
 
 # Dry run - see what would be changed without applying
 AffinityServiceRust.exe -dryrun -noUAC -config config.ini
+
+# Non-admin with console
+AffinityServiceRust.exe -console -noUAC -logloop -loop 3 -interval 2000
+
+# Admin (check logs/YYYYMMDD.log after)
+AffinityServiceRust.exe -logloop -loop 3 -interval 2000
 ```
 
+> When running elevated, avoid `-console` as the UAC spawns a new process and the window closes immediately.
+
 See [DEBUG.md](DEBUG.md) for more details.
+
+For AI agent contributors (Zed, Cursor, etc.), see [AGENT.md](AGENT.md) for CLI tools and workflow tips.
 
 ## Building
 
@@ -242,6 +271,10 @@ See [DEBUG.md](DEBUG.md) for more details.
 cargo build --release
 ```
 
+For rust-analyzer support, also install MSBuild and Windows 11 SDK.
+
 ## Contributing
 
 Issues and pull requests are welcome.
+
+For developers using AI agents, see [AGENT.md](AGENT.md) for useful CLI tools and bulk editing workflows.

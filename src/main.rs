@@ -199,30 +199,87 @@ fn apply_prime_threads(
     apply_config_result: &mut ApplyConfigResult,
 ) {
     // For dry run, just report prime CPUs would be set
-    if !config.prime_threads_cpus.is_empty() {
+    if !config.prime_threads_cpus.is_empty() || config.track_top_x_threads != 0 {
         if dry_run {
-            apply_config_result.add_change(format!("Prime CPUs: -> [{}]", format_cpu_indices(&config.prime_threads_cpus)));
+            if !config.prime_threads_cpus.is_empty() {
+                apply_config_result.add_change(format!("Prime CPUs: -> [{}]", format_cpu_indices(&config.prime_threads_cpus)));
+            }
             return;
         }
-        prime_core_scheduler.set_alive(pid, &config.name);
+        prime_core_scheduler.set_alive(pid);
+        
+        if config.track_top_x_threads != 0 {
+            prime_core_scheduler.set_tracking_info(pid, config.track_top_x_threads, config.name.clone());
+            // Ensure module cache is populated while process is alive
+            crate::winapi::resolve_address_to_module(pid, 1);
+        }
+
         let process = processes.as_mut().unwrap().pid_to_process.get_mut(&pid).unwrap();
         let thread_count = process.thread_count() as usize;
-        let candidate_count = get_cpu_set_information().lock().unwrap().len().min(thread_count);
-        let mut candidate_tids: Vec<u32> = vec![0u32; candidate_count];
-        let mut tid_with_delta_cycles: Vec<(u32, u64, bool)> = vec![(0u32, 0u64, false); candidate_count];
+        
+        let mut all_tids: Vec<u32> = Vec::new();
+        let mut all_delta_cycles: Vec<(u32, u64, bool)> = Vec::new();
+        
+        if config.track_top_x_threads != 0 {
+            all_tids = process.get_threads().keys().copied().collect();
+            all_delta_cycles = vec![(0u32, 0u64, false); all_tids.len()];
+            apply_prime_threads_query_cycles(
+                &all_tids,
+                &mut all_delta_cycles,
+                prime_core_scheduler,
+                pid,
+                &config.name,
+                apply_config_result,
+            );
+            for (tid, thread) in process.get_threads().iter() {
+                let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
+                thread_stats.last_system_thread_info = Some(thread.clone());
+            }
+        }
 
-        apply_prime_threads_select_candidates(process, &mut candidate_tids, prime_core_scheduler, pid);
-        apply_prime_threads_query_cycles(
-            &candidate_tids,
-            &mut tid_with_delta_cycles,
-            prime_core_scheduler,
-            pid,
-            &config.name,
-            apply_config_result,
-        );
-        apply_prime_threads_update_streaks(&mut tid_with_delta_cycles, prime_core_scheduler, pid, candidate_count);
-        apply_prime_threads_promote(&tid_with_delta_cycles, prime_core_scheduler, pid, config, current_mask, apply_config_result);
-        apply_prime_threads_demote(process, &tid_with_delta_cycles, prime_core_scheduler, pid, config, apply_config_result);
+        if !config.prime_threads_cpus.is_empty() && config.track_top_x_threads >= 0 {
+            let candidate_count = get_cpu_set_information().lock().unwrap().len().min(thread_count);
+            let mut candidate_tids: Vec<u32> = vec![0u32; candidate_count];
+            let mut tid_with_delta_cycles: Vec<(u32, u64, bool)> = vec![(0u32, 0u64, false); candidate_count];
+
+            apply_prime_threads_select_candidates(process, &mut candidate_tids, prime_core_scheduler, pid);
+            
+            if config.track_top_x_threads != 0 {
+                // We already queried cycles for all threads, just copy the deltas
+                for i in 0..candidate_count {
+                    let tid = candidate_tids[i];
+                    if let Some(idx) = all_tids.iter().position(|&t| t == tid) {
+                        tid_with_delta_cycles[i] = all_delta_cycles[idx];
+                    }
+                }
+            } else {
+                apply_prime_threads_query_cycles(
+                    &candidate_tids,
+                    &mut tid_with_delta_cycles,
+                    prime_core_scheduler,
+                    pid,
+                    &config.name,
+                    apply_config_result,
+                );
+            }
+            
+            apply_prime_threads_update_streaks(&mut tid_with_delta_cycles, prime_core_scheduler, pid, candidate_count);
+            apply_prime_threads_promote(&tid_with_delta_cycles, prime_core_scheduler, pid, config, current_mask, apply_config_result);
+            apply_prime_threads_demote(process, &tid_with_delta_cycles, prime_core_scheduler, pid, config, apply_config_result);
+        }
+
+        // Cleanup handles for dead threads
+        let process_stats = prime_core_scheduler.pid_to_process_stats.get_mut(&pid).unwrap();
+        let alive_tids = process.get_threads();
+        for (tid, stats) in process_stats.tid_to_thread_stats.iter_mut() {
+            if !alive_tids.contains_key(tid) {
+                if let Some(handle) = stats.handle.take() {
+                    unsafe {
+                        let _ = windows::Win32::Foundation::CloseHandle(handle);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -233,7 +290,6 @@ fn apply_prime_threads_select_candidates(process: &mut process::ProcessEntry, ca
     process.get_threads().iter().for_each(|(tid, thread)| {
         let total_time = unsafe { thread.KernelTime.QuadPart() + thread.UserTime.QuadPart() };
         let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
-        thread_stats.update_from_info(thread, thread_stats.last_cycles, pid);
         tid_with_delta_time.push((*tid, total_time - thread_stats.last_total_time));
         thread_stats.last_total_time = total_time;
     });
@@ -285,10 +341,7 @@ fn apply_prime_threads_query_cycles(
                             }
                             Ok(_) => {
                                 tid_with_delta_cycles[i] = (tid, cycles, false);
-                                if thread_stats.start_address == 0 {
-                                    thread_stats.start_address = get_thread_start_address(handle);
-                                }
-                                thread_stats.total_cycles = cycles;
+                                thread_stats.start_address = get_thread_start_address(handle);
                             }
                         };
                         thread_stats.handle = Some(handle);
@@ -312,7 +365,6 @@ fn apply_prime_threads_query_cycles(
                     Ok(_) => {
                         tid_with_delta_cycles[i] = (tid, cycles - thread_stats.last_cycles, false);
                         thread_stats.last_cycles = cycles;
-                        thread_stats.total_cycles = cycles;
                     }
                 };
             }
@@ -377,7 +429,7 @@ fn apply_prime_threads_promote(
         let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
         if let Some(handle) = thread_stats.handle {
             if !handle.is_invalid() && thread_stats.cpu_set_ids.is_empty() {
-                let start_module = &thread_stats.module_name;
+                let start_module = resolve_address_to_module(pid, thread_stats.start_address);
                 // Find effective prime CPUs and thread priority for this thread based on prefix matching
                 let mut matched = false;
                 let mut effective_prime_cpus = &config.prime_threads_cpus;
@@ -396,11 +448,6 @@ fn apply_prime_threads_promote(
                 if !matched && !config.prime_threads_prefixes.is_empty() {
                     continue;
                 }
-
-                if config.prime_threads_monitor_only {
-                    continue;
-                }
-
                 // Filter by current process affinity mask
                 let filtered_cpus = if *current_mask != 0 {
                     filter_indices_by_mask(effective_prime_cpus, *current_mask)
@@ -882,7 +929,7 @@ fn main() -> windows::core::Result<()> {
                         }
                     }
                 }
-                prime_core_scheduler.close_dead_process_handles(&configs);
+                prime_core_scheduler.close_dead_process_handles();
                 if cli.dry_run {
                     log!(
                         "[DRY RUN] Checking {} running processes against {} config rules...",

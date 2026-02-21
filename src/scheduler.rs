@@ -4,12 +4,11 @@
 //! CPU-intensive threads to preferred "prime" cores on hybrid CPUs.
 
 use crate::{
-    config::{ConfigConstants, ProcessConfig},
-    logging::{log_message, log_pure_message},
+    config::ConfigConstants,
+    logging::log_message,
     priority::ThreadPriority,
-    winapi::{clear_module_cache, get_cpu_set_information, resolve_address_to_module},
+    winapi::{clear_module_cache, resolve_address_to_module},
 };
-use ntapi::ntexapi::SYSTEM_THREAD_INFORMATION;
 use std::collections::HashMap;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 
@@ -30,7 +29,7 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE};
 /// clear stats when a process dies to avoid applying stale data.
 pub struct PrimeThreadScheduler {
     /// Maps PID -> ProcessStats. Cleared when process exits (PIDs can be reused by OS).
-    pid_to_process_stats: HashMap<u32, ProcessStats>,
+    pub pid_to_process_stats: HashMap<u32, ProcessStats>,
     pub constants: ConfigConstants,
 }
 
@@ -50,36 +49,68 @@ impl PrimeThreadScheduler {
     }
 
     /// Marks a process as alive for this iteration.
-    pub fn set_alive(&mut self, pid: u32, name: &str) {
+    pub fn set_alive(&mut self, pid: u32) {
+        self.pid_to_process_stats.entry(pid).or_insert_with(ProcessStats::new).alive = true;
+    }
+
+    pub fn set_tracking_info(&mut self, pid: u32, track_top_x_threads: i32, process_name: String) {
         let stats = self.pid_to_process_stats.entry(pid).or_insert_with(ProcessStats::new);
-        stats.alive = true;
-        if stats.process_name.is_empty() {
-            stats.process_name = name.to_string();
-        }
+        stats.track_top_x_threads = track_top_x_threads;
+        stats.process_name = process_name;
     }
 
     /// Gets or creates thread stats for the given PID/TID pair.
     #[inline]
     pub fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats {
-        let process_stats = self.pid_to_process_stats.entry(pid).or_insert_with(ProcessStats::new);
-        let is_new = !process_stats.tid_to_thread_stats.contains_key(&tid);
-        let stats = process_stats.tid_to_thread_stats.entry(tid).or_insert_with(ThreadStats::new);
-        if is_new {
-            process_stats.total_threads_tracked += 1;
-        }
-        stats.seen = true;
-        stats
+        self.pid_to_process_stats
+            .entry(pid)
+            .or_insert_with(ProcessStats::new)
+            .tid_to_thread_stats
+            .entry(tid)
+            .or_insert_with(ThreadStats::new)
     }
 
     /// Closes thread handles and removes stats for dead processes.
-    pub fn close_dead_process_handles(&mut self, configs: &HashMap<String, ProcessConfig>) {
+    pub fn close_dead_process_handles(&mut self) {
         self.pid_to_process_stats.retain(|pid, process_stats| {
             if !process_stats.alive {
-                // Generate post-mortem report if monitoring was enabled
-                if let Some(config) = configs.get(&process_stats.process_name) {
-                    if config.prime_threads_monitor {
-                        Self::report_post_mortem(*pid, process_stats, config);
+                if process_stats.track_top_x_threads != 0 {
+                    let x = process_stats.track_top_x_threads.abs() as usize;
+                    let mut threads: Vec<(&u32, &ThreadStats)> = process_stats.tid_to_thread_stats.iter().collect();
+                    threads.sort_by(|a, b| b.1.last_cycles.cmp(&a.1.last_cycles));
+
+                    let top_x = threads.into_iter().take(x);
+                    let mut report = format!("Process {} ({}) exited. Top {} threads by CPU cycles:\n", process_stats.process_name, pid, x);
+                    for (i, (tid, stats)) in top_x.enumerate() {
+                        let module_name = resolve_address_to_module(*pid, stats.start_address);
+                        report.push_str(&format!(
+                            "  [{}] TID: {} | Cycles: {} | StartAddress: 0x{:X} ({})\n",
+                            i + 1,
+                            tid,
+                            stats.last_cycles,
+                            stats.start_address,
+                            module_name
+                        ));
+                        if let Some(info) = &stats.last_system_thread_info {
+                            let kernel_time = unsafe { *info.KernelTime.QuadPart() };
+                            let user_time = unsafe { *info.UserTime.QuadPart() };
+                            let create_time = unsafe { *info.CreateTime.QuadPart() };
+                            report.push_str(&format!("    KernelTime: {}\n", format_100ns(kernel_time)));
+                            report.push_str(&format!("    UserTime: {}\n", format_100ns(user_time)));
+                            report.push_str(&format!("    CreateTime: {}\n", format_filetime(create_time)));
+                            report.push_str(&format!("    WaitTime: {}\n", info.WaitTime));
+                            report.push_str(&format!(
+                                "    ClientId: PID {:?}, TID {:?}\n",
+                                info.ClientId.UniqueProcess, info.ClientId.UniqueThread
+                            ));
+                            report.push_str(&format!("    Priority: {}\n", info.Priority));
+                            report.push_str(&format!("    BasePriority: {}\n", info.BasePriority));
+                            report.push_str(&format!("    ContextSwitches: {}\n", info.ContextSwitches));
+                            report.push_str(&format!("    ThreadState: {}\n", info.ThreadState));
+                            report.push_str(&format!("    WaitReason: {}\n", info.WaitReason));
+                        }
                     }
+                    log_message(&report);
                 }
 
                 clear_module_cache(*pid);
@@ -90,101 +121,10 @@ impl PrimeThreadScheduler {
                         }
                     }
                 }
-            } else {
-                // Cleanup dead threads within an alive process
-                let mut dead_history = Vec::new();
-                process_stats.tid_to_thread_stats.retain(|tid, thread_stats| {
-                    if !thread_stats.seen {
-                        // Thread died, record in history if it's a top thread
-                        if let Some(info) = thread_stats.last_thread_info {
-                            dead_history.push(ThreadHistory {
-                                tid: *tid,
-                                info,
-                                total_cycles: thread_stats.total_cycles,
-                                module_name: thread_stats.module_name.clone(),
-                            });
-                        }
-                        if let Some(handle) = thread_stats.handle {
-                            unsafe {
-                                let _ = CloseHandle(handle);
-                            }
-                        }
-                        false
-                    } else {
-                        thread_stats.seen = false; // Reset for next loop
-                        true
-                    }
-                });
-
-                if !dead_history.is_empty() {
-                    if let Some(config) = configs.get(&process_stats.process_name) {
-                        if config.prime_threads_monitor {
-                            process_stats.top_threads_history.extend(dead_history);
-                            process_stats.top_threads_history.sort_by(|a, b| b.total_cycles.cmp(&a.total_cycles));
-                            let top_x = config.prime_threads_top_x.unwrap_or_else(|| get_cpu_set_information().lock().unwrap().len() * 2);
-                            process_stats.top_threads_history.truncate(top_x);
-                        }
-                    }
-                }
             }
             process_stats.alive
         });
     }
-
-    fn report_post_mortem(pid: u32, process_stats: &mut ProcessStats, config: &ProcessConfig) {
-        // Merge remaining alive threads into history for final ranking
-        for (tid, thread_stats) in &process_stats.tid_to_thread_stats {
-            if let Some(info) = thread_stats.last_thread_info {
-                process_stats.top_threads_history.push(ThreadHistory {
-                    tid: *tid,
-                    info,
-                    total_cycles: thread_stats.total_cycles,
-                    module_name: thread_stats.module_name.clone(),
-                });
-            }
-        }
-
-        process_stats.top_threads_history.sort_by(|a, b| b.total_cycles.cmp(&a.total_cycles));
-        let top_x = config.prime_threads_top_x.unwrap_or_else(|| get_cpu_set_information().lock().unwrap().len() * 2);
-        process_stats.top_threads_history.truncate(top_x);
-
-        if process_stats.top_threads_history.is_empty() {
-            return;
-        }
-
-        log_message(&format!("=== Post-Mortem Report: {} (PID: {}) ===", process_stats.process_name, pid));
-        log_pure_message(&format!("Total Threads Tracked: {}", process_stats.total_threads_tracked));
-        log_pure_message(&format!("Top {} Threads by CPU Cycles:", process_stats.top_threads_history.len()));
-
-        for (i, history) in process_stats.top_threads_history.iter().enumerate() {
-            let state_str = match history.info.ThreadState {
-                2 => "Running",
-                5 => "Waiting",
-                _ => "Other",
-            };
-
-            log_pure_message(&format!(
-                "{:2}. TID: {:>5} | Cycles: {:>10.2}B | Switches: {:>8} | Start: {}",
-                i + 1,
-                history.tid,
-                history.total_cycles as f64 / 1_000_000_000.0,
-                history.info.ContextSwitches,
-                history.module_name
-            ));
-            log_pure_message(&format!(
-                "    [State: {} | Priority: {} (Base: {})]",
-                state_str, history.info.Priority, history.info.BasePriority
-            ));
-        }
-    }
-}
-
-/// A record of a thread's performance for post-mortem reporting.
-pub struct ThreadHistory {
-    pub tid: u32,
-    pub info: SYSTEM_THREAD_INFORMATION,
-    pub total_cycles: u64,
-    pub module_name: String,
 }
 
 /// Per-process state for the PrimeThreadScheduler.
@@ -192,11 +132,7 @@ pub struct ProcessStats {
     /// Set to false at loop start, true when process is seen. Dead processes are cleaned up.
     pub alive: bool,
     pub tid_to_thread_stats: HashMap<u32, ThreadStats>,
-    /// History of threads that have died.
-    pub top_threads_history: Vec<ThreadHistory>,
-    /// Total number of unique threads seen for this process.
-    pub total_threads_tracked: usize,
-    /// Process name for reporting.
+    pub track_top_x_threads: i32,
     pub process_name: String,
 }
 
@@ -205,8 +141,7 @@ impl ProcessStats {
         Self {
             alive: true,
             tid_to_thread_stats: HashMap::new(),
-            top_threads_history: Vec::new(),
-            total_threads_tracked: 0,
+            track_top_x_threads: 0,
             process_name: String::new(),
         }
     }
@@ -234,14 +169,7 @@ pub struct ThreadStats {
     pub start_address: usize,
     /// Original thread priority before promotion. None if not promoted.
     pub original_priority: Option<ThreadPriority>,
-    /// Total CPU cycles consumed by this thread.
-    pub total_cycles: u64,
-    /// Last seen thread information from NT snapshot.
-    pub last_thread_info: Option<SYSTEM_THREAD_INFORMATION>,
-    /// Resolved module name and offset.
-    pub module_name: String,
-    /// Whether this thread was seen in the current iteration.
-    pub seen: bool,
+    pub last_system_thread_info: Option<ntapi::ntexapi::SYSTEM_THREAD_INFORMATION>,
 }
 
 impl ThreadStats {
@@ -254,19 +182,7 @@ impl ThreadStats {
             active_streak: 0,
             start_address: 0,
             original_priority: None,
-            total_cycles: 0,
-            last_thread_info: None,
-            module_name: String::new(),
-            seen: true,
-        }
-    }
-
-    pub fn update_from_info(&mut self, info: &SYSTEM_THREAD_INFORMATION, cycles: u64, pid: u32) {
-        self.last_thread_info = Some(*info);
-        self.total_cycles = cycles;
-        if self.start_address == 0 {
-            self.start_address = info.StartAddress as usize;
-            self.module_name = resolve_address_to_module(pid, self.start_address);
+            last_system_thread_info: None,
         }
     }
 }
@@ -274,5 +190,19 @@ impl ThreadStats {
 impl Default for ThreadStats {
     fn default() -> Self {
         Self::new()
+    }
+}
+fn format_100ns(time: i64) -> String {
+    let seconds = time / 10_000_000;
+    let ms = (time % 10_000_000) / 10_000;
+    format!("{}.{:03} s", seconds, ms)
+}
+
+fn format_filetime(time: i64) -> String {
+    let unix_time = time / 10_000_000 - 11644473600;
+    if let Some(dt) = chrono::DateTime::from_timestamp(unix_time, ((time % 10_000_000) * 100) as u32) {
+        dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+    } else {
+        time.to_string()
     }
 }

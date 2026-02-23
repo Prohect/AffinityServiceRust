@@ -29,11 +29,12 @@ For multi-threaded applications (e.g., games), this feature identifies CPU-inten
 - Protects promoted threads from premature demotion (keep threshold: 69% of max)
 - Requires consistent activity (configurable via `@MIN_ACTIVE_STREAK`, default: 2 intervals) before promotion
 - Optionally filters threads by start module name using prefix patterns (syntax: `prime_cpus@prefix1;prefix2`, default: empty matches all)
-- Logs thread start address with module resolution (e.g., `ntdll.dll+0x3C320`) when running elevated
+- Logs thread start address with module resolution (e.g., `ntdll.dll+0x3C320`)
+- Optional thread tracking: `?10` syntax logs top 10 threads by CPU cycles on process exit
 
 Useful for games where main/render threads should prefer P-cores while avoiding cores 0/1 (hardware interrupt handlers).
 
-> **Note:** Thread start address resolution requires admin elevation with SeDebugPrivilege. Without elevation, start addresses show as `0x0`.
+> **Note:** Thread start address resolution requires admin elevation with SeDebugPrivilege. Without elevation, start addresses show as `0x0`. Debug symbols are automatically downloaded from Microsoft's symbol server (configurable via `-proxy` for network environments).
 
 ## Quick Start
 
@@ -69,6 +70,7 @@ AffinityServiceRust.exe -find
 | `-noUAC` | Run without requesting admin privileges |
 | `-interval <ms>` | Check interval in milliseconds (default: `5000`) |
 | `-resolution <0.0001ms>` | Set timer resolution |
+| `-proxy <url>` | HTTP proxy for downloading debug symbols (e.g., `http://proxy:8080`) |
 | `-find` | Log unmanaged processes |
 | `-convert` | Convert Process Lasso config |
 | `-validate` | Validate config file syntax without running |
@@ -144,10 +146,17 @@ The `prime_cpus` field supports optional module-based filtering, per-module CPU 
 
 Examples:
 - `*pN01` - All prime threads use P-cores except 0-1
-- `?20*pN01` - Apply rules using *pN01 CPUs and log the top 20 threads on exit
+- `?10*pN01` - Apply rules using *pN01 CPUs and log the top 10 threads on exit (includes detailed thread statistics: cycles, kernel/user time, context switches, start address with module resolution)
 - `??20*pN01` - Monitor only: log the top 20 threads on exit without applying CPU sets
 - `*pN01@cs2.exe;nvwgf2umx.dll` - Only CS2 and NVIDIA threads, using *pN01 CPUs
 - `*pN01@cs2.exe*p;nvwgf2umx.dll*e` - CS2 threads use P-cores (*p), NVIDIA threads use E-cores (*e)
+
+When a tracked process exits, detailed statistics are logged for each thread including:
+- Thread ID and total CPU cycles
+- Start address resolved to `module.dll+offset` format
+- Kernel and user time
+- Thread priority and state
+- Context switches and wait reason
 
 ### Example
 

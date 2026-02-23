@@ -153,6 +153,7 @@ cargo run --release -- -logloop -loop 3 -interval 2000 -config test.ini
 | `-interval <ms>` | Check interval in milliseconds (min: 16) | 5000 |
 | `-config <file>` | Use custom config file | config.ini |
 | `-blacklist <file>` | Use custom blacklist file | None |
+| `-proxy <url>` | HTTP proxy for downloading debug symbols | None |
 | `-help` | Show basic help | - |
 | `-help-all` | Show extended help with all options | - |
 | `-validate` | Validate config file syntax without running | - |
@@ -184,8 +185,10 @@ process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_p
   - Each segment (separated by `*`) specifies a CPU alias and its associated module prefixes
   - Only CPU aliases (`*p`, `*e`, `*pN01`, etc.) are allowed in multi-segment mode
   - Each prefix can have optional `!priority` suffix for explicit thread priority
+  - Thread tracking: Prefix with `?x` to track top x threads and log on process exit
   - Examples:
     - `0-7` - All prime threads on CPUs 0-7, auto-boost priority
+    - `?10*p` - Track top 10 threads on P-cores, log detailed stats on exit
     - `*p@cs2.exe!highest;main.dll` - cs2.exe at highest priority, main.dll auto-boost, both on P-cores
     - `*p@cs2.exe;*e@nvwgf2umx.dll` - cs2.exe on P-cores, nvwgf2umx.dll on E-cores
     - `*p@engine.dll!time critical;*pN01@render.dll!highest;*e@background.dll!normal`
@@ -266,6 +269,67 @@ cargo run --release -- -console -noUAC -loop 1 -config test.ini
 cargo run --release -- -console -noUAC -logloop -loop 10 -interval 500 -config test.ini
 ```
 
+### Test Thread Tracking
+
+Test the `?10` syntax to track and log top 10 threads on process exit:
+
+```bash
+# Create test config with thread tracking
+cat > test_tracking.ini << 'EOF'
+@MIN_ACTIVE_STREAK = 1
+@KEEP_THRESHOLD = 0.1
+@ENTRY_THRESHOLD = 0.1
+
+*p = 8-19
+
+# Track top 10 threads for notepad.exe
+notepad.exe:above normal:0:*p:?10*p:normal:low
+EOF
+
+# Run with controlled timing: interval * (loop - 1) = 2000 * 9 = 18 seconds
+cargo run --release -- -console -noUAC -loop 10 -interval 2000 -config test_tracking.ini -proxy http://proxy:8080
+```
+
+Start a notepad.exe process, then close it before the 18 seconds expire. The output will show:
+
+```
+[HH:MM:SS]Process notepad.exe (PID) exited. Top 10 threads by CPU cycles:
+  [1] TID: 11724 | Cycles: 2705538276 | StartAddress: 0x7FFA147C3780 (ucrtbase.dll+0x3780)
+    KernelTime: 0.609 s
+    UserTime: 0.359 s
+    CreateTime: 2026-02-23 18:58:46.228
+    Priority: 12
+    BasePriority: 11
+    ContextSwitches: 75520
+    ThreadState: 5
+    WaitReason: 13
+  [2] TID: 15732 | Cycles: 2314481779 | StartAddress: 0x7FF99BEFC430 (dwmcorei.dll+0x15C430)
+    ...
+[HH:MM:SS]Symbol handler cleaned up for PID XXXXX
+```
+
+Each tracked thread shows:
+- Thread ID and CPU cycles consumed
+- Start address resolved to `module.dll+offset` format
+- Kernel/user time, creation time
+- Priority, context switches, thread state
+- Wait reason
+
+### Test Symbol Resolution with Proxy
+
+Test debug symbol downloading through a proxy:
+
+```bash
+# Run with proxy configuration
+cargo run --release -- -console -noUAC -loop 5 -interval 2000 -config test.ini -proxy http://127.0.0.1:8080
+
+# Symbol handler initialization messages will appear:
+# [HH:MM:SS]Using proxy for symbol downloads: http://127.0.0.1:8080
+# [HH:MM:SS]Symbol handler initialized for PID 1234, will download symbols to c:\symbols
+```
+
+Thread start addresses will be resolved to `module.dll+offset` format. First run may take time to download PDB files from Microsoft's symbol server through the proxy. Subsequent runs use cached symbols.
+
 ## Error Codes
 
 Errors are logged with format `[ERROR_TYPE][0x{code}]`:
@@ -309,6 +373,67 @@ Errors are logged with format `[ERROR_TYPE][0x{code}]`:
 3. **Console output lost with admin elevation**: When running with `-console` and UAC elevation, the elevated process spawns in a new window via PowerShell which closes immediately. Use log file output instead (omit `-console`).
 
 4. **High IO priority requires admin**: IO priority `high` only works when running as administrator. Without elevation, you'll get `0xC0000061` (STATUS_PRIVILEGE_NOT_HELD).
+
+5. **Symbol resolution requires admin**: Thread start address resolution requires admin elevation with SeDebugPrivilege. Without elevation, start addresses show as `0x0`.
+
+6. **First symbol download is slow**: When debug symbols are first downloaded from Microsoft's symbol server, it can take 10-30 seconds per PDB file. Subsequent runs use cached symbols at `c:\symbols\` and are instant.
+
+## Symbol Resolution & Debug Symbols
+
+### How It Works
+
+Thread start address resolution uses Windows `dbghelp.dll` to:
+- Automatically download PDB files from Microsoft's symbol server
+- Cache symbols locally at `c:\symbols\`
+- Resolve memory addresses to `module.dll+offset` format
+- Example: `0x7FFA17392220` → `ntdll.dll+0x92220`
+
+### Symbol Server Configuration
+
+**Default symbol path:**
+```
+SRV*c:\symbols*https://msdl.microsoft.com/download/symbols
+```
+
+**With proxy:**
+```
+SRV*c:\symbols*http://proxy:8080*https://msdl.microsoft.com/download/symbols
+```
+
+Use `-proxy http://proxy:8080` to configure proxy for symbol downloads.
+
+### Symbol Cache
+
+- **Location**: `c:\symbols\`
+- **Structure**: `c:\symbols\module.pdb\{GUID}\module.pdb`
+- **First run**: Downloads PDBs (10-30 seconds per module)
+- **Subsequent runs**: Uses cached symbols (instant)
+- **Cleanup**: Safe to delete `c:\symbols\` to free space (symbols will re-download as needed)
+
+### Troubleshooting Symbols
+
+**Symbols not resolving:**
+1. Check network access to `msdl.microsoft.com`
+2. Verify `c:\symbols` directory is writable
+3. Check proxy configuration if behind corporate firewall
+4. Ensure running with admin privileges (SeDebugPrivilege required)
+
+**Symbol handler messages:**
+```
+[HH:MM:SS]Using proxy for symbol downloads: http://proxy:8080
+[HH:MM:SS]Symbol handler initialized for PID 1234, will download symbols to c:\symbols
+[HH:MM:SS]Symbol handler cleaned up for PID 1234
+```
+
+### Symbols for Custom Applications
+
+Microsoft's symbol server only provides symbols for:
+- Windows system files (ntdll.dll, kernel32.dll, etc.)
+- Microsoft applications
+
+For custom applications, you'll see `app.exe+0xOffset` format without function names unless:
+- PDB files are available locally
+- A custom symbol server is configured
 
 ## Project Structure
 

@@ -8,7 +8,16 @@ use crate::{
     logging::{FAIL_SET, error_from_code, log_to_find},
 };
 use once_cell::sync::Lazy;
-use std::{collections::HashMap, env, io, mem::size_of, process::Command, sync::Mutex};
+use std::{
+    collections::{HashMap, HashSet},
+    env,
+    ffi::CString,
+    io,
+    mem::size_of,
+    process::Command,
+    ptr,
+    sync::Mutex,
+};
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE, LUID, NTSTATUS},
     Security::{
@@ -21,6 +30,62 @@ use windows::Win32::{
         Threading::{GetCurrentProcess, GetProcessAffinityMask, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_VM_READ},
     },
 };
+
+// DbgHelp constants for symbol resolution
+const SYMOPT_UNDNAME: u32 = 0x00000002;
+const SYMOPT_DEFERRED_LOADS: u32 = 0x00000004;
+const SYMOPT_LOAD_LINES: u32 = 0x00000010;
+#[allow(dead_code)]
+const SYMOPT_DEBUG: u32 = 0x80000000;
+
+#[repr(C)]
+#[allow(non_snake_case)]
+struct SymbolInfo {
+    size_of_struct: u32,
+    type_index: u32,
+    reserved: [u64; 2],
+    index: u32,
+    size: u32,
+    mod_base: u64,
+    flags: u32,
+    value: u64,
+    address: u64,
+    register: u32,
+    scope: u32,
+    tag: u32,
+    name_len: u32,
+    max_name_len: u32,
+    name: [i8; 1], // Variable length array
+}
+
+// DbgHelp.dll imports for symbol resolution with automatic PDB downloading
+#[link(name = "dbghelp")]
+unsafe extern "system" {
+    /// Sets symbol handler options
+    fn SymSetOptions(options: u32) -> u32;
+
+    /// Initializes the symbol handler for a process
+    /// invade_process: pass 0 to manually load modules, 1 to auto-enumerate
+    fn SymInitialize(h_process: HANDLE, user_search_path: *const i8, invade_process: i32) -> i32;
+
+    /// Loads symbols for a module
+    fn SymLoadModuleEx(
+        h_process: HANDLE,
+        h_file: HANDLE,
+        image_name: *const i8,
+        module_name: *const i8,
+        base_of_dll: u64,
+        dll_size: u32,
+        data: *const std::ffi::c_void,
+        flags: u32,
+    ) -> u64;
+
+    /// Resolves an address to a symbol
+    fn SymFromAddr(h_process: HANDLE, address: u64, displacement: *mut u64, symbol: *mut SymbolInfo) -> i32;
+
+    /// Cleans up symbol handler
+    fn SymCleanup(h_process: HANDLE) -> i32;
+}
 
 // Undocumented NTDLL imports for IO priority and timer resolution control.
 // These APIs are stable but not officially documented by Microsoft.
@@ -466,15 +531,169 @@ pub fn get_thread_start_address(thread_handle: HANDLE) -> usize {
 /// Key: PID, Value: Vec of (base_address, size, module_name)
 static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
-/// Resolves a memory address to a module name for a given process.
-/// Returns the module name + offset (e.g., "ntdll.dll+0x1C320") or just the hex address if not found.
+/// Symbol handler state for processes (tracks which PIDs have symbols initialized)
+static SYMBOL_INITIALIZED: Lazy<Mutex<HashSet<u32>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+
+/// Global proxy setting for symbol downloads
+static SYMBOL_PROXY: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
+
+/// Sets the HTTP proxy for symbol downloads.
+///
+/// # Arguments
+/// * `proxy_url` - Proxy URL (e.g., "http://proxy:8080")
+pub fn set_symbol_proxy(proxy_url: Option<String>) {
+    *SYMBOL_PROXY.lock().unwrap() = proxy_url;
+}
+
+/// Initializes symbol handler for a process with Microsoft symbol server support.
+/// This enables automatic downloading of PDB files from Microsoft's symbol server.
+///
+/// # Arguments
+/// * `h_process` - Handle to the process (must have PROCESS_QUERY_INFORMATION | PROCESS_VM_READ)
+/// * `pid` - Process ID for tracking initialization state
+///
+/// # Returns
+/// `true` if symbols were initialized successfully
+fn initialize_symbols(h_process: HANDLE, pid: u32) -> bool {
+    // Check if already initialized
+    {
+        let initialized = SYMBOL_INITIALIZED.lock().unwrap();
+        if initialized.contains(&pid) {
+            return true;
+        }
+    }
+
+    // Set symbol options for automatic downloading and deferred loading
+    unsafe {
+        SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
+    }
+
+    // Build symbol search path with Microsoft symbol server
+    // Format: "SRV*c:\symbols*https://msdl.microsoft.com/download/symbols"
+    // If proxy is set, use format: "SRV*c:\symbols*https://proxy:port*https://msdl.microsoft.com/download/symbols"
+    let symbol_path_str = {
+        let proxy = SYMBOL_PROXY.lock().unwrap();
+        if let Some(ref proxy_url) = *proxy {
+            format!("SRV*c:\\symbols*{}*https://msdl.microsoft.com/download/symbols", proxy_url)
+        } else {
+            "SRV*c:\\symbols*https://msdl.microsoft.com/download/symbols".to_string()
+        }
+    };
+
+    let symbol_path = match CString::new(symbol_path_str) {
+        Ok(path) => path,
+        Err(_) => return false,
+    };
+
+    // Initialize symbol handler
+    let result = unsafe { SymInitialize(h_process, symbol_path.as_ptr(), 0) };
+
+    if result != 0 {
+        let mut initialized = SYMBOL_INITIALIZED.lock().unwrap();
+        initialized.insert(pid);
+        log!("Symbol handler initialized for PID {}, will download symbols to c:\\symbols", pid);
+        true
+    } else {
+        log!("Failed to initialize symbol handler for PID {}", pid);
+        false
+    }
+}
+
+/// Loads symbols for a specific module in the target process.
+///
+/// # Arguments
+/// * `h_process` - Handle to the process
+/// * `base` - Base address of the module
+/// * `size` - Size of the module
+/// * `name` - Name of the module
+fn load_module_symbols(h_process: HANDLE, base: usize, size: usize, name: &str) {
+    let module_name = CString::new(name).ok();
+
+    if let Some(name_cstr) = module_name {
+        unsafe {
+            let loaded = SymLoadModuleEx(
+                h_process,
+                HANDLE::default(),
+                name_cstr.as_ptr(),
+                ptr::null(),
+                base as u64,
+                size as u32,
+                ptr::null(),
+                0,
+            );
+
+            if loaded == 0 {
+                // Module loading failed - this is expected for many modules without symbols
+                // Only log if debug mode
+                // log!("Could not load symbols for {} at 0x{:X}", name, base);
+            }
+        }
+    }
+}
+
+/// Resolves an address to a symbol name using dbghelp.
+/// This will automatically download debug symbols if available.
+///
+/// # Arguments
+/// * `h_process` - Handle to the process
+/// * `address` - Memory address to resolve
+///
+/// # Returns
+/// Symbol name with offset (e.g., "RtlUserThreadStart+0x21") or None if not found
+fn resolve_address_to_symbol(h_process: HANDLE, address: usize) -> Option<String> {
+    const MAX_NAME_LEN: usize = 256;
+    let mut buffer = vec![0u8; std::mem::size_of::<SymbolInfo>() + MAX_NAME_LEN];
+    let symbol_info = buffer.as_mut_ptr() as *mut SymbolInfo;
+
+    unsafe {
+        (*symbol_info).size_of_struct = std::mem::size_of::<SymbolInfo>() as u32;
+        (*symbol_info).max_name_len = MAX_NAME_LEN as u32;
+
+        let mut displacement: u64 = 0;
+        let result = SymFromAddr(h_process, address as u64, &mut displacement, symbol_info);
+
+        if result != 0 {
+            let name_ptr = (*symbol_info).name.as_ptr();
+            let name_len = (*symbol_info).name_len as usize;
+
+            if name_len > 0 {
+                let name_bytes = std::slice::from_raw_parts(name_ptr as *const u8, name_len);
+                if let Ok(name) = std::str::from_utf8(name_bytes) {
+                    if displacement > 0 {
+                        return Some(format!("{}+0x{:X}", name, displacement));
+                    } else {
+                        return Some(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Cleans up symbol handler for a process.
+fn cleanup_symbols(pid: u32, h_process: HANDLE) {
+    let mut initialized = SYMBOL_INITIALIZED.lock().unwrap();
+    if initialized.remove(&pid) {
+        unsafe {
+            SymCleanup(h_process);
+        }
+        log!("Symbol handler cleaned up for PID {}", pid);
+    }
+}
+
+/// Resolves a memory address to a module name and optionally symbol name for a given process.
+/// With symbol resolution enabled, returns function name (e.g., "ntdll.dll!RtlUserThreadStart+0x21").
+/// Without symbols, returns the module name + offset (e.g., "ntdll.dll+0x1C320").
+/// Falls back to hex address if module not found.
 ///
 /// # Arguments
 /// * `pid` - Process ID
 /// * `address` - Memory address to resolve (e.g., thread start address)
 ///
 /// # Returns
-/// A string like "ntdll.dll+0x1C320" or "0x00007FFC36BDC320" if module not found.
+/// A string like "ntdll.dll!RtlUserThreadStart+0x21", "ntdll.dll+0x1C320", or "0x00007FFC36BDC320"
 pub fn resolve_address_to_module(pid: u32, address: usize) -> String {
     if address == 0 {
         return "0x0".to_string();
@@ -512,12 +731,46 @@ pub fn resolve_address_to_module(pid: u32, address: usize) -> String {
         }
     }
 
+    // Try symbol resolution if we have a process handle
+    let h_proc = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) };
+
+    if let Ok(h) = h_proc {
+        if !h.is_invalid() {
+            // Initialize symbols if not already done
+            if initialize_symbols(h, pid) {
+                // Load symbols for all cached modules
+                let cache = MODULE_CACHE.lock().unwrap();
+                if let Some(cached_modules) = cache.get(&pid) {
+                    for (base, size, name) in cached_modules {
+                        load_module_symbols(h, *base, *size, name);
+                    }
+                }
+                drop(cache);
+
+                // Try to resolve the symbol
+                if let Some(symbol) = resolve_address_to_symbol(h, address) {
+                    let _ = unsafe { CloseHandle(h) };
+                    return symbol;
+                }
+            }
+            let _ = unsafe { CloseHandle(h) };
+        }
+    }
+
     format!("0x{:X}", address)
 }
 
-/// Clears the module cache for a specific process (call when process exits).
+/// Clears the module cache and symbol handler for a specific process (call when process exits).
 pub fn clear_module_cache(pid: u32) {
     MODULE_CACHE.lock().unwrap().remove(&pid);
+
+    // Clean up symbols if we can get a handle
+    if let Ok(h) = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) } {
+        if !h.is_invalid() {
+            cleanup_symbols(pid, h);
+            let _ = unsafe { CloseHandle(h) };
+        }
+    }
 }
 
 /// Enumerates all modules in a process and returns their base addresses, sizes, and names.

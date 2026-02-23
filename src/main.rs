@@ -25,7 +25,7 @@ use std::{
 use winapi::{
     NtQueryInformationProcess, NtSetInformationProcess, NtSetTimerResolution, cpusetids_from_indices, enable_debug_privilege, enable_inc_base_priority_privilege,
     filter_indices_by_mask, get_cpu_set_information, get_thread_start_address, indices_from_cpusetids, is_affinity_unset, is_running_as_admin, request_uac_elevation,
-    resolve_address_to_module,
+    resolve_address_to_module, set_symbol_proxy,
 };
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE},
@@ -207,7 +207,6 @@ fn apply_prime_threads(
             return;
         }
         prime_core_scheduler.set_alive(pid);
-        
         if config.track_top_x_threads != 0 {
             prime_core_scheduler.set_tracking_info(pid, config.track_top_x_threads, config.name.clone());
             // Ensure module cache is populated while process is alive
@@ -216,21 +215,14 @@ fn apply_prime_threads(
 
         let process = processes.as_mut().unwrap().pid_to_process.get_mut(&pid).unwrap();
         let thread_count = process.thread_count() as usize;
-        
+
         let mut all_tids: Vec<u32> = Vec::new();
         let mut all_delta_cycles: Vec<(u32, u64, bool)> = Vec::new();
-        
+
         if config.track_top_x_threads != 0 {
             all_tids = process.get_threads().keys().copied().collect();
             all_delta_cycles = vec![(0u32, 0u64, false); all_tids.len()];
-            apply_prime_threads_query_cycles(
-                &all_tids,
-                &mut all_delta_cycles,
-                prime_core_scheduler,
-                pid,
-                &config.name,
-                apply_config_result,
-            );
+            apply_prime_threads_query_cycles(&all_tids, &mut all_delta_cycles, prime_core_scheduler, pid, &config.name, apply_config_result);
             for (tid, thread) in process.get_threads().iter() {
                 let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
                 thread_stats.last_system_thread_info = Some(thread.clone());
@@ -243,7 +235,7 @@ fn apply_prime_threads(
             let mut tid_with_delta_cycles: Vec<(u32, u64, bool)> = vec![(0u32, 0u64, false); candidate_count];
 
             apply_prime_threads_select_candidates(process, &mut candidate_tids, prime_core_scheduler, pid);
-            
+
             if config.track_top_x_threads != 0 {
                 // We already queried cycles for all threads, just copy the deltas
                 for i in 0..candidate_count {
@@ -262,7 +254,7 @@ fn apply_prime_threads(
                     apply_config_result,
                 );
             }
-            
+
             apply_prime_threads_update_streaks(&mut tid_with_delta_cycles, prime_core_scheduler, pid, candidate_count);
             apply_prime_threads_promote(&tid_with_delta_cycles, prime_core_scheduler, pid, config, current_mask, apply_config_result);
             apply_prime_threads_demote(process, &tid_with_delta_cycles, prime_core_scheduler, pid, config, apply_config_result);
@@ -849,6 +841,11 @@ fn main() -> windows::core::Result<()> {
         }
     } else {
         log!("{} blacklist items load", blacklist.len());
+    }
+    // Set proxy for symbol downloads if provided
+    if let Some(ref proxy) = cli.proxy {
+        set_symbol_proxy(Some(proxy.clone()));
+        log!("Using proxy for symbol downloads: {}", proxy);
     }
     if !cli.no_debug_priv {
         enable_debug_privilege();

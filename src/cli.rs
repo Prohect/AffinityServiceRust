@@ -27,6 +27,7 @@ pub struct CliArgs {
     pub skip_log_before_elevation: bool,
     pub no_debug_priv: bool,
     pub no_inc_base_priority: bool,
+    pub proxy: Option<String>,
 }
 
 impl CliArgs {
@@ -110,6 +111,10 @@ pub fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<(
                 cli.out_file_name = Some(args[i + 1].clone());
                 i += 1;
             }
+            "-proxy" if i + 1 < args.len() => {
+                cli.proxy = Some(args[i + 1].clone());
+                i += 1;
+            }
             "-skip_log_before_elevation" => {
                 cli.skip_log_before_elevation = true;
             }
@@ -139,6 +144,7 @@ pub fn print_help() {
     log!("  -config <file>       config file to use (default: config.ini)");
     log!("  -find                find processes with default affinity (-blacklist <file>)");
     log!("  -interval <ms>       check interval in milliseconds (default: 5000)");
+    log!("  -proxy <url>         HTTP proxy for symbol downloads (e.g., http://proxy:8080)");
     log!("");
     log!("  -noUAC               disable UAC elevation request");
     log!("  -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)");
@@ -289,6 +295,7 @@ pub fn print_cli_help() {
     log!("  -find                find those whose affinity is same as system default which is all possible cores windows could use");
     log!("  -blacklist <file>    the blacklist for -find");
     log!("  -interval <ms>       set interval for checking again (5000 by default, minimal 16)");
+    log!("  -proxy <url>         HTTP proxy for downloading debug symbols (e.g., http://proxy:8080)");
     log!("");
     log!("  -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)");
     log!("");

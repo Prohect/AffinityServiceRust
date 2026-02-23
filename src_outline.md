@@ -1,7 +1,7 @@
 # Src Code Structure Outline
 
 ## src/cli.rs
-- [L7:L30]struct CliArgs {
+- [L7:L31]struct CliArgs {
     pub interval_ms: u64,
     pub help_mode: bool,
     pub help_all_mode: bool,
@@ -21,13 +21,14 @@
     pub skip_log_before_elevation: bool,
     pub no_debug_priv: bool,
     pub no_inc_base_priority: bool,
+    pub proxy: Option<String>,
 }
-- [L43:L127]fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<()> 
-- [L129:L158]fn print_help() 
-- [L160:L267]fn get_config_help_lines() -> Vec<&'static str> 
-- [L269:L274]fn print_config_help() 
-- [L276:L321]fn print_cli_help() 
-- [L323:L329]fn print_help_all() 
+- [L44:L132]fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<()> 
+- [L134:L164]fn print_help() 
+- [L166:L273]fn get_config_help_lines() -> Vec<&'static str> 
+- [L275:L280]fn print_config_help() 
+- [L282:L328]fn print_cli_help() 
+- [L330:L336]fn print_help_all() 
 
 ## src/config.rs
 - [L30:L39]struct PrimePrefix {
@@ -103,7 +104,7 @@
 - [L69:L94]fn apply_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
 - [L96:L131]fn apply_affinity(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, current_mask: &mut usize, apply_config_result: &mut ApplyConfigResult) 
 - [L133:L190]fn apply_process_default_cpuset(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
-- [L192:L284]fn apply_prime_threads(
+- [L192:L276]fn apply_prime_threads(
     pid: u32,
     config: &ProcessConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
@@ -112,8 +113,8 @@
     current_mask: &mut usize,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L286:L301]fn apply_prime_threads_select_candidates(process: &mut process::ProcessEntry, candidate_tids: &mut [u32], prime_core_scheduler: &mut PrimeThreadScheduler, pid: u32) 
-- [L303:L373]fn apply_prime_threads_query_cycles(
+- [L278:L293]fn apply_prime_threads_select_candidates(process: &mut process::ProcessEntry, candidate_tids: &mut [u32], prime_core_scheduler: &mut PrimeThreadScheduler, pid: u32) 
+- [L295:L365]fn apply_prime_threads_query_cycles(
     candidate_tids: &[u32],
     tid_with_delta_cycles: &mut [(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
@@ -121,8 +122,8 @@
     process_name: &str,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L375:L415]fn apply_prime_threads_update_streaks(tid_with_delta_cycles: &mut [(u32, u64, bool)], prime_core_scheduler: &mut PrimeThreadScheduler, pid: u32, prime_count: usize) 
-- [L417:L516]fn apply_prime_threads_promote(
+- [L367:L407]fn apply_prime_threads_update_streaks(tid_with_delta_cycles: &mut [(u32, u64, bool)], prime_core_scheduler: &mut PrimeThreadScheduler, pid: u32, prime_count: usize) 
+- [L409:L508]fn apply_prime_threads_promote(
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
     pid: u32,
@@ -130,7 +131,7 @@
     current_mask: &mut usize,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L518:L564]fn apply_prime_threads_demote(
+- [L510:L556]fn apply_prime_threads_demote(
     process: &mut process::ProcessEntry,
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
@@ -138,17 +139,17 @@
     config: &ProcessConfig,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L566:L624]fn apply_io_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
-- [L626:L684]fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
-- [L686:L729]fn apply_config(
+- [L558:L616]fn apply_io_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
+- [L618:L676]fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
+- [L678:L721]fn apply_config(
     pid: u32,
     config: &ProcessConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
     processes: Option<&mut ProcessSnapshot>,
     dry_run: bool,
 ) -> ApplyConfigResult 
-- [L731:L801]fn process_logs(configs: &HashMap<String, ProcessConfig>, blacklist: &Vec<String>, logs_path: Option<&str>, output_file: Option<&str>) 
-- [L803:L1032]fn main() -> windows::core::Result<()> 
+- [L723:L793]fn process_logs(configs: &HashMap<String, ProcessConfig>, blacklist: &Vec<String>, logs_path: Option<&str>, output_file: Option<&str>) 
+- [L795:L1029]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L17:L27]enum ProcessPriority {
@@ -227,25 +228,36 @@
 - [L201:L208]fn format_filetime(time: i64) -> String 
 
 ## src/winapi.rs
-- [L54:L59]struct CpuSetData {
+- [L43:L46]struct SymbolInfo {
+    size_of_struct: u32,
+    type_index: u32,
+    reserved: [u64; 2],
+- [L119:L124]struct CpuSetData {
     id: u32,
     logical_processor_index: u8,
 }
-- [L75:L75]static CPU_SET_INFORMATION: Lazy<Mutex<Vec<CpuSetData>>> = Lazy::new(|| {
-- [L121:L124]fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>> 
-- [L126:L149]fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32> 
-- [L151:L175]fn cpusetids_from_mask(mask: usize) -> Vec<u32> 
-- [L177:L197]fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32> 
-- [L199:L223]fn mask_from_cpusetids(cpuids: &[u32]) -> usize 
-- [L225:L241]fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<u32> 
-- [L243:L277]fn is_running_as_admin() -> bool 
-- [L279:L303]fn request_uac_elevation() -> io::Result<()> 
-- [L305:L349]fn enable_debug_privilege() 
-- [L351:L395]fn enable_inc_base_priority_privilege() 
-- [L397:L443]fn is_affinity_unset(pid: u32, process_name: &str) -> bool 
-- [L445:L463]fn get_thread_start_address(thread_handle: HANDLE) -> usize 
-- [L467:L467]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-- [L465:L516]fn resolve_address_to_module(pid: u32, address: usize) -> String 
-- [L518:L521]fn clear_module_cache(pid: u32) 
-- [L523:L585]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
+- [L140:L140]static CPU_SET_INFORMATION: Lazy<Mutex<Vec<CpuSetData>>> = Lazy::new(|| {
+- [L186:L189]fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>> 
+- [L191:L214]fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32> 
+- [L216:L240]fn cpusetids_from_mask(mask: usize) -> Vec<u32> 
+- [L242:L262]fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32> 
+- [L264:L288]fn mask_from_cpusetids(cpuids: &[u32]) -> usize 
+- [L290:L306]fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<u32> 
+- [L308:L342]fn is_running_as_admin() -> bool 
+- [L344:L368]fn request_uac_elevation() -> io::Result<()> 
+- [L370:L414]fn enable_debug_privilege() 
+- [L416:L460]fn enable_inc_base_priority_privilege() 
+- [L462:L508]fn is_affinity_unset(pid: u32, process_name: &str) -> bool 
+- [L510:L528]fn get_thread_start_address(thread_handle: HANDLE) -> usize 
+- [L532:L532]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+- [L535:L535]static SYMBOL_INITIALIZED: Lazy<Mutex<HashSet<u32>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+- [L538:L538]static SYMBOL_PROXY: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
+- [L530:L546]fn set_symbol_proxy(proxy_url: Option<String>) 
+- [L548:L600]fn initialize_symbols(h_process: HANDLE, pid: u32) -> bool 
+- [L602:L632]fn load_module_symbols(h_process: HANDLE, base: usize, size: usize, name: &str) 
+- [L634:L673]fn resolve_address_to_symbol(h_process: HANDLE, address: usize) -> Option<String> 
+- [L675:L684]fn cleanup_symbols(pid: u32, h_process: HANDLE) 
+- [L686:L761]fn resolve_address_to_module(pid: u32, address: usize) -> String 
+- [L763:L774]fn clear_module_cache(pid: u32) 
+- [L776:L838]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
 

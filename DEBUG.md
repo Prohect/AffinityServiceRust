@@ -183,8 +183,9 @@ process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_p
 - **affinity**: Hex mask (e.g., `0xFF`) or CPU range (e.g., `0-7;16-23`)
 - **cpuset**: Same format as affinity, for CPU sets
 - **prime_cpus**: CPUs for prime thread scheduling with multi-segment support
-  - Syntax: `*alias1@prefix1[!priority];prefix2;*alias2@prefix3[!priority];...`
-  - Each segment (separated by `*`) specifies a CPU alias and its associated module prefixes
+  - Syntax: `[?[?]x]*alias1@prefix1[!priority][;prefix2[!priority]]...[;*alias2@prefix3[!priority]...]`
+  - Segments are separated by `;`. Each segment starting with `*` specifies a CPU alias and its associated module prefixes
+  - Within a segment's module filter (after `@`), prefixes are also separated by `;`
   - Only CPU aliases (`*p`, `*e`, `*pN01`, etc.) are allowed in multi-segment mode
   - Each prefix can have optional `!priority` suffix for explicit thread priority
   - Thread tracking: Prefix with `?x` to track top x threads and log on process exit

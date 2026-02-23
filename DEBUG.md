@@ -130,12 +130,14 @@ read_file("AffinityServiceRust/logs/20251205.log")
 
 **Non-admin (with console output):**
 ```bash
-cargo run --release -- -console -noUAC -logloop -loop 3 -interval 2000 -config test.ini
+# Run with controlled timing: interval * (loop - 1) = 2000 * 9 = 18 seconds
+cargo run --release -- -console -noUAC -logloop -loop 10 -interval 2000 -config test.ini
 ```
 
 **Admin elevation (check log file after):**
 ```bash
-cargo run --release -- -logloop -loop 3 -interval 2000 -config test.ini
+# Run with controlled timing: interval * (loop - 1) = 2000 * 9 = 18 seconds
+cargo run --release -- -logloop -loop 10 -interval 2000 -config test.ini
 # Then check: logs/YYYYMMDD.log
 # Then check: logs/YYYYMMDD.find.log
 ```
@@ -286,7 +288,6 @@ cat > test_tracking.ini << 'EOF'
 notepad.exe:above normal:0:*p:?10*p:normal:low
 EOF
 
-# Run with controlled timing: interval * (loop - 1) = 2000 * 9 = 18 seconds
 cargo run --release -- -console -noUAC -loop 10 -interval 2000 -config test_tracking.ini -proxy http://proxy:8080
 ```
 

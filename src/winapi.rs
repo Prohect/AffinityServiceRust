@@ -611,6 +611,7 @@ fn load_module_symbols(h_process: HANDLE, base: usize, size: usize, name: &str) 
 
     if let Some(name_cstr) = module_name {
         unsafe {
+            log!("Loading symbols for {} at 0x{:X} (size: {} bytes)...", name, base, size);
             let loaded = SymLoadModuleEx(
                 h_process,
                 HANDLE::default(),
@@ -622,10 +623,11 @@ fn load_module_symbols(h_process: HANDLE, base: usize, size: usize, name: &str) 
                 0,
             );
 
-            if loaded == 0 {
-                // Module loading failed - this is expected for many modules without symbols
-                // Only log if debug mode
-                // log!("Could not load symbols for {} at 0x{:X}", name, base);
+            if loaded != 0 {
+                log!("Symbols loaded successfully for {} (base: 0x{:X})", name, loaded);
+            } else {
+                let err = GetLastError();
+                log!("Could not load symbols for {} at 0x{:X} (error: {})", name, base, err.0);
             }
         }
     }
@@ -699,65 +701,61 @@ pub fn resolve_address_to_module(pid: u32, address: usize) -> String {
         return "0x0".to_string();
     }
 
-    // Check cache first
-    {
+    // First, ensure modules are enumerated and cached
+    let modules = {
         let cache = MODULE_CACHE.lock().unwrap();
-        if let Some(modules) = cache.get(&pid) {
-            for (base, size, name) in modules {
-                if address >= *base && address < base + size {
-                    let offset = address - base;
-                    return format!("{}+0x{:X}", name, offset);
-                }
-            }
-            // Already cached but address not in any known module
-            return format!("0x{:X}", address);
+        if let Some(cached_modules) = cache.get(&pid) {
+            cached_modules.clone()
+        } else {
+            drop(cache);
+            let new_modules = enumerate_process_modules(pid);
+            let mut cache = MODULE_CACHE.lock().unwrap();
+            cache.insert(pid, new_modules.clone());
+            new_modules
         }
+    };
+
+    // Find which module contains this address
+    let module_info = modules.iter().find(|(base, size, _name)| address >= *base && address < base + size);
+
+    if module_info.is_none() {
+        // Address not in any known module
+        return format!("0x{:X}", address);
     }
 
-    // Not cached, enumerate modules
-    let modules = enumerate_process_modules(pid);
+    let (module_base, module_size, module_name) = module_info.unwrap();
 
-    // Store in cache
-    {
-        let mut cache = MODULE_CACHE.lock().unwrap();
-        cache.insert(pid, modules.clone());
-    }
-
-    // Search for the address
-    for (base, size, name) in &modules {
-        if address >= *base && address < base + size {
-            let offset = address - base;
-            return format!("{}+0x{:X}", name, offset);
-        }
-    }
-
-    // Try symbol resolution if we have a process handle
+    // Try symbol resolution first for detailed function names
     let h_proc = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) };
 
     if let Ok(h) = h_proc {
         if !h.is_invalid() {
             // Initialize symbols if not already done
             if initialize_symbols(h, pid) {
-                // Load symbols for all cached modules
-                let cache = MODULE_CACHE.lock().unwrap();
-                if let Some(cached_modules) = cache.get(&pid) {
-                    for (base, size, name) in cached_modules {
-                        load_module_symbols(h, *base, *size, name);
-                    }
-                }
-                drop(cache);
+                // Load symbols for this specific module
+                load_module_symbols(h, *module_base, *module_size, module_name);
 
-                // Try to resolve the symbol
+                // Try to resolve the symbol to function name
                 if let Some(symbol) = resolve_address_to_symbol(h, address) {
+                    // Prepend module name to symbol for clarity: "module.dll!FunctionName+0xOffset"
+                    let result = if symbol.contains('+') || symbol.contains('!') {
+                        // Symbol already has module or offset info
+                        format!("{}!{}", module_name, symbol)
+                    } else {
+                        // Just function name, add module prefix
+                        format!("{}!{}", module_name, symbol)
+                    };
                     let _ = unsafe { CloseHandle(h) };
-                    return symbol;
+                    return result;
                 }
             }
             let _ = unsafe { CloseHandle(h) };
         }
     }
 
-    format!("0x{:X}", address)
+    // Fallback to module+offset if symbol resolution failed
+    let offset = address - module_base;
+    format!("{}+0x{:X}", module_name, offset)
 }
 
 /// Clears the module cache and symbol handler for a specific process (call when process exits).

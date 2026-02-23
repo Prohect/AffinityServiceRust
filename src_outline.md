@@ -254,10 +254,10 @@
 - [L538:L538]static SYMBOL_PROXY: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
 - [L530:L546]fn set_symbol_proxy(proxy_url: Option<String>) 
 - [L548:L600]fn initialize_symbols(h_process: HANDLE, pid: u32) -> bool 
-- [L602:L632]fn load_module_symbols(h_process: HANDLE, base: usize, size: usize, name: &str) 
-- [L634:L673]fn resolve_address_to_symbol(h_process: HANDLE, address: usize) -> Option<String> 
-- [L675:L684]fn cleanup_symbols(pid: u32, h_process: HANDLE) 
-- [L686:L761]fn resolve_address_to_module(pid: u32, address: usize) -> String 
-- [L763:L774]fn clear_module_cache(pid: u32) 
-- [L776:L838]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
+- [L602:L634]fn load_module_symbols(h_process: HANDLE, base: usize, size: usize, name: &str) 
+- [L636:L675]fn resolve_address_to_symbol(h_process: HANDLE, address: usize) -> Option<String> 
+- [L677:L686]fn cleanup_symbols(pid: u32, h_process: HANDLE) 
+- [L688:L759]fn resolve_address_to_module(pid: u32, address: usize) -> String 
+- [L761:L772]fn clear_module_cache(pid: u32) 
+- [L774:L836]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
 

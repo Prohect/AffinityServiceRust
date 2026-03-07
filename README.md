@@ -50,7 +50,7 @@ For multi-threaded applications (e.g., games), this feature dynamically identifi
 - `??x*cpus` - Monitor-only: track and log threads but don't apply CPU sets
 - Logs include: TID, CPU cycles, kernel/user time, context switches, start address with module+offset
 
-> **Note:** Thread start address resolution (module+offset format) requires admin elevation with SeDebugPrivilege. Without elevation, start addresses show as `0x0`. Debug symbols are automatically downloaded from Microsoft's symbol server (configurable via `-proxy` for corporate networks).
+> **Note:** Thread start address resolution (module+offset format) requires admin elevation with SeDebugPrivilege. Without elevation, start addresses show as `0x0`. Resolution uses `psapi GetMappedFileName` — no symbol server or internet access needed.
 
 ## Quick Start
 
@@ -89,7 +89,6 @@ AffinityServiceRust.exe -find
 | `-noUAC` | Run without requesting admin privileges |
 | `-interval <ms>` | Check interval in milliseconds (default: `5000`, minimum: `16`) |
 | `-resolution <0.0001ms>` | Set timer resolution (e.g., `5210` = 0.5210ms, `0` = don't set) |
-| `-proxy <url>` | HTTP proxy for downloading debug symbols (e.g., `http://proxy:8080`) |
 
 ### Operating Modes
 
@@ -435,8 +434,8 @@ For rust-analyzer support, also install MSBuild and Windows 11 SDK.
 
 5. **Process Exit Tracking**
    - When tracked process exits, log top N threads by CPU cycles
-   - Resolve thread start addresses to module+offset format
-   - Clean up symbol handles and module cache
+   - Resolve thread start addresses to `module.dll+offset` format via `psapi GetMappedFileName`
+   - Clean up module cache
 
 ## Architecture
 
@@ -448,7 +447,7 @@ src/
 ├── scheduler.rs    - Prime thread scheduler (hysteresis, streak tracking)
 ├── priority.rs     - Priority enums (Process, Thread, I/O, Memory)
 ├── process.rs      - Process snapshot via NtQuerySystemInformation
-├── winapi.rs       - Windows API wrappers (CPU sets, privileges, symbols)
+├── winapi.rs       - Windows API wrappers (CPU sets, privileges, module resolution)
 └── logging.rs      - Logging to console or file
 ```
 
@@ -460,8 +459,7 @@ src/
 - **High I/O Priority** requires admin elevation
 - **Thread start address resolution** requires admin with SeDebugPrivilege
   - Without admin, start addresses show as `0x0`
-- **Symbol downloads** require internet access to Microsoft symbol server
-  - Use `-proxy` for corporate networks with proxy
+  - Uses `psapi GetMappedFileName` — no symbol server or internet access needed
 
 ## Contributing
 

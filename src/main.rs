@@ -25,7 +25,7 @@ use std::{
 use winapi::{
     NtQueryInformationProcess, NtSetInformationProcess, NtSetTimerResolution, cpusetids_from_indices, enable_debug_privilege, enable_inc_base_priority_privilege,
     filter_indices_by_mask, get_cpu_set_information, get_thread_start_address, indices_from_cpusetids, is_affinity_unset, is_running_as_admin, request_uac_elevation,
-    resolve_address_to_module, set_symbol_proxy,
+    resolve_address_to_module,
 };
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE},
@@ -842,11 +842,7 @@ fn main() -> windows::core::Result<()> {
     } else {
         log!("{} blacklist items load", blacklist.len());
     }
-    // Set proxy for symbol downloads if provided
-    if let Some(ref proxy) = cli.proxy {
-        set_symbol_proxy(Some(proxy.clone()));
-        log!("Using proxy for symbol downloads: {}", proxy);
-    }
+
     if !cli.no_debug_priv {
         enable_debug_privilege();
     } else {

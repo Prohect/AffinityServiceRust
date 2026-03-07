@@ -155,7 +155,6 @@ cargo run --release -- -logloop -loop 10 -interval 2000 -config test.ini
 | `-interval <ms>` | Check interval in milliseconds (min: 16) | 5000 |
 | `-config <file>` | Use custom config file | config.ini |
 | `-blacklist <file>` | Use custom blacklist file | None |
-| `-proxy <url>` | HTTP proxy for downloading debug symbols | None |
 | `-help` | Show basic help | - |
 | `-help-all` | Show extended help with all options | - |
 | `-validate` | Validate config file syntax without running | - |
@@ -169,8 +168,8 @@ A minimal test config is provided at `test.ini`:
 # Test the program itself
 AffinityServiceRust.exe:normal:0:0:0:normal:low
 
-# Test common processes
-notepad.exe:normal:0:0:0:normal:low
+# Test a target process with thread tracking
+v2rayN.exe:above normal:*p:0:?5*p:low:normal
 ```
 
 ### Config Format
@@ -283,13 +282,13 @@ cat > test_tracking.ini << 'EOF'
 @KEEP_THRESHOLD = 0.1
 @ENTRY_THRESHOLD = 0.1
 
-*p = 8-19
+*p = 0-7
 
 # Track top 10 threads for notepad.exe
 notepad.exe:above normal:0:*p:?10*p:normal:low
 EOF
 
-cargo run --release -- -console -noUAC -loop 10 -interval 2000 -config test_tracking.ini -proxy http://proxy:8080
+cargo run --release -- -console -noUAC -loop 10 -interval 2000 -config test_tracking.ini
 ```
 
 Start a notepad.exe process, then close it before the 18 seconds expire. The output will show:
@@ -307,30 +306,14 @@ Start a notepad.exe process, then close it before the 18 seconds expire. The out
     WaitReason: 13
   [2] TID: 15732 | Cycles: 2314481779 | StartAddress: 0x7FF99BEFC430 (dwmcorei.dll+0x15C430)
     ...
-[HH:MM:SS]Symbol handler cleaned up for PID XXXXX
 ```
 
 Each tracked thread shows:
 - Thread ID and CPU cycles consumed
-- Start address resolved to `module.dll+offset` format
+- Start address resolved to `module.dll+offset` format via `psapi GetMappedFileName`
 - Kernel/user time, creation time
 - Priority, context switches, thread state
 - Wait reason
-
-### Test Symbol Resolution with Proxy
-
-Test debug symbol downloading through a proxy:
-
-```bash
-# Run with proxy configuration
-cargo run --release -- -console -noUAC -loop 5 -interval 2000 -config test.ini -proxy http://127.0.0.1:8080
-
-# Symbol handler initialization messages will appear:
-# [HH:MM:SS]Using proxy for symbol downloads: http://127.0.0.1:8080
-# [HH:MM:SS]Symbol handler initialized for PID 1234, will download symbols to c:\symbols
-```
-
-Thread start addresses will be resolved to `module.dll+offset` format. First run may take time to download PDB files from Microsoft's symbol server through the proxy. Subsequent runs use cached symbols.
 
 ## Error Codes
 
@@ -376,66 +359,7 @@ Errors are logged with format `[ERROR_TYPE][0x{code}]`:
 
 4. **High IO priority requires admin**: IO priority `high` only works when running as administrator. Without elevation, you'll get `0xC0000061` (STATUS_PRIVILEGE_NOT_HELD).
 
-5. **Symbol resolution requires admin**: Thread start address resolution requires admin elevation with SeDebugPrivilege. Without elevation, start addresses show as `0x0`.
-
-6. **First symbol download is slow**: When debug symbols are first downloaded from Microsoft's symbol server, it can take 10-30 seconds per PDB file. Subsequent runs use cached symbols at `c:\symbols\` and are instant.
-
-## Symbol Resolution & Debug Symbols
-
-### How It Works
-
-Thread start address resolution uses Windows `dbghelp.dll` to:
-- Automatically download PDB files from Microsoft's symbol server
-- Cache symbols locally at `c:\symbols\`
-- Resolve memory addresses to `module.dll+offset` format
-- Example: `0x7FFA17392220` → `ntdll.dll+0x92220`
-
-### Symbol Server Configuration
-
-**Default symbol path:**
-```
-SRV*c:\symbols*https://msdl.microsoft.com/download/symbols
-```
-
-**With proxy:**
-```
-SRV*c:\symbols*http://proxy:8080*https://msdl.microsoft.com/download/symbols
-```
-
-Use `-proxy http://proxy:8080` to configure proxy for symbol downloads.
-
-### Symbol Cache
-
-- **Location**: `c:\symbols\`
-- **Structure**: `c:\symbols\module.pdb\{GUID}\module.pdb`
-- **First run**: Downloads PDBs (10-30 seconds per module)
-- **Subsequent runs**: Uses cached symbols (instant)
-- **Cleanup**: Safe to delete `c:\symbols\` to free space (symbols will re-download as needed)
-
-### Troubleshooting Symbols
-
-**Symbols not resolving:**
-1. Check network access to `msdl.microsoft.com`
-2. Verify `c:\symbols` directory is writable
-3. Check proxy configuration if behind corporate firewall
-4. Ensure running with admin privileges (SeDebugPrivilege required)
-
-**Symbol handler messages:**
-```
-[HH:MM:SS]Using proxy for symbol downloads: http://proxy:8080
-[HH:MM:SS]Symbol handler initialized for PID 1234, will download symbols to c:\symbols
-[HH:MM:SS]Symbol handler cleaned up for PID 1234
-```
-
-### Symbols for Custom Applications
-
-Microsoft's symbol server only provides symbols for:
-- Windows system files (ntdll.dll, kernel32.dll, etc.)
-- Microsoft applications
-
-For custom applications, you'll see `app.exe+0xOffset` format without function names unless:
-- PDB files are available locally
-- A custom symbol server is configured
+5. **Thread start address resolution requires admin**: Requires admin elevation with SeDebugPrivilege. Without elevation, start addresses show as `0x0`. Resolution uses `psapi GetMappedFileName` — no symbol server or internet access needed.
 
 ## Project Structure
 
@@ -445,7 +369,7 @@ For custom applications, you'll see `app.exe+0xOffset` format without function n
 - `src/logging.rs` - Logging functions and macros
 - `src/process.rs` - Process snapshot and enumeration
 - `src/scheduler.rs` - Prime thread scheduler
-- `src/winapi.rs` - Windows API helpers, NTDLL imports
+- `src/winapi.rs` - Windows API helpers, NTDLL imports, module resolution via psapi
 - `src/cli.rs` - Argument parsing
 
 ## Running Tests

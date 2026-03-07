@@ -1,7 +1,7 @@
 # Src Code Structure Outline
 
 ## src/cli.rs
-- [L7:L31]struct CliArgs {
+- [L7:L30]struct CliArgs {
     pub interval_ms: u64,
     pub help_mode: bool,
     pub help_all_mode: bool,
@@ -21,14 +21,13 @@
     pub skip_log_before_elevation: bool,
     pub no_debug_priv: bool,
     pub no_inc_base_priority: bool,
-    pub proxy: Option<String>,
 }
-- [L44:L132]fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<()> 
-- [L134:L164]fn print_help() 
-- [L166:L273]fn get_config_help_lines() -> Vec<&'static str> 
-- [L275:L280]fn print_config_help() 
-- [L282:L328]fn print_cli_help() 
-- [L330:L336]fn print_help_all() 
+- [L43:L128]fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<()> 
+- [L130:L159]fn print_help() 
+- [L161:L269]fn get_config_help_lines() -> Vec<&'static str> 
+- [L271:L276]fn print_config_help() 
+- [L278:L323]fn print_cli_help() 
+- [L325:L331]fn print_help_all() 
 
 ## src/config.rs
 - [L30:L39]struct PrimePrefix {
@@ -149,7 +148,7 @@
     dry_run: bool,
 ) -> ApplyConfigResult 
 - [L723:L793]fn process_logs(configs: &HashMap<String, ProcessConfig>, blacklist: &Vec<String>, logs_path: Option<&str>, output_file: Option<&str>) 
-- [L795:L1029]fn main() -> windows::core::Result<()> 
+- [L795:L1025]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L17:L27]enum ProcessPriority {
@@ -228,36 +227,25 @@
 - [L201:L208]fn format_filetime(time: i64) -> String 
 
 ## src/winapi.rs
-- [L43:L46]struct SymbolInfo {
-    size_of_struct: u32,
-    type_index: u32,
-    reserved: [u64; 2],
-- [L119:L124]struct CpuSetData {
+- [L54:L59]struct CpuSetData {
     id: u32,
     logical_processor_index: u8,
 }
-- [L140:L140]static CPU_SET_INFORMATION: Lazy<Mutex<Vec<CpuSetData>>> = Lazy::new(|| {
-- [L186:L189]fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>> 
-- [L191:L214]fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32> 
-- [L216:L240]fn cpusetids_from_mask(mask: usize) -> Vec<u32> 
-- [L242:L262]fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32> 
-- [L264:L288]fn mask_from_cpusetids(cpuids: &[u32]) -> usize 
-- [L290:L306]fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<u32> 
-- [L308:L342]fn is_running_as_admin() -> bool 
-- [L344:L368]fn request_uac_elevation() -> io::Result<()> 
-- [L370:L414]fn enable_debug_privilege() 
-- [L416:L460]fn enable_inc_base_priority_privilege() 
-- [L462:L508]fn is_affinity_unset(pid: u32, process_name: &str) -> bool 
-- [L510:L528]fn get_thread_start_address(thread_handle: HANDLE) -> usize 
-- [L532:L532]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-- [L535:L535]static SYMBOL_INITIALIZED: Lazy<Mutex<HashSet<u32>>> = Lazy::new(|| Mutex::new(HashSet::new()));
-- [L538:L538]static SYMBOL_PROXY: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
-- [L530:L546]fn set_symbol_proxy(proxy_url: Option<String>) 
-- [L548:L600]fn initialize_symbols(h_process: HANDLE, pid: u32) -> bool 
-- [L602:L634]fn load_module_symbols(h_process: HANDLE, base: usize, size: usize, name: &str) 
-- [L636:L675]fn resolve_address_to_symbol(h_process: HANDLE, address: usize) -> Option<String> 
-- [L677:L686]fn cleanup_symbols(pid: u32, h_process: HANDLE) 
-- [L688:L759]fn resolve_address_to_module(pid: u32, address: usize) -> String 
-- [L761:L772]fn clear_module_cache(pid: u32) 
-- [L774:L836]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
+- [L75:L75]static CPU_SET_INFORMATION: Lazy<Mutex<Vec<CpuSetData>>> = Lazy::new(|| {
+- [L121:L124]fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>> 
+- [L126:L149]fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32> 
+- [L151:L175]fn cpusetids_from_mask(mask: usize) -> Vec<u32> 
+- [L177:L197]fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32> 
+- [L199:L223]fn mask_from_cpusetids(cpuids: &[u32]) -> usize 
+- [L225:L241]fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<u32> 
+- [L243:L277]fn is_running_as_admin() -> bool 
+- [L279:L303]fn request_uac_elevation() -> io::Result<()> 
+- [L305:L349]fn enable_debug_privilege() 
+- [L351:L395]fn enable_inc_base_priority_privilege() 
+- [L397:L443]fn is_affinity_unset(pid: u32, process_name: &str) -> bool 
+- [L445:L463]fn get_thread_start_address(thread_handle: HANDLE) -> usize 
+- [L467:L467]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+- [L465:L506]fn resolve_address_to_module(pid: u32, address: usize) -> String 
+- [L508:L511]fn clear_module_cache(pid: u32) 
+- [L513:L575]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
 

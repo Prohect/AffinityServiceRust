@@ -50,7 +50,7 @@
 - `??x*cpus` - 仅监控：跟踪并记录线程但不应用 CPU 集
 - 日志包含：TID、CPU 周期、内核/用户时间、上下文切换、起始地址（模块+偏移）
 
-> **注意：** 线程起始地址解析（模块+偏移格式）需要管理员权限和 SeDebugPrivilege。无提权时，起始地址显示为 `0x0`。调试符号自动从微软符号服务器下载（企业网络可通过 `-proxy` 配置代理）。
+> **注意：** 线程起始地址解析（模块+偏移格式）需要管理员权限和 SeDebugPrivilege。无提权时，起始地址显示为 `0x0`。解析使用 `psapi GetMappedFileName`，无需符号服务器或联网。
 
 ## 快速开始
 
@@ -89,7 +89,6 @@ AffinityServiceRust.exe -find
 | `-noUAC` | 不请求管理员权限 |
 | `-interval <ms>` | 检查间隔，毫秒（默认：`5000`，最小：`16`） |
 | `-resolution <0.0001ms>` | 设置计时器分辨率（如 `5210` = 0.5210ms，`0` = 不设置） |
-| `-proxy <url>` | 下载调试符号的 HTTP 代理（如 `http://proxy:8080`） |
 
 ### 运行模式
 
@@ -435,8 +434,8 @@ cargo build --release
 
 5. **进程退出跟踪**
    - 当跟踪的进程退出时，记录 CPU 周期消耗最高的前 N 个线程
-   - 解析线程起始地址为模块+偏移格式
-   - 清理符号句柄和模块缓存
+   - 通过 `psapi GetMappedFileName` 解析线程起始地址为 `module.dll+offset` 格式
+   - 清理模块缓存
 
 ## 架构
 
@@ -448,7 +447,7 @@ src/
 ├── scheduler.rs    - Prime 线程调度器（滞后、连击跟踪）
 ├── priority.rs     - 优先级枚举（进程、线程、I/O、内存）
 ├── process.rs      - 通过 NtQuerySystemInformation 获取进程快照
-├── winapi.rs       - Windows API 包装器（CPU 集、权限、符号）
+├── winapi.rs       - Windows API 包装器（CPU 集、权限、psapi 模块解析）
 └── logging.rs      - 记录到控制台或文件
 ```
 
@@ -460,8 +459,7 @@ src/
 - **高 I/O 优先级**需要管理员提权
 - **线程起始地址解析**需要管理员和 SeDebugPrivilege
   - 无管理员权限时，起始地址显示为 `0x0`
-- **符号下载**需要互联网访问微软符号服务器
-  - 企业代理网络使用 `-proxy`
+  - 使用 `psapi GetMappedFileName`，无需符号服务器或联网
 
 ## 贡献
 

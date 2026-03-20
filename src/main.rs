@@ -720,7 +720,7 @@ fn apply_config(
     apply_config_result
 }
 
-fn process_logs(configs: &HashMap<String, ProcessConfig>, blacklist: &Vec<String>, logs_path: Option<&str>, output_file: Option<&str>) {
+fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklist: &Vec<String>, logs_path: Option<&str>, output_file: Option<&str>) {
     // Processes logs to discover new processes not yet in config or blacklist, and searches for their file paths.
     //
     // # Requirements
@@ -750,7 +750,9 @@ fn process_logs(configs: &HashMap<String, ProcessConfig>, blacklist: &Vec<String
             }
         }
     }
-    let new_processes: Vec<String> = all_processes.into_iter().filter(|p| !configs.contains_key(p) && !blacklist.contains(p)).collect();
+    // Check if process exists in any grade bucket
+    let in_any_grade = |p: &String| configs.values().any(|grade_configs| grade_configs.contains_key(p));
+    let new_processes: Vec<String> = all_processes.into_iter().filter(|p| !in_any_grade(p) && !blacklist.contains(p)).collect();
 
     // Search with es
     let mut output = String::new();
@@ -900,34 +902,44 @@ fn main() -> windows::core::Result<()> {
                 let mut total_changes = 0;
                 let pids_and_names: Vec<(u32, String)> = processes.pid_to_process.values().map(|p| (p.pid(), p.get_name().to_string())).collect();
                 prime_core_scheduler.reset_alive();
-                for (pid, name) in pids_and_names {
-                    if let Some(config) = configs.get(&name) {
-                        let result = apply_config(pid, config, &mut prime_core_scheduler, Some(&mut processes), cli.dry_run);
-                        if !result.is_empty() {
-                            // Log errors to find log
-                            for error in &result.errors {
-                                log_to_find(error);
-                            }
-                            // Log changes to main log
-                            if !result.changes.is_empty() {
-                                let first = format!("{:>5}::{}::{}", pid, config.name, result.changes[0]);
-                                log_message(&first);
-                                let padding = " ".repeat(first.len() - result.changes[0].len() + 10);
-                                for change in &result.changes[1..] {
-                                    log_pure_message(&format!("{}{}", padding, change));
+                
+                // Iterate through graded configs: apply rules only when current_loop % grade == 0
+                for (grade, grade_configs) in &configs {
+                    // current_loop is 0-based, so we apply grade 1 rules every loop (0 % 1 == 0, 1 % 1 == 0, etc.)
+                    if current_loop % *grade != 0 {
+                        continue; // Skip this grade this loop
+                    }
+                    
+                    for (pid, name) in &pids_and_names {
+                        if let Some(config) = grade_configs.get(name) {
+                            let result = apply_config(*pid, config, &mut prime_core_scheduler, Some(&mut processes), cli.dry_run);
+                            if !result.is_empty() {
+                                // Log errors to find log
+                                for error in &result.errors {
+                                    log_to_find(error);
                                 }
-                            }
+                                // Log changes to main log
+                                if !result.changes.is_empty() {
+                                    let first = format!("{:>5}::{}::{}", pid, config.name, result.changes[0]);
+                                    log_message(&first);
+                                    let padding = " ".repeat(first.len() - result.changes[0].len() + 10);
+                                    for change in &result.changes[1..] {
+                                        log_pure_message(&format!("{}{}", padding, change));
+                                    }
+                                }
 
-                            total_changes += result.changes.len();
+                                total_changes += result.changes.len();
+                            }
                         }
                     }
                 }
                 prime_core_scheduler.close_dead_process_handles();
                 if cli.dry_run {
+                    let total_rules: usize = configs.values().map(|g| g.len()).sum();
                     log!(
                         "[DRY RUN] Checking {} running processes against {} config rules...",
                         processes.pid_to_process.len(),
-                        configs.len()
+                        total_rules
                     );
                     log!("[DRY RUN] {} change(s) would be made. Run without -dryrun to apply.", total_changes);
                     should_continue = false;
@@ -947,7 +959,9 @@ fn main() -> windows::core::Result<()> {
                 if Process32FirstW(snapshot, &mut pe32).is_ok() {
                     loop {
                         let process_name = String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]).to_lowercase();
-                        if !FAIL_SET.lock().unwrap().contains(&process_name) && !configs.contains_key(&process_name) && !blacklist.contains(&process_name) {
+                        // Check if process exists in any grade bucket
+                        let in_configs = configs.values().any(|grade_configs| grade_configs.contains_key(&process_name));
+                        if !FAIL_SET.lock().unwrap().contains(&process_name) && !in_configs && !blacklist.contains(&process_name) {
                             if is_affinity_unset(pe32.th32ProcessID, process_name.as_str()) {
                                 log_process_find(&process_name);
                             }
@@ -984,9 +998,10 @@ fn main() -> windows::core::Result<()> {
                         let new_config_result = read_config(&cli.config_file_name);
                         if new_config_result.errors.is_empty() {
                             new_config_result.print_report();
+                            let total_rules = new_config_result.total_rules();
                             configs = new_config_result.configs;
                             prime_core_scheduler.constants = new_config_result.constants;
-                            log!("Configuration reload complete: {} rules loaded.", configs.len());
+                            log!("Configuration reload complete: {} rules loaded.", total_rules);
                         } else {
                             log!("Configuration file '{}' has errors, keeping previous configuration.", cli.config_file_name);
                             for error in &new_config_result.errors {

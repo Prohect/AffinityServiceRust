@@ -18,6 +18,7 @@ A high-performance Windows process management service written in Rust that autom
 | **Memory Priority** | Control memory page priority (Very Low to Normal) |
 | **Timer Resolution** | Adjust Windows system timer resolution |
 | **Hot Reload** | Automatically reload config when files change |
+| **Rule Grades** | Control rule application frequency (every Nth loop) |
 
 > **Note on >64 core systems:** CPU affinity (SetProcessAffinityMask) only works within a single processor group (≤64 cores). For systems with >64 cores, use CPU Sets which work across all processor groups as a soft preference.
 
@@ -114,7 +115,7 @@ AffinityServiceRust.exe -find
 ### Format
 
 ```
-process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority
+process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority:grade
 ```
 
 ### CPU Specification
@@ -128,6 +129,28 @@ process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_p
 | Hex mask | `0xFF` | Legacy format (≤64 cores) |
 | Alias | `*pcore` | Predefined alias |
 | No change | `0` | Don't modify |
+
+### Rule Grades
+
+The `grade` field controls how often a rule is applied (default: 1 = every loop):
+
+| Grade | Frequency | Use Case |
+|-------|-----------|----------|
+| `1` | Every loop | Critical processes (games, real-time apps) |
+| `2` | Every 2nd loop | Semi-critical processes |
+| `5` | Every 5th loop | Background utilities |
+| `10` | Every 10th loop | Rarely changing processes (updaters) |
+
+```ini
+# Apply every loop (default)
+game.exe:high:*pcore:0:*pcore:normal:normal:1
+
+# Apply every 3rd loop (for less critical processes)
+background.exe:normal:*ecore:0:0:low:none:3
+
+# Apply every 10th loop (minimal monitoring)
+updater.exe:normal:0:0:0:normal:none:10
+```
 
 > **Important:** Plain numbers like `7` mean core 7, not a bitmask. Use `0x7` or `0-2` for cores 0-2.
 
@@ -269,45 +292,45 @@ Configure prime thread scheduling behavior:
 *pN0 = 1-7          # P-cores except 0
 
 # === RULES ===
-# Format: process:priority:affinity:cpuset:prime[@prefixes]:io:memory
+# Format: process:priority:affinity:cpuset:prime[@prefixes]:io:memory:grade
 
 # Single process - simple
-cs2.exe:normal:*a:*p:*pN01:normal:normal
+cs2.exe:normal:*a:*p:*pN01:normal:normal:1
 
 # Prime with module filtering - only specific modules
-game.exe:normal:*a:*p:*pN01@UnityPlayer.dll;GameModule.dll:normal:normal
+game.exe:normal:*a:*p:*pN01@UnityPlayer.dll;GameModule.dll:normal:normal:1
 
 # Multi-segment - different cores per module
-cs2.exe:normal:*a:*p:*p@cs2.exe*e@nvwgf2umx.dll:normal:normal
+cs2.exe:normal:*a:*p:*p@cs2.exe*e@nvwgf2umx.dll:normal:normal:1
 
 # Per-module thread priorities
-cs2.exe:normal:*a:*p:*pN01@cs2.exe!time critical;nvwgf2umx.dll!above normal:normal:normal
+cs2.exe:normal:*a:*p:*pN01@cs2.exe!time critical;nvwgf2umx.dll!above normal:normal:normal:1
 
 # Three segments with different CPUs and priorities
-game.exe:normal:*a:*p:*p@engine.dll!time critical*pN01@render.dll!highest*e@background.dll!normal:normal:normal
+game.exe:normal:*a:*p:*p@engine.dll!time critical*pN01@render.dll!highest*e@background.dll!normal:normal:normal:1
 
 # Track top 10 threads - log on exit
-game.exe:normal:*a:*p:?10*pN01@UnityPlayer.dll:normal:normal
+game.exe:normal:*a:*p:?10*pN01@UnityPlayer.dll:normal:normal:1
 
 # Monitor only - track but don't apply
-game.exe:normal:*a:*p:??20*pN01:normal:normal
+game.exe:normal:*a:*p:??20*pN01:normal:normal:1
 
 # Named group - browsers on E-cores
-browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal
+browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal:1
 
 # Anonymous group - background apps
 {
     discord.exe: telegram.exe: slack.exe
-}:below normal:*e:0:0:low:low
+}:below normal:*e:0:0:low:low:2
 
 # System processes (admin required for high I/O)
-dwm.exe:high:*p:0:0:high:normal
+dwm.exe:high:*p:0:0:high:normal:1
 
 # Process Lasso (low priority on E-cores)
 process_mgmt {
     bitsumsessionagent.exe: processgovernor.exe: processlasso.exe
     affinityservicerust.exe: affinityserverc.exe
-}:none:*e:0:0:low:none
+}:none:*e:0:0:low:none:1
 ```
 
 ## Tools

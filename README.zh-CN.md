@@ -18,6 +18,7 @@
 | **内存优先级** | 控制内存页优先级（极低到标准） |
 | **计时器分辨率** | 调整 Windows 系统计时器分辨率 |
 | **热重载** | 配置文件变更时自动重新加载 |
+| **规则等级** | 控制规则应用频率（每 N 次循环） |
 
 > **关于 >64 核系统的说明：** CPU 亲和性（SetProcessAffinityMask）只能在单个处理器组内工作（≤64 核）。对于 >64 核系统，请使用 CPU 集，它可以跨所有处理器组工作，但为软性偏好。
 
@@ -114,7 +115,7 @@ AffinityServiceRust.exe -find
 ### 格式
 
 ```
-process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority
+process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority:grade
 ```
 
 ### CPU 规格
@@ -128,6 +129,28 @@ process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_p
 | 十六进制掩码 | `0xFF` | 旧格式（≤64 核） |
 | 别名 | `*pcore` | 预定义别名 |
 | 不修改 | `0` | 不修改 |
+
+### 规则等级
+
+`grade` 字段控制规则的应用频率（默认值：1 = 每次循环）：
+
+| 等级 | 频率 | 使用场景 |
+|------|------|----------|
+| `1` | 每次循环 | 关键进程（游戏、实时应用） |
+| `2` | 每第 2 次循环 | 半关键进程 |
+| `5` | 每第 5 次循环 | 后台工具 |
+| `10` | 每第 10 次循环 | 极少变化的进程（更新程序） |
+
+```ini
+# 每次循环应用（默认）
+game.exe:high:*pcore:0:*pcore:normal:normal:1
+
+# 每第 3 次循环应用（用于较不关键的进程）
+background.exe:normal:*ecore:0:0:low:none:3
+
+# 每第 10 次循环应用（最小监控频率）
+updater.exe:normal:0:0:0:normal:none:10
+```
 
 > **重要：** 普通数字如 `7` 表示核心 7，不是位掩码。使用 `0x7` 或 `0-2` 表示核心 0-2。
 
@@ -269,45 +292,45 @@ cs2.exe:normal:*a:*p:?10*p@cs2.exe*e@nvwgf2umx.dll:normal:normal
 *pN0 = 1-7          # P 核除 0
 
 # === 规则 ===
-# 格式：process:priority:affinity:cpuset:prime[@prefixes]:io:memory
+# 格式：process:priority:affinity:cpuset:prime[@prefixes]:io:memory:grade
 
 # 单进程 - 简单
-cs2.exe:normal:*a:*p:*pN01:normal:normal
+cs2.exe:normal:*a:*p:*pN01:normal:normal:1
 
 # Prime 带模块过滤 - 仅特定模块
-game.exe:normal:*a:*p:*pN01@UnityPlayer.dll;GameModule.dll:normal:normal
+game.exe:normal:*a:*p:*pN01@UnityPlayer.dll;GameModule.dll:normal:normal:1
 
 # 多段式 - 不同模块不同核心
-cs2.exe:normal:*a:*p:*p@cs2.exe*e@nvwgf2umx.dll:normal:normal
+cs2.exe:normal:*a:*p:*p@cs2.exe*e@nvwgf2umx.dll:normal:normal:1
 
 # 按模块线程优先级
-cs2.exe:normal:*a:*p:*pN01@cs2.exe!time critical;nvwgf2umx.dll!above normal:normal:normal
+cs2.exe:normal:*a:*p:*pN01@cs2.exe!time critical;nvwgf2umx.dll!above normal:normal:normal:1
 
 # 三段式，不同 CPU 和优先级
-game.exe:normal:*a:*p:*p@engine.dll!time critical*pN01@render.dll!highest*e@background.dll!normal:normal:normal
+game.exe:normal:*a:*p:*p@engine.dll!time critical*pN01@render.dll!highest*e@background.dll!normal:normal:normal:1
 
 # 跟踪前 10 个线程 - 退出时记录
-game.exe:normal:*a:*p:?10*pN01@UnityPlayer.dll:normal:normal
+game.exe:normal:*a:*p:?10*pN01@UnityPlayer.dll:normal:normal:1
 
 # 仅监控 - 跟踪但不应用
-game.exe:normal:*a:*p:??20*pN01:normal:normal
+game.exe:normal:*a:*p:??20*pN01:normal:normal:1
 
 # 命名组 - 浏览器在 E 核
-browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal
+browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal:1
 
 # 匿名组 - 后台应用
 {
     discord.exe: telegram.exe: slack.exe
-}:below normal:*e:0:0:low:low
+}:below normal:*e:0:0:low:low:2
 
 # 系统进程（高 I/O 需要管理员）
-dwm.exe:high:*p:0:0:high:normal
+dwm.exe:high:*p:0:0:high:normal:1
 
 # Process Lasso（E 核低优先级）
 process_mgmt {
     bitsumsessionagent.exe: processgovernor.exe: processlasso.exe
     affinityservicerust.exe: affinityserverc.exe
-}:none:*e:0:0:low:none
+}:none:*e:0:0:low:none:1
 ```
 
 ## 工具

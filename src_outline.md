@@ -24,10 +24,10 @@
 }
 - [L43:L128]fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<()> 
 - [L130:L159]fn print_help() 
-- [L161:L269]fn get_config_help_lines() -> Vec<&'static str> 
-- [L271:L276]fn print_config_help() 
-- [L278:L323]fn print_cli_help() 
-- [L325:L331]fn print_help_all() 
+- [L161:L290]fn get_config_help_lines() -> Vec<&'static str> 
+- [L292:L297]fn print_config_help() 
+- [L299:L344]fn print_cli_help() 
+- [L346:L352]fn print_help_all() 
 
 ## src/config.rs
 - [L30:L39]struct PrimePrefix {
@@ -55,8 +55,8 @@
 - [L145:L147]fn mask_to_cpu_indices(mask: u64) -> Vec<u32> 
 - [L149:L159]fn cpu_indices_to_mask(cpus: &[u32]) -> usize 
 - [L161:L194]fn format_cpu_indices(cpus: &[u32]) -> String 
-- [L196:L214]struct ConfigResult {
-    pub configs: HashMap<String, ProcessConfig>,
+- [L196:L216]struct ConfigResult {
+    pub configs: HashMap<u32, HashMap<String, ProcessConfig>>,
     pub constants: ConfigConstants,
     pub constants_count: usize,
     pub aliases_count: usize,
@@ -66,17 +66,17 @@
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
 }
-- [L244:L256]fn resolve_cpu_spec(spec: &str, field_name: &str, line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, errors: &mut Vec<String>) -> Vec<u32> 
-- [L258:L265]fn collect_members(text: &str, members: &mut Vec<String>) 
-- [L268:L304]fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut ConfigResult) 
-- [L306:L320]fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut HashMap<String, Vec<u32>>, result: &mut ConfigResult) 
-- [L322:L346]fn collect_group_block(lines: &[String], start_index: usize, first_line_content: &str) -> Option<(Vec<String>, Option<String>, usize)> 
-- [L358:L598]fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, result: &mut ConfigResult) 
-- [L600:L687]fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult 
-- [L733:L743]fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> 
-- [L745:L750]fn read_utf16le_file(path: &str) -> io::Result<String> 
-- [L752:L758]fn parse_mask(s: &str) -> usize 
-- [L760:L936]fn convert(in_file: Option<String>, out_file: Option<String>) 
+- [L251:L263]fn resolve_cpu_spec(spec: &str, field_name: &str, line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, errors: &mut Vec<String>) -> Vec<u32> 
+- [L265:L272]fn collect_members(text: &str, members: &mut Vec<String>) 
+- [L275:L311]fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut ConfigResult) 
+- [L313:L327]fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut HashMap<String, Vec<u32>>, result: &mut ConfigResult) 
+- [L329:L353]fn collect_group_block(lines: &[String], start_index: usize, first_line_content: &str) -> Option<(Vec<String>, Option<String>, usize)> 
+- [L365:L631]fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, result: &mut ConfigResult) 
+- [L633:L720]fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult 
+- [L766:L776]fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> 
+- [L778:L783]fn read_utf16le_file(path: &str) -> io::Result<String> 
+- [L785:L791]fn parse_mask(s: &str) -> usize 
+- [L793:L969]fn convert(in_file: Option<String>, out_file: Option<String>) 
 
 ## src/logging.rs
 - [L16:L16]static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
@@ -147,8 +147,8 @@
     processes: Option<&mut ProcessSnapshot>,
     dry_run: bool,
 ) -> ApplyConfigResult 
-- [L723:L793]fn process_logs(configs: &HashMap<String, ProcessConfig>, blacklist: &Vec<String>, logs_path: Option<&str>, output_file: Option<&str>) 
-- [L795:L1025]fn main() -> windows::core::Result<()> 
+- [L723:L795]fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklist: &Vec<String>, logs_path: Option<&str>, output_file: Option<&str>) 
+- [L797:L1040]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L17:L27]enum ProcessPriority {

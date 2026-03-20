@@ -200,9 +200,11 @@ pub fn format_cpu_indices(cpus: &[u32]) -> String {
 /// - `@CONSTANT=value` - Set scheduler constants (KEEP_THRESHOLD, ENTRY_THRESHOLD)
 /// - `*alias=spec` - Define a reusable CPU spec alias (e.g., `*pcore=0-7;64-71`)
 /// Result of config parsing and validation
+/// configs is organized as HashMap<grade, HashMap<process_name, ProcessConfig>>
+/// where grade determines how often the rule is applied (every Nth loop)
 #[derive(Debug, Default)]
 pub struct ConfigResult {
-    pub configs: HashMap<String, ProcessConfig>,
+    pub configs: HashMap<u32, HashMap<String, ProcessConfig>>,
     pub constants: ConfigConstants,
     pub constants_count: usize,
     pub aliases_count: usize,
@@ -216,6 +218,11 @@ pub struct ConfigResult {
 impl ConfigResult {
     pub fn is_valid(&self) -> bool {
         self.errors.is_empty()
+    }
+
+    /// Get total number of rules across all grades
+    pub fn total_rules(&self) -> usize {
+        self.configs.values().map(|grade_configs| grade_configs.len()).sum()
     }
 
     pub fn print_report(&self) {
@@ -360,7 +367,7 @@ fn collect_group_block(lines: &[String], start_index: usize, first_line_content:
 ///
 /// # Arguments
 /// * `members` - Process names to create configs for (single element for normal lines, multiple for groups)
-/// * `rule_parts` - The rule fields: [priority, affinity, cpuset, prime, io, memory]
+/// * `rule_parts` - The rule fields: [priority, affinity, cpuset, prime, io, memory, grade]
 /// * `line_number` - For error reporting
 /// * `cpu_aliases` - Resolved CPU aliases
 /// * `result` - ConfigResult to add configs, errors, and warnings to
@@ -577,9 +584,35 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
         MemoryPriority::None
     };
 
-    // Create ProcessConfig for each member
+    // Parse grade (optional, defaults to 1 - apply every loop)
+    // Grade must be a positive integer (>= 1)
+    let grade = if rule_parts.len() >= 7 {
+        let grade_str = rule_parts[6].trim();
+        match grade_str.parse::<u32>() {
+            Ok(g) if g >= 1 => g,
+            Ok(0) => {
+                result.warnings.push(format!(
+                    "Line {}: Grade cannot be 0, using 1 instead",
+                    line_number
+                ));
+                1
+            }
+            _ => {
+                result.warnings.push(format!(
+                    "Line {}: Invalid grade '{}', using 1",
+                    line_number, grade_str
+                ));
+                1
+            }
+        }
+    } else {
+        1
+    };
+
+    // Create ProcessConfig for each member and insert into the appropriate grade bucket
+    let grade_bucket = result.configs.entry(grade).or_default();
     for name in members {
-        result.configs.insert(
+        grade_bucket.insert(
             name.clone(),
             ProcessConfig {
                 name: name.clone(),

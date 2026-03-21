@@ -211,6 +211,7 @@ pub struct ConfigResult {
     pub groups_count: usize,
     pub group_members_count: usize,
     pub process_rules_count: usize,
+    pub redundant_rules_count: usize,
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
 }
@@ -244,6 +245,11 @@ impl ConfigResult {
                 log_to_find(&format!("⚠ {}", warning));
             }
             log_to_find(&format!("Found {} error(s). Fix them before running.", self.errors.len()));
+        }
+        if self.redundant_rules_count > 0 || !self.is_valid() {
+            for warning in &self.warnings {
+                log_to_find(&format!("⚠ {}", warning));
+            }
         }
     }
 }
@@ -591,17 +597,11 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
         match grade_str.parse::<u32>() {
             Ok(g) if g >= 1 => g,
             Ok(0) => {
-                result.warnings.push(format!(
-                    "Line {}: Grade cannot be 0, using 1 instead",
-                    line_number
-                ));
+                result.warnings.push(format!("Line {}: Grade cannot be 0, using 1 instead", line_number));
                 1
             }
             _ => {
-                result.warnings.push(format!(
-                    "Line {}: Invalid grade '{}', using 1",
-                    line_number, grade_str
-                ));
+                result.warnings.push(format!("Line {}: Invalid grade '{}', using 1", line_number, grade_str));
                 1
             }
         }
@@ -609,10 +609,17 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
         1
     };
 
-    // Create ProcessConfig for each member and insert into the appropriate grade bucket
-    let grade_bucket = result.configs.entry(grade).or_default();
     for name in members {
-        grade_bucket.insert(
+        // Check for redundant rules (same process name defined multiple times)
+        if result.configs.values().any(|f| f.contains_key(name)) {
+            result.redundant_rules_count += 1;
+            result.warnings.push(format!(
+                "Line {}: Redundant rule - '{}' already defined (previous definition will be overwritten)",
+                line_number, name
+            ));
+        }
+
+        result.configs.entry(grade).or_default().insert(
             name.clone(),
             ProcessConfig {
                 name: name.clone(),

@@ -72,6 +72,7 @@ pub fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<(
             }
             "-validate" => {
                 cli.validate_mode = true;
+                *use_console().lock().unwrap() = true;
             }
             "-processlogs" => {
                 cli.process_logs_mode = true;

@@ -145,13 +145,13 @@ The `grade` field controls how often a rule is applied (default: 1 = every loop)
 
 ```ini
 # Apply every loop (default)
-game.exe:high:*pcore:0:*pcore:normal:normal:1
+game.exe:high:*pcore:0:*pcore:normal:normal:0:1
 
 # Apply every 3rd loop (for less critical processes)
-background.exe:normal:*ecore:0:0:low:none:3
+background.exe:normal:*ecore:0:0:low:none:0:3
 
 # Apply every 10th loop (minimal monitoring)
-updater.exe:normal:0:0:0:normal:none:10
+updater.exe:normal:0:0:0:normal:none:0:10
 ```
 
 > **Important:** Plain numbers like `7` mean core 7, not a bitmask. Use `0x7` or `0-2` for cores 0-2.
@@ -234,31 +234,31 @@ The `prime_cpus` field supports multi-segment CPU assignment with per-module fil
 
 ```ini
 # Simple - all prime threads on P-cores except 0-1
-game.exe:normal:*a:*p:*pN01:normal:normal
+game.exe:normal:*a:*p:*pN01:normal:normal:0:1
 
 # Track top 10 threads, apply rules, log on exit
-game.exe:normal:*a:*p:?10*pN01:normal:normal
+game.exe:normal:*a:*p:?10*pN01:normal:normal:0:1
 
 # Monitor only - track top 20 threads, log on exit, don't apply CPU sets
-game.exe:normal:*a:*p:??20*pN01:normal:normal
+game.exe:normal:*a:*p:??20*pN01:normal:normal:0:1
 
 # Module filtering - only CS2 and NVIDIA threads
-cs2.exe:normal:*a:*p:*pN01@cs2.exe;nvwgf2umx.dll:normal:normal
+cs2.exe:normal:*a:*p:*pN01@cs2.exe;nvwgf2umx.dll:normal:normal:0:1
 
 # Multi-segment - CS2 on P-cores, NVIDIA on E-cores
-cs2.exe:normal:*a:*p:*p@cs2.exe*e@nvwgf2umx.dll:normal:normal
+cs2.exe:normal:*a:*p:*p@cs2.exe*e@nvwgf2umx.dll:normal:normal:0:1
 
 # Per-module thread priority - CS2 at time critical, NVIDIA at above normal
-cs2.exe:normal:*a:*p:*pN01@cs2.exe!time critical;nvwgf2umx.dll!above normal:normal:normal
+cs2.exe:normal:*a:*p:*pN01@cs2.exe!time critical;nvwgf2umx.dll!above normal:normal:normal:0:1
 
 # Three segments with different CPUs and priorities
-game.exe:normal:*a:*p:*p@engine.dll!time critical*pN01@render.dll!highest*e@background.dll!normal:normal:normal
+game.exe:normal:*a:*p:*p@engine.dll!time critical*pN01@render.dll!highest*e@background.dll!normal:normal:normal:0:1
 
 # Mixed - some with explicit priority, others auto-boost
-game.exe:normal:*a:*p:*pN01@UnityPlayer.dll!time critical;GameModule.dll:normal:normal
+game.exe:normal:*a:*p:*pN01@UnityPlayer.dll!time critical;GameModule.dll:normal:normal:0:1
 
 # Track and multi-segment - track top 10, CS2 on P-cores, NVIDIA on E-cores
-cs2.exe:normal:*a:*p:?10*p@cs2.exe*e@nvwgf2umx.dll:normal:normal
+cs2.exe:normal:*a:*p:?10*p@cs2.exe*e@nvwgf2umx.dll:normal:normal:0:1
 ```
 
 Ideal Processor Assignment

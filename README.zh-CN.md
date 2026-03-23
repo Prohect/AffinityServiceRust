@@ -143,13 +143,13 @@ process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_p
 
 ```ini
 # 每次循环应用（默认）
-game.exe:high:*pcore:0:*pcore:normal:normal:1
+game.exe:high:*pcore:0:*pcore:normal:normal:0:1
 
 # 每第 3 次循环应用（用于较不关键的进程）
-background.exe:normal:*ecore:0:0:low:none:3
+background.exe:normal:*ecore:0:0:low:none:0:3
 
 # 每第 10 次循环应用（最小监控频率）
-updater.exe:normal:0:0:0:normal:none:10
+updater.exe:normal:0:0:0:normal:none:0:10
 ```
 
 > **重要：** 普通数字如 `7` 表示核心 7，不是位掩码。使用 `0x7` 或 `0-2` 表示核心 0-2。
@@ -232,31 +232,31 @@ sys_utils { notepad.exe: calc.exe }:none:*e:0:0:low:none
 
 ```ini
 # 简单 - 所有 prime 线程在除 0-1 外的 P 核
-game.exe:normal:*a:*p:*pN01:normal:normal
+game.exe:normal:*a:*p:*pN01:normal:normal:0:1
 
 # 跟踪前 10 个线程，应用规则，退出时记录
-game.exe:normal:*a:*p:?10*pN01:normal:normal
+game.exe:normal:*a:*p:?10*pN01:normal:normal:0:1
 
 # 仅监控 - 跟踪前 20 个线程，退出时记录，不应用 CPU 集
-game.exe:normal:*a:*p:??20*pN01:normal:normal
+game.exe:normal:*a:*p:??20*pN01:normal:normal:0:1
 
 # 模块过滤 - 仅 CS2 和 NVIDIA 线程
-cs2.exe:normal:*a:*p:*pN01@cs2.exe;nvwgf2umx.dll:normal:normal
+cs2.exe:normal:*a:*p:*pN01@cs2.exe;nvwgf2umx.dll:normal:normal:0:1
 
 # 多段式 - CS2 在 P 核，NVIDIA 在 E 核
-cs2.exe:normal:*a:*p:*p@cs2.exe*e@nvwgf2umx.dll:normal:normal
+cs2.exe:normal:*a:*p:*p@cs2.exe*e@nvwgf2umx.dll:normal:normal:0:1
 
 # 按模块线程优先级 - CS2 为 time critical，NVIDIA 为 above normal
-cs2.exe:normal:*a:*p:*pN01@cs2.exe!time critical;nvwgf2umx.dll!above normal:normal:normal
+cs2.exe:normal:*a:*p:*pN01@cs2.exe!time critical;nvwgf2umx.dll!above normal:normal:normal:0:1
 
 # 三段式，不同 CPU 和优先级
-game.exe:normal:*a:*p:*p@engine.dll!time critical*pN01@render.dll!highest*e@background.dll!normal:normal:normal
+game.exe:normal:*a:*p:*p@engine.dll!time critical*pN01@render.dll!highest*e@background.dll!normal:normal:normal:0:1
 
 # 混合 - 部分显式优先级，其他自动提升
-game.exe:normal:*a:*p:*pN01@UnityPlayer.dll!time critical;GameModule.dll:normal:normal
+game.exe:normal:*a:*p:*pN01@UnityPlayer.dll!time critical;GameModule.dll:normal:normal:0:1
 
 # 跟踪和多段式 - 跟踪前 10，CS2 在 P 核，NVIDIA 在 E 核
-cs2.exe:normal:*a:*p:?10*p@cs2.exe*e@nvwgf2umx.dll:normal:normal
+cs2.exe:normal:*a:*p:?10*p@cs2.exe*e@nvwgf2umx.dll:normal:normal:0:1
 ```
 
 理想处理器（首核）分配（Ideal Processor Assignment）
@@ -321,25 +321,25 @@ background.exe:normal:*a:*p:*p:normal:normal:*p:5
 # 格式：process:priority:affinity:cpuset:prime[@prefixes]:io:memory:ideal[@prefixes]:grade
 
 # 单进程 - 简单
-cs2.exe:normal:*a:*p:*pN01:normal:normal:1
+cs2.exe:normal:*a:*p:*pN01:normal:normal:0:1
 
 # Prime 带模块过滤 - 仅特定模块
-game.exe:normal:*a:*p:*pN01@UnityPlayer.dll;GameModule.dll:normal:normal:1
+game.exe:normal:*a:*p:*pN01@UnityPlayer.dll;GameModule.dll:normal:normal:0:1
 
 # 多段式 - 不同模块不同核心
-cs2.exe:normal:*a:*p:*p@cs2.exe*e@nvwgf2umx.dll:normal:normal:1
+cs2.exe:normal:*a:*p:*p@cs2.exe*e@nvwgf2umx.dll:normal:normal:0:1
 
 # 按模块线程优先级
-cs2.exe:normal:*a:*p:*pN01@cs2.exe!time critical;nvwgf2umx.dll!above normal:normal:normal:1
+cs2.exe:normal:*a:*p:*pN01@cs2.exe!time critical;nvwgf2umx.dll!above normal:normal:normal:0:1
 
 # 三段式，不同 CPU 和优先级
-game.exe:normal:*a:*p:*p@engine.dll!time critical*pN01@render.dll!highest*e@background.dll!normal:normal:normal:1
+game.exe:normal:*a:*p:*p@engine.dll!time critical*pN01@render.dll!highest*e@background.dll!normal:normal:normal:0:1
 
 # 跟踪前 10 个线程 - 退出时记录
-game.exe:normal:*a:*p:?10*pN01@UnityPlayer.dll:normal:normal:1
+game.exe:normal:*a:*p:?10*pN01@UnityPlayer.dll:normal:normal:0:1
 
 # 仅监控 - 跟踪但不应用
-game.exe:normal:*a:*p:??20*pN01:normal:normal:1
+game.exe:normal:*a:*p:??20*pN01:normal:normal:0:1
 
 # 命名组 - 浏览器在 E 核
 browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal:1

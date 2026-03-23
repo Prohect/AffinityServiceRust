@@ -153,6 +153,39 @@ impl Default for ProcessStats {
     }
 }
 
+/// Stores the ideal processor assignment state for a thread.
+#[derive(Debug, Clone, Copy)]
+pub struct IdealProcessorState {
+    /// Current ideal processor group (for >64 core systems)
+    pub current_group: u16,
+    /// Current ideal processor number within the group
+    pub current_number: u8,
+    /// Previous ideal processor group (for restoration when falling out of top N)
+    pub previous_group: u16,
+    /// Previous ideal processor number within the group
+    pub previous_number: u8,
+    /// Whether this thread currently has an ideal processor assigned by us
+    pub is_assigned: bool,
+}
+
+impl IdealProcessorState {
+    pub fn new() -> Self {
+        Self {
+            current_group: 0,
+            current_number: 0,
+            previous_group: 0,
+            previous_number: 0,
+            is_assigned: false,
+        }
+    }
+}
+
+impl Default for IdealProcessorState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Per-thread state for the Prime Thread Scheduler.
 pub struct ThreadStats {
     /// KernelTime + UserTime from last snapshot, used to calculate delta.
@@ -170,6 +203,8 @@ pub struct ThreadStats {
     /// Original thread priority before promotion. None if not promoted.
     pub original_priority: Option<ThreadPriority>,
     pub last_system_thread_info: Option<ntapi::ntexapi::SYSTEM_THREAD_INFORMATION>,
+    /// Ideal processor assignment state for this thread
+    pub ideal_processor: IdealProcessorState,
 }
 
 impl ThreadStats {
@@ -183,6 +218,7 @@ impl ThreadStats {
             start_address: 0,
             original_priority: None,
             last_system_thread_info: None,
+            ideal_processor: IdealProcessorState::new(),
         }
     }
 }

@@ -16,9 +16,10 @@ use windows::Win32::{
         TOKEN_PRIVILEGES, TOKEN_QUERY, TokenElevation,
     },
     System::{
+        Kernel::PROCESSOR_NUMBER,
         ProcessStatus::{EnumProcessModulesEx, GetModuleBaseNameW, GetModuleInformation, LIST_MODULES_ALL, MODULEINFO},
         SystemInformation::{GetSystemCpuSetInformation, SYSTEM_CPU_SET_INFORMATION},
-        Threading::{GetCurrentProcess, GetProcessAffinityMask, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_VM_READ},
+        Threading::{GetCurrentProcess, GetProcessAffinityMask, GetThreadIdealProcessorEx, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_VM_READ, SetThreadIdealProcessorEx},
     },
 };
 
@@ -460,6 +461,52 @@ pub fn get_thread_start_address(thread_handle: HANDLE) -> usize {
     };
 
     if status.is_ok() { start_address } else { 0 }
+}
+
+/// Sets the ideal processor for a thread using SetThreadIdealProcessorEx.
+/// This specifies a preferred processor for the thread without forcing it.
+///
+/// # Arguments
+/// * `thread_handle` - Handle to the thread with THREAD_SET_INFORMATION access
+/// * `group` - Processor group (0 for most systems, use for >64 cores)
+/// * `number` - Logical processor number within the group
+///
+/// # Returns
+/// * `Ok(PROCESSOR_NUMBER)` - The previous ideal processor
+/// * `Err(windows::core::Error)` - If the call fails
+pub fn set_thread_ideal_processor_ex(
+    thread_handle: HANDLE,
+    group: u16,
+    number: u8,
+) -> Result<PROCESSOR_NUMBER, windows::core::Error> {
+    let ideal = PROCESSOR_NUMBER {
+        Group: group,
+        Number: number,
+        Reserved: 0,
+    };
+    let mut previous = PROCESSOR_NUMBER::default();
+    unsafe {
+        SetThreadIdealProcessorEx(thread_handle, &ideal, Some(&mut previous))?;
+    }
+    Ok(previous)
+}
+
+/// Gets the current ideal processor for a thread using GetThreadIdealProcessorEx.
+///
+/// # Arguments
+/// * `thread_handle` - Handle to the thread with THREAD_QUERY_LIMITED_INFORMATION access
+///
+/// # Returns
+/// * `Ok(PROCESSOR_NUMBER)` - The current ideal processor
+/// * `Err(windows::core::Error)` - If the call fails
+pub fn get_thread_ideal_processor_ex(
+    thread_handle: HANDLE,
+) -> Result<PROCESSOR_NUMBER, windows::core::Error> {
+    let mut ideal = PROCESSOR_NUMBER::default();
+    unsafe {
+        GetThreadIdealProcessorEx(thread_handle, &mut ideal)?;
+    }
+    Ok(ideal)
 }
 
 /// Cached module information for processes.

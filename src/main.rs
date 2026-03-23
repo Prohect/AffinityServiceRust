@@ -24,8 +24,8 @@ use std::{
 };
 use winapi::{
     NtQueryInformationProcess, NtSetInformationProcess, NtSetTimerResolution, cpusetids_from_indices, enable_debug_privilege, enable_inc_base_priority_privilege,
-    filter_indices_by_mask, get_cpu_set_information, get_thread_start_address, indices_from_cpusetids, is_affinity_unset, is_running_as_admin, request_uac_elevation,
-    resolve_address_to_module,
+    filter_indices_by_mask, get_cpu_set_information, get_thread_ideal_processor_ex, get_thread_start_address, indices_from_cpusetids, is_affinity_unset,
+    is_running_as_admin, request_uac_elevation, resolve_address_to_module, set_thread_ideal_processor_ex,
 };
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE},
@@ -35,7 +35,7 @@ use windows::Win32::{
         Threading::{
             GetPriorityClass, GetProcessAffinityMask, GetProcessDefaultCpuSets, GetProcessInformation, GetThreadPriority, OpenProcess, OpenThread,
             PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION, ProcessMemoryPriority, SetPriorityClass, SetProcessAffinityMask, SetProcessDefaultCpuSets,
-            SetProcessInformation, SetThreadPriority, SetThreadSelectedCpuSets, THREAD_QUERY_INFORMATION, THREAD_SET_LIMITED_INFORMATION,
+            SetProcessInformation, SetThreadPriority, SetThreadSelectedCpuSets, THREAD_QUERY_INFORMATION, THREAD_SET_INFORMATION, THREAD_SET_LIMITED_INFORMATION,
         },
         WindowsProgramming::QueryThreadCycleTime,
     },
@@ -193,7 +193,7 @@ fn apply_prime_threads(
     pid: u32,
     config: &ProcessConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
-    mut processes: Option<&mut ProcessSnapshot>,
+    processes: &mut Option<&mut ProcessSnapshot>,
     dry_run: bool,
     current_mask: &mut usize,
     apply_config_result: &mut ApplyConfigResult,
@@ -305,7 +305,7 @@ fn apply_prime_threads_query_cycles(
         let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
         match thread_stats.handle {
             None => {
-                let open_result = unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION, false, tid) };
+                let open_result = unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION | THREAD_SET_INFORMATION, false, tid) };
                 match open_result {
                     Err(_) => {
                         let error_code = unsafe { GetLastError().0 };
@@ -675,11 +675,237 @@ fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc:
     }
 }
 
+/// Applies ideal processor assignments to threads based on configuration rules.
+///
+/// For each ideal processor rule:
+/// 1. Find threads whose start module matches the rule's prefixes
+/// 2. Sort matching threads by total CPU time (descending)
+/// 3. Assign ideal processors from the rule's CPU list to top N threads
+/// 4. Store previous ideal processor for restoration when thread falls out of top N
+fn apply_ideal_processors(
+    pid: u32,
+    config: &ProcessConfig,
+    processes: &mut Option<&mut ProcessSnapshot>,
+    prime_scheduler: &mut PrimeThreadScheduler,
+    dry_run: bool,
+    apply_config_result: &mut ApplyConfigResult,
+) {
+    if config.ideal_processor_rules.is_empty() {
+        return;
+    }
+
+    // For dry run, just report what would be done
+    if dry_run {
+        for rule in &config.ideal_processor_rules {
+            let cpus_str = format_cpu_indices(&rule.cpus);
+            let prefixes_str = if rule.prefixes.is_empty() {
+                "all modules".to_string()
+            } else {
+                rule.prefixes.join("; ")
+            };
+            apply_config_result.add_change(format!(
+                "Ideal Processor: CPUs [{}] for top {} threads from [{}]",
+                cpus_str,
+                rule.cpus.len(),
+                prefixes_str
+            ));
+        }
+        return;
+    }
+
+    let processes = match processes {
+        Some(p) => p,
+        None => return,
+    };
+
+    let process = match processes.pid_to_process.get_mut(&pid) {
+        Some(p) => p,
+        None => return,
+    };
+
+    // Get all threads with their total CPU time
+    let mut thread_times: Vec<(u32, i64)> = Vec::new();
+    for (tid, thread_info) in process.get_threads() {
+        let total_time = unsafe { *thread_info.KernelTime.QuadPart() + *thread_info.UserTime.QuadPart() };
+        thread_times.push((*tid, total_time));
+    }
+
+    // Process each ideal processor rule
+    for rule in &config.ideal_processor_rules {
+        if rule.cpus.is_empty() {
+            continue;
+        }
+
+        // First pass: collect thread info without holding mutable borrows
+        let mut thread_infos: Vec<(u32, i64, usize, String)> = Vec::new();
+        for (tid, total_time) in &thread_times {
+            // Get start address from scheduler or resolve it
+            let (start_addr, start_module) = {
+                let thread_stats = prime_scheduler.get_thread_stats(pid, *tid);
+
+                if thread_stats.start_address == 0 {
+                    // Need to open thread to get start address
+                    if thread_stats.handle.is_none() {
+                        match unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION | THREAD_SET_INFORMATION, false, *tid) } {
+                            Ok(handle) if !handle.is_invalid() => {
+                                let addr = get_thread_start_address(handle);
+                                // Store handle for later use
+                                prime_scheduler.get_thread_stats(pid, *tid).handle = Some(handle);
+                                let module = resolve_address_to_module(pid, addr);
+                                (addr, module)
+                            }
+                            _ => (0, String::new()),
+                        }
+                    } else {
+                        let addr = thread_stats.start_address;
+                        let module = resolve_address_to_module(pid, addr);
+                        (addr, module)
+                    }
+                } else {
+                    let addr = thread_stats.start_address;
+                    let module = resolve_address_to_module(pid, addr);
+                    (addr, module)
+                }
+            };
+
+            // Check if module matches any prefix
+            let matches = if rule.prefixes.is_empty() {
+                true // No prefixes = match all
+            } else {
+                let start_module_lower = start_module.to_lowercase();
+                rule.prefixes.iter().any(|prefix| start_module_lower.starts_with(prefix))
+            };
+
+            if matches {
+                thread_infos.push((*tid, *total_time, start_addr, start_module));
+            }
+        }
+
+        // Sort by total CPU time descending
+        thread_infos.sort_by(|a, b| b.1.cmp(&a.1));
+
+        // Take top N threads where N = number of CPUs in the rule
+        let top_n = thread_infos.len().min(rule.cpus.len());
+        let top_threads: Vec<_> = thread_infos.iter().take(top_n).cloned().collect();
+
+        // Apply ideal processors to top N threads
+        for (i, (tid, _, _start_addr, _)) in top_threads.iter().enumerate() {
+            let target_cpu = rule.cpus[i];
+            let thread_stats = prime_scheduler.get_thread_stats(pid, *tid);
+
+            // Open thread if we don't have a handle
+            if thread_stats.handle.is_none() {
+                match unsafe { OpenThread(THREAD_SET_LIMITED_INFORMATION | THREAD_QUERY_INFORMATION | THREAD_SET_INFORMATION, false, *tid) } {
+                    Ok(handle) if !handle.is_invalid() => {
+                        thread_stats.handle = Some(handle);
+                    }
+                    Err(e) => {
+                        apply_config_result.add_error(format!(
+                            "apply_ideal_processor: [OPEN_THREAD][{}] {:>5}-{}-{}",
+                            error_from_code(e.code().0 as u32),
+                            pid,
+                            tid,
+                            config.name
+                        ));
+                        continue;
+                    }
+                    _ => continue,
+                }
+            }
+
+            if let Some(handle) = thread_stats.handle {
+                if handle.is_invalid() {
+                    continue;
+                }
+
+                // Get current ideal processor if not already stored
+                if !thread_stats.ideal_processor.is_assigned {
+                    match get_thread_ideal_processor_ex(handle) {
+                        Ok(prev) => {
+                            thread_stats.ideal_processor.previous_group = prev.Group;
+                            thread_stats.ideal_processor.current_group = prev.Group;
+                            thread_stats.ideal_processor.previous_number = prev.Number;
+                            thread_stats.ideal_processor.current_number = prev.Number;
+                        }
+                        Err(e) => {
+                            apply_config_result.add_error(format!(
+                                "apply_ideal_processor: [GET_IDEAL][{}] {:>5}-{}-{}",
+                                error_from_code(e.code().0 as u32),
+                                pid,
+                                tid,
+                                config.name
+                            ));
+                        }
+                    }
+                }
+
+                // Set new ideal processor (always group 0 for now, extend if >64 cores needed)
+                let target_group: u16 = 0;
+                let target_number: u8 = target_cpu as u8;
+
+                // Only set if different from current
+                if !thread_stats.ideal_processor.is_assigned || thread_stats.ideal_processor.current_number != target_number {
+                    match set_thread_ideal_processor_ex(handle, target_group, target_number) {
+                        Ok(_) => {
+                            thread_stats.ideal_processor.current_group = target_group;
+                            thread_stats.ideal_processor.current_number = target_number;
+                            thread_stats.ideal_processor.is_assigned = true;
+
+                            apply_config_result.add_change(format!("Thread {} -> ideal CPU {} (group {})", tid, target_number, target_group));
+                        }
+                        Err(e) => {
+                            apply_config_result.add_error(format!(
+                                "apply_ideal_processor: [SET_IDEAL][{}] {:>5}-{}-{}",
+                                error_from_code(e.code().0 as u32),
+                                pid,
+                                tid,
+                                config.name
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Restore previous ideal processor for threads that fell out of top N
+        for (tid, _, _, _) in thread_infos.iter().skip(top_n) {
+            let thread_stats = prime_scheduler.get_thread_stats(pid, *tid);
+
+            if thread_stats.ideal_processor.is_assigned {
+                if let Some(handle) = thread_stats.handle {
+                    if !handle.is_invalid() {
+                        let prev_group = thread_stats.ideal_processor.previous_group;
+                        let prev_number = thread_stats.ideal_processor.previous_number;
+
+                        match set_thread_ideal_processor_ex(handle, prev_group, prev_number) {
+                            Ok(_) => {
+                                apply_config_result.add_change(format!("Thread {} -> restored ideal CPU {} (group {})", tid, prev_number, prev_group));
+                                thread_stats.ideal_processor.current_group = prev_group;
+                                thread_stats.ideal_processor.current_number = prev_number;
+                            }
+                            Err(e) => {
+                                apply_config_result.add_error(format!(
+                                    "apply_ideal_processor: [RESTORE_IDEAL][{}] {:>5}-{}-{}",
+                                    error_from_code(e.code().0 as u32),
+                                    pid,
+                                    tid,
+                                    config.name
+                                ));
+                            }
+                        }
+                    }
+                }
+                thread_stats.ideal_processor.is_assigned = false;
+            }
+        }
+    }
+}
+
 fn apply_config(
     pid: u32,
     config: &ProcessConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
-    processes: Option<&mut ProcessSnapshot>,
+    mut processes: Option<&mut ProcessSnapshot>,
     dry_run: bool,
 ) -> ApplyConfigResult {
     let mut apply_config_result = ApplyConfigResult::new();
@@ -713,9 +939,18 @@ fn apply_config(
     apply_priority(pid, config, dry_run, h_prc, &mut apply_config_result);
     apply_affinity(pid, config, dry_run, h_prc, &mut current_mask, &mut apply_config_result);
     apply_process_default_cpuset(pid, config, dry_run, h_prc, &mut apply_config_result);
-    apply_prime_threads(pid, config, prime_core_scheduler, processes, dry_run, &mut current_mask, &mut apply_config_result);
+    apply_prime_threads(
+        pid,
+        config,
+        prime_core_scheduler,
+        &mut processes,
+        dry_run,
+        &mut current_mask,
+        &mut apply_config_result,
+    );
     apply_io_priority(pid, config, dry_run, h_prc, &mut apply_config_result);
     apply_memory_priority(pid, config, dry_run, h_prc, &mut apply_config_result);
+    apply_ideal_processors(pid, config, &mut processes, prime_core_scheduler, dry_run, &mut apply_config_result);
     let _ = unsafe { CloseHandle(h_prc) };
     apply_config_result
 }
@@ -902,14 +1137,14 @@ fn main() -> windows::core::Result<()> {
                 let mut total_changes = 0;
                 let pids_and_names: Vec<(u32, String)> = processes.pid_to_process.values().map(|p| (p.pid(), p.get_name().to_string())).collect();
                 prime_core_scheduler.reset_alive();
-                
+
                 // Iterate through graded configs: apply rules only when current_loop % grade == 0
                 for (grade, grade_configs) in &configs {
                     // current_loop is 0-based, so we apply grade 1 rules every loop (0 % 1 == 0, 1 % 1 == 0, etc.)
                     if current_loop % *grade != 0 {
                         continue; // Skip this grade this loop
                     }
-                    
+
                     for (pid, name) in &pids_and_names {
                         if let Some(config) = grade_configs.get(name) {
                             let result = apply_config(*pid, config, &mut prime_core_scheduler, Some(&mut processes), cli.dry_run);

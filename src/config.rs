@@ -38,10 +38,30 @@ pub struct PrimePrefix {
     pub thread_priority: ThreadPriority,
 }
 
-/// Configuration for a single process, parsed from config.ini.
-/// Format: `name:priority:affinity:cpu_set:prime_cpu:io_priority:memory_priority`
+/// Represents a module prefix filter for ideal processor assignment.
+/// Format: *alias@prefix1;prefix2 or *cpu_list@prefix1;prefix2
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct IdealProcessorPrefix {
+    /// Module name prefix to match (e.g., "cs2.exe", "engine.dll")
+    pub prefix: String,
+    /// CPU indices to assign as ideal processors (one per thread in ranking order)
+    pub cpus: Vec<u32>,
+}
 
+/// Configuration for ideal processor assignment.
+/// Each rule segment defines CPUs and matching module prefixes.
+#[derive(Debug, Clone)]
+pub struct IdealProcessorRule {
+    /// List of CPU indices for ideal processor assignment
+    pub cpus: Vec<u32>,
+    /// Module prefixes that should use these CPUs (empty = all threads)
+    pub prefixes: Vec<String>,
+}
+
+/// Configuration for a single process, parsed from config.ini.
+/// Format: `name:priority:affinity:cpu_set:prime_cpu:io_priority:memory_priority:ideal[@prefixes]:grade`
+#[derive(Debug, Clone)]
 pub struct ProcessConfig {
     pub name: String,
     pub priority: ProcessPriority,
@@ -56,6 +76,8 @@ pub struct ProcessConfig {
     pub track_top_x_threads: i32,
     pub io_priority: IOPriority,
     pub memory_priority: MemoryPriority,
+    /// Ideal processor rules for static thread-to-CPU assignment based on total CPU time
+    pub ideal_processor_rules: Vec<IdealProcessorRule>,
 }
 
 /// Constants used by the Prime Thread Scheduler algorithm.
@@ -332,6 +354,94 @@ fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut Ha
     }
 }
 
+/// Parses ideal processor specification.
+/// 
+/// SYNTAX (ALIAS ONLY):
+///   Each rule starts with '*' followed by an alias and optional module filter:
+///   - *alias@prefix1;prefix2 - Use CPU alias, filter by module prefixes
+///   - *alias - Use CPU alias for all threads (no module filter)
+///
+///   Multiple rules can be chained: *alias1@mod1*alias2@mod2
+///
+/// EXAMPLES:
+///   *pN01@engine.dll;render.dll  - Use alias *pN01 CPUs for engine/render threads
+///   *pN01                        - Use alias *pN01 CPUs for all threads
+///   *p@engine*e@helper           - Alias *p for engine, *e for helper threads
+///
+/// Returns list of IdealProcessorRule (one per segment)
+fn parse_ideal_processor_spec(
+    spec: &str,
+    line_number: usize,
+    cpu_aliases: &HashMap<String, Vec<u32>>,
+    errors: &mut Vec<String>,
+) -> Vec<IdealProcessorRule> {
+    let spec = spec.trim();
+    if spec.is_empty() || spec == "0" {
+        return Vec::new();
+    }
+
+    // Assert: ideal processor spec must start with '*'
+    if !spec.starts_with('*') {
+        errors.push(format!(
+            "Line {}: Ideal processor spec must start with '*', got '{}'",
+            line_number, spec
+        ));
+        return Vec::new();
+    }
+
+    let mut rules = Vec::new();
+
+    // Split by '*' to get segments. 
+    // Example: "*alias1@mod1*alias2@mod2" -> ["", "alias1@mod1", "alias2@mod2"]
+    // We skip the first empty element since spec starts with '*'
+    for segment in spec.split('*').skip(1) {
+        if segment.is_empty() {
+            continue;
+        }
+
+        // Parse segment: [alias]@[prefixes] or just [alias]
+        let (alias_part, prefixes_str) = match segment.find('@') {
+            Some(at_pos) => (&segment[..at_pos], &segment[at_pos + 1..]),
+            None => (segment, ""),
+        };
+
+        let alias = alias_part.trim().to_lowercase();
+        if alias.is_empty() {
+            errors.push(format!(
+                "Line {}: Empty alias in ideal processor rule '*{}'",
+                line_number, segment
+            ));
+            continue;
+        }
+
+        // Resolve CPU alias (alias only, no inline CPU specs)
+        let cpus = if let Some(alias_cpus) = cpu_aliases.get(&alias) {
+            alias_cpus.clone()
+        } else {
+            errors.push(format!(
+                "Line {}: Unknown CPU alias '*{}' in ideal processor specification",
+                line_number, alias
+            ));
+            Vec::new()
+        };
+
+        if cpus.is_empty() {
+            continue;
+        }
+
+        // Parse module prefixes (empty string means no filter)
+        let prefixes: Vec<String> = prefixes_str
+            .split(';')
+            .map(|p| p.trim().to_lowercase())
+            .filter(|p| !p.is_empty())
+            .collect();
+
+        rules.push(IdealProcessorRule { cpus, prefixes });
+    }
+
+    rules
+}
+
 /// Collects group members from lines until closing brace is found.
 /// Returns (members, rule_suffix, next_line_index) or None if unclosed.
 fn collect_group_block(lines: &[String], start_index: usize, first_line_content: &str) -> Option<(Vec<String>, Option<String>, usize)> {
@@ -590,24 +700,54 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
         MemoryPriority::None
     };
 
-    // Parse grade (optional, defaults to 1 - apply every loop)
-    // Grade must be a positive integer (>= 1)
-    let grade = if rule_parts.len() >= 7 {
-        let grade_str = rule_parts[6].trim();
-        match grade_str.parse::<u32>() {
-            Ok(g) if g >= 1 => g,
-            Ok(0) => {
+    // Parse ideal_processor and grade with backward compatibility
+    // Field 6 can be either:
+    //   - ideal_processor (if it starts with '*' or is "0")
+    //   - grade (if it is a positive integer and does not start with '*')
+    //
+    // If field 6 is ideal_processor, grade is at field 7
+    // If field 6 is grade, ideal_processor defaults to "0" (disabled)
+    let (ideal_processor_rules, grade) = if rule_parts.len() >= 7 {
+        let field6 = rule_parts[6].trim();
+        
+        // Check if field 6 is ideal_processor (starts with '*' or is "0")
+        if field6.starts_with('*') || field6 == "0" {
+            // Field 6 is ideal_processor, grade is at field 7 (or default 1)
+            let ideal = parse_ideal_processor_spec(field6, line_number, cpu_aliases, &mut result.errors);
+            let g = if rule_parts.len() >= 8 {
+                let grade_str = rule_parts[7].trim();
+                match grade_str.parse::<u32>() {
+                    Ok(val) if val >= 1 => val,
+                    Ok(0) => {
+                        result.warnings.push(format!("Line {}: Grade cannot be 0, using 1 instead", line_number));
+                        1
+                    }
+                    _ => {
+                        result.warnings.push(format!("Line {}: Invalid grade '{}', using 1", line_number, grade_str));
+                        1
+                    }
+                }
+            } else {
+                1
+            };
+            (ideal, g)
+        } else if let Ok(g) = field6.parse::<u32>() {
+            // Field 6 is grade (backward compatibility)
+            if g == 0 {
                 result.warnings.push(format!("Line {}: Grade cannot be 0, using 1 instead", line_number));
-                1
+                (Vec::new(), 1)
+            } else {
+                (Vec::new(), g)
             }
-            _ => {
-                result.warnings.push(format!("Line {}: Invalid grade '{}', using 1", line_number, grade_str));
-                1
-            }
+        } else {
+            // Unknown format, try to parse as ideal_processor anyway for error reporting
+            let ideal = parse_ideal_processor_spec(field6, line_number, cpu_aliases, &mut result.errors);
+            (ideal, 1)
         }
     } else {
-        1
+        (Vec::new(), 1)
     };
+
 
     for name in members {
         // Check for redundant rules (same process name defined multiple times)
@@ -631,6 +771,7 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
                 track_top_x_threads,
                 io_priority: io_priority.clone(),
                 memory_priority: memory_priority.clone(),
+                ideal_processor_rules: ideal_processor_rules.clone(),
             },
         );
     }

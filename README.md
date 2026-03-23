@@ -14,7 +14,7 @@ A high-performance Windows process management service written in Rust that autom
 | **CPU Affinity** | Hard pin processes to specific cores (≤64 cores, inherited by children) |
 | **CPU Sets** | Soft preference for cores via Windows CPU Sets (works on >64 cores) |
 | **Prime Thread Scheduling** | Dynamically assign CPU-intensive threads to performance cores |
-| **Ideal Processor Assignment** | Static ideal-processor assignment for top N busiest threads using CPU aliases and SetThreadIdealProcessorEx |
+| **Ideal Processor Assignment** | Static ideal-processor assignment for top N busiest threads using CPU aliases and SetThreadIdealProcessorEx|
 | **I/O Priority** | Control I/O priority (Very Low, Low, Normal, High - requires admin) |
 | **Memory Priority** | Control memory page priority (Very Low to Normal) |
 | **Timer Resolution** | Adjust Windows system timer resolution |

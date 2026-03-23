@@ -8,6 +8,17 @@
 
 ## 功能特性
 
+| Feature | Description |
+|---------|-------------|
+| **Process Priority** | 设置进程优先级（Idle、Below Normal、Normal、Above Normal、High、Real-time） |
+| **CPU Affinity** | 将进程绑定到特定核心（≤64核，子进程继承） |
+| **CPU Sets** | 使用 Windows CPU Sets 对核心进行软偏好（适用于 >64 核） |
+| **Prime Thread Scheduling** | 动态将高 CPU 使用率线程分配到性能核心 |
+| **Ideal Processor Assignment** | 使用 CPU 别名与 SetThreadIdealProcessorEx，为最繁忙的 N 个线程静态分配理想处理器 |
+| **I/O Priority** | 控制 I/O 优先级（Very Low、Low、Normal、High - 需要管理员权限） |
+| **Memory Priority** | 控制内存页面优先级（Very Low 到 Normal） |
+| **Timer Resolution** | 调整 Windows 系统计时器分辨率 |
+
 | 功能 | 说明 |
 |------|------|
 | **进程优先级** | 设置优先级类（空闲、低于标准、标准、高于标准、高、实时） |

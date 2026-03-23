@@ -115,8 +115,10 @@ AffinityServiceRust.exe -find
 ### Format
 
 ```
-process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority:grade
+process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority:ideal[@prefixes]:grade
 ```
+
+- `ideal[@prefixes]` - Optional ideal-processor assignment specification. Use CPU aliases prefixed with `*` to describe which logical CPUs should be used as "ideal processors" for top threads. Each alias may include an optional module prefix filter after `@` (multiple prefixes separated by `;`). If the `@prefixes` portion is omitted the alias applies to all threads in the process. See "Ideal Processor Assignment" in the Prime Thread Scheduling section for syntax and examples.
 
 ### CPU Specification
 
@@ -259,6 +261,33 @@ game.exe:normal:*a:*p:*pN01@UnityPlayer.dll!time critical;GameModule.dll:normal:
 cs2.exe:normal:*a:*p:?10*p@cs2.exe*e@nvwgf2umx.dll:normal:normal
 ```
 
+Ideal Processor Assignment
+
+An optional `ideal` specification can be added (immediately before the rule `grade`) to request static ideal-processor assignments for the busiest threads of a process. This uses CPU aliases (the same `*name` aliases defined under ALIASES) and optional per-rule module filtering.
+
+- Placement: the `ideal` field appears before the final `grade` field in a rule.
+- Syntax for `ideal`:
+  - `*alias` — Apply the alias CPUs as candidates for ideal processor assignment to all threads.
+  - `*alias@prefix1;prefix2` — Apply the alias CPUs only to threads whose start module name begins with one of the prefixes.
+  - Multiple rules can be chained: `*alias1@mod1*alias2@mod2`
+- Semantics:
+  - For each `*alias` rule, the implementation ranks matching threads by total CPU (kernel + user). The top N threads (N = number of CPUs in the alias) are assigned ideal processors in ranking order using the alias's CPU indices.
+  - If a thread later falls out of the top N, its previous ideal processor is restored.
+  - If the alias has no module filter (no `@...`), it matches all threads in the process.
+  - The implementation currently assigns processors within processor group 0 (systems with >64 logical processors / multiple groups may need mapping updates).
+
+**Examples of `ideal` usage:**
+```ini
+# Use alias *pN01 CPUs as ideal for the top threads of matching modules
+game.exe:normal:*a:*p:*pN01@UnityPlayer.dll:normal:normal:*pN01@UnityPlayer.dll:1
+
+# Multi-rule: engine threads -> p cores, render threads -> subset pN01
+game.exe:normal:*a:*p:*p@engine.dll*pN01@render.dll:normal:normal:*p@engine.dll*pN01@render.dll:1
+
+# Alias without filter applies to all threads (top N busiest threads get ideal CPUs)
+background.exe:normal:*a:*p:*p:normal:normal:*p:5
+```
+
 **When a tracked process exits**, detailed statistics are logged for each thread:
 - Thread ID and total CPU cycles
 - Start address resolved to `module.dll+offset` format
@@ -292,7 +321,7 @@ Configure prime thread scheduling behavior:
 *pN0 = 1-7          # P-cores except 0
 
 # === RULES ===
-# Format: process:priority:affinity:cpuset:prime[@prefixes]:io:memory:grade
+# Format: process:priority:affinity:cpuset:prime[@prefixes]:io:memory:ideal[@prefixes]:grade
 
 # Single process - simple
 cs2.exe:normal:*a:*p:*pN01:normal:normal:1

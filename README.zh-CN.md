@@ -259,6 +259,32 @@ game.exe:normal:*a:*p:*pN01@UnityPlayer.dll!time critical;GameModule.dll:normal:
 cs2.exe:normal:*a:*p:?10*p@cs2.exe*e@nvwgf2umx.dll:normal:normal
 ```
 
+理想处理器分配（Ideal Processor Assignment）
+
+可选的 `ideal` 字段可以插入到规则的最后 `grade` 字段之前，用于请求对进程中最繁忙线程的静态理想处理器分配。该配置使用与 ALIASES 中相同的 `*name` CPU 别名，并支持按模块前缀进行可选过滤。
+
+- 位置：`ideal` 字段位于规则中的最后 `grade` 字段之前。
+- 语法：
+  - `*alias` — 将该别名表示的 CPUs 用作匹配线程的候选理想处理器（匹配所有线程）。
+  - `*alias@prefix1;prefix2` — 仅对其起始模块名以某个前缀开始的线程应用该别名的 CPUs（多个前缀以 `;` 分隔）。
+  - 支持链式多规则：`*alias1@mod1*alias2@mod2`
+- 语义：
+  - 对于每个 `*alias` 规则，程序会按照线程的总 CPU 使用（内核 + 用户时间）对匹配线程进行排序。对于该别名所包含的 CPU 数量 N，选取排名前 N 的线程，将它们分别按排名映射到别名内的 CPU 索引并设置为理想处理器（ideal processor）。
+  - 当某线程不再位列前 N 时，会尝试将其之前的理想处理器值恢复回去。
+  - 如果别名不包含模块过滤（没有 `@...`），则匹配该进程的所有线程。
+  - 当前实现将理想处理器应用到处理器组 0（对于 >64 逻辑处理器且存在多个处理器组的系统，索引到组与编号的映射可能需要额外扩展）。
+- 示例：
+```ini
+# 将 *pN01 的 CPUs 作为 UnityPlayer.dll 相关线程的理想处理器
+game.exe:normal:*a:*p:*pN01@UnityPlayer.dll:normal:normal:*pN01@UnityPlayer.dll:1
+
+# 多规则：engine 线程 -> p 核，render 线程 -> pN01 子集
+game.exe:normal:*a:*p:*p@engine.dll*pN01@render.dll:normal:normal:*p@engine.dll*pN01@render.dll:1
+
+# 别名无过滤：对所有线程应用（对最繁忙的 N 个线程分配理想 CPU）
+background.exe:normal:*a:*p:*p:normal:normal:*p:5
+```
+
 **当跟踪的进程退出时**，为每个线程记录详细统计信息：
 - 线程 ID 和总 CPU 周期
 - 起始地址解析为 `module.dll+offset` 格式
@@ -292,7 +318,7 @@ cs2.exe:normal:*a:*p:?10*p@cs2.exe*e@nvwgf2umx.dll:normal:normal
 *pN0 = 1-7          # P 核除 0
 
 # === 规则 ===
-# 格式：process:priority:affinity:cpuset:prime[@prefixes]:io:memory:grade
+# 格式：process:priority:affinity:cpuset:prime[@prefixes]:io:memory:ideal[@prefixes]:grade
 
 # 单进程 - 简单
 cs2.exe:normal:*a:*p:*pN01:normal:normal:1

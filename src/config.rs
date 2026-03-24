@@ -507,25 +507,21 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
         if prime_spec.starts_with("??") {
             let rest = &prime_spec[2..];
             let end_idx = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
-            if end_idx > 0 {
-                if let Ok(val) = rest[..end_idx].parse::<i32>() {
-                    track_top_x_threads = -val;
-                    prime_spec = &rest[end_idx..];
-                    if prime_spec.starts_with('x') || prime_spec.starts_with('X') {
-                        prime_spec = &prime_spec[1..];
-                    }
+            if let Ok(val) = rest[..end_idx].parse::<i32>() {
+                track_top_x_threads = -val;
+                prime_spec = &rest[end_idx..];
+                if prime_spec.starts_with('x') || prime_spec.starts_with('X') {
+                    prime_spec = &prime_spec[1..];
                 }
             }
         } else if prime_spec.starts_with('?') {
             let rest = &prime_spec[1..];
             let end_idx = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
-            if end_idx > 0 {
-                if let Ok(val) = rest[..end_idx].parse::<i32>() {
-                    track_top_x_threads = val;
-                    prime_spec = &rest[end_idx..];
-                    if prime_spec.starts_with('x') || prime_spec.starts_with('X') {
-                        prime_spec = &prime_spec[1..];
-                    }
+            if let Ok(val) = rest[..end_idx].parse::<i32>() {
+                track_top_x_threads = val;
+                prime_spec = &rest[end_idx..];
+                if prime_spec.starts_with('x') || prime_spec.starts_with('X') {
+                    prime_spec = &prime_spec[1..];
                 }
             }
         }

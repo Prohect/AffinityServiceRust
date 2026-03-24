@@ -221,9 +221,9 @@ pub fn format_cpu_indices(cpus: &[u32]) -> String {
 /// - `# comment` - Lines starting with `#` are ignored
 /// - `@CONSTANT=value` - Set scheduler constants (KEEP_THRESHOLD, ENTRY_THRESHOLD)
 /// - `*alias=spec` - Define a reusable CPU spec alias (e.g., `*pcore=0-7;64-71`)
-/// Result of config parsing and validation
-/// configs is organized as HashMap<grade, HashMap<process_name, ProcessConfig>>
-/// where grade determines how often the rule is applied (every Nth loop)
+///   Result of config parsing and validation
+///   configs is organized as HashMap<grade, HashMap<process_name, ProcessConfig>>
+///   where grade determines how often the rule is applied (every Nth loop)
 #[derive(Debug, Default)]
 pub struct ConfigResult {
     pub configs: HashMap<u32, HashMap<String, ProcessConfig>>,
@@ -355,7 +355,7 @@ fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut Ha
 }
 
 /// Parses ideal processor specification.
-/// 
+///
 /// SYNTAX (ALIAS ONLY):
 ///   Each rule starts with '*' followed by an alias and optional module filter:
 ///   - *alias@prefix1;prefix2 - Use CPU alias, filter by module prefixes
@@ -369,12 +369,7 @@ fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut Ha
 ///   *p@engine*e@helper           - Alias *p for engine, *e for helper threads
 ///
 /// Returns list of IdealProcessorRule (one per segment)
-fn parse_ideal_processor_spec(
-    spec: &str,
-    line_number: usize,
-    cpu_aliases: &HashMap<String, Vec<u32>>,
-    errors: &mut Vec<String>,
-) -> Vec<IdealProcessorRule> {
+fn parse_ideal_processor_spec(spec: &str, line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, errors: &mut Vec<String>) -> Vec<IdealProcessorRule> {
     let spec = spec.trim();
     if spec.is_empty() || spec == "0" {
         return Vec::new();
@@ -382,16 +377,13 @@ fn parse_ideal_processor_spec(
 
     // Assert: ideal processor spec must start with '*'
     if !spec.starts_with('*') {
-        errors.push(format!(
-            "Line {}: Ideal processor spec must start with '*', got '{}'",
-            line_number, spec
-        ));
+        errors.push(format!("Line {}: Ideal processor spec must start with '*', got '{}'", line_number, spec));
         return Vec::new();
     }
 
     let mut rules = Vec::new();
 
-    // Split by '*' to get segments. 
+    // Split by '*' to get segments.
     // Example: "*alias1@mod1*alias2@mod2" -> ["", "alias1@mod1", "alias2@mod2"]
     // We skip the first empty element since spec starts with '*'
     for segment in spec.split('*').skip(1) {
@@ -407,10 +399,7 @@ fn parse_ideal_processor_spec(
 
         let alias = alias_part.trim().to_lowercase();
         if alias.is_empty() {
-            errors.push(format!(
-                "Line {}: Empty alias in ideal processor rule '*{}'",
-                line_number, segment
-            ));
+            errors.push(format!("Line {}: Empty alias in ideal processor rule '*{}'", line_number, segment));
             continue;
         }
 
@@ -418,10 +407,7 @@ fn parse_ideal_processor_spec(
         let cpus = if let Some(alias_cpus) = cpu_aliases.get(&alias) {
             alias_cpus.clone()
         } else {
-            errors.push(format!(
-                "Line {}: Unknown CPU alias '*{}' in ideal processor specification",
-                line_number, alias
-            ));
+            errors.push(format!("Line {}: Unknown CPU alias '*{}' in ideal processor specification", line_number, alias));
             Vec::new()
         };
 
@@ -430,11 +416,7 @@ fn parse_ideal_processor_spec(
         }
 
         // Parse module prefixes (empty string means no filter)
-        let prefixes: Vec<String> = prefixes_str
-            .split(';')
-            .map(|p| p.trim().to_lowercase())
-            .filter(|p| !p.is_empty())
-            .collect();
+        let prefixes: Vec<String> = prefixes_str.split(';').map(|p| p.trim().to_lowercase()).filter(|p| !p.is_empty()).collect();
 
         rules.push(IdealProcessorRule { cpus, prefixes });
     }
@@ -709,7 +691,7 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
     // If field 6 is grade, ideal_processor defaults to "0" (disabled)
     let (ideal_processor_rules, grade) = if rule_parts.len() >= 7 {
         let field6 = rule_parts[6].trim();
-        
+
         // Check if field 6 is ideal_processor (starts with '*' or is "0")
         if field6.starts_with('*') || field6 == "0" {
             // Field 6 is ideal_processor, grade is at field 7 (or default 1)
@@ -747,7 +729,6 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
     } else {
         (Vec::new(), 1)
     };
-
 
     for name in members {
         // Check for redundant rules (same process name defined multiple times)

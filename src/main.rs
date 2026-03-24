@@ -93,7 +93,15 @@ fn apply_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE
     }
 }
 
-fn apply_affinity(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, current_mask: &mut usize, apply_config_result: &mut ApplyConfigResult) {
+fn apply_affinity(
+    pid: u32,
+    config: &ProcessConfig,
+    dry_run: bool,
+    h_prc: HANDLE,
+    current_mask: &mut usize,
+    apply_config_result: &mut ApplyConfigResult,
+    mut processes: &mut Option<&mut ProcessSnapshot>,
+) {
     let mut system_mask: usize = 0;
     let affinity_mask = cpu_indices_to_mask(&config.affinity_cpus);
     let has_affinity = !config.affinity_cpus.is_empty();
@@ -121,6 +129,7 @@ fn apply_affinity(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE
                             Ok(_) => {
                                 apply_config_result.add_change(format!("Affinity: {:#X} -> {:#X}", current_mask, affinity_mask));
                                 *current_mask = affinity_mask;
+                                reset_thread_ideal_processors(pid, config, false, h_prc, apply_config_result, &mut processes);
                             }
                         }
                     }
@@ -675,6 +684,137 @@ fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc:
     }
 }
 
+/// Resets ideal processor assignments for all threads based on CPU time/cycle sorting.
+///
+/// This function is called when process affinity changes to avoid Windows kernel's
+/// behavior of clamping ideal processor values toward the new range, which can cause
+/// too many threads to have the same ideal processor.
+///
+/// Strategy:
+/// 1. Gather all threads with their total CPU time and cycle count
+/// 2. Sort threads by total CPU time (descending) as primary key
+/// 3. For threads with similar CPU time, use cycle count as secondary key
+/// 4. Assign ideal processors round-robin across the available CPUs in config
+///
+/// # Arguments
+/// * `pid` - Process ID
+/// * `config` - Process configuration with target CPUs
+/// * `dry_run` - If true, only log what would be done
+/// * `h_prc` - Process handle
+/// * `apply_config_result` - Result collector for changes and errors
+fn reset_thread_ideal_processors(
+    pid: u32,
+    config: &ProcessConfig,
+    dry_run: bool,
+    _h_prc: HANDLE,
+    apply_config_result: &mut ApplyConfigResult,
+    processes: &mut Option<&mut ProcessSnapshot>,
+) {
+    if config.affinity_cpus.is_empty() {
+        return;
+    }
+
+    if dry_run {
+        apply_config_result.add_change(format!("Reset Ideal Processors: {} threads based on CPU time/cycle", config.affinity_cpus.len()));
+        return;
+    }
+
+    // Check if processes contains the target process
+    let processes = match processes {
+        Some(p) => p,
+        None => return,
+    };
+
+    let process = match processes.pid_to_process.get_mut(&pid) {
+        Some(p) => p,
+        None => return,
+    };
+
+    // Get all threads with their total CPU time from the snapshot
+    let mut thread_times: Vec<(u32, i64, u64, HANDLE)> = Vec::new();
+
+    // Get threads from the process snapshot
+    for (tid, thread_info) in process.get_threads() {
+        // Get total CPU time from SYSTEM_THREAD_INFORMATION (already available in snapshot)
+        let total_time = unsafe { *thread_info.KernelTime.QuadPart() + *thread_info.UserTime.QuadPart() };
+
+        // Open thread handle to get cycle time for secondary sort key
+        match unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION | THREAD_SET_INFORMATION, false, *tid) } {
+            Err(e) => {
+                let open_thread_error = error_from_code(e.code().0 as u32);
+                apply_config_result.add_error(format!(
+                    "reset_ideal_processor: [OPEN][{}] {:>5}-{} - OpenThread failed: {}",
+                    open_thread_error, pid, tid, open_thread_error,
+                ));
+                // Continue processing other threads
+            }
+            Ok(thread_handle) => {
+                // Get cycle time for secondary sorting
+                let mut cycle_time = 0u64;
+                match unsafe { QueryThreadCycleTime(thread_handle, &mut cycle_time) } {
+                    Ok(()) => {
+                        thread_times.push((*tid, total_time, cycle_time, thread_handle));
+                    }
+                    Err(e) => {
+                        let cycle_time_error = error_from_code(e.code().0 as u32);
+                        apply_config_result.add_error(format!(
+                            "reset_ideal_processor: [QCYCLE][{}] {:>5}-{} - QueryThreadCycleTime failed",
+                            cycle_time_error, pid, tid
+                        ));
+                        // Close the thread handle on cycle time query failure
+                        let _ = unsafe { CloseHandle(thread_handle) };
+                    }
+                }
+            }
+        }
+    }
+
+    if thread_times.is_empty() {
+        return;
+    }
+
+    // Sort by total CPU time descending, then by cycle time descending
+    thread_times.sort_by(|a, b| match b.1.cmp(&a.1) {
+        std::cmp::Ordering::Equal => b.2.cmp(&a.2),
+        other => other,
+    });
+
+    // Assign ideal processors round-robin across target CPUs
+    let target_cpu_count = config.affinity_cpus.len();
+    let random_shift = rand::random::<u8>();
+    for (i, (tid, _cpu_time, _cycles, thread_handle)) in thread_times.iter().enumerate() {
+        let target_cpu_index = (i + random_shift as usize) % target_cpu_count;
+        let target_cpu = config.affinity_cpus[target_cpu_index];
+
+        match set_thread_ideal_processor_ex(*thread_handle, 0, target_cpu as u8) {
+            Err(e) => {
+                let ideal_processor_error = error_from_code(e.code().0 as u32);
+                apply_config_result.add_error(format!(
+                    "reset_ideal_processor: [SET_IDEAL][{}] {:>5}-{} - SetThreadIdealProcessorEx failed",
+                    ideal_processor_error, pid, tid
+                ));
+            }
+            Ok(_) => {
+                apply_config_result.add_change(format!("Thread {} -> ideal CPU {}", tid, target_cpu));
+            }
+        }
+    }
+
+    // Close all thread handles
+    for (_tid, _cpu_time, _cycles, thread_handle) in thread_times {
+        if let Err(e) = unsafe { CloseHandle(thread_handle) } {
+            let close_error = error_from_code(e.code().0 as u32);
+            apply_config_result.add_error(format!(
+                "reset_ideal_processor: [CLOSE][{}] {:>5}-{} - CloseHandle failed: {}",
+                close_error,
+                pid,
+                0, // tid not available here as we iterate over tuples
+                close_error,
+            ));
+        }
+    }
+}
+
 /// Applies ideal processor assignments to threads based on configuration rules.
 ///
 /// For each ideal processor rule:
@@ -795,7 +935,7 @@ fn apply_ideal_processors(
 
             // Open thread if we don't have a handle
             if thread_stats.handle.is_none() {
-                match unsafe { OpenThread(THREAD_SET_LIMITED_INFORMATION | THREAD_QUERY_INFORMATION | THREAD_SET_INFORMATION, false, *tid) } {
+                match unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION | THREAD_SET_INFORMATION, false, *tid) } {
                     Ok(handle) if !handle.is_invalid() => {
                         thread_stats.handle = Some(handle);
                     }
@@ -937,7 +1077,7 @@ fn apply_config(
     }
     let mut current_mask: usize = 0;
     apply_priority(pid, config, dry_run, h_prc, &mut apply_config_result);
-    apply_affinity(pid, config, dry_run, h_prc, &mut current_mask, &mut apply_config_result);
+    apply_affinity(pid, config, dry_run, h_prc, &mut current_mask, &mut apply_config_result, &mut processes);
     apply_process_default_cpuset(pid, config, dry_run, h_prc, &mut apply_config_result);
     apply_prime_threads(
         pid,

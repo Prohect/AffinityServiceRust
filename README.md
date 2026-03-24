@@ -85,6 +85,15 @@ An optional `ideal` specification can be added to rules to request static ideal-
 - Multi-rule syntax allows different CPU sets for different modules
 - Threads that fall out of top N have their ideal processor restored
 
+Note about affinity changes and ideal processor resetting:
+- When a process's CPU affinity is changed by the service, AffinityServiceRust will now proactively reset per-thread ideal processor assignments for that process. This prevents the Windows kernel from clamping many threads toward a narrow CPU range after an affinity change.
+- The reset logic:
+  - Collects threads' total CPU time and per-thread cycle counts,
+  - Sorts threads primarily by total CPU time (descending) and secondarily by cycle count,
+  - Assigns ideal processors round-robin across the configured affinity CPUs with a small random shift to avoid clumping.
+- This behavior runs automatically when affinity is applied and does not require additional configuration.
+- Implementation notes: this change introduced a small dependency (`rand`) used to add randomized shifts during assignment, and the affinity application path now has access to the process snapshot to perform thread-level resets safely.
+
 ## Configuration
 
 ### Config Format

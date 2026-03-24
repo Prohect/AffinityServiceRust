@@ -1,5 +1,14 @@
 # AffinityServiceRust
 
+## 最近更改
+
+- 在进程的 CPU 亲和性（affinity）更改后，AffinityServiceRust 现在会自动重置该进程内各线程的理想处理器 (ideal processor) 分配，以避免 Windows 内核在亲和性更新后将过多线程压缩到狭窄的 CPU 范围内的问题。
+  - 实现在 `src/main.rs` 中，新增了辅助函数 `reset_thread_ideal_processors(...)`。
+  - `apply_affinity(...)` 现在在成功设置进程亲和性后会接收并使用进程快照（`ProcessSnapshot`）引用来调用该重置逻辑，从而在更改亲和性时安全地对线程进行调整。
+  - 重置逻辑会收集线程的总 CPU 时间与线程周期计数，按总 CPU 时间（降序）为主、周期计数为辅排序，然后在目标亲和性 CPU 上以轮询（round-robin）方式分配理想处理器，并加入小幅随机偏移以避免线程聚集。
+  - 为支持随机偏移，已在 `Cargo.toml` 中添加依赖 `rand = "0.10.0"`。
+
+
 <!-- languages -->
 - 🇺🇸 [English](https://github.com/Prohect/AffinityServiceRust/blob/master/README.md)
 - 🇨🇳 [中文 (简体)](https://github.com/Prohect/AffinityServiceRust/blob/master/README.zh-CN.md)

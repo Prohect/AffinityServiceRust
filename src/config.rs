@@ -425,9 +425,10 @@ fn parse_ideal_processor_spec(spec: &str, line_number: usize, cpu_aliases: &Hash
 }
 
 /// Collects group members from lines until closing brace is found.
-/// Returns (members, rule_suffix, consumed_lines) or None if unclosed.
-fn collect_group_block(lines: &mut impl Iterator<Item = String>, first_line_content: &str) -> Option<(Vec<String>, Option<String>, usize)> {
+/// Returns (members, rule_suffix, next_line_index) or None if unclosed.
+fn collect_group_block(lines: &[String], start_index: usize, first_line_content: &str) -> Option<(Vec<String>, Option<String>, usize)> {
     let mut members = Vec::new();
+    let mut i = start_index;
 
     // Collect from first line (content after '{')
     if !first_line_content.is_empty() && !first_line_content.starts_with('#') {
@@ -435,8 +436,8 @@ fn collect_group_block(lines: &mut impl Iterator<Item = String>, first_line_cont
     }
 
     // Continue to subsequent lines
-    for (i, line) in lines.into_iter().enumerate() {
-        let block_line = line.trim();
+    while i < lines.len() {
+        let block_line = lines[i].trim();
 
         if let Some(pos) = block_line.find('}') {
             // Found closing brace
@@ -453,6 +454,7 @@ fn collect_group_block(lines: &mut impl Iterator<Item = String>, first_line_cont
         if !block_line.is_empty() && !block_line.starts_with('#') {
             collect_members(block_line, &mut members);
         }
+        i += 1;
     }
 
     None // Unclosed block
@@ -775,14 +777,16 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
 
     let reader = io::BufReader::new(file);
     let mut cpu_aliases: HashMap<String, Vec<u32>> = HashMap::new();
-    let mut lines = reader.lines().map_while(Result::ok);
-    let mut line_number = 1;
-    loop {
-        let line = if let Some(line) = lines.next() { line } else { break };
+    let lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let line_number = i + 1;
+        let line = lines[i].trim();
 
         // Skip empty lines and comments
         if line.is_empty() || line.starts_with('#') {
-            line_number += 1;
+            i += 1;
             continue;
         }
 
@@ -793,7 +797,7 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
             } else {
                 result.errors.push(format!("Line {}: Invalid constant - expected '@NAME = value'", line_number));
             }
-            line_number += 1;
+            i += 1;
             continue;
         }
 
@@ -810,7 +814,7 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
             } else {
                 result.errors.push(format!("Line {}: Invalid alias - expected '*name = cpu_spec'", line_number));
             }
-            line_number += 1;
+            i += 1;
             continue;
         }
 
@@ -824,26 +828,26 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
             };
 
             // Single-line group: { a: b }:rule
-            let (members, rule_suffix, consumed_lines) = if let Some(brace_end) = line.find('}') {
+            let (members, rule_suffix, next_i) = if let Some(brace_end) = line.find('}') {
                 let mut members = Vec::new();
                 collect_members(&line[brace_start + 1..brace_end], &mut members);
                 let after = line[brace_end + 1..].trim();
                 let suffix = after.strip_prefix(':').map(|s| s.to_string());
-                (members, suffix, line_number + 1)
+                (members, suffix, i + 1)
             } else {
                 // Multi-line group
                 let first_content = line[brace_start + 1..].trim();
-                match collect_group_block(&mut lines, first_content) {
-                    Some((members, suffix, consumed_lines)) => (members, suffix, consumed_lines),
+                match collect_group_block(&lines, i + 1, first_content) {
+                    Some((members, suffix, next)) => (members, suffix, next),
                     None => {
                         result.errors.push(format!("Line {}: Unclosed group '{}' - missing }}", line_number, group_label));
-                        line_number += 1;
+                        i += 1;
                         continue;
                     }
                 }
             };
 
-            line_number += consumed_lines;
+            i = next_i;
 
             if members.is_empty() {
                 result.warnings.push(format!("Line {}: Group '{}' has no members", line_number, group_label));
@@ -868,21 +872,20 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
                 result
                     .errors
                     .push(format!("Line {}: Too few fields - expected name:priority:affinity,...", line_number));
-                line_number += 1;
+                i += 1;
                 continue;
             }
 
             let name = parts[0].trim();
             if name.is_empty() {
                 result.errors.push(format!("Line {}: Empty process name", line_number));
-                line_number += 1;
+                i += 1;
                 continue;
             }
 
             parse_and_insert_rules(&[name.to_lowercase()], &parts[1..], line_number, &cpu_aliases, &mut result);
-            line_number += 1;
+            i += 1;
         }
-        line_number += 1;
     }
 
     result

@@ -10,10 +10,10 @@ if [ -f "Cargo.toml" ]; then
 fi
 
 if [ -n "$members" ]; then
-    echo "# Workspace Code Structure Outline"
+    echo "# Workspace Code Structure Outline, auto-generated during cargo build/check"
     files=$(for member in $members; do find "$member" -name "*.rs" 2>/dev/null; done | sort)
 else
-    echo "# Src Code Structure Outline"
+    echo "# Src Code Structure Outline, auto-generated during cargo build/check"
     files=$(echo src/*.rs)
 fi
 

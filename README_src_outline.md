@@ -1,4 +1,4 @@
-# Src Code Structure Outline
+# Src Code Structure Outline, auto-generated during cargo build/check
 
 ## src/cli.rs
 - [L7:L30]struct CliArgs {

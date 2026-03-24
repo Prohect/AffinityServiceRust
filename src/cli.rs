@@ -89,7 +89,7 @@ pub fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<(
                 i += 1;
             }
             "-resolution" if i + 1 < args.len() => {
-                cli.time_resolution = args[i + 1].parse().unwrap_or(0).max(0);
+                cli.time_resolution = args[i + 1].parse().unwrap_or(5000).max(5000);
                 i += 1;
             }
             "-logloop" => {

@@ -435,9 +435,7 @@ fn collect_group_block(lines: &mut impl Iterator<Item = String>, first_line_cont
     }
 
     // Continue to subsequent lines
-    let mut i = 0;
-    loop {
-        let line = if let Some(line) = lines.next() { line } else { break };
+    for (i, line) in lines.into_iter().enumerate() {
         let block_line = line.trim();
 
         if let Some(pos) = block_line.find('}') {
@@ -455,7 +453,6 @@ fn collect_group_block(lines: &mut impl Iterator<Item = String>, first_line_cont
         if !block_line.is_empty() && !block_line.starts_with('#') {
             collect_members(block_line, &mut members);
         }
-        i += 1;
     }
 
     None // Unclosed block

@@ -13,7 +13,11 @@ fn main() {
         let mut success = false;
 
         for bash_path in bash_paths {
-            match Command::new(bash_path).arg("-c").arg("./scripts/generate_outline.sh > src_outline.md").status() {
+            match Command::new(bash_path)
+                .arg("-c")
+                .arg("./scripts/generate_outline.sh > README_src_outline.md")
+                .status()
+            {
                 Ok(s) if s.success() => {
                     success = true;
                     break;

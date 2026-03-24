@@ -6,17 +6,49 @@
 
 基于 Rust 编写的高性能 Windows 进程管理服务，根据配置文件自动为进程应用 CPU 亲和性、优先级、I/O 优先级和内存优先级规则。
 
+## 概述
+
+AffinityServiceRust 持续监控运行中的进程，并根据配置文件中定义的规则应用定制化的调度策略。它支持：
+
+- **进程优先级管理**：设置进程优先级类（从空闲到实时）
+- **CPU 亲和性**：将进程硬性绑定到特定的逻辑处理器（旧版 ≤64 核系统）
+- **CPU 集**：跨所有处理器组的软性 CPU 偏好（现代 >64 核系统）
+- **Prime 线程调度**：动态识别并分配 CPU 密集型线程到指定的"prime"核心
+- **理想处理器分配**：为最繁忙的 N 个线程静态分配线程到 CPU
+- **I/O 优先级控制**：控制磁盘 I/O 调度优先级
+- **内存优先级控制**：调整进程工作集的内存页面优先级
+- **热重载**：自动检测并应用配置文件更改
+- **规则等级**：控制每个进程规则的应用频率
+
+## 快速开始
+
+1. 编译或下载发行版二进制文件
+2. 将 `config.ini` 和 `blacklist.ini` 复制到工作目录
+3. 编辑 `config.ini` 以匹配你的 CPU 拓扑（参见配置部分）
+4. 使用适当的权限运行：
+
+```bash
+# 基本用法，带控制台输出
+AffinityServiceRust.exe -config my_config.ini -console
+
+# 以管理员身份运行（推荐用于完整功能）
+powershell -Command "Start-Process -FilePath './AffinityServiceRust.exe' -Verb RunAs -Wait"
+
+# 显示所有可用选项
+AffinityServiceRust.exe -helpall
+```
+
 ## 功能特性
 
 | 功能 | 说明 |
 |------|------|
 | **进程优先级** | 设置优先级类（空闲、低于标准、标准、高于标准、高、实时） |
-| **CPU 亲和性** | 硬性绑定进程到特定核心（≤64 核，子进程继承） |
+| **CPU 亲和性** | 旧版基于掩码的亲和性（≤64 核，SetProcessAffinityMask） |
 | **CPU 集** | 通过 Windows CPU Sets 软性偏好核心（支持 >64 核） |
 | **Prime 线程调度** | 动态分配 CPU 密集型线程到性能核心 |
 | **理想处理器（首核）分配** | 使用 CPU 别名与 SetThreadIdealProcessorEx，为最繁忙的 N 个线程静态分配理想处理器 |
 | **I/O 优先级** | 控制 I/O 优先级（极低、低、标准、高 - 需要管理员） |
-| **内存优先级** | 控制内存页优先级（极低到标准） |
+| **内存优先级** | 极低、低、中、低于标准、标准 |
 | **计时器分辨率** | 调整 Windows 系统计时器分辨率 |
 | **热重载** | 配置文件变更时自动重新加载 |
 | **规则等级** | 控制规则应用频率（每 N 次循环） |
@@ -25,57 +57,37 @@
 
 ### Prime 线程调度
 
-针对多线程应用（如游戏），此功能动态识别 CPU 密集型线程并使用 Windows CPU Sets 将其分配到指定的"prime"核心：
+Prime 线程调度器使用基于滞后（hysteresis）的算法，动态识别最 CPU 密集的线程并将其分配到指定的"prime"核心：
 
 **算法：**
-- 实时监控线程 CPU 周期消耗
+- 在可配置的时间间隔监控线程 CPU 周期消耗
 - 应用滞后机制防止频繁切换：
-  - **入场阈值**：线程必须超过最大周期的 42%（可通过 `@ENTRY_THRESHOLD` 配置）
-  - **保持阈值**：提升后，线程高于最大周期的 69% 保持 prime 状态（可通过 `@KEEP_THRESHOLD` 配置）
-  - **活跃连击**：提升前需要连续 2+ 个间隔的持续活跃（可通过 `@MIN_ACTIVE_STREAK` 配置）
+  - **入场阈值**：线程必须超过最大周期的配置百分比（默认 42%）才能成为候选
+  - **保持阈值**：一旦提升，线程保持在配置百分比以上（默认 69%）则保持 prime 状态
+  - **活跃连击**：提升前需要连续活跃间隔（默认 2 个）
 - 自动过滤低活跃线程
-- 可选的基于模块的过滤：仅提升来自特定 DLL/模块的线程
-- 可选的线程跟踪：进程退出时记录 CPU 周期消耗最高的前 N 个线程
-- 记录线程起始地址及模块解析（如 `ntdll.dll+0x3C320`）
+- 支持多段式 CPU 分配：不同模块可以使用不同的核心集
+- 按模块线程优先级控制（显式或自动提升）
+- 线程跟踪模式：进程退出时记录详细统计信息
 
-**多段式 CPU 分配：**
-- 支持按模块覆盖 CPU：不同模块可运行在不同的核心集上
-- 语法：`*alias1@module1.dll;module2.dll*alias2@module3.dll`
-- 示例：CS2 游戏线程在 P 核，NVIDIA 驱动线程在 E 核
+**线程跟踪输出：**
+当跟踪的进程退出时，为前 N 个线程记录详细统计信息：
+- 线程 ID 和总 CPU 周期消耗
+- 起始地址解析为 `module.dll+offset` 格式
+- 内核时间和用户时间
+- 线程优先级、基础优先级、上下文切换
+- 线程状态和等待原因
 
-**线程优先级控制：**
-- 按模块线程优先级：`module.dll!time critical` 设置显式优先级
-- 自动提升模式：省略优先级时，自动提升 1 级（上限为 Highest）
+### 理想处理器分配
 
-**跟踪模式：**
-- `?x*cpus` - 跟踪前 x 个线程，进程退出时记录详细统计信息
-- `??x*cpus` - 仅监控：跟踪并记录线程但不应用 CPU 集
-- 日志包含：TID、CPU 周期、内核/用户时间、上下文切换、起始地址（模块+偏移）
+可选的 `ideal` 规范可以添加到规则中，为最繁忙的线程请求静态理想处理器分配。这使用 CPU 别名和可选的按模块过滤：
 
-> **注意：** 线程起始地址解析（模块+偏移格式）需要管理员权限和 SeDebugPrivilege。无提权时，起始地址显示为 `0x0`。解析使用 `psapi GetMappedFileName`，无需符号服务器或联网。
+- 线程按总 CPU 时间（内核 + 用户）排序
+- 前 N 个线程（N = 别名中的 CPU 数量）接收理想处理器分配
+- 多规则语法允许不同模块使用不同的 CPU 集
+- 掉出前 N 的线程恢复其理想处理器
 
-## 快速开始
 
-1. 下载或编译 `AffinityServiceRust.exe`
-2. 下载 [`config.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/config.ini) 和 [`blacklist.ini`](https://github.com/Prohect/AffinityServiceRust/blob/master/blacklist.ini)
-3. 编辑 `config.ini` 以匹配你的 CPU 拓扑
-4. 运行程序（建议以管理员身份运行以获得完整功能）
-
-```bash
-# 基本用法，带控制台输出
-AffinityServiceRust.exe -config my_config.ini -console
-
-# 显示所有选项
-AffinityServiceRust.exe -helpall
-
-# 转换 Process Lasso 配置
-AffinityServiceRust.exe -convert -in prolasso.ini -out my_config.ini
-
-# 查找未管理的进程
-AffinityServiceRust.exe -find
-```
-
-> **注意：** 默认静默在后台运行，日志保存在 `logs\YYYYmmDD.log`。使用 `-console` 查看实时输出。管理员权限可启用高 I/O 优先级和系统进程管理。
 
 ## 命令行选项
 
@@ -131,6 +143,10 @@ process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_p
 | 别名 | `*pcore` | 预定义别名 |
 | 不修改 | `0` | 不修改 |
 
+### CPU 规格注意事项
+
+**重要：** 普通数字如 `7` 表示核心 7，不是位掩码。使用 `0-7` 表示核心 0-7，而不是 `7`。
+
 ### 规则等级
 
 `grade` 字段控制规则的应用频率（默认值：1 = 每次循环）：
@@ -152,8 +168,6 @@ background.exe:normal:*ecore:0:0:low:none:0:3
 # 每第 10 次循环应用（最小监控频率）
 updater.exe:normal:0:0:0:normal:none:0:10
 ```
-
-> **重要：** 普通数字如 `7` 表示核心 7，不是位掩码。使用 `0x7` 或 `0-2` 表示核心 0-2。
 
 ### 优先级级别
 
@@ -360,6 +374,28 @@ process_mgmt {
 }:none:*e:0:0:low:none:1
 ```
 
+## 特权和能力
+
+### 需要了解的内容
+
+| 目标进程 | 无管理员 | 管理员 | 说明 |
+|----------|---------|-------|------|
+| 同用户进程 | ✅ 完全 | ✅ 完全 | 无需提权即可工作 |
+| 已提升进程 | ❌ | ✅ 完全 | 需要管理员 |
+| SYSTEM 进程 | ❌ | ✅ 完全 | 需要管理员 |
+| 受保护进程 | ❌ | ❌ | 即使管理员也无法修改 |
+
+| 规则 | 无管理员 | 管理员 | 说明 |
+|------|---------|-------|------|
+| 进程优先级 | ✅ | ✅ | 所有级别均可用 |
+| CPU 亲和性 | ✅ | ✅ | 仅限 ≤64 核 |
+| CPU 集 | ✅ | ✅ | 适用于 >64 核 |
+| Prime 调度 | ✅ | ✅ | 线程级 CPU 集 |
+| I/O 优先级 - 高 | ❌ | ✅ | 需要管理员（SeIncreaseBasePriorityPrivilege） |
+| 内存优先级 | ✅ | ✅ | 所有级别均可用 |
+
+**建议：** 以管理员权限运行以获得完整功能，特别是 I/O 优先级`high`和管理 SYSTEM 进程。
+
 ## 工具
 
 ### 进程发现
@@ -487,29 +523,35 @@ cargo build --release
    - 通过 `psapi GetMappedFileName` 解析线程起始地址为 `module.dll+offset` 格式
    - 清理模块缓存
 
-## 架构
+## 项目结构
 
-```
-src/
-├── main.rs         - 主循环、进程快照、应用配置
-├── cli.rs          - 命令行解析、帮助消息
-├── config.rs       - 配置文件解析、CPU 规格解析、别名、组
-├── scheduler.rs    - Prime 线程调度器（滞后、连击跟踪）
-├── priority.rs     - 优先级枚举（进程、线程、I/O、内存）
-├── process.rs      - 通过 NtQuerySystemInformation 获取进程快照
-├── winapi.rs       - Windows API 包装器（CPU 集、权限、psapi 模块解析）
-└── logging.rs      - 记录到控制台或文件
-```
+| 文件 | 说明 |
+|------|------|
+| `src/main.rs` | 主循环、配置应用逻辑 |
+| `src/config.rs` | 配置文件解析、CPU 规格解析、验证 |
+| `src/cli.rs` | 命令行参数解析 |
+| `src/priority.rs` | 优先级枚举（进程、线程、I/O、内存） |
+| `src/logging.rs` | 日志基础设施（控制台和文件） |
+| `src/process.rs` | 进程枚举和快照管理 |
+| `src/scheduler.rs` | Prime 线程调度器实现 |
+| `src/winapi.rs` | Windows API 包装器、模块解析、权限处理 |
+| `config.ini` | 默认配置文件 |
+| `blacklist.ini` | 进程发现的默认黑名单 |
+| `DEBUG.md` | 调试指南和故障排除 |
 
-## 限制
+## 已知限制
 
-- **CPU 亲和性**（SetProcessAffinityMask）只能在一个处理器组内工作（≤64 核）
-  - 对于 >64 核系统使用 CPU 集
-- **I/O 优先级** "critical" 仅限内核，用户模式不可用
-- **高 I/O 优先级**需要管理员提权
-- **线程起始地址解析**需要管理员和 SeDebugPrivilege
-  - 无管理员权限时，起始地址显示为 `0x0`
-  - 使用 `psapi GetMappedFileName`，无需符号服务器或联网
+1. **CPU 亲和性 ≤64 核**：旧版 SetProcessAffinityMask API 只能在单个处理器组内工作。对于 >64 核系统，请使用 CPU 集。
+
+2. **多组/NUMA 系统**：本项目尚未在多个处理器组或 NUMA 系统上测试。`ideal` 处理器分配当前仅在处理器组 0 内分配处理器。具有 >64 逻辑处理器或多个 CPU 组的系统可能会遇到意外行为。
+
+3. **受保护进程**：如 `csrss.exe` 和 `smss.exe` 之类的进程无法修改，即使有管理员权限。
+
+4. **提权时的控制台输出**：使用 UAC 提权时运行 `-console`， Elevated 进程会在新窗口中启动并立即关闭。请使用日志文件输出。
+
+5. **线程起始地址解析**：需要管理员权限和 SeDebugPrivilege。无提权时，起始地址显示为 `0x0`。
+
+6. **计时器分辨率**：系统计时器分辨率影响循环精度。非常低的值（<1ms）可能会影响系统稳定性。
 
 ## 贡献
 

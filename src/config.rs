@@ -526,7 +526,7 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
             }
         }
 
-        if let Some(_) = prime_spec.find('@') {
+        if prime_spec.find('@').is_some() {
             // Parse segments separated by '*' (each segment can have its own CPU alias)
             let mut all_prefixes: Vec<PrimePrefix> = Vec::new();
             let mut base_cpus: Vec<u32> = Vec::new();
@@ -740,13 +740,16 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
             name.clone(),
             ProcessConfig {
                 name: name.clone(),
+                #[allow(clippy::clone_on_copy)]
                 priority: priority.clone(),
                 affinity_cpus: affinity_cpus.clone(),
                 cpu_set_cpus: cpu_set_cpus.clone(),
                 prime_threads_cpus: prime_threads_cpus.clone(),
                 prime_threads_prefixes: prime_threads_prefixes.clone(),
                 track_top_x_threads,
+                #[allow(clippy::clone_on_copy)]
                 io_priority: io_priority.clone(),
+                #[allow(clippy::clone_on_copy)]
                 memory_priority: memory_priority.clone(),
                 ideal_processor_rules: ideal_processor_rules.clone(),
             },

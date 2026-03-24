@@ -80,19 +80,14 @@
 - [L293:L300]fn collect_members(text: &str, members: &mut Vec<String>) 
 - [L303:L339]fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut ConfigResult) 
 - [L341:L355]fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut HashMap<String, Vec<u32>>, result: &mut ConfigResult) 
-- [L357:L443]fn parse_ideal_processor_spec(
-    spec: &str,
-    line_number: usize,
-    cpu_aliases: &HashMap<String, Vec<u32>>,
-    errors: &mut Vec<String>,
-) -> Vec<IdealProcessorRule> 
-- [L445:L469]fn collect_group_block(lines: &[String], start_index: usize, first_line_content: &str) -> Option<(Vec<String>, Option<String>, usize)> 
-- [L481:L779]fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, result: &mut ConfigResult) 
-- [L781:L868]fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult 
-- [L914:L924]fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> 
-- [L926:L931]fn read_utf16le_file(path: &str) -> io::Result<String> 
-- [L933:L939]fn parse_mask(s: &str) -> usize 
-- [L941:L1117]fn convert(in_file: Option<String>, out_file: Option<String>) 
+- [L357:L425]fn parse_ideal_processor_spec(spec: &str, line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, errors: &mut Vec<String>) -> Vec<IdealProcessorRule> 
+- [L427:L451]fn collect_group_block(lines: &[String], start_index: usize, first_line_content: &str) -> Option<(Vec<String>, Option<String>, usize)> 
+- [L463:L760]fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, result: &mut ConfigResult) 
+- [L762:L849]fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult 
+- [L895:L905]fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> 
+- [L907:L912]fn read_utf16le_file(path: &str) -> io::Result<String> 
+- [L914:L920]fn parse_mask(s: &str) -> usize 
+- [L922:L1098]fn convert(in_file: Option<String>, out_file: Option<String>) 
 
 ## src/logging.rs
 - [L16:L16]static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));

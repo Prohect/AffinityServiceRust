@@ -971,7 +971,7 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
 
         // Parse NamedAffinities=alias,cpuspec,alias,cpuspec,...
         if line.starts_with("NamedAffinities=") {
-            let value = &line["NamedAffinities=".len()..];
+            let value = line.strip_prefix("NamedAffinities=").unwrap();
             let parts: Vec<&str> = value.split(',').collect();
             // Pairs of (alias_name, cpu_spec)
             let mut i = 0;
@@ -987,7 +987,7 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
 
         // Parse DefaultPriorities=name,priority,name,priority,...
         if line.starts_with("DefaultPriorities=") {
-            let value = &line["DefaultPriorities=".len()..];
+            let value = line.strip_prefix("DefaultPriorities=").unwrap();
             let parts: Vec<&str> = value.split(',').collect();
             // Pairs of (name, priority)
             let mut i = 0;
@@ -1003,7 +1003,7 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
 
         // Parse DefaultAffinitiesEx=name,mask,cpuset,name,mask,cpuset,...
         if line.starts_with("DefaultAffinitiesEx=") {
-            let value = &line["DefaultAffinitiesEx=".len()..];
+            let value = line.strip_prefix("DefaultAffinitiesEx=").unwrap();
             let parts: Vec<&str> = value.split(',').collect();
             // Triplets of (name, mask, cpuset) - we use cpuset (index 2)
             let mut i = 0;

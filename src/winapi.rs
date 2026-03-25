@@ -587,20 +587,18 @@ fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> {
 
     let module_count = (cb_needed as usize) / size_of::<windows::Win32::Foundation::HMODULE>();
 
-    for i in 0..module_count.min(modules.len()) {
-        let h_module = modules[i];
-
+    for h_module in modules.iter().take(module_count) {
         let mut mod_info = MODULEINFO::default();
 
         // SAFETY: GetModuleInformation with valid handles and properly sized buffer
-        if unsafe { GetModuleInformation(h_proc, h_module, &mut mod_info, size_of::<MODULEINFO>() as u32) }.is_err() {
+        if unsafe { GetModuleInformation(h_proc, *h_module, &mut mod_info, size_of::<MODULEINFO>() as u32) }.is_err() {
             continue;
         }
 
         let mut name_buf: [u16; 260] = [0; 260];
 
         // SAFETY: GetModuleBaseNameW with valid handles and properly sized buffer
-        let name_len = unsafe { GetModuleBaseNameW(h_proc, Some(h_module), &mut name_buf) };
+        let name_len = unsafe { GetModuleBaseNameW(h_proc, Some(*h_module), &mut name_buf) };
 
         if name_len == 0 {
             continue;

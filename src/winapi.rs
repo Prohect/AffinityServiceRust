@@ -19,7 +19,10 @@ use windows::Win32::{
         Kernel::PROCESSOR_NUMBER,
         ProcessStatus::{EnumProcessModulesEx, GetModuleBaseNameW, GetModuleInformation, LIST_MODULES_ALL, MODULEINFO},
         SystemInformation::{GetSystemCpuSetInformation, SYSTEM_CPU_SET_INFORMATION},
-        Threading::{GetCurrentProcess, GetProcessAffinityMask, GetThreadIdealProcessorEx, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_VM_READ, SetThreadIdealProcessorEx},
+        Threading::{
+            GetCurrentProcess, GetProcessAffinityMask, GetThreadIdealProcessorEx, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION,
+            PROCESS_VM_READ, SetThreadIdealProcessorEx,
+        },
     },
 };
 
@@ -474,11 +477,7 @@ pub fn get_thread_start_address(thread_handle: HANDLE) -> usize {
 /// # Returns
 /// * `Ok(PROCESSOR_NUMBER)` - The previous ideal processor
 /// * `Err(windows::core::Error)` - If the call fails
-pub fn set_thread_ideal_processor_ex(
-    thread_handle: HANDLE,
-    group: u16,
-    number: u8,
-) -> Result<PROCESSOR_NUMBER, windows::core::Error> {
+pub fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: u8) -> Result<PROCESSOR_NUMBER, windows::core::Error> {
     let ideal = PROCESSOR_NUMBER {
         Group: group,
         Number: number,
@@ -499,9 +498,7 @@ pub fn set_thread_ideal_processor_ex(
 /// # Returns
 /// * `Ok(PROCESSOR_NUMBER)` - The current ideal processor
 /// * `Err(windows::core::Error)` - If the call fails
-pub fn get_thread_ideal_processor_ex(
-    thread_handle: HANDLE,
-) -> Result<PROCESSOR_NUMBER, windows::core::Error> {
+pub fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, windows::core::Error> {
     let mut ideal = PROCESSOR_NUMBER::default();
     unsafe {
         GetThreadIdealProcessorEx(thread_handle, &mut ideal)?;
@@ -511,6 +508,7 @@ pub fn get_thread_ideal_processor_ex(
 
 /// Cached module information for processes.
 /// Key: PID, Value: Vec of (base_address, size, module_name)
+#[allow(clippy::type_complexity)]
 static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Resolves a memory address to a module name and offset for a given process.

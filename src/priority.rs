@@ -241,7 +241,7 @@ impl ThreadPriority {
     }
 
     /// Convert to `THREAD_PRIORITY` wrapper used by `SetThreadPriority`.
-    pub fn to_thread_priority_struct(&self) -> THREAD_PRIORITY {
+    pub fn to_thread_priority_struct(self) -> THREAD_PRIORITY {
         THREAD_PRIORITY(self.as_win_const().unwrap_or(0))
     }
 }

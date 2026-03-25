@@ -100,7 +100,7 @@ fn apply_affinity(
     h_prc: HANDLE,
     current_mask: &mut usize,
     apply_config_result: &mut ApplyConfigResult,
-    mut processes: &mut Option<&mut ProcessSnapshot>,
+    processes: &mut Option<&mut ProcessSnapshot>,
 ) {
     let mut system_mask: usize = 0;
     let affinity_mask = cpu_indices_to_mask(&config.affinity_cpus);
@@ -129,7 +129,7 @@ fn apply_affinity(
                             Ok(_) => {
                                 apply_config_result.add_change(format!("Affinity: {:#X} -> {:#X}", current_mask, affinity_mask));
                                 *current_mask = affinity_mask;
-                                reset_thread_ideal_processors(pid, config, false, h_prc, apply_config_result, &mut processes);
+                                reset_thread_ideal_processors(pid, config, false, h_prc, apply_config_result, processes);
                             }
                         }
                     }

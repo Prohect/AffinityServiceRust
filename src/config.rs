@@ -446,7 +446,7 @@ fn collect_group_block(lines: &[String], start_index: usize, first_line_content:
                 collect_members(before, &mut members);
             }
             let after = block_line[pos + 1..].trim();
-            let suffix = if after.starts_with(':') { Some(after[1..].to_string()) } else { None };
+            let suffix = after.strip_prefix(':').map(|s| s.to_string());
             return Some((members, suffix, i + 1));
         }
 
@@ -740,17 +740,14 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
             name.clone(),
             ProcessConfig {
                 name: name.clone(),
-                #[allow(clippy::clone_on_copy)]
-                priority: priority.clone(),
+                priority,
                 affinity_cpus: affinity_cpus.clone(),
                 cpu_set_cpus: cpu_set_cpus.clone(),
                 prime_threads_cpus: prime_threads_cpus.clone(),
                 prime_threads_prefixes: prime_threads_prefixes.clone(),
                 track_top_x_threads,
-                #[allow(clippy::clone_on_copy)]
-                io_priority: io_priority.clone(),
-                #[allow(clippy::clone_on_copy)]
-                memory_priority: memory_priority.clone(),
+                io_priority,
+                memory_priority,
                 ideal_processor_rules: ideal_processor_rules.clone(),
             },
         );
@@ -777,7 +774,7 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
 
     let reader = io::BufReader::new(file);
     let mut cpu_aliases: HashMap<String, Vec<u32>> = HashMap::new();
-    let lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+    let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
     let mut i = 0;
 
     while i < lines.len() {
@@ -897,7 +894,7 @@ pub fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> {
     let reader = io::BufReader::new(file);
     Ok(reader
         .lines()
-        .filter_map(|l| l.ok())
+        .map_while(Result::ok)
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty() && !s.starts_with('#'))
         .collect())

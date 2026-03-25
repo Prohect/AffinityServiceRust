@@ -273,11 +273,11 @@ fn apply_prime_threads(
         let process_stats = prime_core_scheduler.pid_to_process_stats.get_mut(&pid).unwrap();
         let alive_tids = process.get_threads();
         for (tid, stats) in process_stats.tid_to_thread_stats.iter_mut() {
-            if !alive_tids.contains_key(tid) {
-                if let Some(handle) = stats.handle.take() {
-                    unsafe {
-                        let _ = windows::Win32::Foundation::CloseHandle(handle);
-                    }
+            if !alive_tids.contains_key(tid)
+                && let Some(handle) = stats.handle.take()
+            {
+                unsafe {
+                    let _ = windows::Win32::Foundation::CloseHandle(handle);
                 }
             }
         }
@@ -428,87 +428,88 @@ fn apply_prime_threads_promote(
             continue;
         }
         let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
-        if let Some(handle) = thread_stats.handle {
-            if !handle.is_invalid() && thread_stats.cpu_set_ids.is_empty() {
-                let start_module = resolve_address_to_module(pid, thread_stats.start_address);
-                // Find effective prime CPUs and thread priority for this thread based on prefix matching
-                let mut matched = false;
-                let mut effective_prime_cpus = &config.prime_threads_cpus;
-                let mut effective_thread_priority = priority::ThreadPriority::None;
-                for prefix in &config.prime_threads_prefixes {
-                    if start_module.to_lowercase().starts_with(&prefix.prefix.to_lowercase()) {
-                        matched = true;
-                        if let Some(ref cpus) = prefix.cpus {
-                            effective_prime_cpus = cpus;
-                        }
-                        effective_thread_priority = prefix.thread_priority;
-                        break;
+        if let Some(handle) = thread_stats.handle
+            && !handle.is_invalid()
+            && thread_stats.cpu_set_ids.is_empty()
+        {
+            let start_module = resolve_address_to_module(pid, thread_stats.start_address);
+            // Find effective prime CPUs and thread priority for this thread based on prefix matching
+            let mut matched = false;
+            let mut effective_prime_cpus = &config.prime_threads_cpus;
+            let mut effective_thread_priority = priority::ThreadPriority::None;
+            for prefix in &config.prime_threads_prefixes {
+                if start_module.to_lowercase().starts_with(&prefix.prefix.to_lowercase()) {
+                    matched = true;
+                    if let Some(ref cpus) = prefix.cpus {
+                        effective_prime_cpus = cpus;
                     }
+                    effective_thread_priority = prefix.thread_priority;
+                    break;
                 }
-                // If prefixes are defined but none match, skip promotion
-                if !matched && !config.prime_threads_prefixes.is_empty() {
-                    continue;
-                }
-                // Filter by current process affinity mask
-                let filtered_cpus = if *current_mask != 0 {
-                    filter_indices_by_mask(effective_prime_cpus, *current_mask)
+            }
+            // If prefixes are defined but none match, skip promotion
+            if !matched && !config.prime_threads_prefixes.is_empty() {
+                continue;
+            }
+            // Filter by current process affinity mask
+            let filtered_cpus = if *current_mask != 0 {
+                filter_indices_by_mask(effective_prime_cpus, *current_mask)
+            } else {
+                effective_prime_cpus.clone()
+            };
+            let cpu_setids = cpusetids_from_indices(&filtered_cpus);
+            if !cpu_setids.is_empty() {
+                // Set the thread selected CPU sets
+                let set_result = unsafe { SetThreadSelectedCpuSets(handle, &cpu_setids) }.as_bool();
+                if !set_result {
+                    let error_code = unsafe { GetLastError().0 };
+                    apply_config_result.add_error(format!(
+                        "apply_config: [SET_THREAD_CPU_SETS][{}] {:>5}-{}-{}",
+                        error_from_code(error_code),
+                        pid,
+                        tid,
+                        config.name
+                    ));
                 } else {
-                    effective_prime_cpus.clone()
-                };
-                let cpu_setids = cpusetids_from_indices(&filtered_cpus);
-                if !cpu_setids.is_empty() {
-                    // Set the thread selected CPU sets
-                    let set_result = unsafe { SetThreadSelectedCpuSets(handle, &cpu_setids) }.as_bool();
-                    if !set_result {
-                        let error_code = unsafe { GetLastError().0 };
+                    thread_stats.cpu_set_ids = cpu_setids.clone();
+                    let promoted_cpus = indices_from_cpusetids(&cpu_setids);
+                    apply_config_result.add_change(format!(
+                        "Thread {} -> (promoted, [{}], cycles={}, start={})",
+                        tid,
+                        format_cpu_indices(&promoted_cpus),
+                        delta_cycles,
+                        start_module
+                    ));
+                }
+                // Set thread priority (use explicit priority from config or boost by one tier)
+                let current_prio = unsafe { GetThreadPriority(handle) };
+                if current_prio != 0x7FFFFFFF_i32 {
+                    let current_prio = priority::ThreadPriority::from_win_const(current_prio);
+                    thread_stats.original_priority = Some(current_prio);
+
+                    let new_prio = if effective_thread_priority != priority::ThreadPriority::None {
+                        effective_thread_priority
+                    } else {
+                        current_prio.boost_one()
+                    };
+
+                    if let Err(e) = unsafe { SetThreadPriority(handle, new_prio.to_thread_priority_struct()) } {
                         apply_config_result.add_error(format!(
-                            "apply_config: [SET_THREAD_CPU_SETS][{}] {:>5}-{}-{}",
-                            error_from_code(error_code),
+                            "apply_config: [SET_THREAD_PRIORITY][{}] {:>5}-{}-{}",
+                            error_from_code(e.code().0 as u32),
                             pid,
                             tid,
                             config.name
                         ));
                     } else {
-                        thread_stats.cpu_set_ids = cpu_setids.clone();
-                        let promoted_cpus = indices_from_cpusetids(&cpu_setids);
-                        apply_config_result.add_change(format!(
-                            "Thread {} -> (promoted, [{}], cycles={}, start={})",
-                            tid,
-                            format_cpu_indices(&promoted_cpus),
-                            delta_cycles,
-                            start_module
-                        ));
-                    }
-                    // Set thread priority (use explicit priority from config or boost by one tier)
-                    let current_prio = unsafe { GetThreadPriority(handle) };
-                    if current_prio != 0x7FFFFFFF_i32 {
-                        let current_prio = priority::ThreadPriority::from_win_const(current_prio);
-                        thread_stats.original_priority = Some(current_prio);
-
-                        let new_prio = if effective_thread_priority != priority::ThreadPriority::None {
-                            effective_thread_priority
+                        let old_name = current_prio.as_str();
+                        let new_name = new_prio.as_str();
+                        let action = if effective_thread_priority != priority::ThreadPriority::None {
+                            "priority set"
                         } else {
-                            current_prio.boost_one()
+                            "priority boosted"
                         };
-
-                        if let Err(e) = unsafe { SetThreadPriority(handle, new_prio.to_thread_priority_struct()) } {
-                            apply_config_result.add_error(format!(
-                                "apply_config: [SET_THREAD_PRIORITY][{}] {:>5}-{}-{}",
-                                error_from_code(e.code().0 as u32),
-                                pid,
-                                tid,
-                                config.name
-                            ));
-                        } else {
-                            let old_name = current_prio.as_str();
-                            let new_name = new_prio.as_str();
-                            let action = if effective_thread_priority != priority::ThreadPriority::None {
-                                "priority set"
-                            } else {
-                                "priority boosted"
-                            };
-                            apply_config_result.add_change(format!("Thread {} -> ({}: {} -> {})", tid, action, old_name, new_name));
-                        }
+                        apply_config_result.add_change(format!("Thread {} -> ({}: {} -> {})", tid, action, old_name, new_name));
                     }
                 }
             }
@@ -1012,26 +1013,26 @@ fn apply_ideal_processors(
             let thread_stats = prime_scheduler.get_thread_stats(pid, *tid);
 
             if thread_stats.ideal_processor.is_assigned {
-                if let Some(handle) = thread_stats.handle {
-                    if !handle.is_invalid() {
-                        let prev_group = thread_stats.ideal_processor.previous_group;
-                        let prev_number = thread_stats.ideal_processor.previous_number;
+                if let Some(handle) = thread_stats.handle
+                    && !handle.is_invalid()
+                {
+                    let prev_group = thread_stats.ideal_processor.previous_group;
+                    let prev_number = thread_stats.ideal_processor.previous_number;
 
-                        match set_thread_ideal_processor_ex(handle, prev_group, prev_number) {
-                            Ok(_) => {
-                                apply_config_result.add_change(format!("Thread {} -> restored ideal CPU {} (group {})", tid, prev_number, prev_group));
-                                thread_stats.ideal_processor.current_group = prev_group;
-                                thread_stats.ideal_processor.current_number = prev_number;
-                            }
-                            Err(e) => {
-                                apply_config_result.add_error(format!(
-                                    "apply_ideal_processor: [RESTORE_IDEAL][{}] {:>5}-{}-{}",
-                                    error_from_code(e.code().0 as u32),
-                                    pid,
-                                    tid,
-                                    config.name
-                                ));
-                            }
+                    match set_thread_ideal_processor_ex(handle, prev_group, prev_number) {
+                        Ok(_) => {
+                            apply_config_result.add_change(format!("Thread {} -> restored ideal CPU {} (group {})", tid, prev_number, prev_group));
+                            thread_stats.ideal_processor.current_group = prev_group;
+                            thread_stats.ideal_processor.current_number = prev_number;
+                        }
+                        Err(e) => {
+                            apply_config_result.add_error(format!(
+                                "apply_ideal_processor: [RESTORE_IDEAL][{}] {:>5}-{}-{}",
+                                error_from_code(e.code().0 as u32),
+                                pid,
+                                tid,
+                                config.name
+                            ));
                         }
                     }
                 }
@@ -1059,7 +1060,7 @@ fn apply_config(
         Err(_) => {
             let error_code = unsafe { GetLastError().0 };
             if dry_run {
-                apply_config_result.add_change(format!("[SKIP] OpenProcess failed"));
+                apply_config_result.add_change("[SKIP] OpenProcess failed".to_owned());
             } else {
                 apply_config_result.add_error(format!("apply_config: [OPEN][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
             }
@@ -1069,7 +1070,7 @@ fn apply_config(
     };
     if h_prc.is_invalid() {
         if dry_run {
-            apply_config_result.add_change(format!("[SKIP] Invalid handle"));
+            apply_config_result.add_change("[SKIP] Invalid handle".to_owned());
             return apply_config_result;
         }
         apply_config_result.add_error(format!("apply_config: [INVALID_HANDLE] {:>5}-{}", pid, config.name));
@@ -1095,7 +1096,7 @@ fn apply_config(
     apply_config_result
 }
 
-fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklist: &Vec<String>, logs_path: Option<&str>, output_file: Option<&str>) {
+fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) {
     // Processes logs to discover new processes not yet in config or blacklist, and searches for their file paths.
     //
     // # Requirements
@@ -1110,15 +1111,15 @@ fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklis
     if let Ok(entries) = std::fs::read_dir(logs_path) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.file_name().and_then(|n| n.to_str()).map_or(false, |s| s.ends_with(".find.log")) {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    for line in content.lines() {
-                        if let Some(idx) = line.find("find ") {
-                            let rest = &line[idx + 5..];
-                            let proc = if let Some(space_idx) = rest.find(' ') { &rest[..space_idx] } else { rest.trim() };
-                            if proc.ends_with(".exe") {
-                                all_processes.insert(proc.to_lowercase());
-                            }
+            if path.file_name().and_then(|n| n.to_str()).map_or(false, |s| s.ends_with(".find.log"))
+                && let Ok(content) = std::fs::read_to_string(&path)
+            {
+                for line in content.lines() {
+                    if let Some(idx) = line.find("find ") {
+                        let rest = &line[idx + 5..];
+                        let proc = if let Some(space_idx) = rest.find(' ') { &rest[..space_idx] } else { rest.trim() };
+                        if proc.ends_with(".exe") {
+                            all_processes.insert(proc.to_lowercase());
                         }
                     }
                 }
@@ -1138,7 +1139,7 @@ fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklis
         output.push_str(&format!("Process: {}\n", proc));
         // Escape dots for regex
         let escaped_proc = proc.replace(".", r"\.");
-        let es_output = Command::new("es").args(&["-utf8-bom", "-r", &format!("^{}$", escaped_proc)]).output();
+        let es_output = Command::new("es").args(["-utf8-bom", "-r", &format!("^{}$", escaped_proc)]).output();
         match es_output {
             Ok(output_result) if output_result.status.success() => {
                 let stdout = &output_result.stdout;
@@ -1281,7 +1282,7 @@ fn main() -> windows::core::Result<()> {
                 // Iterate through graded configs: apply rules only when current_loop % grade == 0
                 for (grade, grade_configs) in &configs {
                     // current_loop is 0-based, so we apply grade 1 rules every loop (0 % 1 == 0, 1 % 1 == 0, etc.)
-                    if current_loop % *grade != 0 {
+                    if !current_loop.is_multiple_of(*grade) {
                         continue; // Skip this grade this loop
                     }
 
@@ -1336,12 +1337,14 @@ fn main() -> windows::core::Result<()> {
                         let process_name = String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]).to_lowercase();
                         // Check if process exists in any grade bucket
                         let in_configs = configs.values().any(|grade_configs| grade_configs.contains_key(&process_name));
-                        if !FAIL_SET.lock().unwrap().contains(&process_name) && !in_configs && !blacklist.contains(&process_name) {
-                            if is_affinity_unset(pe32.th32ProcessID, process_name.as_str()) {
-                                log_process_find(&process_name);
-                            }
+                        if !FAIL_SET.lock().unwrap().contains(&process_name)
+                            && !in_configs
+                            && !blacklist.contains(&process_name)
+                            && is_affinity_unset(pe32.th32ProcessID, process_name.as_str())
+                        {
+                            log_process_find(&process_name);
                         }
-                        if !Process32NextW(snapshot, &mut pe32).is_ok() {
+                        if Process32NextW(snapshot, &mut pe32).is_err() {
                             break;
                         }
                     }
@@ -1352,37 +1355,36 @@ fn main() -> windows::core::Result<()> {
         let _ = find_logger().lock().unwrap().flush();
         let _ = logger().lock().unwrap().flush();
         current_loop += 1;
-        if let Some(max_loops) = cli.loop_count {
-            if current_loop >= max_loops {
-                if cli.log_loop {
-                    log!("Completed {} loops, exiting", max_loops);
-                }
-                should_continue = false;
+        if let Some(max_loops) = cli.loop_count
+            && current_loop >= max_loops
+        {
+            if cli.log_loop {
+                log!("Completed {} loops, exiting", max_loops);
             }
+            should_continue = false;
         }
         if should_continue {
             thread::sleep(Duration::from_millis(cli.interval_ms));
             *LOCALTIME_BUFFER.lock().unwrap() = Local::now();
 
             // Check for config reload
-            if let Ok(metadata) = std::fs::metadata(&cli.config_file_name) {
-                if let Ok(mod_time) = metadata.modified() {
-                    if Some(mod_time) != last_config_mod_time {
-                        last_config_mod_time = Some(mod_time);
-                        log!("Configuration file '{}' changed, reloading...", cli.config_file_name);
-                        let new_config_result = read_config(&cli.config_file_name);
-                        if new_config_result.errors.is_empty() {
-                            new_config_result.print_report();
-                            let total_rules = new_config_result.total_rules();
-                            configs = new_config_result.configs;
-                            prime_core_scheduler.constants = new_config_result.constants;
-                            log!("Configuration reload complete: {} rules loaded.", total_rules);
-                        } else {
-                            log!("Configuration file '{}' has errors, keeping previous configuration.", cli.config_file_name);
-                            for error in &new_config_result.errors {
-                                log!("  - {}", error);
-                            }
-                        }
+            if let Ok(metadata) = std::fs::metadata(&cli.config_file_name)
+                && let Ok(mod_time) = metadata.modified()
+                && Some(mod_time) != last_config_mod_time
+            {
+                last_config_mod_time = Some(mod_time);
+                log!("Configuration file '{}' changed, reloading...", cli.config_file_name);
+                let new_config_result = read_config(&cli.config_file_name);
+                if new_config_result.errors.is_empty() {
+                    new_config_result.print_report();
+                    let total_rules = new_config_result.total_rules();
+                    configs = new_config_result.configs;
+                    prime_core_scheduler.constants = new_config_result.constants;
+                    log!("Configuration reload complete: {} rules loaded.", total_rules);
+                } else {
+                    log!("Configuration file '{}' has errors, keeping previous configuration.", cli.config_file_name);
+                    for error in &new_config_result.errors {
+                        log!("  - {}", error);
                     }
                 }
             }
@@ -1391,13 +1393,13 @@ fn main() -> windows::core::Result<()> {
             if let Some(ref bf) = cli.blacklist_file_name {
                 match std::fs::metadata(bf) {
                     Ok(metadata) => {
-                        if let Ok(mod_time) = metadata.modified() {
-                            if Some(mod_time) != last_blacklist_mod_time {
-                                last_blacklist_mod_time = Some(mod_time);
-                                log!("Blacklist file '{}' changed, reloading...", bf);
-                                blacklist = read_list(bf).unwrap_or_default();
-                                log!("Blacklist reload complete: {} items loaded.", blacklist.len());
-                            }
+                        if let Ok(mod_time) = metadata.modified()
+                            && Some(mod_time) != last_blacklist_mod_time
+                        {
+                            last_blacklist_mod_time = Some(mod_time);
+                            log!("Blacklist file '{}' changed, reloading...", bf);
+                            blacklist = read_list(bf).unwrap_or_default();
+                            log!("Blacklist reload complete: {} items loaded.", blacklist.len());
                         }
                     }
                     Err(_) => {

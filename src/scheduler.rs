@@ -50,11 +50,11 @@ impl PrimeThreadScheduler {
 
     /// Marks a process as alive for this iteration.
     pub fn set_alive(&mut self, pid: u32) {
-        self.pid_to_process_stats.entry(pid).or_insert_with(ProcessStats::new).alive = true;
+        self.pid_to_process_stats.entry(pid).or_default().alive = true;
     }
 
     pub fn set_tracking_info(&mut self, pid: u32, track_top_x_threads: i32, process_name: String) {
-        let stats = self.pid_to_process_stats.entry(pid).or_insert_with(ProcessStats::new);
+        let stats = self.pid_to_process_stats.entry(pid).or_default();
         stats.track_top_x_threads = track_top_x_threads;
         stats.process_name = process_name;
     }
@@ -62,12 +62,7 @@ impl PrimeThreadScheduler {
     /// Gets or creates thread stats for the given PID/TID pair.
     #[inline]
     pub fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats {
-        self.pid_to_process_stats
-            .entry(pid)
-            .or_insert_with(ProcessStats::new)
-            .tid_to_thread_stats
-            .entry(tid)
-            .or_insert_with(ThreadStats::new)
+        self.pid_to_process_stats.entry(pid).or_default().tid_to_thread_stats.entry(tid).or_default()
     }
 
     /// Closes thread handles and removes stats for dead processes.
@@ -75,7 +70,7 @@ impl PrimeThreadScheduler {
         self.pid_to_process_stats.retain(|pid, process_stats| {
             if !process_stats.alive {
                 if process_stats.track_top_x_threads != 0 {
-                    let x = process_stats.track_top_x_threads.abs() as usize;
+                    let x = process_stats.track_top_x_threads.unsigned_abs() as usize;
                     let mut threads: Vec<(&u32, &ThreadStats)> = process_stats.tid_to_thread_stats.iter().collect();
                     threads.sort_by(|a, b| b.1.last_cycles.cmp(&a.1.last_cycles));
 

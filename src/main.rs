@@ -234,7 +234,7 @@ fn apply_prime_threads(
             apply_prime_threads_query_cycles(&all_tids, &mut all_delta_cycles, prime_core_scheduler, pid, &config.name, apply_config_result);
             for (tid, thread) in process.get_threads().iter() {
                 let thread_stats = prime_core_scheduler.get_thread_stats(pid, *tid);
-                thread_stats.last_system_thread_info = Some(thread.clone());
+                thread_stats.last_system_thread_info = Some(*thread);
             }
         }
 
@@ -1111,7 +1111,7 @@ fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklis
     if let Ok(entries) = std::fs::read_dir(logs_path) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.file_name().and_then(|n| n.to_str()).map_or(false, |s| s.ends_with(".find.log"))
+            if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".find.log"))
                 && let Ok(content) = std::fs::read_to_string(&path)
             {
                 for line in content.lines() {
@@ -1330,8 +1330,10 @@ fn main() -> windows::core::Result<()> {
         if cli.find_mode {
             unsafe {
                 let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
-                let mut pe32 = PROCESSENTRY32W::default();
-                pe32.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+                let mut pe32 = PROCESSENTRY32W {
+                    dwSize: size_of::<PROCESSENTRY32W>() as u32,
+                    ..Default::default()
+                };
                 if Process32FirstW(snapshot, &mut pe32).is_ok() {
                     loop {
                         let process_name = String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]).to_lowercase();

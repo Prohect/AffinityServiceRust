@@ -6,6 +6,7 @@ use crate::winapi::{
     NtQueryInformationProcess, NtSetInformationProcess, cpusetids_from_indices, filter_indices_by_mask, get_cpu_set_information, get_thread_ideal_processor_ex,
     get_thread_start_address, indices_from_cpusetids, resolve_address_to_module, set_thread_ideal_processor_ex,
 };
+use std::collections::HashSet;
 use std::mem::size_of;
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE},
@@ -889,12 +890,48 @@ pub fn apply_ideal_processors(
         let top_n = thread_infos.len().min(rule.cpus.len());
         let top_threads: Vec<_> = thread_infos.iter().take(top_n).cloned().collect();
 
-        // Apply ideal processors to top N threads
-        for (i, (tid, _, _start_addr, _)) in top_threads.iter().enumerate() {
-            let target_cpu = rule.cpus[i];
+        // Stability-first assignment:
+        // A thread is "stable" if it is already assigned to a CPU that is inside rule.cpus.
+        // Stable threads need no syscall this loop — only threads whose current ideal CPU
+        // falls outside rule.cpus are touched.  Each CPU in rule.cpus may be claimed by at
+        // most one stable thread; any duplicate or unassigned slot goes into the free pool
+        // and is handed out (in rule.cpus order) to threads that do need reassignment.
+
+        // Pass 1 — identify stable threads and build the free pool.
+        let mut claimed: HashSet<u32> = HashSet::new();
+        let mut stable_tids: HashSet<u32> = HashSet::new();
+
+        for (tid, _, _, _) in top_threads.iter() {
+            let ts = prime_scheduler.get_thread_stats(pid, *tid);
+            if ts.ideal_processor.is_assigned {
+                let cur = ts.ideal_processor.current_number as u32;
+                // Only the first thread to claim a given CPU is considered stable;
+                // a duplicate claimant will be reassigned via the free pool.
+                if rule.cpus.contains(&cur) && claimed.insert(cur) {
+                    stable_tids.insert(*tid);
+                }
+            }
+        }
+
+        // Free pool: CPUs in rule.cpus that no stable thread claimed yet.
+        let mut free_pool = rule.cpus.iter().copied().filter(|c| !claimed.contains(c));
+
+        // Pass 2 — assign free-pool CPUs to threads that are not yet stable.
+        for (tid, _, _, _) in top_threads.iter() {
+            if stable_tids.contains(tid) {
+                continue; // Already on a valid unique CPU inside rule.cpus — leave untouched.
+            }
+
+            let target_cpu = match free_pool.next() {
+                Some(c) => c,
+                None => break, // All rule CPUs already claimed (shouldn't happen normally).
+            };
+            let target_group: u16 = 0;
+            let target_number: u8 = target_cpu as u8;
+
             let thread_stats = prime_scheduler.get_thread_stats(pid, *tid);
 
-            // Open thread if we don't have a handle
+            // Open thread handle if not yet held.
             if thread_stats.handle.is_none() {
                 match unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION | THREAD_SET_INFORMATION, false, *tid) } {
                     Err(_) => {
@@ -920,7 +957,8 @@ pub fn apply_ideal_processors(
                     continue;
                 }
 
-                // Get current ideal processor if not already stored
+                // Capture the original ideal CPU once before the first assignment so we
+                // can restore it when the thread later falls out of top N.
                 if !thread_stats.ideal_processor.is_assigned {
                     match get_thread_ideal_processor_ex(handle) {
                         Err(_) => {
@@ -935,37 +973,29 @@ pub fn apply_ideal_processors(
                         }
                         Ok(prev) => {
                             thread_stats.ideal_processor.previous_group = prev.Group;
-                            thread_stats.ideal_processor.current_group = prev.Group;
                             thread_stats.ideal_processor.previous_number = prev.Number;
+                            thread_stats.ideal_processor.current_group = prev.Group;
                             thread_stats.ideal_processor.current_number = prev.Number;
                         }
                     }
                 }
 
-                // Set new ideal processor (always group 0 for now, extend if >64 cores needed)
-                let target_group: u16 = 0;
-                let target_number: u8 = target_cpu as u8;
-
-                // Only set if different from current
-                if !thread_stats.ideal_processor.is_assigned || thread_stats.ideal_processor.current_number != target_number {
-                    match set_thread_ideal_processor_ex(handle, target_group, target_number) {
-                        Err(_) => {
-                            let error_code = unsafe { GetLastError().0 };
-                            apply_config_result.add_error(format!(
-                                "apply_ideal_processor: [SET_IDEAL][{}] {:>5}-{}-{}",
-                                error_from_code(error_code),
-                                pid,
-                                tid,
-                                config.name
-                            ));
-                        }
-                        Ok(_) => {
-                            thread_stats.ideal_processor.current_group = target_group;
-                            thread_stats.ideal_processor.current_number = target_number;
-                            thread_stats.ideal_processor.is_assigned = true;
-
-                            apply_config_result.add_change(format!("Thread {} -> ideal CPU {} (group {})", tid, target_number, target_group));
-                        }
+                match set_thread_ideal_processor_ex(handle, target_group, target_number) {
+                    Err(_) => {
+                        let error_code = unsafe { GetLastError().0 };
+                        apply_config_result.add_error(format!(
+                            "apply_ideal_processor: [SET_IDEAL][{}] {:>5}-{}-{}",
+                            error_from_code(error_code),
+                            pid,
+                            tid,
+                            config.name
+                        ));
+                    }
+                    Ok(_) => {
+                        thread_stats.ideal_processor.current_group = target_group;
+                        thread_stats.ideal_processor.current_number = target_number;
+                        thread_stats.ideal_processor.is_assigned = true;
+                        apply_config_result.add_change(format!("Thread {} -> ideal CPU {} (group {})", tid, target_number, target_group));
                     }
                 }
             }

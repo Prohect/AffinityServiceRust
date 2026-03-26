@@ -12,6 +12,7 @@ pub struct CliArgs {
     pub help_mode: bool,
     pub help_all_mode: bool,
     pub convert_mode: bool,
+    pub autogroup_mode: bool,
     pub find_mode: bool,
     pub validate_mode: bool,
     pub process_logs_mode: bool,
@@ -66,6 +67,9 @@ pub fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<(
             }
             "-convert" => {
                 cli.convert_mode = true;
+            }
+            "-autogroup" => {
+                cli.autogroup_mode = true;
             }
             "-find" => {
                 cli.find_mode = true;
@@ -152,6 +156,7 @@ pub fn print_help() {
       -processlogs         process logs (from -find mode) to find new processes and search paths (-config <file> -blacklist <file> -in <logs dir> -out <file>)
       -dryrun              show what would be changed without applying
       -convert             convert Process Lasso config (-in <file> -out <file>)
+      -autogroup           auto-group rules with identical settings (-in <file> -out <file>)
     "#
     );
 }
@@ -182,6 +187,7 @@ pub fn print_cli_help() {
           -processlogs         process logs (from -find mode) to find new processes and search paths with everything (-config <file> -blacklist <file> -in <logs dir> -out <file>)
           -dryrun              simulate changes without applying (shows what would happen)
           -convert             convert process configs from -in <file>(from process lasso) to -out <file>
+          -autogroup           auto-group rules with identical settings into named group blocks (-in <file> -out <file>)
           -in <file>           input file for -convert / logs directory for -processlogs (default: logs)
           -out <file>          output file for -convert / results file for -processlogs (default: new_processes_results.txt)
 

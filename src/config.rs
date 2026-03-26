@@ -1088,3 +1088,242 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
 
     log!("Converted {} to {}", in_path, out_path);
 }
+
+/// Reads a config file and groups process rules with the same rule string.
+///
+/// Rules that are **exactly** identical (same raw rule text after the process name) are merged
+/// into a single named group block. Groups are assigned auto-generated names `grp_0`, `grp_1`, …
+/// Process names within each group are sorted alphabetically. The preamble (comments, constants,
+/// aliases before the first process rule) is preserved verbatim.
+///
+/// Inline comments between rules are dropped because they are per-process and would no longer
+/// be meaningful after regrouping.
+///
+/// Usage: `-autogroup -in <file> -out <file>`
+pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) {
+    let in_path = match in_file {
+        Some(p) => p,
+        None => {
+            log!("Error: -in <file> is required for -autogroup");
+            return;
+        }
+    };
+    let out_path = match out_file {
+        Some(p) => p,
+        None => {
+            log!("Error: -out <file> is required for -autogroup");
+            return;
+        }
+    };
+
+    let content = match fs::read_to_string(&in_path) {
+        Ok(c) => c,
+        Err(e) => {
+            log!("Failed to read {}: {}", in_path, e);
+            return;
+        }
+    };
+
+    let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+
+    // Preamble: all lines before the first process rule (comments, blanks, constants, aliases).
+    let mut preamble_lines: Vec<String> = Vec::new();
+    let mut in_rules_section = false;
+
+    // Ordered list of unique rule strings (insertion order = first occurrence).
+    let mut rule_order: Vec<String> = Vec::new();
+    // Map rule_string -> Vec of process names
+    let mut rule_to_members: HashMap<String, Vec<String>> = HashMap::new();
+
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i].trim();
+
+        // --- Empty lines ---
+        if line.is_empty() {
+            if !in_rules_section {
+                preamble_lines.push(lines[i].clone());
+            }
+            i += 1;
+            continue;
+        }
+
+        // --- Comment lines ---
+        if line.starts_with('#') {
+            if !in_rules_section {
+                preamble_lines.push(lines[i].clone());
+            }
+            // Comments between rules are dropped (they are per-process and no longer relevant).
+            i += 1;
+            continue;
+        }
+
+        // --- Constants (@) and aliases (*) are always kept in the preamble ---
+        if line.starts_with('@') || line.starts_with('*') {
+            preamble_lines.push(lines[i].clone());
+            i += 1;
+            continue;
+        }
+
+        // --- Process rule (single line or group) ---
+        in_rules_section = true;
+
+        if line.contains('{') {
+            // Group rule (single-line or multi-line).
+            let brace_start = line.find('{').unwrap();
+            let (members, rule_suffix, next_i) = if let Some(brace_end) = line.find('}') {
+                // Single-line group: `name { a.exe: b.exe }:rule`
+                let mut members = Vec::new();
+                collect_members(&line[brace_start + 1..brace_end], &mut members);
+                let after = line[brace_end + 1..].trim();
+                let suffix = after.strip_prefix(':').map(|s| s.to_string());
+                (members, suffix, i + 1)
+            } else {
+                // Multi-line group — reuse the existing helper.
+                let first_content = line[brace_start + 1..].trim();
+                match collect_group_block(&lines, i + 1, first_content) {
+                    Some((members, suffix, next)) => (members, suffix, next),
+                    None => {
+                        // Unclosed group – skip and continue.
+                        i += 1;
+                        continue;
+                    }
+                }
+            };
+
+            i = next_i;
+
+            if let Some(rule) = rule_suffix {
+                let rule = rule.trim().to_string();
+                if !rule.is_empty() {
+                    if !rule_to_members.contains_key(&rule) {
+                        rule_order.push(rule.clone());
+                        rule_to_members.insert(rule.clone(), Vec::new());
+                    }
+                    rule_to_members.get_mut(&rule).unwrap().extend(members);
+                }
+            }
+        } else {
+            // Single process rule: `name.exe:priority:affinity:...`
+            if let Some(colon_pos) = line.find(':') {
+                let name = line[..colon_pos].trim().to_lowercase();
+                let rule = line[colon_pos + 1..].trim().to_string();
+                if !name.is_empty() && !rule.is_empty() {
+                    if !rule_to_members.contains_key(&rule) {
+                        rule_order.push(rule.clone());
+                        rule_to_members.insert(rule.clone(), Vec::new());
+                    }
+                    rule_to_members.get_mut(&rule).unwrap().push(name);
+                }
+            }
+            i += 1;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Build output
+    // -----------------------------------------------------------------------
+    let mut output_lines: Vec<String> = Vec::new();
+
+    // Write preamble, trimming any trailing blank lines.
+    let preamble_end = preamble_lines.iter().rposition(|l| !l.trim().is_empty()).map(|p| p + 1).unwrap_or(0);
+    for line in &preamble_lines[..preamble_end] {
+        output_lines.push(line.clone());
+    }
+    output_lines.push(String::new());
+
+    let mut group_idx: usize = 0;
+    let mut single_count: usize = 0;
+    let mut group_count: usize = 0;
+    let mut grouped_member_count: usize = 0;
+
+    for rule_string in &rule_order {
+        let members = match rule_to_members.get_mut(rule_string) {
+            Some(m) => m,
+            None => continue,
+        };
+
+        // Sort alphabetically and deduplicate within this rule group.
+        members.sort();
+        members.dedup();
+
+        if members.is_empty() {
+            continue;
+        }
+
+        if members.len() == 1 {
+            // Single process — no group wrapper needed.
+            output_lines.push(format!("{}:{}", members[0], rule_string));
+            single_count += 1;
+        } else {
+            // Multiple processes share the same rule — emit a named group.
+            let group_name = format!("grp_{}", group_idx);
+            group_idx += 1;
+            group_count += 1;
+            grouped_member_count += members.len();
+
+            // Try single-line first: `grp_N { m1: m2: m3 }:rule`
+            let members_inline = members.join(": ");
+            let single_line = format!("{} {{ {} }}:{}", group_name, members_inline, rule_string);
+            if single_line.len() < 128 {
+                output_lines.push(single_line);
+            } else {
+                // Multi-line: pack members with `: ` separator, wrapping before a line hits 128 chars.
+                output_lines.push(format!("{} {{", group_name));
+                const INDENT: &str = "    ";
+                let mut cur = String::from(INDENT);
+                let mut first = true;
+                for member in members.iter() {
+                    if first {
+                        cur.push_str(member);
+                        first = false;
+                    } else {
+                        let candidate = format!("{}: {}", cur, member);
+                        if candidate.len() < 128 {
+                            cur = candidate;
+                        } else {
+                            output_lines.push(cur);
+                            cur = format!("{}{}", INDENT, member);
+                        }
+                    }
+                }
+                if !first {
+                    output_lines.push(cur);
+                }
+                output_lines.push(format!("}}:{}", rule_string));
+            }
+        }
+
+        // Blank line between rule entries for readability.
+        output_lines.push(String::new());
+    }
+
+    // Remove trailing blank lines.
+    while output_lines.last().map(|l: &String| l.trim().is_empty()).unwrap_or(false) {
+        output_lines.pop();
+    }
+
+    // Write to output file.
+    let mut out = match File::create(&out_path) {
+        Ok(f) => f,
+        Err(e) => {
+            log!("Failed to create {}: {}", out_path, e);
+            return;
+        }
+    };
+    for line in output_lines {
+        if writeln!(out, "{}", line).is_err() {
+            log!("Failed to write to {}", out_path);
+            return;
+        }
+    }
+
+    log!(
+        "Auto-grouped: {} total process rules → {} individual + {} processes merged into {} groups",
+        single_count + grouped_member_count,
+        single_count,
+        grouped_member_count,
+        group_count
+    );
+    log!("Written to {}", out_path);
+}

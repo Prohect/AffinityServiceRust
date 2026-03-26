@@ -13,7 +13,7 @@ use apply::{
 };
 use chrono::Local;
 use cli::{CliArgs, parse_args, print_help, print_help_all};
-use config::{ProcessConfig, convert, read_config, read_list};
+use config::{ProcessConfig, convert, read_config, read_list, sort_and_group_config};
 use encoding_rs::Encoding;
 use logging::{
     DUST_BIN_MODE, FAIL_SET, LOCALTIME_BUFFER, error_from_code, find_logger, log_message, log_process_find, log_pure_message, log_to_find, logger, use_console,
@@ -181,6 +181,10 @@ fn main() -> windows::core::Result<()> {
     }
     if cli.convert_mode {
         convert(cli.in_file_name, cli.out_file_name);
+        return Ok(());
+    }
+    if cli.autogroup_mode {
+        sort_and_group_config(cli.in_file_name, cli.out_file_name);
         return Ok(());
     }
     let config_result = read_config(&cli.config_file_name);

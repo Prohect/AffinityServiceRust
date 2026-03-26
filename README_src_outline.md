@@ -76,11 +76,12 @@
 ) 
 
 ## src/cli.rs
-- [L7:L30]struct CliArgs {
+- [L7:L31]struct CliArgs {
     pub interval_ms: u64,
     pub help_mode: bool,
     pub help_all_mode: bool,
     pub convert_mode: bool,
+    pub autogroup_mode: bool,
     pub find_mode: bool,
     pub validate_mode: bool,
     pub process_logs_mode: bool,
@@ -97,12 +98,12 @@
     pub no_debug_priv: bool,
     pub no_inc_base_priority: bool,
 }
-- [L43:L129]fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<()> 
-- [L131:L157]fn print_help() 
-- [L159:L207]fn print_cli_help() 
-- [L209:L316]fn get_config_help_lines() -> Vec<&'static str> 
-- [L318:L323]fn print_config_help() 
-- [L325:L331]fn print_help_all() 
+- [L44:L133]fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<()> 
+- [L135:L162]fn print_help() 
+- [L164:L213]fn print_cli_help() 
+- [L215:L322]fn get_config_help_lines() -> Vec<&'static str> 
+- [L324:L329]fn print_config_help() 
+- [L331:L337]fn print_help_all() 
 
 ## src/config.rs
 - [L30:L39]struct PrimePrefix {
@@ -163,6 +164,7 @@
 - [L903:L908]fn read_utf16le_file(path: &str) -> io::Result<String> 
 - [L910:L916]fn parse_mask(s: &str) -> usize 
 - [L918:L1090]fn convert(in_file: Option<String>, out_file: Option<String>) 
+- [L1092:L1329]fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
 
 ## src/logging.rs
 - [L16:L16]static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
@@ -191,7 +193,7 @@
     dry_run: bool,
 ) -> ApplyConfigResult 
 - [L96:L168]fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
-- [L170:L417]fn main() -> windows::core::Result<()> 
+- [L170:L421]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L17:L27]enum ProcessPriority {

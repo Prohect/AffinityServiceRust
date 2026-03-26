@@ -285,6 +285,7 @@ browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal:
 | Mode | Description |
 |------|-------------|
 | `-convert` | Convert Process Lasso config (`-in <file> -out <file>`) |
+| `-autogroup` | Auto-group rules with identical settings into named groups (`-in <file> -out <file>`) |
 | `-find` | Log unmanaged processes with default affinity |
 | `-validate` | Validate config file syntax without running |
 | `-processlogs` | Process logs to find new processes and search paths |
@@ -328,6 +329,29 @@ Convert Process Lasso config format:
 ```bash
 AffinityServiceRust.exe -convert -in prolasso.ini -out my_config.ini
 ```
+
+### Config Auto-Grouping
+
+Automatically merge rules with identical settings into named group blocks:
+```bash
+AffinityServiceRust.exe -autogroup -in config.ini -out config_grouped.ini
+```
+
+Rules that share the exact same rule string are collected into a `grp_N { }` block, with members sorted alphabetically. Groups that fit within 128 characters are written on a single line; larger groups wrap across multiple lines with `: `-separated members, each line kept under 128 characters.
+
+**Input:**
+```ini
+explorer.exe:none:*a:*e:0:none:none:0:4
+cmd.exe:none:*a:*e:0:none:none:0:4
+notepad.exe:none:*a:*e:0:none:none:0:4
+```
+
+**Output:**
+```ini
+grp_0 { cmd.exe: explorer.exe: notepad.exe }:none:*a:*e:0:none:none:0:4
+```
+
+The preamble (`@constants`, `*aliases`, and leading comments) is preserved verbatim. Per-process inline comments between rules are dropped during regrouping.
 
 ## Privileges and Capabilities
 

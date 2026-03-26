@@ -131,32 +131,79 @@ pub fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<(
 /// Prints the basic help message.
 pub fn print_help() {
     *use_console().lock().unwrap() = true;
-    log!("usage: AffinityServiceRust.exe [args]");
-    log!("");
-    log!("A Windows service to manage process priority, CPU affinity, IO priority, and memory priority.");
-    log!("");
-    log!("Common Options:");
-    log!("  -help | --help       show this help message");
-    log!("  -console             output to console instead of log file");
-    log!("  -config <file>       config file to use (default: config.ini)");
-    log!("  -find                find processes with default affinity (-blacklist <file>)");
-    log!("  -interval <ms>       check interval in milliseconds (default: 5000)");
-    log!("");
-    log!("  -noUAC               disable UAC elevation request");
-    log!("  -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)");
-    log!("");
-    log!("Modes:");
-    log!("  -validate            validate config file syntax without running");
-    log!("  -processlogs         process logs (from -find mode) to find new processes and search paths (-config <file> -blacklist <file> -in <logs dir> -out <file>)");
-    log!("  -dryrun              show what would be changed without applying");
-    log!("  -convert             convert Process Lasso config (-in <file> -out <file>)");
-    log!("");
-    log!("Config Format: process_name:priority:affinity:cpuset:prime:io_priority:memory_priority");
-    log!("  Example: notepad.exe:above normal:0-7:0:0:low:normal");
-    log!("  Example: game.exe:high:*pcore:0:*pcore@module.dll:normal:low");
-    log!("  Example: cs2.exe:high:*pcore:0:*pcore@cs2.exe*p;nvidia.dll*e:normal:low");
-    log!("");
-    log!("Use -helpall for detailed options and debugging features.");
+    log!(
+        r#"
+    A Windows service to manage process priority, CPU affinity, IO priority, and memory priority.
+    usage: AffinityServiceRust.exe [args]
+
+    Common Options:
+      -help | --help       show this help message
+      -helpall             detailed options and debugging features.
+      -console             output to console instead of log file
+      -config <file>       config file to use (default: config.ini)
+      -find                find processes with default affinity (-blacklist <file>)
+      -interval <ms>       check interval in milliseconds (default: 5000)
+
+      -noUAC               disable UAC elevation request
+      -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)
+
+    Modes:
+      -validate            validate config file syntax without running
+      -processlogs         process logs (from -find mode) to find new processes and search paths (-config <file> -blacklist <file> -in <logs dir> -out <file>)
+      -dryrun              show what would be changed without applying
+      -convert             convert Process Lasso config (-in <file> -out <file>)
+    "#
+    );
+}
+
+/// Prints CLI help (command line arguments).
+pub fn print_cli_help() {
+    log!(
+        r#"
+        A Windows service to manage process priority, CPU affinity, IO priority, and memory priority.
+        usage: AffinityServiceRust.exe [args]
+
+        === COMMAND LINE OPTIONS ===
+
+        Basic Arguments:
+          -help | --help       print basic help message
+          -? | /? | ?          print basic help message
+          -helpall | --helpall print this detailed help with debug options
+          -console             use console as output instead of log file
+          -noUAC | -nouac      disable UAC elevation request
+          -config <file>       the config file u wanna use (config.ini by default)
+          -find                find those whose affinity is same as system default which is all possible cores windows could use
+          -blacklist <file>    the blacklist for -find
+          -interval <ms>       set interval for checking again (5000 by default, minimal 16)
+          -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)
+
+        Operating Modes:
+          -validate            validate config file for syntax errors and undefined aliases then exit
+          -processlogs         process logs (from -find mode) to find new processes and search paths with everything (-config <file> -blacklist <file> -in <logs dir> -out <file>)
+          -dryrun              simulate changes without applying (shows what would happen)
+          -convert             convert process configs from -in <file>(from process lasso) to -out <file>
+          -in <file>           input file for -convert / logs directory for -processlogs (default: logs)
+          -out <file>          output file for -convert / results file for -processlogs (default: new_processes_results.txt)
+
+        Debug & Testing Options:
+          -loop <count>        number of loops to run (default: infinite) - for testing
+          -logloop             log a message at the start of each loop for testing
+          -noDebugPriv         not request SeDebugPrivilege
+          -noIncBasePriority   not request SeIncreaseBasePriorityPrivilege
+
+        === DEBUGGING ===
+
+        Quick debug command (non-admin):
+          AffinityServiceRust.exe -console -noUAC -logloop -loop 3 -interval 2000 -config test.ini
+
+        Admin debug (check log file after, do NOT use -console):
+          AffinityServiceRust.exe -logloop -loop 3 -interval 2000 -config test.ini
+          Then check: logs/YYYYMMDD.log
+
+        Note: When running with UAC elevation, -console output goes to a new session
+        that cant be shown in currerent session. Use log files instead.
+        "#
+    );
 }
 
 /// Returns configuration help lines (for embedding in converted files).
@@ -273,53 +320,6 @@ pub fn print_config_help() {
     for line in get_config_help_lines() {
         log!("{}", line);
     }
-}
-
-/// Prints CLI help (command line arguments).
-pub fn print_cli_help() {
-    log!("usage: AffinityServiceRust.exe [args]");
-    log!("");
-    log!("=== COMMAND LINE OPTIONS ===");
-    log!("");
-    log!("Basic Arguments:");
-    log!("  -help | --help       print basic help message");
-    log!("  -helpall | --helpall print this detailed help with debug options");
-    log!("  -? | /? | ?          print basic help message");
-    log!("  -console             use console as output instead of log file");
-    log!("  -noUAC | -nouac      disable UAC elevation request");
-    log!("  -config <file>       the config file u wanna use (config.ini by default)");
-    log!("  -find                find those whose affinity is same as system default which is all possible cores windows could use");
-    log!("  -blacklist <file>    the blacklist for -find");
-    log!("  -interval <ms>       set interval for checking again (5000 by default, minimal 16)");
-    log!("");
-    log!("  -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)");
-    log!("");
-    log!("Operating Modes:");
-    log!("  -validate            validate config file for syntax errors and undefined aliases");
-    log!("  -processlogs         process logs (from -find mode) to find new processes and search paths (-config <file> -blacklist <file> -in <logs dir> -out <file>)");
-    log!("  -dryrun              simulate changes without applying (shows what would happen)");
-    log!("  -convert             convert process configs from -in <file>(from process lasso) to -out <file>");
-    log!("  -in <file>           input file for -convert / logs directory for -processlogs (default: logs)");
-    log!("  -out <file>          output file for -convert / results file for -processlogs (default: new_processes_results.txt)");
-    log!("");
-    log!("Debug & Testing Options:");
-    log!("  -loop <count>        number of loops to run (default: infinite) - for testing");
-    log!("  -logloop             log a message at the start of each loop for testing");
-    log!("  -noDebugPriv         not request SeDebugPrivilege");
-    log!("  -noIncBasePriority   not request SeIncreaseBasePriorityPrivilege");
-    log!("");
-    log!("=== DEBUGGING ===");
-    log!("");
-    log!("Quick debug command (non-admin):");
-    log!("  AffinityServiceRust.exe -console -noUAC -logloop -loop 3 -interval 2000 -config test.ini");
-    log!("");
-    log!("Admin debug (check log file after, do NOT use -console):");
-    log!("  AffinityServiceRust.exe -logloop -loop 3 -interval 2000 -config test.ini");
-    log!("  Then check: logs/YYYYMMDD.log");
-    log!("");
-    log!("Note: When running with UAC elevation, -console output goes to a new window");
-    log!("that closes immediately. Use log files instead for admin testing.");
-    log!("");
 }
 
 /// Prints the detailed help message with all options (CLI + Config).

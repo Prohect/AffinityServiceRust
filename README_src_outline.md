@@ -23,10 +23,10 @@
     pub no_inc_base_priority: bool,
 }
 - [L43:L129]fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<()> 
-- [L131:L160]fn print_help() 
-- [L162:L269]fn get_config_help_lines() -> Vec<&'static str> 
-- [L271:L276]fn print_config_help() 
-- [L278:L323]fn print_cli_help() 
+- [L131:L157]fn print_help() 
+- [L159:L207]fn print_cli_help() 
+- [L209:L316]fn get_config_help_lines() -> Vec<&'static str> 
+- [L318:L323]fn print_config_help() 
 - [L325:L331]fn print_help_all() 
 
 ## src/config.rs

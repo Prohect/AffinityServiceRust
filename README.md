@@ -23,7 +23,7 @@ AffinityServiceRust continuously monitors running processes and applies customiz
 ## Quick Start
 
 1. Build or download the release binary
-2. Copy `config.ini` and `blacklist.ini` to your working directory
+2. Download `config.ini` and `blacklist.ini` to your working directory
 3. Edit `config.ini` to match your CPU topology (see Configuration section)
 4. Run with appropriate privileges:
 

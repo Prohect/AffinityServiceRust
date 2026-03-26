@@ -23,7 +23,7 @@ AffinityServiceRust 持续监控运行中的进程，并根据配置文件中定
 ## 快速开始
 
 1. 编译或下载发行版二进制文件
-2. 将 `config.ini` 和 `blacklist.ini` 复制到工作目录
+2. 下载 `config.ini` 和 `blacklist.ini` 到工作目录
 3. 编辑 `config.ini` 以匹配你的 CPU 拓扑（参见配置部分）
 4. 使用适当的权限运行：
 

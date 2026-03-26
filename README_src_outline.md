@@ -1,5 +1,80 @@
 # Src Code Structure Outline, auto-generated during cargo build/check
 
+## src/apply.rs
+- [L23:L26]struct ApplyConfigResult {
+    pub changes: Vec<String>,
+    pub errors: Vec<String>,
+}
+- [L47:L72]fn apply_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
+- [L74:L116]fn apply_affinity(
+    pid: u32,
+    config: &ProcessConfig,
+    dry_run: bool,
+    h_prc: HANDLE,
+    current_mask: &mut usize,
+    apply_config_result: &mut ApplyConfigResult,
+    processes: &mut Option<&mut ProcessSnapshot>,
+) 
+- [L118:L175]fn apply_process_default_cpuset(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
+- [L177:L261]fn apply_prime_threads(
+    pid: u32,
+    config: &ProcessConfig,
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    processes: &mut Option<&mut ProcessSnapshot>,
+    dry_run: bool,
+    current_mask: &mut usize,
+    apply_config_result: &mut ApplyConfigResult,
+) 
+- [L263:L283]fn apply_prime_threads_select_candidates(
+    process: &mut crate::process::ProcessEntry,
+    candidate_tids: &mut [u32],
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    pid: u32,
+) 
+- [L285:L352]fn apply_prime_threads_query_cycles(
+    candidate_tids: &[u32],
+    tid_with_delta_cycles: &mut [(u32, u64, bool)],
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    pid: u32,
+    process_name: &str,
+    apply_config_result: &mut ApplyConfigResult,
+) 
+- [L354:L394]fn apply_prime_threads_update_streaks(tid_with_delta_cycles: &mut [(u32, u64, bool)], prime_core_scheduler: &mut PrimeThreadScheduler, pid: u32, prime_count: usize) 
+- [L396:L497]fn apply_prime_threads_promote(
+    tid_with_delta_cycles: &[(u32, u64, bool)],
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    pid: u32,
+    config: &ProcessConfig,
+    current_mask: &mut usize,
+    apply_config_result: &mut ApplyConfigResult,
+) 
+- [L499:L546]fn apply_prime_threads_demote(
+    process: &mut crate::process::ProcessEntry,
+    tid_with_delta_cycles: &[(u32, u64, bool)],
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    pid: u32,
+    config: &ProcessConfig,
+    apply_config_result: &mut ApplyConfigResult,
+) 
+- [L548:L606]fn apply_io_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
+- [L608:L665]fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
+- [L667:L777]fn reset_thread_ideal_processors(
+    pid: u32,
+    config: &ProcessConfig,
+    dry_run: bool,
+    _h_prc: HANDLE,
+    apply_config_result: &mut ApplyConfigResult,
+    processes: &mut Option<&mut ProcessSnapshot>,
+) 
+- [L779:L1007]fn apply_ideal_processors(
+    pid: u32,
+    config: &ProcessConfig,
+    processes: &mut Option<&mut ProcessSnapshot>,
+    prime_scheduler: &mut PrimeThreadScheduler,
+    dry_run: bool,
+    apply_config_result: &mut ApplyConfigResult,
+) 
+
 ## src/cli.rs
 - [L7:L30]struct CliArgs {
     pub interval_ms: u64,
@@ -108,83 +183,15 @@
 - [L110:L131]fn error_from_code(code: u32) -> String 
 
 ## src/main.rs
-- [L47:L50]struct ApplyConfigResult {
-    changes: Vec<String>,
-    errors: Vec<String>,
-}
-- [L71:L96]fn apply_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
-- [L98:L140]fn apply_affinity(
-    pid: u32,
-    config: &ProcessConfig,
-    dry_run: bool,
-    h_prc: HANDLE,
-    current_mask: &mut usize,
-    apply_config_result: &mut ApplyConfigResult,
-    processes: &mut Option<&mut ProcessSnapshot>,
-) 
-- [L142:L199]fn apply_process_default_cpuset(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
-- [L201:L285]fn apply_prime_threads(
-    pid: u32,
-    config: &ProcessConfig,
-    prime_core_scheduler: &mut PrimeThreadScheduler,
-    processes: &mut Option<&mut ProcessSnapshot>,
-    dry_run: bool,
-    current_mask: &mut usize,
-    apply_config_result: &mut ApplyConfigResult,
-) 
-- [L287:L302]fn apply_prime_threads_select_candidates(process: &mut process::ProcessEntry, candidate_tids: &mut [u32], prime_core_scheduler: &mut PrimeThreadScheduler, pid: u32) 
-- [L304:L371]fn apply_prime_threads_query_cycles(
-    candidate_tids: &[u32],
-    tid_with_delta_cycles: &mut [(u32, u64, bool)],
-    prime_core_scheduler: &mut PrimeThreadScheduler,
-    pid: u32,
-    process_name: &str,
-    apply_config_result: &mut ApplyConfigResult,
-) 
-- [L373:L413]fn apply_prime_threads_update_streaks(tid_with_delta_cycles: &mut [(u32, u64, bool)], prime_core_scheduler: &mut PrimeThreadScheduler, pid: u32, prime_count: usize) 
-- [L415:L516]fn apply_prime_threads_promote(
-    tid_with_delta_cycles: &[(u32, u64, bool)],
-    prime_core_scheduler: &mut PrimeThreadScheduler,
-    pid: u32,
-    config: &ProcessConfig,
-    current_mask: &mut usize,
-    apply_config_result: &mut ApplyConfigResult,
-) 
-- [L518:L565]fn apply_prime_threads_demote(
-    process: &mut process::ProcessEntry,
-    tid_with_delta_cycles: &[(u32, u64, bool)],
-    prime_core_scheduler: &mut PrimeThreadScheduler,
-    pid: u32,
-    config: &ProcessConfig,
-    apply_config_result: &mut ApplyConfigResult,
-) 
-- [L567:L625]fn apply_io_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
-- [L627:L684]fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
-- [L686:L796]fn reset_thread_ideal_processors(
-    pid: u32,
-    config: &ProcessConfig,
-    dry_run: bool,
-    _h_prc: HANDLE,
-    apply_config_result: &mut ApplyConfigResult,
-    processes: &mut Option<&mut ProcessSnapshot>,
-) 
-- [L798:L1026]fn apply_ideal_processors(
-    pid: u32,
-    config: &ProcessConfig,
-    processes: &mut Option<&mut ProcessSnapshot>,
-    prime_scheduler: &mut PrimeThreadScheduler,
-    dry_run: bool,
-    apply_config_result: &mut ApplyConfigResult,
-) 
-- [L1028:L1080]fn apply_config(
+- [L42:L94]fn apply_config(
     pid: u32,
     config: &ProcessConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
     mut processes: Option<&mut ProcessSnapshot>,
     dry_run: bool,
 ) -> ApplyConfigResult 
-- [L1082:L1154]fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
-- [L1156:L1403]fn main() -> windows::core::Result<()> 
+- [L96:L168]fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
+- [L170:L417]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L17:L27]enum ProcessPriority {

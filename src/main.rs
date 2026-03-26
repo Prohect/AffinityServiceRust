@@ -35,7 +35,7 @@ use windows::Win32::{
     System::{
         Console::GetConsoleOutputCP,
         Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
-        Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION},
+        Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_SET_LIMITED_INFORMATION},
     },
 };
 
@@ -50,7 +50,7 @@ fn apply_config(
     let access_flags = if dry_run {
         PROCESS_QUERY_INFORMATION
     } else {
-        PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION
+        PROCESS_QUERY_INFORMATION | PROCESS_SET_LIMITED_INFORMATION | PROCESS_SET_INFORMATION
     };
     let open_result = unsafe { OpenProcess(access_flags, false, pid) };
     let h_prc = match open_result {

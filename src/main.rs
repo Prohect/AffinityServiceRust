@@ -109,8 +109,7 @@ fn apply_affinity(
     let has_affinity = !config.affinity_cpus.is_empty();
     let has_prime = !config.prime_threads_cpus.is_empty();
     if has_affinity || has_prime {
-        let query_result = unsafe { GetProcessAffinityMask(h_prc, &mut *current_mask, &mut system_mask) };
-        match query_result {
+        match unsafe { GetProcessAffinityMask(h_prc, &mut *current_mask, &mut system_mask) } {
             Err(_) => {
                 if !dry_run {
                     let error_code = unsafe { GetLastError().0 };
@@ -122,8 +121,7 @@ fn apply_affinity(
                     if dry_run {
                         apply_config_result.add_change(format!("Affinity: {:#X} -> {:#X}", current_mask, affinity_mask));
                     } else {
-                        let set_result = unsafe { SetProcessAffinityMask(h_prc, affinity_mask) };
-                        match set_result {
+                        match unsafe { SetProcessAffinityMask(h_prc, affinity_mask) } {
                             Err(_) => {
                                 let error_code = unsafe { GetLastError().0 };
                                 apply_config_result.add_error(format!("apply_config: [SET_AFFINITY][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
@@ -316,8 +314,7 @@ fn apply_prime_threads_query_cycles(
         let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
         match thread_stats.handle {
             None => {
-                let open_result = unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION | THREAD_SET_INFORMATION, false, tid) };
-                match open_result {
+                match unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION | THREAD_SET_INFORMATION, false, tid) } {
                     Err(_) => {
                         let error_code = unsafe { GetLastError().0 };
                         apply_config_result.add_error(format!(
@@ -330,8 +327,7 @@ fn apply_prime_threads_query_cycles(
                     }
                     Ok(handle) => {
                         let mut cycles: u64 = 0;
-                        let query_result = unsafe { QueryThreadCycleTime(handle, &mut cycles) };
-                        match query_result {
+                        match unsafe { QueryThreadCycleTime(handle, &mut cycles) } {
                             Err(_) => {
                                 let error_code = unsafe { GetLastError().0 };
                                 apply_config_result.add_error(format!(
@@ -353,8 +349,7 @@ fn apply_prime_threads_query_cycles(
             }
             Some(handle) => {
                 let mut cycles: u64 = 0;
-                let query_result = unsafe { QueryThreadCycleTime(handle, &mut cycles) };
-                match query_result {
+                match unsafe { QueryThreadCycleTime(handle, &mut cycles) } {
                     Err(_) => {
                         let error_code = unsafe { GetLastError().0 };
                         apply_config_result.add_error(format!(
@@ -632,15 +627,14 @@ fn apply_io_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HAN
 fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) {
     if let Some(memory_priority_flag) = config.memory_priority.as_win_const() {
         let mut current_mem_prio = priority::MemoryPriorityInformation(0);
-        let query_result = unsafe {
+        match unsafe {
             GetProcessInformation(
                 h_prc,
                 ProcessMemoryPriority,
                 &mut current_mem_prio as *mut _ as *mut std::ffi::c_void,
                 size_of::<priority::MemoryPriorityInformation>() as u32,
             )
-        };
-        match query_result {
+        } {
             Err(_) => {
                 let err = unsafe { GetLastError().0 };
                 apply_config_result.add_error(format!(
@@ -656,15 +650,14 @@ fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc:
                         apply_config_result.add_change(format!("Memory Priority: -> {}", config.io_priority.as_str()));
                     } else {
                         let mem_prio_info = priority::MemoryPriorityInformation(memory_priority_flag.0);
-                        let set_result = unsafe {
+                        match unsafe {
                             SetProcessInformation(
                                 h_prc,
                                 ProcessMemoryPriority,
                                 &mem_prio_info as *const _ as *const std::ffi::c_void,
                                 size_of::<priority::MemoryPriorityInformation>() as u32,
                             )
-                        };
-                        match set_result {
+                        } {
                             Err(_) => {
                                 let error_code = unsafe { GetLastError().0 };
                                 apply_config_result.add_error(format!(
@@ -923,9 +916,6 @@ fn apply_ideal_processors(
             // Open thread if we don't have a handle
             if thread_stats.handle.is_none() {
                 match unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION | THREAD_SET_INFORMATION, false, *tid) } {
-                    Ok(handle) if !handle.is_invalid() => {
-                        thread_stats.handle = Some(handle);
-                    }
                     Err(_) => {
                         let error_code = unsafe { GetLastError().0 };
                         apply_config_result.add_error(format!(
@@ -936,6 +926,9 @@ fn apply_ideal_processors(
                             config.name
                         ));
                         continue;
+                    }
+                    Ok(handle) if !handle.is_invalid() => {
+                        thread_stats.handle = Some(handle);
                     }
                     _ => continue,
                 }
@@ -949,12 +942,6 @@ fn apply_ideal_processors(
                 // Get current ideal processor if not already stored
                 if !thread_stats.ideal_processor.is_assigned {
                     match get_thread_ideal_processor_ex(handle) {
-                        Ok(prev) => {
-                            thread_stats.ideal_processor.previous_group = prev.Group;
-                            thread_stats.ideal_processor.current_group = prev.Group;
-                            thread_stats.ideal_processor.previous_number = prev.Number;
-                            thread_stats.ideal_processor.current_number = prev.Number;
-                        }
                         Err(_) => {
                             let error_code = unsafe { GetLastError().0 };
                             apply_config_result.add_error(format!(
@@ -964,6 +951,12 @@ fn apply_ideal_processors(
                                 tid,
                                 config.name
                             ));
+                        }
+                        Ok(prev) => {
+                            thread_stats.ideal_processor.previous_group = prev.Group;
+                            thread_stats.ideal_processor.current_group = prev.Group;
+                            thread_stats.ideal_processor.previous_number = prev.Number;
+                            thread_stats.ideal_processor.current_number = prev.Number;
                         }
                     }
                 }
@@ -1385,6 +1378,13 @@ fn main() -> windows::core::Result<()> {
             // Check for blacklist reload
             if let Some(ref bf) = cli.blacklist_file_name {
                 match std::fs::metadata(bf) {
+                    Err(_) => {
+                        if last_blacklist_mod_time.is_some() {
+                            last_blacklist_mod_time = None;
+                            log!("Blacklist file '{}' no longer accessible, clearing blacklist.", bf);
+                            blacklist.clear();
+                        }
+                    }
                     Ok(metadata) => {
                         if let Ok(mod_time) = metadata.modified()
                             && Some(mod_time) != last_blacklist_mod_time
@@ -1393,13 +1393,6 @@ fn main() -> windows::core::Result<()> {
                             log!("Blacklist file '{}' changed, reloading...", bf);
                             blacklist = read_list(bf).unwrap_or_default();
                             log!("Blacklist reload complete: {} items loaded.", blacklist.len());
-                        }
-                    }
-                    Err(_) => {
-                        if last_blacklist_mod_time.is_some() {
-                            last_blacklist_mod_time = None;
-                            log!("Blacklist file '{}' no longer accessible, clearing blacklist.", bf);
-                            blacklist.clear();
                         }
                     }
                 }

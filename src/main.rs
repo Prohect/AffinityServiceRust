@@ -10,7 +10,9 @@ use chrono::Local;
 use cli::{CliArgs, parse_args, print_help, print_help_all};
 use config::{ProcessConfig, convert, cpu_indices_to_mask, format_cpu_indices, read_config, read_list};
 use encoding_rs::Encoding;
-use logging::{FAIL_SET, LOCALTIME_BUFFER, error_from_code, find_logger, log_message, log_process_find, log_pure_message, log_to_find, logger, use_console};
+use logging::{
+    DUST_BIN_MODE, FAIL_SET, LOCALTIME_BUFFER, error_from_code, find_logger, log_message, log_process_find, log_pure_message, log_to_find, logger, use_console,
+};
 use process::ProcessSnapshot;
 use scheduler::PrimeThreadScheduler;
 use std::{
@@ -1175,6 +1177,7 @@ fn main() -> windows::core::Result<()> {
         return Ok(());
     }
     let config_result = read_config(&cli.config_file_name);
+    *DUST_BIN_MODE.lock().unwrap() = cli.skip_log_before_elevation;
     config_result.print_report();
     if !config_result.errors.is_empty() {
         log!("Configuration file has errors, please fix them before running the service.");
@@ -1200,9 +1203,7 @@ fn main() -> windows::core::Result<()> {
     }
     if is_config_empty && is_blacklist_empty {
         if !cli.find_mode {
-            if cli.skip_log_before_elevation {
-                log!("not even a single config, existing");
-            }
+            log!("not even a single config, existing");
             return Ok(());
         }
     } else {
@@ -1219,6 +1220,7 @@ fn main() -> windows::core::Result<()> {
     } else {
         log!("SeIncreaseBasePriorityPrivilege disabled by -noIncBasePriority flag");
     }
+
     if cli.time_resolution != 0 {
         unsafe {
             let mut current_resolution = 0u32;
@@ -1234,9 +1236,8 @@ fn main() -> windows::core::Result<()> {
             };
         }
     }
-    if !cli.skip_log_before_elevation {
-        log!("Affinity Service started with time interval: {}", cli.interval_ms);
-    }
+    log!("Affinity Service started with time interval: {}", cli.interval_ms);
+
     if !is_running_as_admin() {
         if cli.no_uac {
             log!("Not running as administrator. UAC elevation disabled by -noUAC flag.");
@@ -1253,6 +1254,7 @@ fn main() -> windows::core::Result<()> {
             }
         }
     }
+    *DUST_BIN_MODE.lock().unwrap() = false;
     let mut prime_core_scheduler = PrimeThreadScheduler::new(config_result.constants);
     let mut current_loop = 0u32;
     let mut should_continue = true;

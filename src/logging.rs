@@ -24,6 +24,9 @@ pub static FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(Hash
 /// Whether to output to console instead of log files.
 static USE_CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
 
+/// Whether to eat all logs ovO.
+pub static DUST_BIN_MODE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
+
 /// Main log file handle.
 static LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path("")).unwrap()));
 
@@ -67,6 +70,9 @@ macro_rules! log {
 
 /// Logs a message with prefix added to either console or log file based on current mode.
 pub fn log_message(args: &str) {
+    if *DUST_BIN_MODE.lock().unwrap() {
+        return;
+    }
     let time_prefix = LOCALTIME_BUFFER.lock().unwrap().format("%H:%M:%S").to_string();
     if *use_console().lock().unwrap() {
         println!("[{}]{}", time_prefix, args);

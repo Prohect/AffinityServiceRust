@@ -714,7 +714,7 @@ fn reset_thread_ideal_processors(
     }
 
     if dry_run {
-        apply_config_result.add_change(format!("Reset Ideal Processors: {} threads based on CPU time/cycle", config.affinity_cpus.len()));
+        apply_config_result.add_change(format!("Reset Ideal Processors: {} threads based on CPU time", config.affinity_cpus.len()));
         return;
     }
 
@@ -785,7 +785,7 @@ fn reset_thread_ideal_processors(
         }
     }
 
-    apply_config_result.add_change(format!("reset ideal processor: {} threads reset successfully", counter_set_success));
+    apply_config_result.add_change(format!("reset ideal processor for {} threads", counter_set_success));
 
     // Close all thread handles
     for (_tid, _cpu_time, thread_handle) in thread_times {

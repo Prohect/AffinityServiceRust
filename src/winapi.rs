@@ -281,7 +281,7 @@ pub fn is_running_as_admin() -> bool {
 }
 
 /// Requests UAC elevation by relaunching the process with admin privileges.
-pub fn request_uac_elevation() -> io::Result<()> {
+pub fn request_uac_elevation(console: bool) -> io::Result<()> {
     let exe_path = env::current_exe()?;
     let mut args: Vec<String> = env::args().skip(1).collect();
     args.push("-skip_log_before_elevation".to_string());
@@ -297,6 +297,11 @@ pub fn request_uac_elevation() -> io::Result<()> {
     match cmd.spawn() {
         Ok(_) => {
             log!("UAC elevation request sent. Please approve the elevation prompt.");
+            if console {
+                log!(
+                    "Warning: process is running as non-administrator without 'noUAC' flag with 'console' flag, the log after elevation will not be shown in currerent session."
+                );
+            }
             std::process::exit(0);
         }
         Err(e) => {

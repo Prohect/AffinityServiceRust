@@ -277,7 +277,7 @@ fn apply_prime_threads(
                 && let Some(handle) = stats.handle.take()
             {
                 unsafe {
-                    let _ = windows::Win32::Foundation::CloseHandle(handle);
+                    let _ = CloseHandle(handle);
                 }
             }
         }
@@ -493,10 +493,11 @@ fn apply_prime_threads_promote(
                         current_prio.boost_one()
                     };
 
-                    if let Err(e) = unsafe { SetThreadPriority(handle, new_prio.to_thread_priority_struct()) } {
+                    if unsafe { SetThreadPriority(handle, new_prio.to_thread_priority_struct()) }.is_err() {
+                        let error_code = unsafe { GetLastError().0 };
                         apply_config_result.add_error(format!(
                             "apply_config: [SET_THREAD_PRIORITY][{}] {:>5}-{}-{}",
-                            error_from_code(e.code().0 as u32),
+                            error_from_code(error_code),
                             pid,
                             tid,
                             config.name
@@ -548,10 +549,11 @@ fn apply_prime_threads_demote(
 
                 // Restore priority
                 if thread_stats.original_priority.is_some() {
-                    if let Err(e) = unsafe { SetThreadPriority(handle, thread_stats.original_priority.as_mut().unwrap().to_thread_priority_struct()) } {
+                    if unsafe { SetThreadPriority(handle, thread_stats.original_priority.as_mut().unwrap().to_thread_priority_struct()) }.is_err() {
+                        let error_code = unsafe { GetLastError().0 };
                         apply_config_result.add_error(format!(
                             "apply_config: [RESTORE_THREAD_PRIORITY][{}] {:>5}-{}-{}",
-                            error_from_code(e.code().0 as u32),
+                            error_from_code(error_code),
                             pid,
                             tid,
                             config.name
@@ -661,10 +663,11 @@ fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc:
                             )
                         };
                         match set_result {
-                            Err(e) => {
+                            Err(_) => {
+                                let error_code = unsafe { GetLastError().0 };
                                 apply_config_result.add_error(format!(
-                                    "apply_config: [SET_MEMORY_PRIORITY][0x{:08X}] {:>5}-{} -> {}",
-                                    e.code().0 as u32,
+                                    "apply_config: [SET_MEMORY_PRIORITY][{}] {:>5}-{} -> {}",
+                                    error_from_code(error_code),
                                     pid,
                                     config.name,
                                     config.memory_priority.as_str()
@@ -732,40 +735,25 @@ fn reset_thread_ideal_processors(
     };
 
     // Get all threads with their total CPU time from the snapshot
-    let mut thread_times: Vec<(u32, i64, u64, HANDLE)> = Vec::new();
+    let mut thread_times: Vec<(u32, i64, HANDLE)> = Vec::new();
 
     // Get threads from the process snapshot
     for (tid, thread_info) in process.get_threads() {
         // Get total CPU time from SYSTEM_THREAD_INFORMATION (already available in snapshot)
         let total_time = unsafe { *thread_info.KernelTime.QuadPart() + *thread_info.UserTime.QuadPart() };
 
-        // Open thread handle to get cycle time for secondary sort key
+        // Open thread handle
         match unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION | THREAD_SET_INFORMATION, false, *tid) } {
-            Err(e) => {
-                let open_thread_error = error_from_code(e.code().0 as u32);
+            Err(_) => {
+                let error_code = unsafe { GetLastError().0 };
+                let open_thread_error = error_from_code(error_code);
                 apply_config_result.add_error(format!(
                     "reset_ideal_processor: [OPEN][{}] {:>5}-{} - OpenThread failed: {}",
                     open_thread_error, pid, tid, open_thread_error,
                 ));
-                // Continue processing other threads
             }
             Ok(thread_handle) => {
-                // Get cycle time for secondary sorting
-                let mut cycle_time = 0u64;
-                match unsafe { QueryThreadCycleTime(thread_handle, &mut cycle_time) } {
-                    Ok(()) => {
-                        thread_times.push((*tid, total_time, cycle_time, thread_handle));
-                    }
-                    Err(e) => {
-                        let cycle_time_error = error_from_code(e.code().0 as u32);
-                        apply_config_result.add_error(format!(
-                            "reset_ideal_processor: [QCYCLE][{}] {:>5}-{} - QueryThreadCycleTime failed",
-                            cycle_time_error, pid, tid
-                        ));
-                        // Close the thread handle on cycle time query failure
-                        let _ = unsafe { CloseHandle(thread_handle) };
-                    }
-                }
+                thread_times.push((*tid, total_time, thread_handle));
             }
         }
     }
@@ -775,15 +763,13 @@ fn reset_thread_ideal_processors(
     }
 
     // Sort by total CPU time descending, then by cycle time descending
-    thread_times.sort_by(|a, b| match b.1.cmp(&a.1) {
-        std::cmp::Ordering::Equal => b.2.cmp(&a.2),
-        other => other,
-    });
+    thread_times.sort_by(|a, b| b.1.cmp(&a.1));
 
     // Assign ideal processors round-robin across target CPUs
     let target_cpu_count = config.affinity_cpus.len();
     let random_shift = rand::random::<u8>();
-    for (i, (tid, _cpu_time, _cycles, thread_handle)) in thread_times.iter().enumerate() {
+    let mut counter_set_success = 0;
+    for (i, (tid, _cpu_time, thread_handle)) in thread_times.iter().enumerate() {
         let target_cpu_index = (i + random_shift as usize) % target_cpu_count;
         let target_cpu = config.affinity_cpus[target_cpu_index];
 
@@ -799,22 +785,17 @@ fn reset_thread_ideal_processors(
                 ));
             }
             Ok(_) => {
-                apply_config_result.add_change(format!("Thread {} -> ideal CPU {}", tid, target_cpu));
+                counter_set_success += 1;
             }
         }
     }
 
+    apply_config_result.add_change(format!("reset ideal processor: {} threads reset successfully", counter_set_success));
+
     // Close all thread handles
-    for (_tid, _cpu_time, _cycles, thread_handle) in thread_times {
-        if let Err(e) = unsafe { CloseHandle(thread_handle) } {
-            let close_error = error_from_code(e.code().0 as u32);
-            apply_config_result.add_error(format!(
-                "reset_ideal_processor: [CLOSE][{}] {:>5}-{} - CloseHandle failed: {}",
-                close_error,
-                pid,
-                0, // tid not available here as we iterate over tuples
-                close_error,
-            ));
+    for (_tid, _cpu_time, thread_handle) in thread_times {
+        unsafe {
+            let _ = CloseHandle(thread_handle);
         }
     }
 }
@@ -943,10 +924,11 @@ fn apply_ideal_processors(
                     Ok(handle) if !handle.is_invalid() => {
                         thread_stats.handle = Some(handle);
                     }
-                    Err(e) => {
+                    Err(_) => {
+                        let error_code = unsafe { GetLastError().0 };
                         apply_config_result.add_error(format!(
                             "apply_ideal_processor: [OPEN_THREAD][{}] {:>5}-{}-{}",
-                            error_from_code(e.code().0 as u32),
+                            error_from_code(error_code),
                             pid,
                             tid,
                             config.name
@@ -971,10 +953,11 @@ fn apply_ideal_processors(
                             thread_stats.ideal_processor.previous_number = prev.Number;
                             thread_stats.ideal_processor.current_number = prev.Number;
                         }
-                        Err(e) => {
+                        Err(_) => {
+                            let error_code = unsafe { GetLastError().0 };
                             apply_config_result.add_error(format!(
                                 "apply_ideal_processor: [GET_IDEAL][{}] {:>5}-{}-{}",
-                                error_from_code(e.code().0 as u32),
+                                error_from_code(error_code),
                                 pid,
                                 tid,
                                 config.name
@@ -1260,7 +1243,7 @@ fn main() -> windows::core::Result<()> {
             log!("Warning: May not be able to manage all processes without admin privileges.");
         } else {
             log!("Not running as administrator. Requesting UAC elevation...");
-            match request_uac_elevation() {
+            match request_uac_elevation(*use_console().lock().unwrap()) {
                 Ok(_) => {
                     log!("Running with administrator privileges.");
                 }

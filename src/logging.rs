@@ -61,7 +61,7 @@ fn get_log_path(suffix: &str) -> PathBuf {
 #[macro_export]
 macro_rules! log {
     ($($arg:tt)*) => {
-        $crate::logging::log_message(format!($($arg)*).as_str());
+        $crate::logging::log_message(format!($($arg)*).as_str())
     };
 }
 

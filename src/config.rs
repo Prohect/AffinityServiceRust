@@ -945,11 +945,7 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
 
     // Prepend config help with # comment prefix
     for help_line in get_config_help_lines() {
-        if help_line.is_empty() {
-            output_lines.push("#".to_string());
-        } else {
-            output_lines.push(format!("# {}", help_line));
-        }
+        output_lines.push(help_line.to_string());
     }
     output_lines.push(String::new());
     output_lines.push("# Converted from Process Lasso config".to_string());

@@ -162,131 +162,109 @@ pub fn print_help() {
 /// Returns configuration help lines (for embedding in converted files).
 pub fn get_config_help_lines() -> Vec<&'static str> {
     vec![
-        "============================================================================",
-        "AffinityServiceRust Configuration Format",
-        "============================================================================",
-        "",
-        "Config file format: process_name:priority:affinity:cpuset:prime[@prefixes]:io_priority:memory_priority:grade",
-        "",
-        "  prime[@prefixes] supports per-module CPU overrides:",
-        "    prime_cpus@module1*alias1;module2*alias2",
-        "",
-        "  grade: Rule application frequency (default: 1). Rule runs every Nth loop.",
-        "",
-        "----------------------------------------------------------------------------",
-        "PRIORITY OPTIONS",
-        "----------------------------------------------------------------------------",
-        "  priority:        none, idle, below normal, normal, above normal, high, real time",
-        "  io_priority:     none, very low, low, normal, high (high requires admin)",
-        "  memory_priority: none, very low, low, medium, below normal, normal",
-        "",
-        "  Use 'none' to skip setting that attribute (keep Windows default).",
-        "",
-        "----------------------------------------------------------------------------",
-        "CPU SPECIFICATION FORMATS",
-        "----------------------------------------------------------------------------",
-        "  0              - no change",
-        "  0xFF           - hex mask (legacy, ≤64 cores)",
-        "  0-7            - CPU range",
-        "  0-7;64-71      - multiple ranges (for >64 cores)",
-        "  0;4;8;64       - individual CPUs",
-        "  *alias_name    - use predefined alias",
-        "",
-        "  NOTE: \"7\" means core 7, NOT a bitmask for cores 0-2.",
-        "        Use \"0x7\" or \"0-2\" if you want cores 0, 1, and 2.",
-        "",
-        "----------------------------------------------------------------------------",
-        "CPU ALIASES (supports >64 cores)",
-        "----------------------------------------------------------------------------",
-        "  Define reusable CPU specs with: *alias_name = spec",
-        "  Examples:",
-        "    *pcore = 0-7;64-71      # P-cores in both CPU groups",
-        "    *ecore = 8-15;72-79     # E-cores in both CPU groups",
-        "    *allcores = 0-127       # All 128 cores",
-        "    *legacy = 0xFF          # Old hex mask still works",
-        "  Then use: game.exe:high:*pcore:0:*pcore:normal:normal",
-        "",
-        "----------------------------------------------------------------------------",
-        "PROCESS GROUPS",
-        "----------------------------------------------------------------------------",
-        "  Group multiple processes with the same rule using { } syntax:",
-        "",
-        "  # Named group (multi-line)",
-        "  group_name {",
-        "      process1.exe: process2.exe",
-        "      # Comments allowed inside",
-        "      process3.exe",
-        "  }:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority",
-        "",
-        "  # Named group (single-line)",
-        "  browsers { chrome.exe: firefox.exe }:normal:*e:0:0:low:none",
-        "",
-        "  # Prime with per-module CPU assignment",
-        "  cs2.exe:high:*pcore:0:*pcore@cs2.exe*p;nvidia.dll*e:high:none",
-        "",
-        "  # Anonymous group (no name)",
-        "  { notepad.exe: calc.exe }:none:*e:0:0:low:none",
-        "",
-        "----------------------------------------------------------------------------",
-        "RULE GRADES (Rule Application Frequency)",
-        "----------------------------------------------------------------------------",
-        "  The grade field controls how often a rule is applied:",
-        "    1 (default) - Apply every loop (every interval)",
-        "    2           - Apply every 2nd loop (50% frequency)",
-        "    5           - Apply every 5th loop (20% frequency)",
-        "    N           - Apply every Nth loop",
-        "",
-        "  Examples:",
-        "    # Apply every loop (default)",
-        "    game.exe:high:*pcore:0:*pcore:normal:normal:1",
-        "",
-        "    # Apply every 3rd loop (for less critical processes)",
-        "    background.exe:normal:*ecore:0:0:low:none:3",
-        "",
-        "    # Apply every 10th loop (minimal monitoring)",
-        "    updater.exe:normal:0:0:0:normal:none:10",
-        "",
-        "----------------------------------------------------------------------------",
-        "SCHEDULER CONSTANTS (for Prime Thread Scheduling)",
-        "----------------------------------------------------------------------------",
-        "  @MIN_ACTIVE_STREAK = 2      # consecutive active intervals before promotion",
-        "  @KEEP_THRESHOLD    = 0.69   # keep prime when above this * highest cycles",
-        "  @ENTRY_THRESHOLD   = 0.42   # become prime when above this * highest cycles",
-        "",
-        "----------------------------------------------------------------------------",
-        "PRIME THREAD SCHEDULING",
-        "----------------------------------------------------------------------------",
-        "  For processes with prime_cpus configured, the scheduler:",
-        "  - Monitors thread CPU cycles and promotes active threads to prime cores",
-        "  - Optionally filters threads by start module name using prefix patterns",
-        "    Syntax: prime_cpus@prefix1;prefix2 (default: empty matches all modules)",
-        "  - Logs promoted/demoted threads with start address module resolution",
-        "    e.g., \"11184-1234-game.exe -> (promoted, [2-7], cycles=123456, start=ntdll.dll+0x3C320)\"",
-        "",
-        "  NOTE: Thread start address resolution (module+offset) requires:",
-        "    - Admin elevation (UAC)",
-        "    - SeDebugPrivilege enabled",
-        "  Without elevation, start addresses show as 0x0.",
-        "  Uses psapi GetMappedFileName - no symbol server or internet access needed.",
-        "",
-        "----------------------------------------------------------------------------",
-        "MULTI-CPU GROUP SUPPORT",
-        "----------------------------------------------------------------------------",
-        "  - Systems with >64 logical processors use multiple CPU groups",
-        "  - Use range syntax (0-7;64-71) instead of hex masks for >64 cores",
-        "  - CPU Set APIs are used automatically for full multi-group support",
-        "  - Legacy hex masks (0xFF) still work for ≤64 core systems",
-        "",
-        "----------------------------------------------------------------------------",
-        "LIMITATIONS & NOTES",
-        "----------------------------------------------------------------------------",
-        "  - Admin privileges needed for managing system processes",
-        "  - SetProcessAffinityMask only works within one CPU group (≤64 cores)",
-        "  - For >64 cores, use CPU Set features (cpuset column) instead of affinity",
-        "  - IO priority 'high' requires admin elevation",
-        "  - IO priority 'critical' is kernel-only and not available from user mode",
-        "",
-        "============================================================================",
+        r#"## ============================================================================
+        ## AffinityServiceRust Configuration File
+        ## ============================================================================
+        ##
+        ## This config file defines CPU affinity: priority: and scheduling rules for
+        ## Windows processes. Customize the aliases below to match YOUR CPU topology.
+        ##
+        ## Logs are stored in logs/ directory by default for -processlogs mode.
+        ##
+        ## ----------------------------------------------------------------------------
+        ## TERMINOLOGY
+        ## ----------------------------------------------------------------------------
+        ##   P-core  = Performance core (Intel hybrid CPUs)
+        ##   E-core  = Efficiency core (Intel hybrid CPUs)
+        ##   p       = P-core with HyperThreading OFF (1 thread per core)
+        ##   pp      = P-core with HyperThreading ON (2 threads per core)
+        ##   e       = E-core (always 1 thread per core)
+        ##
+        ## Example: Intel i7-14700KF with HT off = 8p + 12e = 20 logical processors
+        ##
+        ## ----------------------------------------------------------------------------
+        ## CONFIG FORMAT
+        ## ----------------------------------------------------------------------------
+        ##   process_name:priority:affinity:cpuset:prime_cpus[@startModuleName1;startModuleName2]:io_priority:memory_priority:grade
+        ##
+        ##   Field descriptions:
+        ##     process_name     - Executable name (e.g.: game.exe)
+        ##     priority         - Process priority class
+        ##     affinity         - Hard CPU affinity mask (inherited by child processes)
+        ##     cpuset           - Soft CPU preference via Windows CPU Sets
+        ##     prime_cpus       - CPUs for prime thread scheduling (CPU-intensive threads). Optionally @prefix1;prefix2 to match start module names (default empty)
+        ##     io_priority      - I/O priority level
+        ##     memory_priority  - Memory page priority
+        ##     ideal_processor  - Ideal CPU assignment based on thread start module. Format: *cpu_spec[@prefix1;prefix2] (default: 0)
+        ##     grade            - Rule application frequency (default: 1). Rule runs every Nth loop
+        ##
+        ## ----------------------------------------------------------------------------
+        ## CPU SPECIFICATION FORMATS
+        ## ----------------------------------------------------------------------------
+        ##   0           - Don't modify (keep current setting)
+        ##   0-7         - CPU range: cores 0 through 7 (RECOMMENDED)
+        ##   0;4;8       - Individual CPUs: cores 0: 4: and 8
+        ##   0-7;64-71   - Multiple ranges: for >64 core systems
+        ##   7           - Single CPU: core 7 only (NOT a bitmask!)
+        ##   0xFF        - Hex bitmask: legacy format: ≤64 cores only
+        ##   *alias      - Use predefined alias (e.g.: *pcore: *ecore)
+        ##
+        ##   NOTE: "7" means core 7: NOT a bitmask for cores 0-2.
+        ##         Use "0x7" or "0-2" if you want cores 0: 1: and 2.
+        ##
+        ## ----------------------------------------------------------------------------
+        ## PRIORITY LEVELS
+        ## ----------------------------------------------------------------------------
+        ##   priority:        none: idle: below normal: normal: above normal: high: real time
+        ##   io_priority:     none: very low: low: normal: high (high requires admin)
+        ##   memory_priority: none: very low: low: medium: below normal: normal
+        ##
+        ##   Use "none" to skip setting that attribute (keep Windows default).
+        ##
+        ## ----------------------------------------------------------------------------
+        ## IDEAL PROCESSOR SYNTAX
+        ## ----------------------------------------------------------------------------
+        ##   Specifies preferred CPU for threads based on their start module.
+        ##   The scheduler assigns ideal CPUs to top N threads by total CPU time
+        ##   (where N = number of CPUs specified). Falls back to previous ideal CPU
+        ##   when thread drops out of top N.
+        ##
+        ##   Format: *alias[@prefix1;prefix2;...]
+        ##
+        ##   Components:
+        ##     *            - Required prefix marker for each rule
+        ##     alias        - CPU alias name (e.g., pN01, e, 4567 - must be defined in ALIAS section)
+        ##     @prefix      - Optional module prefix filter (e.g., engine.dll;render.dll)
+        ##
+        ##   Multi-segment (different CPUs for different modules):
+        ##     *p@engine.dll*e@helper.dll  - Alias *p for engine, *e for helper
+        ##
+        ##   Examples:
+        ##     *pN01@cs2.exe;nvwgf2umx.dll  - Use alias *pN01 for CS2/nvidia threads
+        ##     *pN01                        - Use alias *pN01 for all threads
+        ##     *p@worker*e@background      - Alias *p for worker, *e for background
+        ##
+        ## ----------------------------------------------------------------------------
+        ## PROCESS GROUPS
+        ## ----------------------------------------------------------------------------
+        ##   Group multiple processes with the same rule using { } syntax.
+        ##   Group name is optional (for documentation/debugging only):
+        ##
+        ##   # Named group (multi-line)
+        ##   group_name {
+        ##       process1.exe: process2.exe
+        ##       # Comments allowed inside
+        ##       process3.exe
+        ##   }:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority:ideal_processor:grade
+        ##
+        ##   # Named group (single-line)
+        ##   browsers { chrome.exe: firefox.exe }:normal:*e:0:0:low:none:0:1
+        ##
+        ##   # Anonymous group (no name)
+        ##   { notepad.exe: calc.exe }:none:*e:0:0:low:none:0:1
+        ##
+        ## ============================================================================
+"#,
     ]
 }
 

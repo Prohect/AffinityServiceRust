@@ -1177,6 +1177,7 @@ fn main() -> windows::core::Result<()> {
         return Ok(());
     }
     let config_result = read_config(&cli.config_file_name);
+    // avoid redundant log output after elevation, which starts a new process of this service
     *DUST_BIN_MODE.lock().unwrap() = cli.skip_log_before_elevation;
     config_result.print_report();
     if !config_result.errors.is_empty() {

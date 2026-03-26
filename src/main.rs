@@ -788,11 +788,14 @@ fn reset_thread_ideal_processors(
         let target_cpu = config.affinity_cpus[target_cpu_index];
 
         match set_thread_ideal_processor_ex(*thread_handle, 0, target_cpu as u8) {
-            Err(e) => {
-                let ideal_processor_error = error_from_code(e.code().0 as u32);
+            Err(_) => {
+                let error_code = unsafe { GetLastError().0 };
                 apply_config_result.add_error(format!(
-                    "reset_ideal_processor: [SET_IDEAL][{}] {:>5}-{} - SetThreadIdealProcessorEx failed",
-                    ideal_processor_error, pid, tid
+                    "reset_ideal_processor: [SET_IDEAL][{}] {:>5}-{}-{} - SetThreadIdealProcessorEx failed",
+                    error_from_code(error_code),
+                    pid,
+                    tid,
+                    config.name
                 ));
             }
             Ok(_) => {
@@ -987,21 +990,22 @@ fn apply_ideal_processors(
                 // Only set if different from current
                 if !thread_stats.ideal_processor.is_assigned || thread_stats.ideal_processor.current_number != target_number {
                     match set_thread_ideal_processor_ex(handle, target_group, target_number) {
+                        Err(_) => {
+                            let error_code = unsafe { GetLastError().0 };
+                            apply_config_result.add_error(format!(
+                                "apply_ideal_processor: [SET_IDEAL][{}] {:>5}-{}-{}",
+                                error_from_code(error_code),
+                                pid,
+                                tid,
+                                config.name
+                            ));
+                        }
                         Ok(_) => {
                             thread_stats.ideal_processor.current_group = target_group;
                             thread_stats.ideal_processor.current_number = target_number;
                             thread_stats.ideal_processor.is_assigned = true;
 
                             apply_config_result.add_change(format!("Thread {} -> ideal CPU {} (group {})", tid, target_number, target_group));
-                        }
-                        Err(e) => {
-                            apply_config_result.add_error(format!(
-                                "apply_ideal_processor: [SET_IDEAL][{}] {:>5}-{}-{}",
-                                error_from_code(e.code().0 as u32),
-                                pid,
-                                tid,
-                                config.name
-                            ));
                         }
                     }
                 }
@@ -1020,19 +1024,20 @@ fn apply_ideal_processors(
                     let prev_number = thread_stats.ideal_processor.previous_number;
 
                     match set_thread_ideal_processor_ex(handle, prev_group, prev_number) {
-                        Ok(_) => {
-                            apply_config_result.add_change(format!("Thread {} -> restored ideal CPU {} (group {})", tid, prev_number, prev_group));
-                            thread_stats.ideal_processor.current_group = prev_group;
-                            thread_stats.ideal_processor.current_number = prev_number;
-                        }
-                        Err(e) => {
+                        Err(_) => {
+                            let error_code = unsafe { GetLastError().0 };
                             apply_config_result.add_error(format!(
                                 "apply_ideal_processor: [RESTORE_IDEAL][{}] {:>5}-{}-{}",
-                                error_from_code(e.code().0 as u32),
+                                error_from_code(error_code),
                                 pid,
                                 tid,
                                 config.name
                             ));
+                        }
+                        Ok(_) => {
+                            apply_config_result.add_change(format!("Thread {} -> restored ideal CPU {} (group {})", tid, prev_number, prev_group));
+                            thread_stats.ideal_processor.current_group = prev_group;
+                            thread_stats.ideal_processor.current_number = prev_number;
                         }
                     }
                 }

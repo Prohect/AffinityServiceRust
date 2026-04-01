@@ -187,6 +187,8 @@ pub struct ThreadStats {
     pub last_total_time: i64,
     /// CPU cycles from last snapshot, used for accurate activity measurement.
     pub last_cycles: u64,
+    /// CPU cycles from last ideal-processor query, used to compute delta for sorting.
+    pub last_ideal_cycles: u64,
     /// Cached thread handle to avoid repeated OpenThread calls.
     pub handle: Option<HANDLE>,
     /// Current CPU set IDs assigned to this thread. Empty = not pinned (inherits from process).
@@ -207,6 +209,7 @@ impl ThreadStats {
         Self {
             last_total_time: 0,
             last_cycles: 0,
+            last_ideal_cycles: 0,
             handle: None,
             cpu_set_ids: vec![],
             active_streak: 0,

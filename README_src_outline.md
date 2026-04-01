@@ -40,7 +40,7 @@
     apply_config_result: &mut ApplyConfigResult,
 ) 
 - [L355:L395]fn apply_prime_threads_update_streaks(tid_with_delta_cycles: &mut [(u32, u64, bool)], prime_core_scheduler: &mut PrimeThreadScheduler, pid: u32, prime_count: usize) 
-- [L397:L498]fn apply_prime_threads_promote(
+- [L397:L500]fn apply_prime_threads_promote(
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
     pid: u32,
@@ -48,7 +48,7 @@
     current_mask: &mut usize,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L500:L547]fn apply_prime_threads_demote(
+- [L502:L549]fn apply_prime_threads_demote(
     process: &mut crate::process::ProcessEntry,
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
@@ -56,9 +56,9 @@
     config: &ProcessConfig,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L549:L607]fn apply_io_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
-- [L609:L666]fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
-- [L668:L778]fn reset_thread_ideal_processors(
+- [L551:L609]fn apply_io_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
+- [L611:L668]fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_prc: HANDLE, apply_config_result: &mut ApplyConfigResult) 
+- [L670:L780]fn reset_thread_ideal_processors(
     pid: u32,
     config: &ProcessConfig,
     dry_run: bool,
@@ -66,7 +66,7 @@
     apply_config_result: &mut ApplyConfigResult,
     processes: &mut Option<&mut ProcessSnapshot>,
 ) 
-- [L780:L1037]fn apply_ideal_processors(
+- [L782:L1085]fn apply_ideal_processors(
     pid: u32,
     config: &ProcessConfig,
     processes: &mut Option<&mut ProcessSnapshot>,
@@ -265,9 +265,10 @@
     pub previous_number: u8,
     pub is_assigned: bool,
 }
-- [L184:L203]struct ThreadStats {
+- [L184:L205]struct ThreadStats {
     pub last_total_time: i64,
     pub last_cycles: u64,
+    pub last_ideal_cycles: u64,
     pub handle: Option<HANDLE>,
     pub cpu_set_ids: Vec<u32>,
     pub active_streak: u8,
@@ -276,8 +277,8 @@
     pub last_system_thread_info: Option<ntapi::ntexapi::SYSTEM_THREAD_INFORMATION>,
     pub ideal_processor: IdealProcessorState,
 }
-- [L226:L230]fn format_100ns(time: i64) -> String 
-- [L232:L239]fn format_filetime(time: i64) -> String 
+- [L229:L233]fn format_100ns(time: i64) -> String 
+- [L235:L242]fn format_filetime(time: i64) -> String 
 
 ## src/winapi.rs
 - [L58:L63]struct CpuSetData {

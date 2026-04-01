@@ -472,24 +472,26 @@ pub fn apply_prime_threads_promote(
                         current_prio.boost_one()
                     };
 
-                    if unsafe { SetThreadPriority(handle, new_prio.to_thread_priority_struct()) }.is_err() {
-                        let error_code = unsafe { GetLastError().0 };
-                        apply_config_result.add_error(format!(
-                            "apply_config: [SET_THREAD_PRIORITY][{}] {:>5}-{}-{}",
-                            error_from_code(error_code),
-                            pid,
-                            tid,
-                            config.name
-                        ));
-                    } else {
-                        let old_name = current_prio.as_str();
-                        let new_name = new_prio.as_str();
-                        let action = if effective_thread_priority != crate::priority::ThreadPriority::None {
-                            "priority set"
+                    if new_prio != current_prio {
+                        if unsafe { SetThreadPriority(handle, new_prio.to_thread_priority_struct()) }.is_err() {
+                            let error_code = unsafe { GetLastError().0 };
+                            apply_config_result.add_error(format!(
+                                "apply_config: [SET_THREAD_PRIORITY][{}] {:>5}-{}-{}",
+                                error_from_code(error_code),
+                                pid,
+                                tid,
+                                config.name
+                            ));
                         } else {
-                            "priority boosted"
-                        };
-                        apply_config_result.add_change(format!("Thread {} -> ({}: {} -> {})", tid, action, old_name, new_name));
+                            let old_name = current_prio.as_str();
+                            let new_name = new_prio.as_str();
+                            let action = if effective_thread_priority != crate::priority::ThreadPriority::None {
+                                "priority set"
+                            } else {
+                                "priority boosted"
+                            };
+                            apply_config_result.add_change(format!("Thread {} -> ({}: {} -> {})", tid, action, old_name, new_name));
+                        }
                     }
                 }
             }
@@ -780,10 +782,14 @@ pub fn reset_thread_ideal_processors(
 /// Applies ideal processor assignments to threads based on configuration rules.
 ///
 /// For each ideal processor rule:
-/// 1. Find threads whose start module matches the rule's prefixes
-/// 2. Sort matching threads by total CPU time (descending)
-/// 3. Assign ideal processors from the rule's CPU list to top N threads
-/// 4. Store previous ideal processor for restoration when thread falls out of top N
+/// 1. Pre-collect handles, start addresses, and cycle deltas for all threads (once, before rule loop).
+///    `delta_cycles` = `QueryThreadCycleTime` − `ThreadStats::last_ideal_cycles` so the sort
+///    reflects actual CPU activity since the last query rather than cumulative lifetime totals.
+/// 2. Find threads whose start module matches the rule's prefixes
+/// 3. Sort matching threads by delta_cycles (descending)
+/// 4. Assign ideal processors from the rule's CPU list to top N threads;
+///    log each assignment with `start=module+offset` (e.g. `start=cs2.exe+0xEA60`)
+/// 5. Store previous ideal processor for restoration when thread falls out of top N
 pub fn apply_ideal_processors(
     pid: u32,
     config: &ProcessConfig,
@@ -825,51 +831,90 @@ pub fn apply_ideal_processors(
         None => return,
     };
 
-    // Get all threads with their total CPU time
-    let mut thread_times: Vec<(u32, i64)> = Vec::new();
-    for (tid, thread_info) in process.get_threads() {
-        let total_time = unsafe { *thread_info.KernelTime.QuadPart() + *thread_info.UserTime.QuadPart() };
-        thread_times.push((*tid, total_time));
+    // Phase 1: Pre-collect (tid, delta_cycles, start_addr, start_module) for every thread once,
+    // before the rule loop.  Handles are opened/cached here and reused below.
+    // delta_cycles is derived from ThreadStats::last_ideal_cycles so the sort reflects
+    // actual CPU usage since the last query rather than cumulative lifetime totals.
+    let tids: Vec<u32> = process.get_threads().keys().copied().collect();
+    let mut all_threads: Vec<(u32, u64, usize, String)> = Vec::new();
+    for &tid in &tids {
+        // Open thread handle if not yet cached.
+        {
+            let ts = prime_scheduler.get_thread_stats(pid, tid);
+            if ts.handle.is_none() {
+                match unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION | THREAD_SET_INFORMATION, false, tid) } {
+                    Ok(h) if !h.is_invalid() => {
+                        ts.handle = Some(h);
+                    }
+                    Err(_) => {
+                        let error_code = unsafe { GetLastError().0 };
+                        apply_config_result.add_error(format!(
+                            "apply_ideal_processor: [OPEN_THREAD][{}] {:>5}-{}-{}",
+                            error_from_code(error_code),
+                            pid,
+                            tid,
+                            config.name
+                        ));
+                        continue;
+                    }
+                    _ => continue,
+                }
+            }
+        }
+
+        let handle = {
+            let ts = prime_scheduler.get_thread_stats(pid, tid);
+            match ts.handle {
+                Some(h) if !h.is_invalid() => h,
+                _ => continue,
+            }
+        };
+
+        // Populate start address if not yet cached.
+        {
+            let ts = prime_scheduler.get_thread_stats(pid, tid);
+            if ts.start_address == 0 {
+                ts.start_address = get_thread_start_address(handle);
+            }
+        }
+
+        let start_addr = prime_scheduler.get_thread_stats(pid, tid).start_address;
+        let start_module = resolve_address_to_module(pid, start_addr);
+
+        // Query cycles and compute delta against the last ideal-processor query.
+        let mut current_cycles: u64 = 0;
+        let delta_cycles = match unsafe { QueryThreadCycleTime(handle, &mut current_cycles) } {
+            Ok(_) => {
+                let ts = prime_scheduler.get_thread_stats(pid, tid);
+                let delta = current_cycles.saturating_sub(ts.last_ideal_cycles);
+                ts.last_ideal_cycles = current_cycles;
+                delta
+            }
+            Err(_) => {
+                let error_code = unsafe { GetLastError().0 };
+                apply_config_result.add_error(format!(
+                    "apply_ideal_processor: [QUERY_CYCLES][{}] {:>5}-{}-{}",
+                    error_from_code(error_code),
+                    pid,
+                    tid,
+                    config.name
+                ));
+                0u64
+            }
+        };
+
+        all_threads.push((tid, delta_cycles, start_addr, start_module));
     }
 
-    // Process each ideal processor rule
+    // Phase 2: Process each ideal processor rule using the pre-collected cycle deltas.
     for rule in &config.ideal_processor_rules {
         if rule.cpus.is_empty() {
             continue;
         }
 
-        // First pass: collect thread info without holding mutable borrows
-        let mut thread_infos: Vec<(u32, i64, usize, String)> = Vec::new();
-        for (tid, total_time) in &thread_times {
-            // Get start address from scheduler or resolve it
-            let (start_addr, start_module) = {
-                let thread_stats = prime_scheduler.get_thread_stats(pid, *tid);
-
-                if thread_stats.start_address == 0 {
-                    // Need to open thread to get start address
-                    if thread_stats.handle.is_none() {
-                        match unsafe { OpenThread(THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION | THREAD_SET_INFORMATION, false, *tid) } {
-                            Ok(handle) if !handle.is_invalid() => {
-                                let addr = get_thread_start_address(handle);
-                                // Store handle for later use
-                                prime_scheduler.get_thread_stats(pid, *tid).handle = Some(handle);
-                                let module = resolve_address_to_module(pid, addr);
-                                (addr, module)
-                            }
-                            _ => (0, String::new()),
-                        }
-                    } else {
-                        let addr = thread_stats.start_address;
-                        let module = resolve_address_to_module(pid, addr);
-                        (addr, module)
-                    }
-                } else {
-                    let addr = thread_stats.start_address;
-                    let module = resolve_address_to_module(pid, addr);
-                    (addr, module)
-                }
-            };
-
+        // Filter threads matching this rule's prefixes, keyed on delta_cycles.
+        let mut thread_infos: Vec<(u32, u64, usize, String)> = Vec::new();
+        for &(tid, delta_cycles, start_addr, ref start_module) in &all_threads {
             // Check if module matches any prefix
             let matches = if rule.prefixes.is_empty() {
                 true // No prefixes = match all
@@ -879,11 +924,11 @@ pub fn apply_ideal_processors(
             };
 
             if matches {
-                thread_infos.push((*tid, *total_time, start_addr, start_module));
+                thread_infos.push((tid, delta_cycles, start_addr, start_module.clone()));
             }
         }
 
-        // Sort by total CPU time descending
+        // Sort by delta_cycles descending (CPU usage since last query).
         thread_infos.sort_by(|a, b| b.1.cmp(&a.1));
 
         // Take top N threads where N = number of CPUs in the rule
@@ -917,7 +962,7 @@ pub fn apply_ideal_processors(
         let mut free_pool = rule.cpus.iter().copied().filter(|c| !claimed.contains(c));
 
         // Pass 2 — assign free-pool CPUs to threads that are not yet stable.
-        for (tid, _, _, _) in top_threads.iter() {
+        for (tid, _, _, start_module) in top_threads.iter() {
             if stable_tids.contains(tid) {
                 continue; // Already on a valid unique CPU inside rule.cpus — leave untouched.
             }
@@ -995,7 +1040,10 @@ pub fn apply_ideal_processors(
                         thread_stats.ideal_processor.current_group = target_group;
                         thread_stats.ideal_processor.current_number = target_number;
                         thread_stats.ideal_processor.is_assigned = true;
-                        apply_config_result.add_change(format!("Thread {} -> ideal CPU {} (group {})", tid, target_number, target_group));
+                        apply_config_result.add_change(format!(
+                            "Thread {} -> ideal CPU {} (group {}) start={}",
+                            tid, target_number, target_group, start_module
+                        ));
                     }
                 }
             }

@@ -46,7 +46,7 @@ AffinityServiceRust.exe -helpall
 | **CPU Affinity** | Legacy mask-based affinity (≤64 cores, SetProcessAffinityMask) |
 | **CPU Sets** | Modern soft CPU preferences (unlimited cores, SetProcessDefaultCpuSets) |
 | **Prime Thread Scheduling** | Dynamic thread-to-core assignment using hysteresis-based algorithm |
-| **Ideal Processor Assignment** | Static ideal-processor for top N threads by total CPU time |
+| **Ideal Processor Assignment** | Hysteresis-based ideal-processor assignment using the same algorithm and constants (`MIN_ACTIVE_STREAK`, `ENTRY_THRESHOLD`, `KEEP_THRESHOLD`) as Prime Thread Scheduling |
 | **I/O Priority** | VeryLow, Low, Normal, High (requires admin for High) |
 | **Memory Priority** | VeryLow, Low, Medium, BelowNormal, Normal |
 | **Timer Resolution** | Configure system timer resolution for tighter loops |
@@ -78,19 +78,21 @@ When a tracked process exits, detailed statistics are logged for top N threads:
 
 ### Ideal Processor Assignment
 
-An optional `ideal` specification can be added to rules to request static ideal-processor assignments for the busiest threads. This uses CPU aliases and optional per-rule module filtering:
+An optional `ideal` specification assigns preferred processors to the most CPU-active threads, using the **same hysteresis-based filter** as prime thread scheduling.
 
-- Threads are ranked by total CPU time (kernel + user)
-- Top N threads (where N = number of CPUs in the alias) receive ideal processor assignment
-- Multi-rule syntax allows different CPU sets for different modules
-- Threads that fall out of top N have their ideal processor restored
+**Algorithm:**
+- Per-iteration cycle data is provided by the shared `prefetch_all_thread_cycles` pass (one `QueryThreadCycleTime` per thread, capped at the logical-CPU count)
+- Applies `MIN_ACTIVE_STREAK`, `ENTRY_THRESHOLD`, and `KEEP_THRESHOLD` constants — identical to prime thread scheduling:
+  - **Pass 1 (keep)**: threads already assigned and still above `KEEP_THRESHOLD` retain their slot with **zero write syscalls**
+  - **Pass 2 (promote)**: new candidates above `ENTRY_THRESHOLD` whose streak counter has reached `MIN_ACTIVE_STREAK` receive a slot
+- Lazy set: if a newly-selected thread's current ideal processor is already in the free CPU pool, `SetThreadIdealProcessorEx` is skipped — the slot is claimed in-place
+- Demotion: threads that fall out of selection have their original ideal processor restored
+- Each assignment log line includes `start=module+offset` (e.g. `start=cs2.exe+0xEA60`)
+- Multi-rule syntax allows different CPU sets for different module prefixes
 
 Note about affinity changes and ideal processor resetting:
 - When a process's CPU affinity is changed by the service, AffinityServiceRust will proactively reset per-thread ideal processor assignments for that process. This prevents the Windows kernel from clamping many threads toward a narrow CPU range after an affinity change.
-- The reset logic:
-  - Collects threads' total CPU time and per-thread cycle counts,
-  - Sorts threads primarily by total CPU time (descending) and secondarily by cycle count,
-  - Assigns ideal processors round-robin across the configured affinity CPUs with a small random shift to avoid clumping.
+- The reset logic collects threads' total CPU time and cycle counts, sorts by total CPU time (descending) with cycle count as secondary key, then assigns ideal processors round-robin across the configured affinity CPUs with a small random shift to avoid clumping.
 - This behavior runs automatically when affinity is applied and does not require additional configuration.
 
 ## Configuration
@@ -221,6 +223,7 @@ Configure prime thread scheduler behavior:
 @ENTRY_THRESHOLD = 0.42   # Fraction of max cycles to become candidate (default: 0.42)
 @KEEP_THRESHOLD = 0.69    # Fraction of max cycles to stay prime (default: 0.69)
 ```
+These constants govern **both** prime thread scheduling and ideal processor assignment — they share the same hysteresis filter.
 
 ### Complete Example
 
@@ -432,10 +435,15 @@ target/release/AffinityServiceRust.exe
    - Track thread cycle time at each interval
    - Apply hysteresis-based promotion/demotion logic
    - Use Windows CPU Sets for fine-grained thread placement
-5. **Ideal Processor Assignment**:
-   - Rank threads by total CPU time
-   - Assign ideal processors to top N threads
-   - Restore ideal processors for threads that fall out of ranking
+5. **Shared Cycle Prefetch** (per process, before prime and ideal scheduling):
+   - Rank all threads by CPU-time delta from `NtQuerySystemInformation` data (no extra syscall)
+   - Keep only the top-N threads (N = logical CPU count) — threads below cannot win any assignment slot
+   - Open handles and call `QueryThreadCycleTime` for the top-N only; results cached in `ThreadStats::cached_cycles`
+6. **Ideal Processor Assignment** (per process, per interval):
+   - Apply the same hysteresis filter (streak + keep/entry thresholds) as prime thread scheduling
+   - Pass 1: already-assigned threads above `keep_threshold` keep their slot — no write syscall
+   - Pass 2: promote threads above `entry_threshold` with satisfied streak; skip `SetThreadIdealProcessorEx` if thread is already on a free-pool CPU (lazy set)
+   - Demote threads no longer selected: restore original ideal processor
 
 ## Known Limitations
 

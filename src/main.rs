@@ -9,7 +9,7 @@ mod winapi;
 
 use apply::{
     ApplyConfigResult, apply_affinity, apply_ideal_processors, apply_io_priority, apply_memory_priority, apply_prime_threads, apply_priority,
-    apply_process_default_cpuset,
+    apply_process_default_cpuset, prefetch_all_thread_cycles,
 };
 use chrono::Local;
 use cli::{CliArgs, parse_args, print_help, print_help_all};
@@ -77,6 +77,9 @@ fn apply_config(
     apply_priority(pid, config, dry_run, h_prc, &mut apply_config_result);
     apply_affinity(pid, config, dry_run, h_prc, &mut current_mask, &mut apply_config_result, &mut processes);
     apply_process_default_cpuset(pid, config, dry_run, h_prc, &mut apply_config_result);
+    if !config.prime_threads_cpus.is_empty() || !config.ideal_processor_rules.is_empty() || config.track_top_x_threads != 0 {
+        prefetch_all_thread_cycles(pid, &config.name, &mut processes, prime_core_scheduler, &mut apply_config_result);
+    }
     apply_prime_threads(
         pid,
         config,

@@ -9,6 +9,7 @@ use crate::{
     priority::ThreadPriority,
     winapi::{clear_module_cache, resolve_address_to_module},
 };
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 
@@ -63,6 +64,80 @@ impl PrimeThreadScheduler {
     #[inline]
     pub fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats {
         self.pid_to_process_stats.entry(pid).or_default().tid_to_thread_stats.entry(tid).or_default()
+    }
+
+    /// Core hysteresis-based selection algorithm shared by prime-thread and ideal-processor
+    /// assignment.
+    ///
+    /// Sorts `tid_with_delta_cycles` by delta descending and marks up to `slot_count` entries
+    /// as `is_prime = true` using two passes:
+    ///   1. Protect already-assigned threads that still exceed `keep_threshold` — no write
+    ///      syscall needed because they are already on the correct resource.
+    ///   2. Award remaining slots to threads above `entry_threshold` whose streak counter has
+    ///      reached `MIN_ACTIVE_STREAK`, preventing one-shot bursts from winning slots.
+    ///
+    /// # Parameters
+    /// - `slot_count`            – maximum number of threads to mark as `is_prime`
+    /// - `get_streak_mut`        – mutable accessor for the per-thread streak counter to use;
+    ///   both prime-thread and ideal-processor scheduling share `active_streak` since the
+    ///   hysteresis constants are global and the two-pass filter behaves identically
+    /// - `is_currently_assigned` – predicate indicating the thread already holds a managed slot
+    ///   (`!cpu_set_ids.is_empty()` vs `ideal_processor.is_assigned`)
+    pub fn select_top_threads_with_hysteresis(
+        &mut self,
+        pid: u32,
+        tid_with_delta_cycles: &mut [(u32, u64, bool)],
+        slot_count: usize,
+        get_streak_mut: fn(&mut ThreadStats) -> &mut u8,
+        is_currently_assigned: fn(&ThreadStats) -> bool,
+    ) {
+        tid_with_delta_cycles.sort_unstable_by_key(|&(_, delta, _)| Reverse(delta));
+        let max_cycles = tid_with_delta_cycles.first().map(|&(_, c, _)| c).unwrap_or(0u64);
+        let entry_min = (max_cycles as f64 * self.constants.entry_threshold) as u64;
+        let keep_min = (max_cycles as f64 * self.constants.keep_threshold) as u64;
+
+        // Update streaks.
+        for &(tid, delta, _) in tid_with_delta_cycles.iter() {
+            if tid == 0 {
+                continue;
+            }
+            let ts = self.get_thread_stats(pid, tid);
+            let s = get_streak_mut(ts);
+            if delta >= entry_min {
+                *s = s.saturating_add(1).min(254);
+            } else {
+                *s = 0;
+            }
+        }
+
+        let mut slots_used = 0usize;
+
+        // Pass 1: protect existing assignments that still exceed keep_threshold.
+        for (tid, delta, is_prime) in tid_with_delta_cycles.iter_mut() {
+            if *tid == 0 || slots_used >= slot_count {
+                continue;
+            }
+            if is_currently_assigned(self.get_thread_stats(pid, *tid)) && *delta >= keep_min {
+                *is_prime = true;
+                slots_used += 1;
+            }
+        }
+
+        // Pass 2: award new slots to threads that have earned entry.
+        for (tid, delta, is_prime) in tid_with_delta_cycles.iter_mut() {
+            if slots_used >= slot_count {
+                break;
+            }
+            if *tid == 0 || *is_prime {
+                continue;
+            }
+            let ts = self.get_thread_stats(pid, *tid);
+            let streak = *get_streak_mut(ts);
+            if *delta >= entry_min && streak >= self.constants.min_active_streak {
+                *is_prime = true;
+                slots_used += 1;
+            }
+        }
     }
 
     /// Closes thread handles and removes stats for dead processes.
@@ -189,6 +264,9 @@ pub struct ThreadStats {
     pub last_cycles: u64,
     /// CPU cycles from last ideal-processor query, used to compute delta for sorting.
     pub last_ideal_cycles: u64,
+    /// Raw `QueryThreadCycleTime` result captured during the per-iteration prefetch.
+    /// Consumed by both prime-thread and ideal-processor scheduling.
+    pub cached_cycles: u64,
     /// Cached thread handle to avoid repeated OpenThread calls.
     pub handle: Option<HANDLE>,
     /// Current CPU set IDs assigned to this thread. Empty = not pinned (inherits from process).
@@ -210,6 +288,7 @@ impl ThreadStats {
             last_total_time: 0,
             last_cycles: 0,
             last_ideal_cycles: 0,
+            cached_cycles: 0,
             handle: None,
             cpu_set_ids: vec![],
             active_streak: 0,

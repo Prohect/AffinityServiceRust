@@ -260,10 +260,8 @@ impl Default for IdealProcessorState {
 pub struct ThreadStats {
     /// KernelTime + UserTime from last snapshot, used to calculate delta.
     pub last_total_time: i64,
-    /// CPU cycles from last snapshot, used for accurate activity measurement.
+    /// CPU cycles from last QueryThreadCycleTimew, used for accurate activity measurement.
     pub last_cycles: u64,
-    /// CPU cycles from last ideal-processor query, used to compute delta for sorting.
-    pub last_ideal_cycles: u64,
     /// Raw `QueryThreadCycleTime` result captured during the per-iteration prefetch.
     /// Consumed by both prime-thread and ideal-processor scheduling.
     pub cached_cycles: u64,
@@ -287,7 +285,6 @@ impl ThreadStats {
         Self {
             last_total_time: 0,
             last_cycles: 0,
-            last_ideal_cycles: 0,
             cached_cycles: 0,
             handle: None,
             cpu_set_ids: vec![],

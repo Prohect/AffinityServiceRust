@@ -270,9 +270,6 @@ pub fn prefetch_all_thread_cycles(
         // Step 4: Query cycles into cached_cycles; on error leave cached_cycles unchanged.
         let mut cycles: u64 = 0;
         match unsafe { QueryThreadCycleTime(handle, &mut cycles) } {
-            Ok(_) => {
-                prime_scheduler.get_thread_stats(pid, tid).cached_cycles = cycles;
-            }
             Err(_) => {
                 let error_code = unsafe { GetLastError().0 };
                 apply_config_result.add_error(format!(
@@ -283,6 +280,9 @@ pub fn prefetch_all_thread_cycles(
                     process_name
                 ));
                 // Do not update cached_cycles — leave at previous value or 0 (no data sentinel).
+            }
+            Ok(_) => {
+                prime_scheduler.get_thread_stats(pid, tid).cached_cycles = cycles;
             }
         }
     }
@@ -308,11 +308,10 @@ pub fn apply_prime_threads(
         prime_core_scheduler.set_alive(pid);
         if config.track_top_x_threads != 0 {
             prime_core_scheduler.set_tracking_info(pid, config.track_top_x_threads, config.name.clone());
-            // Ensure module cache is populated while process is alive
-            crate::winapi::resolve_address_to_module(pid, 1);
         }
 
-        let process = processes.as_mut().unwrap().pid_to_process.get_mut(&pid).unwrap();
+        let Some(processes) = processes else { return };
+        let Some(process) = processes.pid_to_process.get_mut(&pid) else { return };
         let thread_count = process.thread_count() as usize;
 
         let mut all_tids: Vec<u32> = Vec::new();
@@ -360,7 +359,9 @@ pub fn apply_prime_threads(
         }
 
         // Cleanup handles for dead threads
-        let process_stats = prime_core_scheduler.pid_to_process_stats.get_mut(&pid).unwrap();
+        let Some(process_stats) = prime_core_scheduler.pid_to_process_stats.get_mut(&pid) else {
+            return;
+        };
         let alive_tids = process.get_threads();
         for (tid, stats) in process_stats.tid_to_thread_stats.iter_mut() {
             if !alive_tids.contains_key(tid)
@@ -561,8 +562,8 @@ pub fn apply_prime_threads_demote(
                 }
 
                 // Restore priority
-                if thread_stats.original_priority.is_some() {
-                    if unsafe { SetThreadPriority(handle, thread_stats.original_priority.as_mut().unwrap().to_thread_priority_struct()) }.is_err() {
+                if let Some(original_priority) = thread_stats.original_priority {
+                    if unsafe { SetThreadPriority(handle, original_priority.to_thread_priority_struct()) }.is_err() {
                         let error_code = unsafe { GetLastError().0 };
                         apply_config_result.add_error(format!(
                             "apply_config: [RESTORE_THREAD_PRIORITY][{}] {:>5}-{}-{}",
@@ -822,7 +823,7 @@ pub fn reset_thread_ideal_processors(
 /// **Phase 1** (once, before the rule loop):
 /// - For every thread in the process snapshot: open/cache the handle, populate
 ///   `start_address`, call `QueryThreadCycleTime` and compute
-///   `delta = current − ThreadStats::last_ideal_cycles` (separate from the
+///   `delta = current − ThreadStats::last_cycles` (separate from the
 ///   `last_cycles` field used by prime-thread scheduling).
 /// - Builds `all_threads: Vec<(tid, delta_cycles, start_addr, start_module)>`.
 ///
@@ -883,7 +884,7 @@ pub fn apply_ideal_processors(
     // Phase 1: Pre-collect (tid, delta_cycles, start_addr, start_module) for every thread once,
     // before the rule loop.  Thread handles, start addresses, and raw cycle counts are now
     // provided by `prefetch_all_thread_cycles` (called before both this function and
-    // `apply_prime_threads`).  delta_cycles is derived from ThreadStats::last_ideal_cycles so
+    // `apply_prime_threads`).  delta_cycles is derived from ThreadStats::last_cycles so
     // the sort reflects actual CPU usage since the last query rather than cumulative totals.
     let tids: Vec<u32> = process.get_threads().keys().copied().collect();
     let mut all_threads: Vec<(u32, u64, usize, String)> = Vec::new();
@@ -893,8 +894,8 @@ pub fn apply_ideal_processors(
         if cycles == 0 {
             continue;
         }
-        let delta = cycles.saturating_sub(ts.last_ideal_cycles);
-        ts.last_ideal_cycles = cycles;
+        let delta = cycles.saturating_sub(ts.last_cycles);
+        ts.last_cycles = cycles;
         let start_addr = ts.start_address;
         let start_module = resolve_address_to_module(pid, start_addr);
         all_threads.push((tid, delta, start_addr, start_module));

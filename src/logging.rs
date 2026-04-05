@@ -5,7 +5,7 @@
 use chrono::{DateTime, Datelike, Local};
 use once_cell::sync::Lazy;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
     io::Write,
     path::PathBuf,
@@ -20,6 +20,65 @@ pub static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(Has
 
 /// Set of process names that failed to be accessed (to avoid repeated error logs).
 pub static FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+
+/// Entry in `APPLY_FAIL_MAP` for a specific PID that returned ACCESS_DENIED from
+/// `apply_config` OpenProcess.  The `alive` flag is used during each snapshot reconcile
+/// to evict PIDs that have exited or been reused for a different process name.
+struct ApplyFailEntry {
+    proc_name: String,
+    alive: bool,
+}
+
+/// Map of PID → `ApplyFailEntry` for processes that returned ACCESS_DENIED from
+/// `apply_config` OpenProcess.  Keyed by PID so multiple instances of the same
+/// executable (e.g. `svchost.exe`) are tracked independently: one inaccessible
+/// instance does not suppress errors for other accessible-but-currently-failing ones.
+static APPLY_FAIL_MAP: Lazy<Mutex<HashMap<u32, ApplyFailEntry>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+
+/// Checks whether `(pid, proc_name)` is already in the fail map; if not, inserts it.
+/// Returns `true` when the entry is new — the caller should emit the error exactly once.
+pub fn apply_fail_insert_if_new(pid: u32, proc_name: &str) -> bool {
+    let mut map = APPLY_FAIL_MAP.lock().unwrap();
+    match map.get(&pid) {
+        // Same PID, same name → already logged, suppress.
+        Some(entry) if entry.proc_name == proc_name => false,
+        // New PID, or PID reused for a different name → insert and allow logging.
+        _ => {
+            map.insert(
+                pid,
+                ApplyFailEntry {
+                    proc_name: proc_name.to_string(),
+                    alive: true,
+                },
+            );
+            true
+        }
+    }
+}
+
+/// Reconciles the fail map against the current process snapshot.
+///
+/// Algorithm:
+/// 1. Mark every stored entry as potentially dead (`alive = false`).
+/// 2. Revive entries whose PID is still present in the snapshot **with the same name**.
+/// 3. Drop all entries still marked dead (process exited or PID was reused).
+///
+/// Call this once per loop iteration right after `pids_and_names` is built from the
+/// fresh `ProcessSnapshot`, so stale entries never accumulate.
+pub fn purge_apply_fail_map(pids_and_names: &[(u32, String)]) {
+    let mut map = APPLY_FAIL_MAP.lock().unwrap();
+    for entry in map.values_mut() {
+        entry.alive = false;
+    }
+    for (pid, name) in pids_and_names {
+        if let Some(entry) = map.get_mut(pid)
+            && entry.proc_name == *name
+        {
+            entry.alive = true;
+        }
+    }
+    map.retain(|_, entry| entry.alive);
+}
 
 /// Whether to output to console instead of log files.
 static USE_CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));

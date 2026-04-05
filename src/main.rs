@@ -16,7 +16,8 @@ use cli::{CliArgs, parse_args, print_help, print_help_all};
 use config::{ProcessConfig, convert, read_config, read_list, sort_and_group_config};
 use encoding_rs::Encoding;
 use logging::{
-    DUST_BIN_MODE, FAIL_SET, LOCALTIME_BUFFER, error_from_code, find_logger, log_message, log_process_find, log_pure_message, log_to_find, logger, use_console,
+    DUST_BIN_MODE, FAIL_SET, LOCALTIME_BUFFER, apply_fail_insert_if_new, error_from_code, find_logger, log_message, log_process_find, log_pure_message, log_to_find,
+    logger, purge_apply_fail_map, use_console,
 };
 use process::ProcessSnapshot;
 use scheduler::PrimeThreadScheduler;
@@ -61,7 +62,7 @@ fn apply_config(
             let error_code = unsafe { GetLastError().0 };
             if dry_run {
                 apply_config_result.add_change("[SKIP] OpenProcess failed".to_owned());
-            } else {
+            } else if apply_fail_insert_if_new(pid, &config.name) {
                 apply_config_result.add_error(format!("apply_config: [OPEN][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
             }
             return apply_config_result;
@@ -289,6 +290,7 @@ fn main() -> windows::core::Result<()> {
             Ok(mut processes) => {
                 let mut total_changes = 0;
                 let pids_and_names: Vec<(u32, String)> = processes.pid_to_process.values().map(|p| (p.pid(), p.get_name().to_string())).collect();
+                purge_apply_fail_map(&pids_and_names);
                 prime_core_scheduler.reset_alive();
 
                 // Iterate through graded configs: apply rules only when current_loop % grade == 0

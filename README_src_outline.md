@@ -177,30 +177,37 @@
 - [L16:L16]static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
 - [L19:L19]static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 - [L22:L22]static FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
-- [L25:L25]static USE_CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
-- [L28:L28]static DUST_BIN_MODE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
-- [L31:L31]static LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path("")).unwrap()));
-- [L34:L34]static FIND_LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path(".find")).unwrap()));
-- [L15:L39]fn use_console() -> &'static Mutex<bool> 
-- [L41:L44]fn logger() -> &'static Mutex<File> 
-- [L46:L49]fn find_logger() -> &'static Mutex<File> 
-- [L51:L61]fn get_log_path(suffix: &str) -> PathBuf 
-- [L71:L82]fn log_message(args: &str) 
-- [L84:L91]fn log_pure_message(args: &str) 
-- [L93:L101]fn log_to_find(msg: &str) 
-- [L103:L108]fn log_process_find(process_name: &str) 
-- [L110:L131]fn error_from_code(code: u32) -> String 
+- [L15:L30]struct ApplyFailEntry {
+    proc_name: String,
+    alive: bool,
+}
+- [L36:L36]static APPLY_FAIL_MAP: Lazy<Mutex<HashMap<u32, ApplyFailEntry>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+- [L32:L57]fn apply_fail_insert_if_new(pid: u32, proc_name: &str) -> bool 
+- [L59:L81]fn purge_apply_fail_map(pids_and_names: &[(u32, String)]) 
+- [L84:L84]static USE_CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
+- [L87:L87]static DUST_BIN_MODE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
+- [L90:L90]static LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path("")).unwrap()));
+- [L93:L93]static FIND_LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path(".find")).unwrap()));
+- [L83:L98]fn use_console() -> &'static Mutex<bool> 
+- [L100:L103]fn logger() -> &'static Mutex<File> 
+- [L105:L108]fn find_logger() -> &'static Mutex<File> 
+- [L110:L120]fn get_log_path(suffix: &str) -> PathBuf 
+- [L130:L141]fn log_message(args: &str) 
+- [L143:L150]fn log_pure_message(args: &str) 
+- [L152:L160]fn log_to_find(msg: &str) 
+- [L162:L167]fn log_process_find(process_name: &str) 
+- [L169:L190]fn error_from_code(code: u32) -> String 
 
 ## src/main.rs
-- [L45:L100]fn apply_config(
+- [L46:L101]fn apply_config(
     pid: u32,
     config: &ProcessConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
     mut processes: Option<&mut ProcessSnapshot>,
     dry_run: bool,
 ) -> ApplyConfigResult 
-- [L102:L174]fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
-- [L176:L431]fn main() -> windows::core::Result<()> 
+- [L103:L175]fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
+- [L177:L433]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L17:L27]enum ProcessPriority {

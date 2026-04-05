@@ -192,15 +192,15 @@
 - [L110:L131]fn error_from_code(code: u32) -> String 
 
 ## src/main.rs
-- [L42:L97]fn apply_config(
+- [L45:L100]fn apply_config(
     pid: u32,
     config: &ProcessConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
     mut processes: Option<&mut ProcessSnapshot>,
     dry_run: bool,
 ) -> ApplyConfigResult 
-- [L99:L171]fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
-- [L173:L424]fn main() -> windows::core::Result<()> 
+- [L102:L174]fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
+- [L176:L431]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L17:L27]enum ProcessPriority {
@@ -288,27 +288,28 @@
 - [L311:L318]fn format_filetime(time: i64) -> String 
 
 ## src/winapi.rs
-- [L58:L63]struct CpuSetData {
+- [L59:L64]struct CpuSetData {
     id: u32,
     logical_processor_index: u8,
 }
-- [L79:L79]static CPU_SET_INFORMATION: Lazy<Mutex<Vec<CpuSetData>>> = Lazy::new(|| {
-- [L125:L128]fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>> 
-- [L130:L153]fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32> 
-- [L155:L179]fn cpusetids_from_mask(mask: usize) -> Vec<u32> 
-- [L181:L201]fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32> 
-- [L203:L227]fn mask_from_cpusetids(cpuids: &[u32]) -> usize 
-- [L229:L245]fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<u32> 
-- [L247:L281]fn is_running_as_admin() -> bool 
-- [L283:L312]fn request_uac_elevation(console: bool) -> io::Result<()> 
-- [L314:L358]fn enable_debug_privilege() 
-- [L360:L404]fn enable_inc_base_priority_privilege() 
-- [L406:L452]fn is_affinity_unset(pid: u32, process_name: &str) -> bool 
-- [L454:L472]fn get_thread_start_address(thread_handle: HANDLE) -> usize 
-- [L474:L496]fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: u8) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
-- [L498:L512]fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
-- [L517:L517]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-- [L514:L556]fn resolve_address_to_module(pid: u32, address: usize) -> String 
-- [L558:L561]fn clear_module_cache(pid: u32) 
-- [L563:L623]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
+- [L80:L80]static CPU_SET_INFORMATION: Lazy<Mutex<Vec<CpuSetData>>> = Lazy::new(|| {
+- [L126:L129]fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>> 
+- [L131:L154]fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32> 
+- [L156:L180]fn cpusetids_from_mask(mask: usize) -> Vec<u32> 
+- [L182:L202]fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32> 
+- [L204:L228]fn mask_from_cpusetids(cpuids: &[u32]) -> usize 
+- [L230:L246]fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<u32> 
+- [L248:L282]fn is_running_as_admin() -> bool 
+- [L284:L313]fn request_uac_elevation(console: bool) -> io::Result<()> 
+- [L315:L359]fn enable_debug_privilege() 
+- [L361:L405]fn enable_inc_base_priority_privilege() 
+- [L407:L453]fn is_affinity_unset(pid: u32, process_name: &str) -> bool 
+- [L455:L473]fn get_thread_start_address(thread_handle: HANDLE) -> usize 
+- [L475:L497]fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: u8) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
+- [L499:L513]fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
+- [L518:L518]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+- [L515:L557]fn resolve_address_to_module(pid: u32, address: usize) -> String 
+- [L559:L610]fn terminate_child_processes() 
+- [L612:L615]fn clear_module_cache(pid: u32) 
+- [L617:L677]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
 

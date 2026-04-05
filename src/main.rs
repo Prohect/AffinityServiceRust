@@ -29,7 +29,10 @@ use std::{
     thread,
     time::Duration,
 };
-use winapi::{NtSetTimerResolution, enable_debug_privilege, enable_inc_base_priority_privilege, is_affinity_unset, is_running_as_admin, request_uac_elevation};
+use winapi::{
+    NtSetTimerResolution, enable_debug_privilege, enable_inc_base_priority_privilege, is_affinity_unset, is_running_as_admin, request_uac_elevation,
+    terminate_child_processes,
+};
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError},
     System::{
@@ -273,6 +276,10 @@ fn main() -> windows::core::Result<()> {
     let mut prime_core_scheduler = PrimeThreadScheduler::new(config_result.constants);
     let mut current_loop = 0u32;
     let mut should_continue = true;
+
+    // Terminate any child processes (e.g. conhost.exe attached by a scheduled task or
+    // UAC re-launch) that are holding a pipe to our stdout before entering the main loop.
+    terminate_child_processes();
 
     while should_continue {
         if cli.log_loop {

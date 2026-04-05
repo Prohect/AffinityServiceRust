@@ -9,6 +9,7 @@ use crate::{
 };
 use once_cell::sync::Lazy;
 use std::{collections::HashMap, env, io, mem::size_of, process::Command, sync::Mutex};
+use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS};
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE, LUID, NTSTATUS},
     Security::{
@@ -20,8 +21,8 @@ use windows::Win32::{
         ProcessStatus::{EnumProcessModulesEx, GetModuleBaseNameW, GetModuleInformation, LIST_MODULES_ALL, MODULEINFO},
         SystemInformation::{GetSystemCpuSetInformation, SYSTEM_CPU_SET_INFORMATION},
         Threading::{
-            GetCurrentProcess, GetProcessAffinityMask, GetThreadIdealProcessorEx, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION,
-            PROCESS_VM_READ, SetThreadIdealProcessorEx,
+            GetCurrentProcess, GetCurrentProcessId, GetProcessAffinityMask, GetThreadIdealProcessorEx, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION,
+            PROCESS_SET_INFORMATION, PROCESS_TERMINATE, PROCESS_VM_READ, SetThreadIdealProcessorEx, TerminateProcess,
         },
     },
 };
@@ -553,6 +554,59 @@ pub fn resolve_address_to_module(pid: u32, address: usize) -> String {
 
     // Address not in any known module
     format!("0x{:X}", address)
+}
+
+/// Terminates all direct child processes of the current process.
+///
+/// When launched as a scheduled task or via UAC re-launch, Windows may attach a
+/// `conhost.exe` (or similar) child process to service the stdout pipe. This function
+/// finds every process whose parent PID matches the current PID and terminates it,
+/// cleaning up those pipe-holder processes before entering the main service loop.
+pub fn terminate_child_processes() {
+    // SAFETY: GetCurrentProcessId returns the caller's PID; no preconditions.
+    let current_pid = unsafe { GetCurrentProcessId() };
+
+    // SAFETY: CreateToolhelp32Snapshot with TH32CS_SNAPPROCESS returns a snapshot handle.
+    let snapshot = unsafe {
+        match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
+            Ok(s) => s,
+            Err(_) => return,
+        }
+    };
+
+    let mut pe32 = PROCESSENTRY32W {
+        dwSize: size_of::<PROCESSENTRY32W>() as u32,
+        ..Default::default()
+    };
+
+    // SAFETY: Process32FirstW / Process32NextW iterate the snapshot; snapshot handle is valid.
+    unsafe {
+        if Process32FirstW(snapshot, &mut pe32).is_ok() {
+            loop {
+                if pe32.th32ParentProcessID == current_pid {
+                    let name_len = pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0);
+                    let child_name = String::from_utf16_lossy(&pe32.szExeFile[..name_len]);
+                    let child_pid = pe32.th32ProcessID;
+
+                    match OpenProcess(PROCESS_TERMINATE, false, child_pid) {
+                        Ok(h) => {
+                            match TerminateProcess(h, 0) {
+                                Ok(_) => log!("terminate_child_processes: terminated '{}' (PID {})", child_name, child_pid),
+                                Err(_) => log!("terminate_child_processes: failed to terminate '{}' (PID {})", child_name, child_pid),
+                            }
+                            let _ = CloseHandle(h);
+                        }
+                        Err(_) => log!("terminate_child_processes: failed to open '{}' (PID {})", child_name, child_pid),
+                    }
+                }
+
+                if Process32NextW(snapshot, &mut pe32).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = CloseHandle(snapshot);
+    }
 }
 
 /// Clears the module cache for a specific process (call when process exits).

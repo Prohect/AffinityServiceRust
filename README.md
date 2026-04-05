@@ -424,7 +424,7 @@ target/release/AffinityServiceRust.exe
 
 ## How It Works
 
-1. **Startup**: Parse config file, request necessary privileges (SeDebugPrivilege, SeIncreaseBasePriorityPrivilege), optionally elevate to admin
+1. **Startup**: Parse config file, request necessary privileges (SeDebugPrivilege, SeIncreaseBasePriorityPrivilege), optionally elevate to admin; then terminate any child processes inherited from the launcher (e.g. `conhost.exe` attached by a scheduled task runner) before entering the main loop
 2. **Main Loop**: 
    - Enumerate all running processes
    - Match each process against configured rules
@@ -444,6 +444,18 @@ target/release/AffinityServiceRust.exe
    - Pass 1: already-assigned threads above `keep_threshold` keep their slot — no write syscall
    - Pass 2: promote threads above `entry_threshold` with satisfied streak; skip `SetThreadIdealProcessorEx` if thread is already on a free-pool CPU (lazy set)
    - Demote threads no longer selected: restore original ideal processor
+
+## Known Behaviours
+
+7. **`[SET_AFFINITY][ACCESS_DENIED]` on own child processes**: When this service spawns a child process (e.g. `conhost.exe` attached by a scheduled task runner or a UAC re-launch) that happens to match one of the configured rules, it will attempt to apply affinity and log a line such as:
+
+   ```
+   apply_config: [SET_AFFINITY][ACCESS_DENIED]  6976-conhost.exe
+   ```
+
+   to `.find.log`. This is **intentional** — the service applies rules to every matching process name it sees in the snapshot, including its own short-lived children. The child is terminated before the main loop starts (see startup cleanup), so this entry will appear at most once per run and can be safely ignored.
+
+8. **`[OPEN][ACCESS_DENIED]` per-PID deduplication**: When `apply_config` fails to open a process due to `ACCESS_DENIED`, the error is written to `.find.log` exactly once per unique `(pid, process_name)` pair. After each snapshot, the deduplication map is reconciled: entries whose PID has exited or been reused for a different executable are evicted, so if the same process name later re-appears under a new PID the error fires once more. Multiple concurrent instances of the same executable (e.g. several `svchost.exe` processes with different PIDs) are tracked independently — one denied instance never silences errors for any other PID sharing the same name.
 
 ## Known Limitations
 

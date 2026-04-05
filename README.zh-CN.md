@@ -522,6 +522,7 @@ cargo build --release
    - 请求管理员提权（除非 `-noUAC`）
    - 启用 SeDebugPrivilege 和 SeIncreaseBasePriorityPrivilege
    - 设置计时器分辨率（如果指定）
+   - 终止从启动器继承的任何子进程（如计划任务运行器附加的 `conhost.exe`），在进入主循环前执行清理
 
 2. **主循环**（每个间隔，默认 5000ms）
    - 通过 `NtQuerySystemInformation` 获取所有运行进程的快照
@@ -582,6 +583,18 @@ cargo build --release
 | `config.ini` | 默认配置文件 |
 | `blacklist.ini` | 进程发现的默认黑名单 |
 | `DEBUG.md` | 调试指南和故障排除 |
+
+## 已知行为
+
+7. **自身子进程上出现 `[SET_AFFINITY][ACCESS_DENIED]`**：当本服务派生了子进程（例如由计划任务运行器附加的 `conhost.exe`，或 UAC 重启动时产生的进程），而该子进程的名称恰好匹配某条配置规则时，服务会尝试对其应用亲和性，并向 `.find.log` 写入如下一行：
+
+   ```
+   apply_config: [SET_AFFINITY][ACCESS_DENIED]  6976-conhost.exe
+   ```
+
+   这是**预期行为** —— 服务会对快照中所有名称匹配的进程应用规则，包括自身短暂存活的子进程。该子进程会在主循环启动前被终止（见启动清理逻辑），因此此条目每次运行最多出现一次，可安全忽略。
+
+8. **`[OPEN][ACCESS_DENIED]` 按 PID 去重**：当 `apply_config` 因 `ACCESS_DENIED` 无法打开某进程时，该错误仅对每个唯一的 `(pid, 进程名)` 组合写入一次 `.find.log`。每次获取快照后，去重映射表会与当前快照对账：PID 已退出或被其他可执行文件复用的条目将被清除，因此若同一进程名在新 PID 下再次出现，错误将重新触发一次。同名可执行文件的多个并发实例（如具有不同 PID 的多个 `svchost.exe`）被独立跟踪——某个实例被拒绝访问，不会压制其他同名但不同 PID 实例的错误输出。
 
 ## 已知限制
 

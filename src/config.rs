@@ -1,18 +1,3 @@
-//! Configuration parsing and management.
-//!
-//! Handles reading config.ini files with process configurations,
-//! affinity aliases, and scheduler constants.
-//!
-//! ## CPU Specification Format
-//!
-//! Supports both legacy hex masks (≤64 cores) and new range syntax (unlimited cores):
-//!
-//! - Legacy hex: `0xFF`, `0xFFFF`
-//! - Single CPU: `5`
-//! - Range: `0-7`
-//! - Multiple ranges: `0-7;64-71`
-//! - Mixed: `0-3;8;9;64-67`
-
 use crate::{
     cli::get_config_help_lines,
     log,
@@ -27,70 +12,44 @@ use std::{
     path::Path,
 };
 
-/// Represents a module prefix filter for prime thread scheduling with optional CPU set override and thread priority.
 #[derive(Debug, Clone)]
 pub struct PrimePrefix {
-    /// Module name prefix to match (e.g., "cs2.exe", "nvwgf2umx.dll")
     pub prefix: String,
-    /// Optional CPU set for threads matching this prefix (falls back to prime_threads_cpus if None)
     pub cpus: Option<Vec<u32>>,
-    /// Optional thread priority for threads matching this prefix (uses boost_one if None)
     pub thread_priority: ThreadPriority,
 }
 
-/// Represents a module prefix filter for ideal processor assignment.
-/// Format: *alias@prefix1;prefix2 or *cpu_list@prefix1;prefix2
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct IdealProcessorPrefix {
-    /// Module name prefix to match (e.g., "cs2.exe", "engine.dll")
     pub prefix: String,
-    /// CPU indices to assign as ideal processors (one per thread in ranking order)
     pub cpus: Vec<u32>,
 }
 
-/// Configuration for ideal processor assignment.
-/// Each rule segment defines CPUs and matching module prefixes.
 #[derive(Debug, Clone)]
 pub struct IdealProcessorRule {
-    /// List of CPU indices for ideal processor assignment
     pub cpus: Vec<u32>,
-    /// Module prefixes that should use these CPUs (empty = all threads)
     pub prefixes: Vec<String>,
 }
 
-/// Configuration for a single process, parsed from config.ini.
-/// Format: `name:priority:affinity:cpu_set:prime_cpu:io_priority:memory_priority:ideal[@prefixes]:grade`
 #[derive(Debug, Clone)]
 pub struct ProcessConfig {
     pub name: String,
     pub priority: ProcessPriority,
-    /// CPU indices for legacy affinity mask (SetProcessAffinityMask, ≤64 cores)
     pub affinity_cpus: Vec<u32>,
-    /// CPU indices for CPU sets (SetProcessDefaultCpuSets, unlimited cores)
     pub cpu_set_cpus: Vec<u32>,
-    /// CPU indices for prime thread scheduling (high-priority threads)
     pub prime_threads_cpus: Vec<u32>,
-    /// Module name prefixes for filtering prime threads with optional CPU overrides
     pub prime_threads_prefixes: Vec<PrimePrefix>,
     pub track_top_x_threads: i32,
     pub io_priority: IOPriority,
     pub memory_priority: MemoryPriority,
-    /// Ideal processor rules for static thread-to-CPU assignment based on total CPU time
     pub ideal_processor_rules: Vec<IdealProcessorRule>,
 }
 
-/// Constants used by the Prime Thread Scheduler algorithm.
-///
-/// These control how threads are promoted/demoted to prime cores based on
-/// their CPU activity levels.
 #[derive(Debug, Clone)]
 pub struct ConfigConstants {
-    /// Minimum consecutive active intervals before a thread can be promoted (default: 2)
     pub min_active_streak: u8,
-    /// Fraction of max cycles below which a prime thread is demoted (default: 69%)
     pub keep_threshold: f64,
-    /// Fraction of max cycles above which a thread becomes prime candidate (default: 42%)
     pub entry_threshold: f64,
 }
 
@@ -104,32 +63,12 @@ impl Default for ConfigConstants {
     }
 }
 
-/// Parses a CPU specification string into a vector of CPU indices.
-///
-/// Supports multiple formats:
-/// - Legacy hex mask (≤64 cores): `0xFF`, `0xFFFF`
-/// - Single CPU index: `5`
-/// - Range: `0-7`
-/// - Multiple ranges with semicolons: `0-7;64-71`
-/// - Mixed: `0-3;8;9;64-67`
-///
-/// Note: Decimal masks are NOT supported to avoid confusion with single core indices.
-/// Use hex format (0xFF) for masks or the new range format (0-7) instead.
-///
-/// # Examples
-/// ```
-/// parse_cpu_spec("0xFF")       // -> [0, 1, 2, 3, 4, 5, 6, 7]
-/// parse_cpu_spec("0-7;64-71")  // -> [0, 1, 2, 3, 4, 5, 6, 7, 64, 65, 66, 67, 68, 69, 70, 71]
-/// parse_cpu_spec("0;4;8")      // -> [0, 4, 8]
-/// parse_cpu_spec("7")          // -> [7] (single core, not a mask)
-/// ```
 pub fn parse_cpu_spec(s: &str) -> Vec<u32> {
     let s = s.trim();
     if s.is_empty() || s == "0" {
         return Vec::new();
     }
 
-    // Legacy hex mask format: 0xFF, 0xFFFF, etc.
     if s.starts_with("0x") || s.starts_with("0X") {
         if let Ok(mask) = u64::from_str_radix(&s[2..], 16) {
             return mask_to_cpu_indices(mask);
@@ -137,7 +76,6 @@ pub fn parse_cpu_spec(s: &str) -> Vec<u32> {
         return Vec::new();
     }
 
-    // New range/individual format: "0-7", "0-7;64-71", "0;4;8", "7"
     let mut cpus = Vec::new();
     for part in s.split(';') {
         let part = part.trim();
@@ -145,7 +83,6 @@ pub fn parse_cpu_spec(s: &str) -> Vec<u32> {
             continue;
         }
         if let Some(dash_pos) = part.find('-') {
-            // Range format: "0-7"
             let start: u32 = part[..dash_pos].trim().parse().unwrap_or(0);
             let end: u32 = part[dash_pos + 1..].trim().parse().unwrap_or(start);
             for cpu in start..=end {
@@ -154,7 +91,6 @@ pub fn parse_cpu_spec(s: &str) -> Vec<u32> {
                 }
             }
         } else if let Ok(cpu) = part.parse::<u32>() {
-            // Single CPU index: "7"
             if !cpus.contains(&cpu) {
                 cpus.push(cpu);
             }
@@ -168,8 +104,6 @@ fn mask_to_cpu_indices(mask: u64) -> Vec<u32> {
     (0..64).filter(|i| (mask >> i) & 1 == 1).collect()
 }
 
-/// Converts a vector of CPU indices to a legacy affinity mask.
-/// Only works correctly for indices < 64.
 pub fn cpu_indices_to_mask(cpus: &[u32]) -> usize {
     let mut mask: usize = 0;
     for &cpu in cpus {
@@ -180,8 +114,6 @@ pub fn cpu_indices_to_mask(cpus: &[u32]) -> usize {
     mask
 }
 
-/// Formats CPU indices as a compact string for logging.
-/// E.g., [0, 1, 2, 3, 8, 9, 10] -> "0-3,8-10"
 pub fn format_cpu_indices(cpus: &[u32]) -> String {
     if cpus.is_empty() {
         return String::from("0");
@@ -196,7 +128,6 @@ pub fn format_cpu_indices(cpus: &[u32]) -> String {
         let start = sorted[i];
         let mut end = start;
 
-        // Find contiguous range
         while i + 1 < sorted.len() && sorted[i + 1] == sorted[i] + 1 {
             end = sorted[i + 1];
             i += 1;
@@ -215,15 +146,6 @@ pub fn format_cpu_indices(cpus: &[u32]) -> String {
     result
 }
 
-/// Reads a configuration file and returns process configs and scheduler constants.
-///
-/// ## Supported line formats:
-/// - `# comment` - Lines starting with `#` are ignored
-/// - `@CONSTANT=value` - Set scheduler constants (KEEP_THRESHOLD, ENTRY_THRESHOLD)
-/// - `*alias=spec` - Define a reusable CPU spec alias (e.g., `*pcore=0-7;64-71`)
-///   Result of config parsing and validation
-///   configs is organized as HashMap<grade, HashMap<process_name, ProcessConfig>>
-///   where grade determines how often the rule is applied (every Nth loop)
 #[derive(Debug, Default)]
 pub struct ConfigResult {
     pub configs: HashMap<u32, HashMap<String, ProcessConfig>>,
@@ -243,7 +165,6 @@ impl ConfigResult {
         self.errors.is_empty()
     }
 
-    /// Get total number of rules across all grades
     pub fn total_rules(&self) -> usize {
         self.configs.values().map(|grade_configs| grade_configs.len()).sum()
     }
@@ -276,7 +197,6 @@ impl ConfigResult {
     }
 }
 
-/// Helper function to resolve a CPU spec field (handles aliases and direct specs).
 fn resolve_cpu_spec(spec: &str, field_name: &str, line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, errors: &mut Vec<String>) -> Vec<u32> {
     let spec = spec.trim();
     if spec.starts_with('*') {
@@ -290,7 +210,6 @@ fn resolve_cpu_spec(spec: &str, field_name: &str, line_number: usize, cpu_aliase
     }
 }
 
-/// Collects process names from comma-separated text into a vector.
 fn collect_members(text: &str, members: &mut Vec<String>) {
     for item in text.split(':') {
         let item = item.trim().to_lowercase();
@@ -300,7 +219,6 @@ fn collect_members(text: &str, members: &mut Vec<String>) {
     }
 }
 
-/// Parses a constant definition and updates the result.
 fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut ConfigResult) {
     match name {
         "MIN_ACTIVE_STREAK" => {
@@ -338,7 +256,6 @@ fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut Conf
     }
 }
 
-/// Parses a CPU alias definition and adds it to the aliases map.
 fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut HashMap<String, Vec<u32>>, result: &mut ConfigResult) {
     if name.is_empty() {
         result.errors.push(format!("Line {}: Empty alias name", line_number));
@@ -354,28 +271,12 @@ fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut Ha
     }
 }
 
-/// Parses ideal processor specification.
-///
-/// SYNTAX (ALIAS ONLY):
-///   Each rule starts with '*' followed by an alias and optional module filter:
-///   - *alias@prefix1;prefix2 - Use CPU alias, filter by module prefixes
-///   - *alias - Use CPU alias for all threads (no module filter)
-///
-///   Multiple rules can be chained: *alias1@mod1*alias2@mod2
-///
-/// EXAMPLES:
-///   *pN01@engine.dll;render.dll  - Use alias *pN01 CPUs for engine/render threads
-///   *pN01                        - Use alias *pN01 CPUs for all threads
-///   *p@engine*e@helper           - Alias *p for engine, *e for helper threads
-///
-/// Returns list of IdealProcessorRule (one per segment)
 fn parse_ideal_processor_spec(spec: &str, line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, errors: &mut Vec<String>) -> Vec<IdealProcessorRule> {
     let spec = spec.trim();
     if spec.is_empty() || spec == "0" {
         return Vec::new();
     }
 
-    // Assert: ideal processor spec must start with '*'
     if !spec.starts_with('*') {
         errors.push(format!("Line {}: Ideal processor spec must start with '*', got '{}'", line_number, spec));
         return Vec::new();
@@ -383,15 +284,11 @@ fn parse_ideal_processor_spec(spec: &str, line_number: usize, cpu_aliases: &Hash
 
     let mut rules = Vec::new();
 
-    // Split by '*' to get segments.
-    // Example: "*alias1@mod1*alias2@mod2" -> ["", "alias1@mod1", "alias2@mod2"]
-    // We skip the first empty element since spec starts with '*'
     for segment in spec.split('*').skip(1) {
         if segment.is_empty() {
             continue;
         }
 
-        // Parse segment: [alias]@[prefixes] or just [alias]
         let (alias_part, prefixes_str) = match segment.find('@') {
             Some(at_pos) => (&segment[..at_pos], &segment[at_pos + 1..]),
             None => (segment, ""),
@@ -403,7 +300,6 @@ fn parse_ideal_processor_spec(spec: &str, line_number: usize, cpu_aliases: &Hash
             continue;
         }
 
-        // Resolve CPU alias (alias only, no inline CPU specs)
         let cpus = if let Some(alias_cpus) = cpu_aliases.get(&alias) {
             alias_cpus.clone()
         } else {
@@ -415,7 +311,6 @@ fn parse_ideal_processor_spec(spec: &str, line_number: usize, cpu_aliases: &Hash
             continue;
         }
 
-        // Parse module prefixes (empty string means no filter)
         let prefixes: Vec<String> = prefixes_str.split(';').map(|p| p.trim().to_lowercase()).filter(|p| !p.is_empty()).collect();
 
         rules.push(IdealProcessorRule { cpus, prefixes });
@@ -424,23 +319,18 @@ fn parse_ideal_processor_spec(spec: &str, line_number: usize, cpu_aliases: &Hash
     rules
 }
 
-/// Collects group members from lines until closing brace is found.
-/// Returns (members, rule_suffix, next_line_index) or None if unclosed.
 fn collect_group_block(lines: &[String], start_index: usize, first_line_content: &str) -> Option<(Vec<String>, Option<String>, usize)> {
     let mut members = Vec::new();
     let mut i = start_index;
 
-    // Collect from first line (content after '{')
     if !first_line_content.is_empty() && !first_line_content.starts_with('#') {
         collect_members(first_line_content, &mut members);
     }
 
-    // Continue to subsequent lines
     while i < lines.len() {
         let block_line = lines[i].trim();
 
         if let Some(pos) = block_line.find('}') {
-            // Found closing brace
             let before = block_line[..pos].trim();
             if !before.is_empty() && !before.starts_with('#') {
                 collect_members(before, &mut members);
@@ -450,25 +340,15 @@ fn collect_group_block(lines: &[String], start_index: usize, first_line_content:
             return Some((members, suffix, i + 1));
         }
 
-        // Regular content line
         if !block_line.is_empty() && !block_line.starts_with('#') {
             collect_members(block_line, &mut members);
         }
         i += 1;
     }
 
-    None // Unclosed block
+    None
 }
 
-/// Parses rule fields and creates ProcessConfig entries for all members.
-/// This is the unified logic for both group definitions and single-line process rules.
-///
-/// # Arguments
-/// * `members` - Process names to create configs for (single element for normal lines, multiple for groups)
-/// * `rule_parts` - The rule fields: [priority, affinity, cpuset, prime, io, memory, grade]
-/// * `line_number` - For error reporting
-/// * `cpu_aliases` - Resolved CPU aliases
-/// * `result` - ConfigResult to add configs, errors, and warnings to
 fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, result: &mut ConfigResult) {
     if rule_parts.len() < 2 {
         result.errors.push(format!(
@@ -479,7 +359,6 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
         return;
     }
 
-    // Parse priority
     let priority_str = rule_parts[0].trim();
     let priority = ProcessPriority::from_str(priority_str);
     if priority == ProcessPriority::None && !priority_str.eq_ignore_ascii_case("none") {
@@ -488,18 +367,14 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
             .push(format!("Line {}: Unknown priority '{}' - will be treated as 'none'", line_number, priority_str));
     }
 
-    // Parse affinity
     let affinity_cpus = resolve_cpu_spec(rule_parts[1], "affinity", line_number, cpu_aliases, &mut result.errors);
 
-    // Parse cpuset (optional, defaults to "0")
     let cpu_set_cpus = if rule_parts.len() >= 3 {
         resolve_cpu_spec(rule_parts[2], "cpuset", line_number, cpu_aliases, &mut result.errors)
     } else {
         Vec::new()
     };
 
-    // Parse prime_cpus (optional, defaults to "0") and prime_threads_prefixes (optional, defaults to "")
-    // Supports multiple segments: *alias1@prefix1;prefix2;*alias2@prefix3!priority;...
     let (prime_threads_cpus, prime_threads_prefixes, track_top_x_threads) = if rule_parts.len() >= 4 {
         let mut prime_spec = rule_parts[3].trim();
         let mut track_top_x_threads = 0;
@@ -529,41 +404,33 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
             }
 
             if prime_spec.find('@').is_some() {
-                // Parse segments separated by '*' (each segment can have its own CPU alias)
                 let mut all_prefixes: Vec<PrimePrefix> = Vec::new();
                 let mut base_cpus: Vec<u32> = Vec::new();
 
-                // Split by '*' to get segments, but keep track of positions
                 let mut segments: Vec<&str> = Vec::new();
 
                 if prime_spec.starts_with('*') {
-                    // First segment starts with '*'
                     segments.push("");
                 }
 
                 for (idx, part) in prime_spec.split('*').enumerate() {
                     if idx == 0 && !prime_spec.starts_with('*') {
-                        // Handle case where spec doesn't start with '*'
                         segments.push(part);
                     } else if !part.is_empty() {
                         segments.push(part);
                     }
                 }
 
-                // Process each segment
                 for segment in segments {
                     if segment.is_empty() {
                         continue;
                     }
 
-                    // Each segment format: alias@prefix1[!priority];prefix2[!priority];...
                     if let Some(at_pos) = segment.find('@') {
                         let alias = segment[..at_pos].trim();
 
-                        // Find the end of this segment's prefix list (before next '*' or end)
                         let remaining = &segment[at_pos + 1..];
 
-                        // Resolve CPU alias for this segment (stored without '*' prefix, lowercase)
                         let segment_cpus = if alias.is_empty() {
                             Vec::new()
                         } else {
@@ -578,21 +445,18 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
                             }
                         };
 
-                        // Merge all segments' CPUs into base, avoiding duplicates
                         for cpu in &segment_cpus {
                             if !base_cpus.contains(cpu) {
                                 base_cpus.push(*cpu);
                             }
                         }
 
-                        // Parse prefixes for this segment
                         for prefix_str in remaining.split(';') {
                             let prefix_str = prefix_str.trim();
                             if prefix_str.is_empty() {
                                 continue;
                             }
 
-                            // Check for !priority suffix
                             if let Some(bang_pos) = prefix_str.find('!') {
                                 let prefix = prefix_str[..bang_pos].to_string();
                                 let prio_str = &prefix_str[bang_pos + 1..];
@@ -609,7 +473,6 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
                                     thread_priority: thread_prio,
                                 });
                             } else {
-                                // No priority suffix, just prefix name
                                 all_prefixes.push(PrimePrefix {
                                     prefix: prefix_str.to_string(),
                                     cpus: Some(segment_cpus.clone()),
@@ -630,7 +493,6 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
 
                 (base_cpus, all_prefixes, track_top_x_threads)
             } else {
-                // No '@' found, treat as simple CPU spec
                 let cpus = resolve_cpu_spec(prime_spec, "prime_cpus", line_number, cpu_aliases, &mut result.errors);
                 (
                     cpus,
@@ -655,7 +517,6 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
         )
     };
 
-    // Parse io_priority (optional, defaults to None)
     let io_priority = if rule_parts.len() >= 5 {
         let io_str = rule_parts[4].trim();
         let io_p = IOPriority::from_str(io_str);
@@ -669,7 +530,6 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
         IOPriority::None
     };
 
-    // Parse memory_priority (optional, defaults to None)
     let memory_priority = if rule_parts.len() >= 6 {
         let mem_str = rule_parts[5].trim();
         let mem_p = MemoryPriority::from_str(mem_str);
@@ -683,19 +543,10 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
         MemoryPriority::None
     };
 
-    // Parse ideal_processor and grade with backward compatibility
-    // Field 6 can be either:
-    //   - ideal_processor (if it starts with '*' or is "0")
-    //   - grade (if it is a positive integer and does not start with '*')
-    //
-    // If field 6 is ideal_processor, grade is at field 7
-    // If field 6 is grade, ideal_processor defaults to "0" (disabled)
     let (ideal_processor_rules, grade) = if rule_parts.len() >= 7 {
         let field6 = rule_parts[6].trim();
 
-        // Check if field 6 is ideal_processor (starts with '*' or is "0")
         if field6.starts_with('*') || field6 == "0" {
-            // Field 6 is ideal_processor, grade is at field 7 (or default 1)
             let ideal = parse_ideal_processor_spec(field6, line_number, cpu_aliases, &mut result.errors);
             let g = if rule_parts.len() >= 8 {
                 let grade_str = rule_parts[7].trim();
@@ -715,7 +566,6 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
             };
             (ideal, g)
         } else if let Ok(g) = field6.parse::<u32>() {
-            // Field 6 is grade (backward compatibility)
             if g == 0 {
                 result.warnings.push(format!("Line {}: Grade cannot be 0, using 1 instead", line_number));
                 (Vec::new(), 1)
@@ -723,7 +573,6 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
                 (Vec::new(), g)
             }
         } else {
-            // Unknown format, try to parse as ideal_processor anyway for error reporting
             let ideal = parse_ideal_processor_spec(field6, line_number, cpu_aliases, &mut result.errors);
             (ideal, 1)
         }
@@ -732,7 +581,6 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
     };
 
     for name in members {
-        // Check for redundant rules (same process name defined multiple times)
         if result.configs.values().any(|f| f.contains_key(name)) {
             result.redundant_rules_count += 1;
             result.warnings.push(format!(
@@ -760,12 +608,6 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
     result.process_rules_count += members.len();
 }
 
-/// Reads and validates the config file.
-/// Supports:
-/// - `@CONSTANT = value` - Define a constant
-/// - `*alias = cpu_spec` - Define a CPU alias
-/// - `[name] { ... },priority,affinity,...` - Process group (name optional)
-/// - `name,priority,affinity,cpuset,prime[@prefixes],io,memory` - Single process rule
 pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
     let mut result = ConfigResult::default();
 
@@ -786,13 +628,11 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
         let line_number = i + 1;
         let line = lines[i].trim();
 
-        // Skip empty lines and comments
         if line.is_empty() || line.starts_with('#') {
             i += 1;
             continue;
         }
 
-        // Constant: @NAME = value
         if line.starts_with('@') {
             if let Some(eq_pos) = line.find('=') {
                 parse_constant(&line[1..eq_pos].trim().to_uppercase(), line[eq_pos + 1..].trim(), line_number, &mut result);
@@ -803,7 +643,6 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
             continue;
         }
 
-        // Alias: *name = cpu_spec
         if line.starts_with('*') {
             if let Some(eq_pos) = line.find('=') {
                 parse_alias(
@@ -820,7 +659,6 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
             continue;
         }
 
-        // Group: [name] { members }:rule  OR  Single: name:rule
         if let Some(brace_start) = line.find('{') {
             let group_name = line[..brace_start].trim();
             let group_label = if group_name.is_empty() {
@@ -829,7 +667,6 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
                 group_name.to_lowercase()
             };
 
-            // Single-line group: { a: b }:rule
             let (members, rule_suffix, next_i) = if let Some(brace_end) = line.find('}') {
                 let mut members = Vec::new();
                 collect_members(&line[brace_start + 1..brace_end], &mut members);
@@ -837,7 +674,6 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
                 let suffix = after.strip_prefix(':').map(|s| s.to_string());
                 (members, suffix, i + 1)
             } else {
-                // Multi-line group
                 let first_content = line[brace_start + 1..].trim();
                 match collect_group_block(&lines, i + 1, first_content) {
                     Some((members, suffix, next)) => (members, suffix, next),
@@ -868,7 +704,6 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
                     .push(format!("Line {}: Group '{}' missing rule - use }}:priority:affinity,...", line_number, group_label));
             }
         } else {
-            // Single process line
             let parts: Vec<&str> = line.split(':').collect();
             if parts.len() < 3 {
                 result
@@ -893,7 +728,6 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
     result
 }
 
-/// Reads a list of process names from a file (for blacklist).
 pub fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> {
     let file = File::open(path)?;
     let reader = io::BufReader::new(file);
@@ -905,23 +739,18 @@ pub fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> {
         .collect())
 }
 
-/// Reads a UTF-16 LE encoded file (Process Lasso format).
 pub fn read_utf16le_file(path: &str) -> io::Result<String> {
     let bytes = fs::read(path)?;
     let utf16: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
     Ok(String::from_utf16_lossy(&utf16))
 }
 
-/// Parses a CPU mask string in Process Lasso format.
-/// Supports semicolon-separated core IDs and ranges: `"0;2;4-7"` -> cores 0, 2, 4, 5, 6, 7
 #[allow(dead_code)]
 pub fn parse_mask(s: &str) -> usize {
     let cpus = parse_cpu_spec(s);
     cpu_indices_to_mask(&cpus)
 }
 
-/// Converts Process Lasso configuration (UTF-16LE) to this tool's format.
-/// Extracts `DefaultPriorities` and `DefaultAffinitiesEx` entries.
 pub fn convert(in_file: Option<String>, out_file: Option<String>) {
     let in_path = match in_file {
         Some(p) => p,
@@ -948,7 +777,6 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
 
     let mut output_lines: Vec<String> = Vec::new();
 
-    // Prepend config help with # comment prefix
     for help_line in get_config_help_lines() {
         output_lines.push(help_line.to_string());
     }
@@ -960,18 +788,13 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
     let mut affinities: HashMap<String, String> = HashMap::new();
     let mut named_affinities: Vec<(String, String)> = Vec::new();
 
-    // Process Lasso stores data in these formats:
-    // 1. Single line: DefaultPriorities=proc1.exe,priority1,proc2.exe,priority2,...
-    // 2. Single line: DefaultAffinitiesEx=proc1.exe,mask,cpuset,proc2.exe,mask,cpuset,...
-    // 3. Single line: NamedAffinities=alias1,cpuspec1,alias2,cpuspec2,...
     for line in content.lines() {
         let line = line.trim();
 
-        // Parse NamedAffinities=alias,cpuspec,alias,cpuspec,...
         if line.starts_with("NamedAffinities=") {
             let value = line.strip_prefix("NamedAffinities=").unwrap();
             let parts: Vec<&str> = value.split(',').collect();
-            // Pairs of (alias_name, cpu_spec)
+
             let mut i = 0;
             while i + 1 < parts.len() {
                 let alias_name = parts[i].trim();
@@ -983,11 +806,10 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
             }
         }
 
-        // Parse DefaultPriorities=name,priority,name,priority,...
         if line.starts_with("DefaultPriorities=") {
             let value = line.strip_prefix("DefaultPriorities=").unwrap();
             let parts: Vec<&str> = value.split(',').collect();
-            // Pairs of (name, priority)
+
             let mut i = 0;
             while i + 1 < parts.len() {
                 let name = parts[i].trim().to_lowercase();
@@ -999,11 +821,10 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
             }
         }
 
-        // Parse DefaultAffinitiesEx=name,mask,cpuset,name,mask,cpuset,...
         if line.starts_with("DefaultAffinitiesEx=") {
             let value = line.strip_prefix("DefaultAffinitiesEx=").unwrap();
             let parts: Vec<&str> = value.split(',').collect();
-            // Triplets of (name, mask, cpuset) - we use cpuset (index 2)
+
             let mut i = 0;
             while i + 2 < parts.len() {
                 let name = parts[i].trim().to_lowercase();
@@ -1017,13 +838,11 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
         }
     }
 
-    // Build a reverse lookup: cpu_spec -> alias_name (for replacing specs with aliases)
     let mut spec_to_alias: HashMap<String, String> = HashMap::new();
     for (alias_name, cpu_spec) in &named_affinities {
         spec_to_alias.insert(cpu_spec.clone(), format!("*{}", alias_name));
     }
 
-    // Output CPU aliases from NamedAffinities
     if !named_affinities.is_empty() {
         output_lines.push("# CPU Aliases (from Process Lasso NamedAffinities)".to_string());
         for (alias_name, cpu_spec) in &named_affinities {
@@ -1032,22 +851,18 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
         output_lines.push(String::new());
     }
 
-    // Merge priorities and affinities
     let mut all_processes: std::collections::HashSet<String> = priorities.keys().cloned().collect();
     all_processes.extend(affinities.keys().cloned());
 
-    // Sort process names for consistent output
     let mut sorted_processes: Vec<String> = all_processes.into_iter().collect();
     sorted_processes.sort();
 
     for name in sorted_processes {
         let priority = priorities.get(&name).map(|s| s.as_str()).unwrap_or("none");
         let affinity_raw = affinities.get(&name).map(|s| s.as_str()).unwrap_or("0");
-        // Replace CPU spec with alias if it matches
+
         let affinity = spec_to_alias.get(affinity_raw).map(|s| s.as_str()).unwrap_or(affinity_raw);
 
-        // Convert Process Lasso priority to our format
-        // Process Lasso uses text like "high", "above normal", etc. directly
         let priority_str = match priority.to_lowercase().as_str() {
             "idle" => "idle",
             "below normal" => "below normal",
@@ -1055,7 +870,7 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
             "above normal" => "above normal",
             "high" => "high",
             "realtime" | "real time" => "real time",
-            // Also handle numeric values
+
             "1" => "idle",
             "2" => "below normal",
             "3" => "normal",
@@ -1075,7 +890,6 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
         affinities.len()
     );
 
-    // Write output file
     let mut out = match File::create(&out_path) {
         Ok(f) => f,
         Err(e) => {
@@ -1094,17 +908,6 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
     log!("Converted {} to {}", in_path, out_path);
 }
 
-/// Reads a config file and groups process rules with the same rule string.
-///
-/// Rules that are **exactly** identical (same raw rule text after the process name) are merged
-/// into a single named group block. Groups are assigned auto-generated names `grp_0`, `grp_1`, …
-/// Process names within each group are sorted alphabetically. The preamble (comments, constants,
-/// aliases before the first process rule) is preserved verbatim.
-///
-/// Inline comments between rules are dropped because they are per-process and would no longer
-/// be meaningful after regrouping.
-///
-/// Usage: `-autogroup -in <file> -out <file>`
 pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) {
     let in_path = match in_file {
         Some(p) => p,
@@ -1131,20 +934,17 @@ pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
 
     let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
 
-    // Preamble: all lines before the first process rule (comments, blanks, constants, aliases).
     let mut preamble_lines: Vec<String> = Vec::new();
     let mut in_rules_section = false;
 
-    // Ordered list of unique rule strings (insertion order = first occurrence).
     let mut rule_order: Vec<String> = Vec::new();
-    // Map rule_string -> Vec of process names
+
     let mut rule_to_members: HashMap<String, Vec<String>> = HashMap::new();
 
     let mut i = 0;
     while i < lines.len() {
         let line = lines[i].trim();
 
-        // --- Empty lines ---
         if line.is_empty() {
             if !in_rules_section {
                 preamble_lines.push(lines[i].clone());
@@ -1153,43 +953,36 @@ pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
             continue;
         }
 
-        // --- Comment lines ---
         if line.starts_with('#') {
             if !in_rules_section {
                 preamble_lines.push(lines[i].clone());
             }
-            // Comments between rules are dropped (they are per-process and no longer relevant).
+
             i += 1;
             continue;
         }
 
-        // --- Constants (@) and aliases (*) are always kept in the preamble ---
         if line.starts_with('@') || line.starts_with('*') {
             preamble_lines.push(lines[i].clone());
             i += 1;
             continue;
         }
 
-        // --- Process rule (single line or group) ---
         in_rules_section = true;
 
         if line.contains('{') {
-            // Group rule (single-line or multi-line).
             let brace_start = line.find('{').unwrap();
             let (members, rule_suffix, next_i) = if let Some(brace_end) = line.find('}') {
-                // Single-line group: `name { a.exe: b.exe }:rule`
                 let mut members = Vec::new();
                 collect_members(&line[brace_start + 1..brace_end], &mut members);
                 let after = line[brace_end + 1..].trim();
                 let suffix = after.strip_prefix(':').map(|s| s.to_string());
                 (members, suffix, i + 1)
             } else {
-                // Multi-line group — reuse the existing helper.
                 let first_content = line[brace_start + 1..].trim();
                 match collect_group_block(&lines, i + 1, first_content) {
                     Some((members, suffix, next)) => (members, suffix, next),
                     None => {
-                        // Unclosed group – skip and continue.
                         i += 1;
                         continue;
                     }
@@ -1209,7 +1002,6 @@ pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
                 }
             }
         } else {
-            // Single process rule: `name.exe:priority:affinity:...`
             if let Some(colon_pos) = line.find(':') {
                 let name = line[..colon_pos].trim().to_lowercase();
                 let rule = line[colon_pos + 1..].trim().to_string();
@@ -1225,12 +1017,8 @@ pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Build output
-    // -----------------------------------------------------------------------
     let mut output_lines: Vec<String> = Vec::new();
 
-    // Write preamble, trimming any trailing blank lines.
     let preamble_end = preamble_lines.iter().rposition(|l| !l.trim().is_empty()).map(|p| p + 1).unwrap_or(0);
     for line in &preamble_lines[..preamble_end] {
         output_lines.push(line.clone());
@@ -1248,7 +1036,6 @@ pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
             None => continue,
         };
 
-        // Sort alphabetically and deduplicate within this rule group.
         members.sort();
         members.dedup();
 
@@ -1257,23 +1044,19 @@ pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
         }
 
         if members.len() == 1 {
-            // Single process — no group wrapper needed.
             output_lines.push(format!("{}:{}", members[0], rule_string));
             single_count += 1;
         } else {
-            // Multiple processes share the same rule — emit a named group.
             let group_name = format!("grp_{}", group_idx);
             group_idx += 1;
             group_count += 1;
             grouped_member_count += members.len();
 
-            // Try single-line first: `grp_N { m1: m2: m3 }:rule`
             let members_inline = members.join(": ");
             let single_line = format!("{} {{ {} }}:{}", group_name, members_inline, rule_string);
             if single_line.len() < 128 {
                 output_lines.push(single_line);
             } else {
-                // Multi-line: pack members with `: ` separator, wrapping before a line hits 128 chars.
                 output_lines.push(format!("{} {{", group_name));
                 const INDENT: &str = "    ";
                 let mut cur = String::from(INDENT);
@@ -1299,16 +1082,13 @@ pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
             }
         }
 
-        // Blank line between rule entries for readability.
         output_lines.push(String::new());
     }
 
-    // Remove trailing blank lines.
     while output_lines.last().map(|l: &String| l.trim().is_empty()).unwrap_or(false) {
         output_lines.pop();
     }
 
-    // Write to output file.
     let mut out = match File::create(&out_path) {
         Ok(f) => f,
         Err(e) => {

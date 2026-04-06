@@ -1,20 +1,9 @@
-/*!
-Priority enums and helpers for process, IO, memory, and thread priorities.
-
-This module provides type-safe enums that map to Windows constants and
-helper functions used by the service (for example, boosting a thread's
-priority by one tier while avoiding TIME_CRITICAL promotions).
-
-References:
-- SetThreadPriority: https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadpriority
-*/
 use windows::Win32::System::Threading::{
     ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, MEMORY_PRIORITY, MEMORY_PRIORITY_BELOW_NORMAL,
     MEMORY_PRIORITY_LOW, MEMORY_PRIORITY_MEDIUM, MEMORY_PRIORITY_NORMAL, MEMORY_PRIORITY_VERY_LOW, NORMAL_PRIORITY_CLASS, PROCESS_CREATION_FLAGS,
     REALTIME_PRIORITY_CLASS, THREAD_PRIORITY,
 };
 
-/// Process priority levels corresponding to Windows priority classes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessPriority {
     None,
@@ -37,24 +26,19 @@ impl ProcessPriority {
         (Self::Realtime, "real time", Some(REALTIME_PRIORITY_CLASS)),
     ];
 
-    /// Human readable name for this variant.
     pub fn as_str(&self) -> &'static str {
         Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, name, _)| *name).unwrap_or("unknown")
     }
 
-    /// Returns the Windows PROCESS_CREATION_FLAGS constant for this variant, if any.
     pub fn as_win_const(&self) -> Option<PROCESS_CREATION_FLAGS> {
         Self::TABLE.iter().find(|(v, _, _)| v == self).and_then(|(_, _, val)| *val)
     }
 
-    /// Parse from string (case-insensitive match against known names).
     pub fn from_str(s: &str) -> Self {
         let s = s.to_lowercase();
         Self::TABLE.iter().find(|(_, name, _)| *name == s.as_str()).map(|(v, _, _)| *v).unwrap_or(Self::None)
     }
 
-    /// Convert a Windows priority class constant (GetPriorityClass) to a human name.
-    /// Keeps compatibility with logging code that expects a &str.
     pub fn from_win_const(val: u32) -> &'static str {
         Self::TABLE
             .iter()
@@ -64,7 +48,6 @@ impl ProcessPriority {
     }
 }
 
-/// IO priority levels for process I/O operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IOPriority {
     None,
@@ -105,12 +88,10 @@ impl IOPriority {
     }
 }
 
-/// Memory priority information structure for SetProcessInformation.
 #[repr(C)]
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub struct MemoryPriorityInformation(pub u32);
 
-/// Memory priority levels for process memory management.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryPriority {
     None,
@@ -153,20 +134,6 @@ impl MemoryPriority {
     }
 }
 
-/// Thread priority abstraction and helpers.
-///
-/// Matches values from Microsoft SetThreadPriority documentation:
-/// - THREAD_MODE_BACKGROUND_BEGIN = 0x00010000
-/// - THREAD_MODE_BACKGROUND_END   = 0x00020000
-/// - THREAD_PRIORITY_ABOVE_NORMAL = 1
-/// - THREAD_PRIORITY_BELOW_NORMAL = -1
-/// - THREAD_PRIORITY_HIGHEST      = 2
-/// - THREAD_PRIORITY_IDLE         = -15
-/// - THREAD_PRIORITY_LOWEST       = -2
-/// - THREAD_PRIORITY_NORMAL       = 0
-/// - THREAD_PRIORITY_TIME_CRITICAL= 15
-///
-/// Note: `GetThreadPriority` returns THREAD_PRIORITY_ERROR_RETURN (0x7FFFFFFF) on error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadPriority {
     None,
@@ -197,23 +164,19 @@ impl ThreadPriority {
         (Self::TimeCritical, "time critical", Some(15)),
     ];
 
-    /// Human-readable name.
     pub fn as_str(&self) -> &'static str {
         Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, name, _)| *name).unwrap_or("unknown")
     }
 
-    /// Convert enum to raw Win32 thread priority integer.
     pub fn as_win_const(&self) -> Option<i32> {
         Self::TABLE.iter().find(|(v, _, _)| v == self).and_then(|(_, _, val)| *val)
     }
 
-    /// Parse from string (case-insensitive match against known names).
     pub fn from_str(s: &str) -> Self {
         let s = s.to_lowercase();
         Self::TABLE.iter().find(|(_, name, _)| *name == s.as_str()).map(|(v, _, _)| *v).unwrap_or(Self::None)
     }
 
-    /// Create enum from raw GetThreadPriority/SetThreadPriority value.
     pub fn from_win_const(val: i32) -> Self {
         Self::TABLE
             .iter()
@@ -222,8 +185,6 @@ impl ThreadPriority {
             .unwrap_or(Self::None)
     }
 
-    /// Return the next higher priority tier, capping at `Highest`.
-    /// We intentionally avoid promoting to `TimeCritical` automatically.
     pub fn boost_one(&self) -> Self {
         match self {
             ThreadPriority::None => ThreadPriority::None,
@@ -240,7 +201,6 @@ impl ThreadPriority {
         }
     }
 
-    /// Convert to `THREAD_PRIORITY` wrapper used by `SetThreadPriority`.
     pub fn to_thread_priority_struct(self) -> THREAD_PRIORITY {
         THREAD_PRIORITY(self.as_win_const().unwrap_or(0))
     }

@@ -1,11 +1,5 @@
-//! Command-line argument parsing and help display.
-//!
-//! Handles parsing of command-line arguments and displays help messages.
-
 use crate::{log, logging::use_console};
 
-/// Configuration struct for CLI arguments.
-/// Defaults are set here; `parse_args` will override them based on user input.
 #[derive(Debug, Default)]
 pub struct CliArgs {
     pub interval_ms: u64,
@@ -31,7 +25,6 @@ pub struct CliArgs {
 }
 
 impl CliArgs {
-    /// Creates a new `CliArgs` with sensible defaults.
     pub fn new() -> Self {
         Self {
             interval_ms: 5000,                          // Default from the original code
@@ -41,14 +34,6 @@ impl CliArgs {
     }
 }
 
-/// Parses command-line arguments and sets the corresponding flags and values.
-///
-/// # Arguments
-/// * `args` - The command-line arguments
-/// * `cli` - Mutable reference to the CLI config struct
-///
-/// # Returns
-/// `Ok(())` on success, or a Windows error on failure.
 pub fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<()> {
     let mut i = 1;
     while i < args.len() {
@@ -132,7 +117,6 @@ pub fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<(
     Ok(())
 }
 
-/// Prints the basic help message.
 pub fn print_help() {
     *use_console().lock().unwrap() = true;
     log!(
@@ -161,7 +145,6 @@ pub fn print_help() {
     );
 }
 
-/// Prints CLI help (command line arguments).
 pub fn print_cli_help() {
     log!(
         r#"
@@ -212,7 +195,6 @@ pub fn print_cli_help() {
     );
 }
 
-/// Returns configuration help lines (for embedding in converted files).
 pub fn get_config_help_lines() -> Vec<&'static str> {
     vec![
         r#"## ============================================================================
@@ -321,14 +303,12 @@ pub fn get_config_help_lines() -> Vec<&'static str> {
     ]
 }
 
-/// Prints configuration format help to console.
 pub fn print_config_help() {
     for line in get_config_help_lines() {
         log!("{}", line);
     }
 }
 
-/// Prints the detailed help message with all options (CLI + Config).
 pub fn print_help_all() {
     *use_console().lock().unwrap() = true;
     print_cli_help();

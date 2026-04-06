@@ -32,11 +32,10 @@ impl ApplyConfigResult {
         Self::default()
     }
 
-    /// pid & name will be logged in main loop
     pub fn add_change(&mut self, change: String) {
         self.changes.push(change);
     }
-    /// pid & name will not be logged in main loop
+
     pub fn add_error(&mut self, error: String) {
         self.errors.push(error);
     }
@@ -129,7 +128,6 @@ pub fn apply_process_default_cpuset(pid: u32, config: &ProcessConfig, dry_run: b
                 let mut requiredidcount: u32 = 0;
                 let query_result = unsafe { GetProcessDefaultCpuSets(h_prc, None, &mut requiredidcount) }.as_bool();
                 if query_result {
-                    // 0 is large enough, meaning there are no default CPU sets for this process
                     toset = true;
                 } else {
                     let code = unsafe { GetLastError().0 };
@@ -425,7 +423,7 @@ pub fn apply_prime_threads_promote(
                     ));
                 }
                 let current_priority = unsafe { GetThreadPriority(handle) };
-                // 0x7FFFFFFF_i32 -> ThreadPriority::ErrorReturn
+
                 if current_priority != 0x7FFFFFFF_i32 {
                     let current_priority = crate::priority::ThreadPriority::from_win_const(current_priority);
                     thread_stats.original_priority = Some(current_priority);
@@ -854,7 +852,6 @@ pub fn apply_ideal_processors(
             };
         }
 
-        // restore old candidates who failed to meet the active streak threshold
         for &(tid, _, _, ref start_module) in &thread_infos {
             let thread_stats = prime_scheduler.get_thread_stats(pid, tid);
             if !thread_stats.ideal_processor.is_assigned || selected_set.contains(&tid) {

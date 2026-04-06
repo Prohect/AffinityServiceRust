@@ -66,8 +66,35 @@ impl PrimeThreadScheduler {
         self.pid_to_process_stats.entry(pid).or_default().tid_to_thread_stats.entry(tid).or_default()
     }
 
+    /// Updates `active_streak` for every thread in `tid_with_delta_cycles` based on the
+    /// supplied cycle deltas.  Called once per iteration from `prefetch_all_thread_cycles`
+    /// **before** either `apply_prime_threads` or `apply_ideal_processors` runs, so that
+    /// both consumers see consistent, freshly-updated streak values without double-counting.
+    ///
+    /// `entry_threshold` is read from `self.constants`; threads whose delta reaches or exceeds
+    /// `entry_min = max_delta * entry_threshold` have their streak incremented (capped at 254),
+    /// all others are reset to 0.
+    pub fn update_active_streaks(&mut self, pid: u32, tid_with_delta_cycles: &[(u32, u64)], get_streak_mut: fn(&mut ThreadStats) -> &mut u8) {
+        let max_cycles = tid_with_delta_cycles.iter().map(|&(_, c)| c).max().unwrap_or(0);
+        let entry_min = (max_cycles as f64 * self.constants.entry_threshold) as u64;
+        let keep_min = (max_cycles as f64 * self.constants.keep_threshold) as u64;
+        for &(tid, delta) in tid_with_delta_cycles {
+            let streak = get_streak_mut(self.get_thread_stats(pid, tid));
+            if *streak > 0 {
+                if delta < keep_min {
+                    *streak = 0;
+                    continue;
+                }
+                *streak = streak.saturating_add(1).min(254);
+            } else if delta >= entry_min {
+                *streak = 1;
+            }
+        }
+    }
+
     /// Core hysteresis-based selection algorithm shared by prime-thread and ideal-processor
-    /// assignment.
+    /// assignment.  Streak counters must already be updated by `update_active_streaks` before
+    /// this is called; this function only performs the two-pass slot selection.
     ///
     /// Sorts `tid_with_delta_cycles` by delta descending and marks up to `slot_count` entries
     /// as `is_prime = true` using two passes:
@@ -78,9 +105,8 @@ impl PrimeThreadScheduler {
     ///
     /// # Parameters
     /// - `slot_count`            – maximum number of threads to mark as `is_prime`
-    /// - `get_streak_mut`        – mutable accessor for the per-thread streak counter to use;
-    ///   both prime-thread and ideal-processor scheduling share `active_streak` since the
-    ///   hysteresis constants are global and the two-pass filter behaves identically
+    /// - `get_streak_mut`        – mutable accessor for the per-thread streak counter used
+    ///   to read the already-updated streak value in pass 2
     /// - `is_currently_assigned` – predicate indicating the thread already holds a managed slot
     ///   (`!cpu_set_ids.is_empty()` vs `ideal_processor.is_assigned`)
     pub fn select_top_threads_with_hysteresis(
@@ -95,20 +121,6 @@ impl PrimeThreadScheduler {
         let max_cycles = tid_with_delta_cycles.first().map(|&(_, c, _)| c).unwrap_or(0u64);
         let entry_min = (max_cycles as f64 * self.constants.entry_threshold) as u64;
         let keep_min = (max_cycles as f64 * self.constants.keep_threshold) as u64;
-
-        // Update streaks.
-        for &(tid, delta, _) in tid_with_delta_cycles.iter() {
-            if tid == 0 {
-                continue;
-            }
-            let ts = self.get_thread_stats(pid, tid);
-            let s = get_streak_mut(ts);
-            if delta >= entry_min {
-                *s = s.saturating_add(1).min(254);
-            } else {
-                *s = 0;
-            }
-        }
 
         let mut slots_used = 0usize;
 
@@ -260,6 +272,10 @@ impl Default for IdealProcessorState {
 pub struct ThreadStats {
     /// KernelTime + UserTime from last snapshot, used to calculate delta.
     pub last_total_time: i64,
+    /// KernelTime + UserTime captured during `apply_prime_threads` Step 1 this iteration.
+    /// Flushed into `last_total_time` by `finalize_thread_baselines` after all apply
+    /// functions have run, so the delta baseline is always consistent.
+    pub cached_total_time: i64,
     /// CPU cycles from last QueryThreadCycleTimew, used for accurate activity measurement.
     pub last_cycles: u64,
     /// Raw `QueryThreadCycleTime` result captured during the per-iteration prefetch.
@@ -284,6 +300,7 @@ impl ThreadStats {
     pub fn new() -> Self {
         Self {
             last_total_time: 0,
+            cached_total_time: 0,
             last_cycles: 0,
             cached_cycles: 0,
             handle: None,

@@ -9,6 +9,7 @@ use crate::{
     priority::ThreadPriority,
     winapi::{clear_module_cache, resolve_address_to_module},
 };
+use ntapi::ntexapi::SYSTEM_THREAD_INFORMATION;
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
@@ -28,6 +29,7 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE};
 ///
 /// PIDs and TIDs can be reused by Windows after a process exits, so we must
 /// clear stats when a process dies to avoid applying stale data.
+#[derive(Debug)]
 pub struct PrimeThreadScheduler {
     /// Maps PID -> ProcessStats. Cleared when process exits (PIDs can be reused by OS).
     pub pid_to_process_stats: HashMap<u32, ProcessStats>,
@@ -51,11 +53,11 @@ impl PrimeThreadScheduler {
 
     /// Marks a process as alive for this iteration.
     pub fn set_alive(&mut self, pid: u32) {
-        self.pid_to_process_stats.entry(pid).or_default().alive = true;
+        self.pid_to_process_stats.entry(pid).or_insert(ProcessStats::new(pid)).alive = true;
     }
 
     pub fn set_tracking_info(&mut self, pid: u32, track_top_x_threads: i32, process_name: String) {
-        let stats = self.pid_to_process_stats.entry(pid).or_default();
+        let stats = self.pid_to_process_stats.entry(pid).or_insert(ProcessStats::new(pid));
         stats.track_top_x_threads = track_top_x_threads;
         stats.process_name = process_name;
     }
@@ -63,7 +65,12 @@ impl PrimeThreadScheduler {
     /// Gets or creates thread stats for the given PID/TID pair.
     #[inline]
     pub fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats {
-        self.pid_to_process_stats.entry(pid).or_default().tid_to_thread_stats.entry(tid).or_default()
+        self.pid_to_process_stats
+            .entry(pid)
+            .or_insert(ProcessStats::new(pid))
+            .tid_to_thread_stats
+            .entry(tid)
+            .or_insert(ThreadStats::new(pid))
     }
 
     /// Updates `active_streak` for every thread in `tid_with_delta_cycles` based on the
@@ -191,28 +198,32 @@ impl PrimeThreadScheduler {
 }
 
 /// Per-process state for the PrimeThreadScheduler.
+#[derive(Debug)]
 pub struct ProcessStats {
     /// Set to false at loop start, true when process is seen. Dead processes are cleaned up.
     pub alive: bool,
     pub tid_to_thread_stats: HashMap<u32, ThreadStats>,
     pub track_top_x_threads: i32,
     pub process_name: String,
+    #[allow(dead_code)]
+    pub process_id: u32,
 }
 
 impl ProcessStats {
-    pub fn new() -> Self {
+    pub fn new(process_id: u32) -> Self {
         Self {
             alive: true,
             tid_to_thread_stats: HashMap::new(),
             track_top_x_threads: 0,
             process_name: String::new(),
+            process_id,
         }
     }
 }
 
 impl Default for ProcessStats {
     fn default() -> Self {
-        Self::new()
+        Self::new(0)
     }
 }
 
@@ -272,13 +283,32 @@ pub struct ThreadStats {
     pub start_address: usize,
     /// Original thread priority before promotion. None if not promoted.
     pub original_priority: Option<ThreadPriority>,
-    pub last_system_thread_info: Option<ntapi::ntexapi::SYSTEM_THREAD_INFORMATION>,
+    pub last_system_thread_info: Option<SYSTEM_THREAD_INFORMATION>,
     /// Ideal processor assignment state for this thread
     pub ideal_processor: IdealProcessorState,
+    pub process_id: u32,
+}
+
+impl std::fmt::Debug for ThreadStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ThreadStats")
+            .field("last_total_time", &self.last_total_time)
+            .field("cached_total_time", &self.cached_total_time)
+            .field("last_cycles", &self.last_cycles)
+            .field("cached_cycles", &self.cached_cycles)
+            .field("handle", &self.handle)
+            .field("pinned_cpu_set_ids", &self.pinned_cpu_set_ids)
+            .field("active_streak", &self.active_streak)
+            .field("start_address", &resolve_address_to_module(self.process_id, self.start_address))
+            .field("original_priority", &self.original_priority)
+            // last_system_thread_info skipped: SYSTEM_THREAD_INFORMATION does not implement Debug
+            .field("ideal_processor", &self.ideal_processor)
+            .finish()
+    }
 }
 
 impl ThreadStats {
-    pub fn new() -> Self {
+    pub fn new(process_id: u32) -> Self {
         Self {
             last_total_time: 0,
             cached_total_time: 0,
@@ -291,13 +321,14 @@ impl ThreadStats {
             original_priority: None,
             last_system_thread_info: None,
             ideal_processor: IdealProcessorState::new(),
+            process_id,
         }
     }
 }
 
 impl Default for ThreadStats {
     fn default() -> Self {
-        Self::new()
+        Self::new(0)
     }
 }
 fn format_100ns(time: i64) -> String {

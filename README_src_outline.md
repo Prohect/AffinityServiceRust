@@ -243,24 +243,25 @@
 }
 
 ## src/scheduler.rs
-- [L16:L35]struct PrimeThreadScheduler {
+- [L17:L37]struct PrimeThreadScheduler {
     pub pid_to_process_stats: HashMap<u32, ProcessStats>,
     pub constants: ConfigConstants,
 }
-- [L193:L200]struct ProcessStats {
+- [L200:L210]struct ProcessStats {
     pub alive: bool,
     pub tid_to_thread_stats: HashMap<u32, ThreadStats>,
     pub track_top_x_threads: i32,
     pub process_name: String,
+    pub process_id: u32,
 }
-- [L219:L232]struct IdealProcessorState {
+- [L230:L243]struct IdealProcessorState {
     pub current_group: u16,
     pub current_number: u8,
     pub previous_group: u16,
     pub previous_number: u8,
     pub is_assigned: bool,
 }
-- [L252:L278]struct ThreadStats {
+- [L263:L290]struct ThreadStats {
     pub last_total_time: i64,
     pub cached_total_time: i64,
     pub last_cycles: u64,
@@ -270,11 +271,12 @@
     pub active_streak: u8,
     pub start_address: usize,
     pub original_priority: Option<ThreadPriority>,
-    pub last_system_thread_info: Option<ntapi::ntexapi::SYSTEM_THREAD_INFORMATION>,
+    pub last_system_thread_info: Option<SYSTEM_THREAD_INFORMATION>,
     pub ideal_processor: IdealProcessorState,
+    pub process_id: u32,
 }
-- [L303:L307]fn format_100ns(time: i64) -> String 
-- [L309:L316]fn format_filetime(time: i64) -> String 
+- [L334:L338]fn format_100ns(time: i64) -> String 
+- [L340:L347]fn format_filetime(time: i64) -> String 
 
 ## src/winapi.rs
 - [L59:L64]struct CpuSetData {

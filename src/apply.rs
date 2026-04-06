@@ -259,7 +259,7 @@ pub fn prefetch_all_thread_cycles(
                 .iter_mut()
                 .filter_map(|(tid, thread_stats)| {
                     if thread_stats.cached_cycles > 0 {
-                        Some((*tid, thread_stats.cached_cycles - thread_stats.last_cycles))
+                        Some((*tid, thread_stats.cached_cycles.saturating_sub(thread_stats.last_cycles)))
                     } else {
                         thread_stats.active_streak = 0;
                         None
@@ -337,7 +337,7 @@ pub fn apply_prime_threads(
         .iter()
         .map(|&tid| {
             let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
-            (tid, thread_stats.cached_cycles - thread_stats.last_cycles, false)
+            (tid, thread_stats.cached_cycles.saturating_sub(thread_stats.last_cycles), false)
         })
         .collect();
 

@@ -534,13 +534,11 @@ pub fn resolve_address_to_module(pid: u32, address: usize) -> String {
 
     // Ensure modules are enumerated and cached
     let modules = {
-        let cache = MODULE_CACHE.lock().unwrap();
+        let mut cache = MODULE_CACHE.lock().unwrap();
         if let Some(cached_modules) = cache.get(&pid) {
             cached_modules.clone()
         } else {
-            drop(cache);
             let new_modules = enumerate_process_modules(pid);
-            let mut cache = MODULE_CACHE.lock().unwrap();
             cache.insert(pid, new_modules.clone());
             new_modules
         }
@@ -554,6 +552,11 @@ pub fn resolve_address_to_module(pid: u32, address: usize) -> String {
 
     // Address not in any known module
     format!("0x{:X}", address)
+}
+
+pub fn drop_module_cache(pid: u32) {
+    let mut cache = MODULE_CACHE.lock().unwrap();
+    cache.remove(&pid);
 }
 
 /// Terminates all direct child processes of the current process.

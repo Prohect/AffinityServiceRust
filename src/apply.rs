@@ -268,7 +268,7 @@ pub fn prefetch_all_thread_cycles(
                 .collect()
         })
         .unwrap_or_default();
-    prime_scheduler.update_active_streaks(pid, &tid_with_delta_cycles, |ts| &mut ts.active_streak);
+    prime_scheduler.update_active_streaks(pid, &tid_with_delta_cycles);
 }
 
 pub fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler) {

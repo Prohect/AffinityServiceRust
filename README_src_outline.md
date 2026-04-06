@@ -186,9 +186,9 @@
 - [L169:L190]fn error_from_code(code: u32) -> String 
 
 ## src/main.rs
-- [L46:L88]fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut PrimeThreadScheduler, processes: &mut ProcessSnapshot, dry_run: bool) -> ApplyConfigResult 
-- [L90:L162]fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
-- [L164:L420]fn main() -> windows::core::Result<()> 
+- [L46:L89]fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut PrimeThreadScheduler, processes: &mut ProcessSnapshot, dry_run: bool) -> ApplyConfigResult 
+- [L91:L163]fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
+- [L165:L421]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L17:L27]enum ProcessPriority {
@@ -299,8 +299,9 @@
 - [L475:L497]fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: u8) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
 - [L499:L513]fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
 - [L518:L518]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-- [L515:L557]fn resolve_address_to_module(pid: u32, address: usize) -> String 
-- [L559:L610]fn terminate_child_processes() 
-- [L612:L615]fn clear_module_cache(pid: u32) 
-- [L617:L677]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
+- [L515:L555]fn resolve_address_to_module(pid: u32, address: usize) -> String 
+- [L557:L560]fn drop_module_cache(pid: u32) 
+- [L562:L613]fn terminate_child_processes() 
+- [L615:L618]fn clear_module_cache(pid: u32) 
+- [L620:L680]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
 

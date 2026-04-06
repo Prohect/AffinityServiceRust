@@ -81,18 +81,18 @@ impl PrimeThreadScheduler {
     /// `entry_threshold` is read from `self.constants`; threads whose delta reaches or exceeds
     /// `entry_min = max_delta * entry_threshold` have their streak incremented (capped at 254),
     /// all others are reset to 0.
-    pub fn update_active_streaks(&mut self, pid: u32, tid_with_delta_cycles: &[(u32, u64)], get_streak_mut: fn(&mut ThreadStats) -> &mut u8) {
+    pub fn update_active_streaks(&mut self, pid: u32, tid_with_delta_cycles: &[(u32, u64)]) {
         let max_cycles = tid_with_delta_cycles.iter().map(|&(_, c)| c).max().unwrap_or(0);
         let entry_min = (max_cycles as f64 * self.constants.entry_threshold) as u64;
         let keep_min = (max_cycles as f64 * self.constants.keep_threshold) as u64;
         for &(tid, delta) in tid_with_delta_cycles {
-            let streak = get_streak_mut(self.get_thread_stats(pid, tid));
+            let streak = &mut self.get_thread_stats(pid, tid).active_streak;
             if *streak > 0 {
                 if delta < keep_min {
                     *streak = 0;
                     continue;
                 }
-                *streak = streak.saturating_add(1).min(254);
+                *streak = (*streak + 1).min(254);
             } else if delta >= entry_min {
                 *streak = 1;
             }

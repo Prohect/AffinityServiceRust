@@ -152,13 +152,13 @@
 - [L259:L272]fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut HashMap<String, Vec<u32>>, result: &mut ConfigResult) 
 - [L274:L320]fn parse_ideal_processor_spec(spec: &str, line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, errors: &mut Vec<String>) -> Vec<IdealProcessorRule> 
 - [L322:L328]fn collect_group_block(lines: &[String], start_index: usize, first_line_content: &str) -> Option<(Vec<String>, Option<String>, usize)> 
-- [L352:L609]fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, result: &mut ConfigResult) 
-- [L611:L686]fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult 
-- [L731:L740]fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> 
-- [L742:L746]fn read_utf16le_file(path: &str) -> io::Result<String> 
-- [L749:L752]fn parse_mask(s: &str) -> usize 
-- [L754:L909]fn convert(in_file: Option<String>, out_file: Option<String>) 
-- [L911:L1114]fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
+- [L352:L607]fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, result: &mut ConfigResult) 
+- [L609:L684]fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult 
+- [L729:L738]fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> 
+- [L740:L744]fn read_utf16le_file(path: &str) -> io::Result<String> 
+- [L747:L750]fn parse_mask(s: &str) -> usize 
+- [L752:L907]fn convert(in_file: Option<String>, out_file: Option<String>) 
+- [L909:L1112]fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
 
 ## src/logging.rs
 - [L11:L11]static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));

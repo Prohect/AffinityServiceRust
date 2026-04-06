@@ -90,10 +90,10 @@ pub fn parse_cpu_spec(s: &str) -> Vec<u32> {
                     cpus.push(cpu);
                 }
             }
-        } else if let Ok(cpu) = part.parse::<u32>() {
-            if !cpus.contains(&cpu) {
-                cpus.push(cpu);
-            }
+        } else if let Ok(cpu) = part.parse::<u32>()
+            && !cpus.contains(&cpu)
+        {
+            cpus.push(cpu);
         }
     }
     cpus.sort();
@@ -414,9 +414,7 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
                 }
 
                 for (idx, part) in prime_spec.split('*').enumerate() {
-                    if idx == 0 && !prime_spec.starts_with('*') {
-                        segments.push(part);
-                    } else if !part.is_empty() {
+                    if (idx == 0 && !prime_spec.starts_with('*')) || !part.is_empty() {
                         segments.push(part);
                     }
                 }

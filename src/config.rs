@@ -503,142 +503,145 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
     let (prime_threads_cpus, prime_threads_prefixes, track_top_x_threads) = if rule_parts.len() >= 4 {
         let mut prime_spec = rule_parts[3].trim();
         let mut track_top_x_threads = 0;
-
-        if prime_spec.starts_with("??") {
-            let rest = &prime_spec[2..];
-            let end_idx = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
-            if let Ok(val) = rest[..end_idx].parse::<i32>() {
-                track_top_x_threads = -val;
-                prime_spec = &rest[end_idx..];
-                if prime_spec.starts_with('x') || prime_spec.starts_with('X') {
-                    prime_spec = &prime_spec[1..];
-                }
-            }
-        } else if prime_spec.starts_with('?') {
-            let rest = &prime_spec[1..];
-            let end_idx = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
-            if let Ok(val) = rest[..end_idx].parse::<i32>() {
-                track_top_x_threads = val;
-                prime_spec = &rest[end_idx..];
-                if prime_spec.starts_with('x') || prime_spec.starts_with('X') {
-                    prime_spec = &prime_spec[1..];
-                }
-            }
-        }
-
-        if prime_spec.find('@').is_some() {
-            // Parse segments separated by '*' (each segment can have its own CPU alias)
-            let mut all_prefixes: Vec<PrimePrefix> = Vec::new();
-            let mut base_cpus: Vec<u32> = Vec::new();
-
-            // Split by '*' to get segments, but keep track of positions
-            let mut segments: Vec<&str> = Vec::new();
-
-            if prime_spec.starts_with('*') {
-                // First segment starts with '*'
-                segments.push("");
-            }
-
-            for (idx, part) in prime_spec.split('*').enumerate() {
-                if idx == 0 && !prime_spec.starts_with('*') {
-                    // Handle case where spec doesn't start with '*'
-                    segments.push(part);
-                } else if !part.is_empty() {
-                    segments.push(part);
-                }
-            }
-
-            // Process each segment
-            for segment in segments {
-                if segment.is_empty() {
-                    continue;
-                }
-
-                // Each segment format: alias@prefix1[!priority];prefix2[!priority];...
-                if let Some(at_pos) = segment.find('@') {
-                    let alias = segment[..at_pos].trim();
-
-                    // Find the end of this segment's prefix list (before next '*' or end)
-                    let remaining = &segment[at_pos + 1..];
-
-                    // Resolve CPU alias for this segment (stored without '*' prefix, lowercase)
-                    let segment_cpus = if alias.is_empty() {
-                        Vec::new()
-                    } else {
-                        let alias_lower = alias.to_lowercase();
-                        if let Some(alias_cpus) = cpu_aliases.get(alias_lower.as_str()) {
-                            alias_cpus.clone()
-                        } else {
-                            result
-                                .errors
-                                .push(format!("Line {}: Unknown CPU alias '*{}' in prime specification", line_number, alias));
-                            Vec::new()
-                        }
-                    };
-
-                    // Merge all segments' CPUs into base, avoiding duplicates
-                    for cpu in &segment_cpus {
-                        if !base_cpus.contains(cpu) {
-                            base_cpus.push(*cpu);
-                        }
-                    }
-
-                    // Parse prefixes for this segment
-                    for prefix_str in remaining.split(';') {
-                        let prefix_str = prefix_str.trim();
-                        if prefix_str.is_empty() {
-                            continue;
-                        }
-
-                        // Check for !priority suffix
-                        if let Some(bang_pos) = prefix_str.find('!') {
-                            let prefix = prefix_str[..bang_pos].to_string();
-                            let prio_str = &prefix_str[bang_pos + 1..];
-                            let thread_prio = ThreadPriority::from_str(prio_str.trim());
-                            if thread_prio == ThreadPriority::None && !prio_str.trim().eq_ignore_ascii_case("none") {
-                                result.warnings.push(format!(
-                                    "Line {}: Unknown thread priority '{}' in prefix - will be treated as 'none' (auto-boost)",
-                                    line_number, prio_str
-                                ));
-                            }
-                            all_prefixes.push(PrimePrefix {
-                                prefix,
-                                cpus: Some(segment_cpus.clone()),
-                                thread_priority: thread_prio,
-                            });
-                        } else {
-                            // No priority suffix, just prefix name
-                            all_prefixes.push(PrimePrefix {
-                                prefix: prefix_str.to_string(),
-                                cpus: Some(segment_cpus.clone()),
-                                thread_priority: ThreadPriority::None,
-                            });
-                        }
-                    }
-                }
-            }
-
-            if all_prefixes.is_empty() {
-                all_prefixes.push(PrimePrefix {
-                    prefix: "".to_string(),
-                    cpus: None,
-                    thread_priority: ThreadPriority::None,
-                });
-            }
-
-            (base_cpus, all_prefixes, track_top_x_threads)
+        if prime_spec == "0" {
+            (Vec::<u32>::new(), Vec::new(), 0)
         } else {
-            // No '@' found, treat as simple CPU spec
-            let cpus = resolve_cpu_spec(prime_spec, "prime_cpus", line_number, cpu_aliases, &mut result.errors);
-            (
-                cpus,
-                vec![PrimePrefix {
-                    prefix: "".to_string(),
-                    cpus: None,
-                    thread_priority: ThreadPriority::None,
-                }],
-                track_top_x_threads,
-            )
+            if prime_spec.starts_with("??") {
+                let rest = &prime_spec[2..];
+                let end_idx = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+                if let Ok(val) = rest[..end_idx].parse::<i32>() {
+                    track_top_x_threads = -val;
+                    prime_spec = &rest[end_idx..];
+                    if prime_spec.starts_with('x') || prime_spec.starts_with('X') {
+                        prime_spec = &prime_spec[1..];
+                    }
+                }
+            } else if prime_spec.starts_with('?') {
+                let rest = &prime_spec[1..];
+                let end_idx = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+                if let Ok(val) = rest[..end_idx].parse::<i32>() {
+                    track_top_x_threads = val;
+                    prime_spec = &rest[end_idx..];
+                    if prime_spec.starts_with('x') || prime_spec.starts_with('X') {
+                        prime_spec = &prime_spec[1..];
+                    }
+                }
+            }
+
+            if prime_spec.find('@').is_some() {
+                // Parse segments separated by '*' (each segment can have its own CPU alias)
+                let mut all_prefixes: Vec<PrimePrefix> = Vec::new();
+                let mut base_cpus: Vec<u32> = Vec::new();
+
+                // Split by '*' to get segments, but keep track of positions
+                let mut segments: Vec<&str> = Vec::new();
+
+                if prime_spec.starts_with('*') {
+                    // First segment starts with '*'
+                    segments.push("");
+                }
+
+                for (idx, part) in prime_spec.split('*').enumerate() {
+                    if idx == 0 && !prime_spec.starts_with('*') {
+                        // Handle case where spec doesn't start with '*'
+                        segments.push(part);
+                    } else if !part.is_empty() {
+                        segments.push(part);
+                    }
+                }
+
+                // Process each segment
+                for segment in segments {
+                    if segment.is_empty() {
+                        continue;
+                    }
+
+                    // Each segment format: alias@prefix1[!priority];prefix2[!priority];...
+                    if let Some(at_pos) = segment.find('@') {
+                        let alias = segment[..at_pos].trim();
+
+                        // Find the end of this segment's prefix list (before next '*' or end)
+                        let remaining = &segment[at_pos + 1..];
+
+                        // Resolve CPU alias for this segment (stored without '*' prefix, lowercase)
+                        let segment_cpus = if alias.is_empty() {
+                            Vec::new()
+                        } else {
+                            let alias_lower = alias.to_lowercase();
+                            if let Some(alias_cpus) = cpu_aliases.get(alias_lower.as_str()) {
+                                alias_cpus.clone()
+                            } else {
+                                result
+                                    .errors
+                                    .push(format!("Line {}: Unknown CPU alias '*{}' in prime specification", line_number, alias));
+                                Vec::new()
+                            }
+                        };
+
+                        // Merge all segments' CPUs into base, avoiding duplicates
+                        for cpu in &segment_cpus {
+                            if !base_cpus.contains(cpu) {
+                                base_cpus.push(*cpu);
+                            }
+                        }
+
+                        // Parse prefixes for this segment
+                        for prefix_str in remaining.split(';') {
+                            let prefix_str = prefix_str.trim();
+                            if prefix_str.is_empty() {
+                                continue;
+                            }
+
+                            // Check for !priority suffix
+                            if let Some(bang_pos) = prefix_str.find('!') {
+                                let prefix = prefix_str[..bang_pos].to_string();
+                                let prio_str = &prefix_str[bang_pos + 1..];
+                                let thread_prio = ThreadPriority::from_str(prio_str.trim());
+                                if thread_prio == ThreadPriority::None && !prio_str.trim().eq_ignore_ascii_case("none") {
+                                    result.warnings.push(format!(
+                                        "Line {}: Unknown thread priority '{}' in prefix - will be treated as 'none' (auto-boost)",
+                                        line_number, prio_str
+                                    ));
+                                }
+                                all_prefixes.push(PrimePrefix {
+                                    prefix,
+                                    cpus: Some(segment_cpus.clone()),
+                                    thread_priority: thread_prio,
+                                });
+                            } else {
+                                // No priority suffix, just prefix name
+                                all_prefixes.push(PrimePrefix {
+                                    prefix: prefix_str.to_string(),
+                                    cpus: Some(segment_cpus.clone()),
+                                    thread_priority: ThreadPriority::None,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                if all_prefixes.is_empty() {
+                    all_prefixes.push(PrimePrefix {
+                        prefix: "".to_string(),
+                        cpus: None,
+                        thread_priority: ThreadPriority::None,
+                    });
+                }
+
+                (base_cpus, all_prefixes, track_top_x_threads)
+            } else {
+                // No '@' found, treat as simple CPU spec
+                let cpus = resolve_cpu_spec(prime_spec, "prime_cpus", line_number, cpu_aliases, &mut result.errors);
+                (
+                    cpus,
+                    vec![PrimePrefix {
+                        prefix: "".to_string(),
+                        cpus: None,
+                        thread_priority: ThreadPriority::None,
+                    }],
+                    track_top_x_threads,
+                )
+            }
         }
     } else {
         (

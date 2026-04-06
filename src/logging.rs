@@ -21,6 +21,10 @@ struct ApplyFailEntry {
 
 static APPLY_FAIL_MAP: Lazy<Mutex<HashMap<u32, ApplyFailEntry>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// Tracks process open failures to avoid spamming logs.
+///
+/// Returns true if this is the first failure for this PID/name combination,
+/// allowing one error log per process instance.
 pub fn apply_fail_insert_if_new(pid: u32, proc_name: &str) -> bool {
     let mut map = APPLY_FAIL_MAP.lock().unwrap();
     match map.get(&pid) {
@@ -39,6 +43,10 @@ pub fn apply_fail_insert_if_new(pid: u32, proc_name: &str) -> bool {
     }
 }
 
+/// Removes stale entries from the apply failure tracking map.
+///
+/// Marks all entries as dead, then re-marks currently running processes as alive.
+/// Dead entries are removed to prevent unbounded growth.
 pub fn purge_apply_fail_map(pids_and_names: &[(u32, String)]) {
     let mut map = APPLY_FAIL_MAP.lock().unwrap();
     for entry in map.values_mut() {
@@ -121,6 +129,10 @@ pub fn log_to_find(msg: &str) {
     }
 }
 
+/// Logs a discovered process from -find mode, deduplicated per day.
+///
+/// Uses FINDS_SET to ensure each process is logged only once per session,
+/// preventing log spam from repeatedly discovered processes.
 pub fn log_process_find(process_name: &str) {
     if FINDS_SET.lock().unwrap().insert(process_name.to_string()) {
         log_to_find(&format!("find {}", process_name));

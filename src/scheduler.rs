@@ -47,6 +47,11 @@ impl PrimeThreadScheduler {
             .or_insert(ThreadStats::new(pid))
     }
 
+    /// Updates active streak counters for hysteresis-based thread selection.
+    ///
+    /// Threads accumulate "active streak" when their cycle count exceeds the entry threshold.
+    /// This prevents briefly-active threads from being promoted to prime status.
+    /// Streak is reset when cycles drop below the keep threshold.
     pub fn update_active_streaks(&mut self, pid: u32, tid_with_delta_cycles: &[(u32, u64)]) {
         let max_cycles = tid_with_delta_cycles.iter().map(|&(_, c)| c).max().unwrap_or(0);
         let entry_min = (max_cycles as f64 * self.constants.entry_threshold) as u64;
@@ -65,6 +70,12 @@ impl PrimeThreadScheduler {
         }
     }
 
+    /// Selects top threads using hysteresis to prevent promotion/demotion thrashing.
+    ///
+    /// First pass: keeps currently-assigned threads if they still qualify (cycles >= keep_threshold).
+    /// Second pass: fills remaining slots with new threads that have sufficient active streak.
+    ///
+    /// The `is_currently_assigned` callback checks if a thread already has the resource being assigned.
     pub fn select_top_threads_with_hysteresis(
         &mut self,
         pid: u32,
@@ -79,16 +90,21 @@ impl PrimeThreadScheduler {
         let keep_min = (max_cycles as f64 * self.constants.keep_threshold) as u64;
         let mut slots_used = 0usize;
 
+        // First pass: retain currently-assigned threads that still qualify
+        // This prevents threads from losing prime status due to minor fluctuations
         for (tid, delta, is_prime) in tid_with_delta_cycles.iter_mut() {
             if slots_used >= slot_count {
                 continue;
             }
+            // Keep threshold is higher than entry threshold (hysteresis)
             if is_currently_assigned(self.get_thread_stats(pid, *tid)) && *delta >= keep_min {
                 *is_prime = true;
                 slots_used += 1;
             }
         }
 
+        // Second pass: fill remaining slots with new qualifying threads
+        // Requires active_streak to prevent promotion of briefly-active threads
         for (tid, delta, is_prime) in tid_with_delta_cycles.iter_mut() {
             if slots_used >= slot_count {
                 break;
@@ -103,6 +119,10 @@ impl PrimeThreadScheduler {
         }
     }
 
+    /// Cleans up resources for processes that no longer exist.
+    ///
+    /// Closes thread handles, clears module cache, and optionally logs
+    /// top N threads by cycles for debugging/analysis purposes.
     pub fn close_dead_process_handles(&mut self) {
         self.pid_to_process_stats.retain(|pid, process_stats| {
             if !process_stats.alive {

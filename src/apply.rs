@@ -174,6 +174,11 @@ pub fn apply_process_default_cpuset(pid: u32, config: &ProcessConfig, dry_run: b
     }
 }
 
+/// Prefetches thread cycle counts for prime thread selection.
+///
+/// Opens handles to top CPU-consuming threads (by kernel+user time) and
+/// queries their cycle counters. This establishes baseline measurements
+/// for the hysteresis-based prime thread promotion/demotion algorithm.
 pub fn prefetch_all_thread_cycles(
     pid: u32,
     process_name: &str,
@@ -284,6 +289,15 @@ pub fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler)
     }
 }
 
+/// Applies prime thread scheduling to CPU-intensive threads.
+///
+/// The algorithm:
+/// 1. Sort threads by CPU time delta to identify candidates
+/// 2. Select top threads using hysteresis (entry/keep thresholds)
+/// 3. Promote selected threads to prime CPUs with optional priority boost
+/// 4. Demote threads that no longer qualify
+///
+/// Prime threads are pinned to specific CPUs via CPU Sets for better cache locality.
 pub fn apply_prime_threads(
     pid: u32,
     config: &ProcessConfig,
@@ -294,7 +308,7 @@ pub fn apply_prime_threads(
     apply_config_result: &mut ApplyConfigResult,
 ) {
     let has_prime_cpus = !config.prime_threads_cpus.is_empty() || !config.prime_threads_prefixes.is_empty();
-    let do_prime = has_prime_cpus && config.track_top_x_threads >= 0;
+    let do_prime = has_prime_cpus && config.track_top_x_threads >= 0; // Negative track_top_x_threads disables prime
     let has_tracking = config.track_top_x_threads != 0;
     if !do_prime && !has_tracking {
         return;
@@ -321,8 +335,11 @@ pub fn apply_prime_threads(
     }
     tid_with_time_deltas.sort_unstable_by(|a, b| b.1.cmp(&a.1));
     let prime_count = config.prime_threads_cpus.len();
+    // Candidate pool: 4x prime slots or CPU count, whichever is larger, capped at thread count
     let candidate_count = (prime_count * 4).max(get_cpu_set_information().lock().unwrap().len()).min(thread_count);
     let mut candidate_tids: Vec<u32> = tid_with_time_deltas.iter().take(candidate_count).map(|&(tid, _)| tid).collect();
+    // Include previously-pinned threads that may have dropped out of top candidates
+    // This ensures they can be properly demoted if they no longer qualify
     if let Some(process_stats) = prime_core_scheduler.pid_to_process_stats.get(&pid) {
         process_stats.tid_to_thread_stats.iter().for_each(|(tid, thread_stats)| {
             if thread_stats.pinned_cpu_set_ids.is_empty() && !candidate_tids.contains(tid) {
@@ -343,6 +360,7 @@ pub fn apply_prime_threads(
     apply_prime_threads_promote(&tid_with_delta_cycles, prime_core_scheduler, pid, config, current_mask, apply_config_result);
     apply_prime_threads_demote(process, &tid_with_delta_cycles, prime_core_scheduler, pid, config, apply_config_result);
 
+    // Clean up handles for threads that no longer exist in the process
     let live_set: HashSet<u32> = tid_with_time_deltas.iter().map(|&(tid, _)| tid).collect();
     if let Some(ps) = prime_core_scheduler.pid_to_process_stats.get_mut(&pid) {
         for (tid, ts) in ps.tid_to_thread_stats.iter_mut() {
@@ -357,10 +375,21 @@ pub fn apply_prime_threads(
     }
 }
 
+/// Selects top threads for prime status using hysteresis to prevent thrashing.
+///
+/// Hysteresis prevents threads from rapidly flipping between prime/non-prime:
+/// - Currently prime threads stay prime if cycles >= keep_threshold% of max
+/// - Non-prime threads become prime if cycles >= entry_threshold% of max AND active_streak >= min_active_streak
 pub fn apply_prime_threads_select(tid_with_delta_cycles: &mut [(u32, u64, bool)], prime_core_scheduler: &mut PrimeThreadScheduler, pid: u32, prime_count: usize) {
     prime_core_scheduler.select_top_threads_with_hysteresis(pid, tid_with_delta_cycles, prime_count, |thread_stats| !thread_stats.pinned_cpu_set_ids.is_empty());
 }
 
+/// Promotes selected threads to prime status with CPU pinning and optional priority boost.
+///
+/// For each thread marked as prime:
+/// - Resolves start address to module name for prefix matching
+/// - Applies module-specific CPU set if prefixes are configured
+/// - Boosts thread priority (either explicitly configured or auto-boosted by one level)
 pub fn apply_prime_threads_promote(
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
@@ -459,6 +488,10 @@ pub fn apply_prime_threads_promote(
     }
 }
 
+/// Demotes threads that no longer qualify for prime status.
+///
+/// Removes CPU set pinning and restores original thread priority.
+/// Clears pinned_cpu_set_ids even on failure to prevent infinite retry loops.
 pub fn apply_prime_threads_demote(
     process: &mut crate::process::ProcessEntry,
     tid_with_delta_cycles: &[(u32, u64, bool)],
@@ -633,6 +666,11 @@ pub fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, h_
     }
 }
 
+/// Resets ideal processors for all threads after affinity change.
+///
+/// When process affinity is changed, Windows may reset thread ideal processors.
+/// This redistributes threads across the new affinity CPUs with a random shift
+/// to avoid always assigning the same threads to the same CPUs.
 pub fn reset_thread_ideal_processors(
     pid: u32,
     config: &ProcessConfig,
@@ -711,6 +749,12 @@ pub fn reset_thread_ideal_processors(
     }
 }
 
+/// Assigns ideal processors to threads based on their start module.
+///
+/// For each rule, identifies threads whose start module matches the prefix,
+/// selects top N by cycle count (N = number of CPUs in rule), and assigns
+/// each to a dedicated CPU. When a thread drops out of top N, its ideal
+/// processor is restored to the previous value.
 pub fn apply_ideal_processors(
     pid: u32,
     config: &ProcessConfig,

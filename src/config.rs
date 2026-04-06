@@ -63,6 +63,19 @@ impl Default for ConfigConstants {
     }
 }
 
+/// Parses a CPU specification string into a sorted list of CPU indices.
+///
+/// Supports multiple formats:
+/// - "0" or empty → empty vec (no change)
+/// - "0xFF" → hex bitmask (legacy, ≤64 cores)
+/// - "0-7" → CPU range inclusive
+/// - "0;4;8" → individual CPUs separated by semicolons
+/// - "0-7;64-71" → multiple ranges for >64 core systems
+///
+/// # Examples
+/// * "0-3" → [0, 1, 2, 3]
+/// * "0;2;4" → [0, 2, 4]
+/// * "0x0F" → [0, 1, 2, 3]
 pub fn parse_cpu_spec(s: &str) -> Vec<u32> {
     let s = s.trim();
     if s.is_empty() || s == "0" {
@@ -271,6 +284,14 @@ fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut Ha
     }
 }
 
+/// Parses ideal processor specification with module prefix filtering.
+///
+/// Format: `*alias[@prefix1;prefix2]` where:
+/// - `*` is a required prefix marker for each rule segment
+/// - `alias` is a CPU alias name (must be defined in ALIAS section)
+/// - `@prefix` optionally filters threads by their start module name
+///
+/// Multiple segments can be chained: `*p@engine.dll*e@helper.dll`
 fn parse_ideal_processor_spec(spec: &str, line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, errors: &mut Vec<String>) -> Vec<IdealProcessorRule> {
     let spec = spec.trim();
     if spec.is_empty() || spec == "0" {
@@ -319,6 +340,10 @@ fn parse_ideal_processor_spec(spec: &str, line_number: usize, cpu_aliases: &Hash
     rules
 }
 
+/// Collects members from a multi-line group block until closing brace.
+///
+/// Handles both single-line `{ a, b }` and multi-line group definitions.
+/// Returns (members, rule_suffix_after_brace, next_line_index) or None if unclosed.
 fn collect_group_block(lines: &[String], start_index: usize, first_line_content: &str) -> Option<(Vec<String>, Option<String>, usize)> {
     let mut members = Vec::new();
     let mut i = start_index;
@@ -349,6 +374,10 @@ fn collect_group_block(lines: &[String], start_index: usize, first_line_content:
     None
 }
 
+/// Parses rule fields and inserts config entries for all group members.
+///
+/// Rule format: priority:affinity:cpuset:prime_cpus:io_priority:memory_priority:ideal_processor:grade
+/// Each field is optional with sensible defaults.
 fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, result: &mut ConfigResult) {
     if rule_parts.len() < 2 {
         result.errors.push(format!(
@@ -381,11 +410,14 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
         if prime_spec == "0" {
             (Vec::<u32>::new(), Vec::new(), 0)
         } else {
+            // Parse tracking prefix: ?N means track top N threads, ??N means track without prime
+            // e.g., ?8x*p means track and prime top 8 threads to alias p
+            //       ??16 means track top 16 threads without any prime scheduling
             if prime_spec.starts_with("??") {
                 let rest = &prime_spec[2..];
                 let end_idx = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
                 if let Ok(val) = rest[..end_idx].parse::<i32>() {
-                    track_top_x_threads = -val;
+                    track_top_x_threads = -val; // Negative = tracking without prime
                     prime_spec = &rest[end_idx..];
                     if prime_spec.starts_with('x') || prime_spec.starts_with('X') {
                         prime_spec = &prime_spec[1..];
@@ -395,7 +427,7 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
                 let rest = &prime_spec[1..];
                 let end_idx = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
                 if let Ok(val) = rest[..end_idx].parse::<i32>() {
-                    track_top_x_threads = val;
+                    track_top_x_threads = val; // Positive = tracking with prime
                     prime_spec = &rest[end_idx..];
                     if prime_spec.starts_with('x') || prime_spec.starts_with('X') {
                         prime_spec = &prime_spec[1..];
@@ -749,6 +781,14 @@ pub fn parse_mask(s: &str) -> usize {
     cpu_indices_to_mask(&cpus)
 }
 
+/// Converts Process Lasso configuration to AffinityServiceRust format.
+///
+/// Parses INI-style Process Lasso config with:
+/// - NamedAffinities=alias,cpus,alias,cpus...
+/// - DefaultPriorities=process,priority,process,priority...
+/// - DefaultAffinitiesEx=process,mask,cpuset,process,mask,cpuset...
+///
+/// Outputs config with CPU aliases and process rules in native format.
 pub fn convert(in_file: Option<String>, out_file: Option<String>) {
     let in_path = match in_file {
         Some(p) => p,
@@ -906,6 +946,11 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
     log!("Converted {} to {}", in_path, out_path);
 }
 
+/// Auto-groups processes with identical rules to reduce config duplication.
+///
+/// Reads config, identifies processes sharing the same rule settings,
+/// and groups them using `{ process1: process2: ... }:rule syntax.
+/// Generates compact output with single-line groups where possible.
 pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) {
     let in_path = match in_file {
         Some(p) => p,

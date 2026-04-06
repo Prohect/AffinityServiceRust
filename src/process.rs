@@ -14,6 +14,10 @@ impl Drop for ProcessSnapshot {
 }
 
 impl ProcessSnapshot {
+    /// Captures a snapshot of all processes and threads via NtQuerySystemInformation.
+    ///
+    /// Dynamically allocates buffer and retries if STATUS_INFO_LENGTH_MISMATCH.
+    /// Parses SYSTEM_PROCESS_INFORMATION structures into ProcessEntry objects.
     pub fn take() -> Result<Self, i32> {
         let mut buf_len: usize = 1024;
         let mut buffer: Vec<u8>;
@@ -85,6 +89,10 @@ impl ProcessEntry {
         }
     }
 
+    /// Returns thread information map, lazily populating from raw pointer on first call.
+    ///
+    /// The raw thread array from SYSTEM_PROCESS_INFORMATION is parsed into a HashMap
+    /// for efficient TID-based lookup. Cached on first access per process entry.
     #[inline]
     pub fn get_threads(&mut self) -> &HashMap<u32, SYSTEM_THREAD_INFORMATION> {
         if self.process.NumberOfThreads as usize != self.threads.len() {

@@ -43,6 +43,17 @@ use windows::Win32::{
     },
 };
 
+/// Applies all configuration settings to a target process.
+///
+/// This is the core function that orchestrates applying priority, affinity, CPU sets,
+/// IO priority, memory priority, and prime thread scheduling to a process.
+///
+/// # Arguments
+/// * `pid` - Target process ID
+/// * `config` - Process configuration containing all settings to apply
+/// * `prime_core_scheduler` - Scheduler for managing prime threads
+/// * `processes` - Current process snapshot for thread enumeration
+/// * `dry_run` - If true, only reports what would change without applying
 fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut PrimeThreadScheduler, processes: &mut ProcessSnapshot, dry_run: bool) -> ApplyConfigResult {
     let mut apply_config_result = ApplyConfigResult::new();
     let access_flags = if dry_run {
@@ -88,6 +99,11 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
     apply_config_result
 }
 
+/// Processes log files from -find mode to discover new processes.
+///
+/// Scans .find.log files for discovered processes, filters out known ones,
+/// and uses Everything search (es.exe) to locate executable paths.
+/// Results are written to a text file for manual review.
 fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) {
     *use_console().lock().unwrap() = true;
     let logs_path = logs_path.unwrap_or("logs");
@@ -272,6 +288,8 @@ fn main() -> windows::core::Result<()> {
                 purge_apply_fail_map(&pids_and_names);
                 prime_core_scheduler.reset_alive();
 
+                // Grade-based scheduling: rules with higher grade values run less frequently
+                // e.g., grade=1 runs every loop, grade=5 runs every 5th loop
                 for (grade, grade_configs) in &configs {
                     if !current_loop.is_multiple_of(*grade) {
                         continue; // Skip this grade this loop

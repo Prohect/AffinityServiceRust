@@ -77,6 +77,7 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
     apply_io_priority(pid, config, dry_run, h_prc, &mut apply_config_result);
     apply_memory_priority(pid, config, dry_run, h_prc, &mut apply_config_result);
     if !config.prime_threads_cpus.is_empty() || !config.prime_threads_prefixes.is_empty() || !config.ideal_processor_rules.is_empty() || config.track_top_x_threads != 0 {
+        prime_core_scheduler.set_alive(pid);
         prefetch_all_thread_cycles(pid, &config.name, processes, prime_core_scheduler, &mut apply_config_result);
         apply_prime_threads(pid, config, prime_core_scheduler, processes, dry_run, &mut current_mask, &mut apply_config_result);
         apply_ideal_processors(pid, config, processes, prime_core_scheduler, dry_run, &mut apply_config_result);

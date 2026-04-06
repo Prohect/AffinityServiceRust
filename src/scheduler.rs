@@ -92,41 +92,24 @@ impl PrimeThreadScheduler {
         }
     }
 
-    /// Core hysteresis-based selection algorithm shared by prime-thread and ideal-processor
-    /// assignment.  Streak counters must already be updated by `update_active_streaks` before
-    /// this is called; this function only performs the two-pass slot selection.
-    ///
-    /// Sorts `tid_with_delta_cycles` by delta descending and marks up to `slot_count` entries
-    /// as `is_prime = true` using two passes:
-    ///   1. Protect already-assigned threads that still exceed `keep_threshold` — no write
-    ///      syscall needed because they are already on the correct resource.
-    ///   2. Award remaining slots to threads above `entry_threshold` whose streak counter has
-    ///      reached `MIN_ACTIVE_STREAK`, preventing one-shot bursts from winning slots.
-    ///
-    /// # Parameters
-    /// - `slot_count`            – maximum number of threads to mark as `is_prime`
-    /// - `get_streak_mut`        – mutable accessor for the per-thread streak counter used
-    ///   to read the already-updated streak value in pass 2
-    /// - `is_currently_assigned` – predicate indicating the thread already holds a managed slot
-    ///   (`!cpu_set_ids.is_empty()` vs `ideal_processor.is_assigned`)
+    /// would sort the `tid_with_delta_cycles` in descending order by delta and select the top threads with hysteresis.
     pub fn select_top_threads_with_hysteresis(
         &mut self,
         pid: u32,
+        // the selected flag is unset here upon calling
         tid_with_delta_cycles: &mut [(u32, u64, bool)],
         slot_count: usize,
-        get_streak_mut: fn(&mut ThreadStats) -> &mut u8,
         is_currently_assigned: fn(&ThreadStats) -> bool,
     ) {
         tid_with_delta_cycles.sort_unstable_by_key(|&(_, delta, _)| Reverse(delta));
         let max_cycles = tid_with_delta_cycles.first().map(|&(_, c, _)| c).unwrap_or(0u64);
         let entry_min = (max_cycles as f64 * self.constants.entry_threshold) as u64;
         let keep_min = (max_cycles as f64 * self.constants.keep_threshold) as u64;
-
         let mut slots_used = 0usize;
 
         // Pass 1: protect existing assignments that still exceed keep_threshold.
         for (tid, delta, is_prime) in tid_with_delta_cycles.iter_mut() {
-            if *tid == 0 || slots_used >= slot_count {
+            if slots_used >= slot_count {
                 continue;
             }
             if is_currently_assigned(self.get_thread_stats(pid, *tid)) && *delta >= keep_min {
@@ -143,9 +126,7 @@ impl PrimeThreadScheduler {
             if *tid == 0 || *is_prime {
                 continue;
             }
-            let ts = self.get_thread_stats(pid, *tid);
-            let streak = *get_streak_mut(ts);
-            if *delta >= entry_min && streak >= self.constants.min_active_streak {
+            if *delta >= entry_min && self.get_thread_stats(pid, *tid).active_streak >= self.constants.min_active_streak {
                 *is_prime = true;
                 slots_used += 1;
             }
@@ -284,7 +265,7 @@ pub struct ThreadStats {
     /// Cached thread handle to avoid repeated OpenThread calls.
     pub handle: Option<HANDLE>,
     /// Current CPU set IDs assigned to this thread. Empty = not pinned (inherits from process).
-    pub cpu_set_ids: Vec<u32>,
+    pub pinned_cpu_set_ids: Vec<u32>,
     /// Consecutive intervals this thread exceeded entry_threshold. Must reach 2 to be promoted.
     pub active_streak: u8,
     /// Cached start address of the thread.
@@ -304,7 +285,7 @@ impl ThreadStats {
             last_cycles: 0,
             cached_cycles: 0,
             handle: None,
-            cpu_set_ids: vec![],
+            pinned_cpu_set_ids: vec![],
             active_streak: 0,
             start_address: 0,
             original_priority: None,

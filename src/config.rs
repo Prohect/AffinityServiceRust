@@ -576,9 +576,11 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
                         }
                     };
 
-                    // Use first segment's CPUs as base
-                    if base_cpus.is_empty() {
-                        base_cpus = segment_cpus.clone();
+                    // Merge all segments' CPUs into base, avoiding duplicates
+                    for cpu in &segment_cpus {
+                        if !base_cpus.contains(cpu) {
+                            base_cpus.push(*cpu);
+                        }
                     }
 
                     // Parse prefixes for this segment

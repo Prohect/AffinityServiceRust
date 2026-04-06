@@ -250,125 +250,25 @@ pub fn prefetch_all_thread_cycles(
         counter += 1;
     }
 
-    let tid_with_delta: Vec<(u32, u64)> = prime_scheduler
+    let tid_with_delta_cycles: Vec<(u32, u64)> = prime_scheduler
         .pid_to_process_stats
-        .get(&pid)
+        .get_mut(&pid)
         .map(|process_stats| {
             process_stats
                 .tid_to_thread_stats
-                .iter()
-                .filter(|(_, ts)| ts.cached_cycles > 0)
-                .map(|(&tid, ts)| (tid, ts.cached_cycles.saturating_sub(ts.last_cycles)))
+                .iter_mut()
+                .filter_map(|(tid, thread_stats)| {
+                    if thread_stats.cached_cycles > 0 {
+                        Some((*tid, thread_stats.cached_cycles - thread_stats.last_cycles))
+                    } else {
+                        thread_stats.active_streak = 0;
+                        None
+                    }
+                })
                 .collect()
         })
         .unwrap_or_default();
-    prime_scheduler.update_active_streaks(pid, &tid_with_delta, |ts| &mut ts.active_streak);
-}
-
-pub fn apply_prime_threads(
-    pid: u32,
-    config: &ProcessConfig,
-    prime_core_scheduler: &mut PrimeThreadScheduler,
-    processes: &mut ProcessSnapshot,
-    dry_run: bool,
-    current_mask: &mut usize,
-    apply_config_result: &mut ApplyConfigResult,
-) {
-    let has_prime_cpus = !config.prime_threads_cpus.is_empty();
-    let do_prime = has_prime_cpus && config.track_top_x_threads >= 0;
-    let has_tracking = config.track_top_x_threads != 0;
-
-    if !do_prime && !has_tracking {
-        return;
-    }
-
-    if dry_run {
-        if has_prime_cpus {
-            apply_config_result.add_change(format!("Prime CPUs: -> [{}]", format_cpu_indices(&config.prime_threads_cpus)));
-        }
-        return;
-    }
-
-    prime_core_scheduler.set_alive(pid);
-    if has_tracking {
-        prime_core_scheduler.set_tracking_info(pid, config.track_top_x_threads, config.name.clone());
-    }
-
-    let Some(process) = processes.pid_to_process.get_mut(&pid) else { return };
-
-    let mut tid_time_deltas: Vec<(u32, i64)> = Vec::with_capacity(process.thread_count() as usize);
-    for (&tid, thread) in process.get_threads().iter() {
-        let ts = prime_core_scheduler.get_thread_stats(pid, tid);
-        tid_time_deltas.push((tid, ts.cached_total_time - ts.last_total_time));
-        if has_tracking {
-            ts.last_system_thread_info = Some(*thread);
-        }
-    }
-
-    if !do_prime {
-        return;
-    }
-
-    let thread_count = tid_time_deltas.len();
-    if thread_count == 0 {
-        return;
-    }
-
-    let prime_count = config.prime_threads_cpus.len();
-    let cpu_count = get_cpu_set_information().lock().unwrap().len();
-    let k = (prime_count.saturating_mul(4)).max(cpu_count).min(thread_count);
-
-    tid_time_deltas.sort_unstable_by(|a, b| b.1.cmp(&a.1));
-    let mut candidate_set: Vec<u32> = tid_time_deltas.iter().take(k).map(|&(tid, _)| tid).collect();
-
-    let promoted_tids: Vec<u32> = {
-        match prime_core_scheduler.pid_to_process_stats.get(&pid) {
-            Some(ps) => ps
-                .tid_to_thread_stats
-                .iter()
-                .filter(|(_, ts)| !ts.cpu_set_ids.is_empty())
-                .map(|(&tid, _)| tid)
-                .collect(),
-            None => vec![],
-        }
-    };
-    for tid in promoted_tids {
-        if !candidate_set.contains(&tid) {
-            candidate_set.push(tid);
-        }
-    }
-
-    let mut tid_with_delta_cycles: Vec<(u32, u64, bool)> = candidate_set
-        .iter()
-        .map(|&tid| {
-            let ts = prime_core_scheduler.get_thread_stats(pid, tid);
-            let cached = ts.cached_cycles;
-            let delta = cached.saturating_sub(ts.last_cycles);
-            (tid, delta, false)
-        })
-        .collect();
-
-    apply_prime_threads_select(&mut tid_with_delta_cycles, prime_core_scheduler, pid, prime_count);
-
-    apply_prime_threads_promote(&tid_with_delta_cycles, prime_core_scheduler, pid, config, current_mask, apply_config_result);
-    apply_prime_threads_demote(process, &tid_with_delta_cycles, prime_core_scheduler, pid, config, apply_config_result);
-
-    let live_set: HashSet<u32> = tid_time_deltas.iter().map(|&(tid, _)| tid).collect();
-    if let Some(ps) = prime_core_scheduler.pid_to_process_stats.get_mut(&pid) {
-        for (tid, ts) in ps.tid_to_thread_stats.iter_mut() {
-            if !live_set.contains(tid)
-                && let Some(h) = ts.handle.take()
-            {
-                unsafe {
-                    let _ = CloseHandle(h);
-                }
-            }
-        }
-    }
-}
-
-pub fn apply_prime_threads_select(tid_with_delta_cycles: &mut [(u32, u64, bool)], prime_core_scheduler: &mut PrimeThreadScheduler, pid: u32, prime_count: usize) {
-    prime_core_scheduler.select_top_threads_with_hysteresis(pid, tid_with_delta_cycles, prime_count, |ts| &mut ts.active_streak, |ts| !ts.cpu_set_ids.is_empty());
+    prime_scheduler.update_active_streaks(pid, &tid_with_delta_cycles, |ts| &mut ts.active_streak);
 }
 
 pub fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler) {
@@ -386,6 +286,83 @@ pub fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler)
     }
 }
 
+pub fn apply_prime_threads(
+    pid: u32,
+    config: &ProcessConfig,
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    processes: &mut ProcessSnapshot,
+    dry_run: bool,
+    current_mask: &mut usize,
+    apply_config_result: &mut ApplyConfigResult,
+) {
+    let has_prime_cpus = !config.prime_threads_cpus.is_empty() || !config.prime_threads_prefixes.is_empty();
+    let do_prime = has_prime_cpus && config.track_top_x_threads >= 0;
+    let has_tracking = config.track_top_x_threads != 0;
+    if !do_prime && !has_tracking {
+        return;
+    }
+    if dry_run {
+        if has_prime_cpus {
+            apply_config_result.add_change(format!("Prime CPUs: -> [{}]", format_cpu_indices(&config.prime_threads_cpus)));
+        }
+        return;
+    }
+    if has_tracking {
+        prime_core_scheduler.set_tracking_info(pid, config.track_top_x_threads, config.name.clone());
+    }
+
+    let Some(process) = processes.pid_to_process.get_mut(&pid) else { return };
+    let thread_count = process.thread_count() as usize;
+    let mut tid_with_time_deltas: Vec<(u32, i64)> = Vec::with_capacity(thread_count);
+    for (&tid, thread) in process.get_threads().iter() {
+        let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
+        tid_with_time_deltas.push((tid, thread_stats.cached_total_time - thread_stats.last_total_time));
+        if has_tracking {
+            thread_stats.last_system_thread_info = Some(*thread);
+        }
+    }
+    tid_with_time_deltas.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    let prime_count = config.prime_threads_cpus.len();
+    let candidate_count = (prime_count * 4).max(get_cpu_set_information().lock().unwrap().len()).min(thread_count);
+    let mut candidate_tids: Vec<u32> = tid_with_time_deltas.iter().take(candidate_count).map(|&(tid, _)| tid).collect();
+    if let Some(process_stats) = prime_core_scheduler.pid_to_process_stats.get(&pid) {
+        process_stats.tid_to_thread_stats.iter().for_each(|(tid, thread_stats)| {
+            if thread_stats.pinned_cpu_set_ids.is_empty() && !candidate_tids.contains(tid) {
+                candidate_tids.push(*tid);
+            };
+        });
+    }
+
+    let mut tid_with_delta_cycles: Vec<(u32, u64, bool)> = candidate_tids
+        .iter()
+        .map(|&tid| {
+            let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
+            (tid, thread_stats.cached_cycles - thread_stats.last_cycles, false)
+        })
+        .collect();
+
+    apply_prime_threads_select(&mut tid_with_delta_cycles, prime_core_scheduler, pid, prime_count);
+    apply_prime_threads_promote(&tid_with_delta_cycles, prime_core_scheduler, pid, config, current_mask, apply_config_result);
+    apply_prime_threads_demote(process, &tid_with_delta_cycles, prime_core_scheduler, pid, config, apply_config_result);
+
+    let live_set: HashSet<u32> = tid_with_time_deltas.iter().map(|&(tid, _)| tid).collect();
+    if let Some(ps) = prime_core_scheduler.pid_to_process_stats.get_mut(&pid) {
+        for (tid, ts) in ps.tid_to_thread_stats.iter_mut() {
+            if !live_set.contains(tid)
+                && let Some(h) = ts.handle.take()
+            {
+                unsafe {
+                    let _ = CloseHandle(h);
+                }
+            }
+        }
+    }
+}
+
+pub fn apply_prime_threads_select(tid_with_delta_cycles: &mut [(u32, u64, bool)], prime_core_scheduler: &mut PrimeThreadScheduler, pid: u32, prime_count: usize) {
+    prime_core_scheduler.select_top_threads_with_hysteresis(pid, tid_with_delta_cycles, prime_count, |thread_stats| !thread_stats.pinned_cpu_set_ids.is_empty());
+}
+
 pub fn apply_prime_threads_promote(
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
@@ -401,19 +378,19 @@ pub fn apply_prime_threads_promote(
         let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
         if let Some(handle) = thread_stats.handle
             && !handle.is_invalid()
-            && thread_stats.cpu_set_ids.is_empty()
+            && thread_stats.pinned_cpu_set_ids.is_empty()
         {
             let start_module = resolve_address_to_module(pid, thread_stats.start_address);
             let mut matched = false;
-            let mut effective_prime_cpus = &config.prime_threads_cpus;
-            let mut effective_thread_priority = crate::priority::ThreadPriority::None;
+            let mut prime_cpus_to_set = &config.prime_threads_cpus;
+            let mut thread_priority_to_set = crate::priority::ThreadPriority::None;
             for prefix in &config.prime_threads_prefixes {
                 if start_module.to_lowercase().starts_with(&prefix.prefix.to_lowercase()) {
                     matched = true;
                     if let Some(ref cpus) = prefix.cpus {
-                        effective_prime_cpus = cpus;
+                        prime_cpus_to_set = cpus;
                     }
-                    effective_thread_priority = prefix.thread_priority;
+                    thread_priority_to_set = prefix.thread_priority;
                     break;
                 }
             }
@@ -421,14 +398,13 @@ pub fn apply_prime_threads_promote(
                 continue;
             }
             let filtered_cpus = if *current_mask != 0 {
-                filter_indices_by_mask(effective_prime_cpus, *current_mask)
+                filter_indices_by_mask(prime_cpus_to_set, *current_mask)
             } else {
-                effective_prime_cpus.clone()
+                prime_cpus_to_set.clone()
             };
             let cpu_setids = cpusetids_from_indices(&filtered_cpus);
             if !cpu_setids.is_empty() {
-                let set_result = unsafe { SetThreadSelectedCpuSets(handle, &cpu_setids) }.as_bool();
-                if !set_result {
+                if !unsafe { SetThreadSelectedCpuSets(handle, &cpu_setids) }.as_bool() {
                     let error_code = unsafe { GetLastError().0 };
                     apply_config_result.add_error(format!(
                         "apply_config: [SET_THREAD_CPU_SETS][{}] {:>5}-{}-{}",
@@ -438,7 +414,7 @@ pub fn apply_prime_threads_promote(
                         config.name
                     ));
                 } else {
-                    thread_stats.cpu_set_ids = cpu_setids.clone();
+                    thread_stats.pinned_cpu_set_ids = cpu_setids.clone();
                     let promoted_cpus = indices_from_cpusetids(&cpu_setids);
                     apply_config_result.add_change(format!(
                         "Thread {} -> (promoted, [{}], cycles={}, start={})",
@@ -448,19 +424,18 @@ pub fn apply_prime_threads_promote(
                         start_module
                     ));
                 }
-                let current_prio = unsafe { GetThreadPriority(handle) };
-                if current_prio != 0x7FFFFFFF_i32 {
-                    let current_prio = crate::priority::ThreadPriority::from_win_const(current_prio);
-                    thread_stats.original_priority = Some(current_prio);
-
-                    let new_prio = if effective_thread_priority != crate::priority::ThreadPriority::None {
-                        effective_thread_priority
+                let current_priority = unsafe { GetThreadPriority(handle) };
+                // 0x7FFFFFFF_i32 -> ThreadPriority::ErrorReturn
+                if current_priority != 0x7FFFFFFF_i32 {
+                    let current_priority = crate::priority::ThreadPriority::from_win_const(current_priority);
+                    thread_stats.original_priority = Some(current_priority);
+                    let new_priority = if thread_priority_to_set != crate::priority::ThreadPriority::None {
+                        thread_priority_to_set
                     } else {
-                        current_prio.boost_one()
+                        current_priority.boost_one()
                     };
-
-                    if new_prio != current_prio {
-                        if unsafe { SetThreadPriority(handle, new_prio.to_thread_priority_struct()) }.is_err() {
+                    if new_priority != current_priority {
+                        if unsafe { SetThreadPriority(handle, new_priority.to_thread_priority_struct()) }.is_err() {
                             let error_code = unsafe { GetLastError().0 };
                             apply_config_result.add_error(format!(
                                 "apply_config: [SET_THREAD_PRIORITY][{}] {:>5}-{}-{}",
@@ -470,9 +445,9 @@ pub fn apply_prime_threads_promote(
                                 config.name
                             ));
                         } else {
-                            let old_name = current_prio.as_str();
-                            let new_name = new_prio.as_str();
-                            let action = if effective_thread_priority != crate::priority::ThreadPriority::None {
+                            let old_name = current_priority.as_str();
+                            let new_name = new_priority.as_str();
+                            let action = if thread_priority_to_set != crate::priority::ThreadPriority::None {
                                 "priority set"
                             } else {
                                 "priority boosted"
@@ -502,30 +477,15 @@ pub fn apply_prime_threads_demote(
     let live_tids: Vec<u32> = process.get_threads().keys().copied().collect();
 
     for tid in live_tids {
-        let needs_demote = {
-            let ts = prime_core_scheduler.get_thread_stats(pid, tid);
-            !ts.cpu_set_ids.is_empty() && !prime_set.contains(&tid)
-        };
-        if !needs_demote {
+        let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
+        if prime_set.contains(&tid) || thread_stats.pinned_cpu_set_ids.is_empty() {
             continue;
         }
-
-        let (handle_opt, start_address, original_priority_opt) = {
-            let ts = prime_core_scheduler.get_thread_stats(pid, tid);
-            let h = ts.handle;
-            let addr = ts.start_address;
-            let prio = ts.original_priority.take(); // also clears ts.original_priority
-            ts.cpu_set_ids.clear();
-            (h, addr, prio)
-        };
-
-        let Some(handle) = handle_opt else { continue };
+        let Some(handle) = thread_stats.handle else { continue };
         if handle.is_invalid() {
             continue;
         }
-
-        let set_result = unsafe { SetThreadSelectedCpuSets(handle, &[]) }.as_bool();
-        if !set_result {
+        if !unsafe { SetThreadSelectedCpuSets(handle, &[]) }.as_bool() {
             let error_code = unsafe { GetLastError().0 };
             apply_config_result.add_error(format!(
                 "apply_config: [SET_THREAD_CPU_SETS][{}] {:>5}-{}-{}",
@@ -535,11 +495,13 @@ pub fn apply_prime_threads_demote(
                 config.name
             ));
         } else {
-            let start_module = resolve_address_to_module(pid, start_address);
+            let start_module = resolve_address_to_module(pid, thread_stats.start_address);
             apply_config_result.add_change(format!("Thread {} -> (demoted, start={})", tid, start_module));
         }
+        // whether this failed or not, clear pinned_cpu_set_ids to avoid infinite retries which spam in the logs
+        thread_stats.pinned_cpu_set_ids.clear();
 
-        if let Some(original_priority) = original_priority_opt
+        if let Some(original_priority) = thread_stats.original_priority.take() // same as above
             && unsafe { SetThreadPriority(handle, original_priority.to_thread_priority_struct()) }.is_err()
         {
             let error_code = unsafe { GetLastError().0 };
@@ -690,10 +652,7 @@ pub fn reset_thread_ideal_processors(
         return;
     }
 
-    let process = match processes.pid_to_process.get_mut(&pid) {
-        Some(p) => p,
-        None => return,
-    };
+    let Some(process) = processes.pid_to_process.get_mut(&pid) else { return };
 
     let mut thread_times: Vec<(u32, i64, HANDLE)> = Vec::new();
 
@@ -784,23 +743,17 @@ pub fn apply_ideal_processors(
         return;
     }
 
-    let process = match processes.pid_to_process.get_mut(&pid) {
-        Some(p) => p,
-        None => return,
-    };
-
+    let Some(process) = processes.pid_to_process.get_mut(&pid) else { return };
     let tids: Vec<u32> = process.get_threads().keys().copied().collect();
     let mut all_threads: Vec<(u32, u64, usize, String)> = Vec::new();
     for &tid in &tids {
-        let ts = prime_scheduler.get_thread_stats(pid, tid);
-        let cycles = ts.cached_cycles;
+        let thread_stats = prime_scheduler.get_thread_stats(pid, tid);
+        let cycles = thread_stats.cached_cycles;
         if cycles == 0 {
             continue;
         }
-        let delta = cycles.saturating_sub(ts.last_cycles);
-        let start_addr = ts.start_address;
-        let start_module = resolve_address_to_module(pid, start_addr);
-        all_threads.push((tid, delta, start_addr, start_module));
+        let start_addr = thread_stats.start_address;
+        all_threads.push((tid, cycles - thread_stats.last_cycles, start_addr, resolve_address_to_module(pid, start_addr)));
     }
 
     for rule in &config.ideal_processor_rules {
@@ -821,115 +774,98 @@ pub fn apply_ideal_processors(
             }
         }
 
-        let slot_count = rule.cpus.len();
-
         let mut selection: Vec<(u32, u64, bool)> = thread_infos.iter().map(|&(tid, delta, _, _)| (tid, delta, false)).collect();
-
-        prime_scheduler.select_top_threads_with_hysteresis(pid, &mut selection, slot_count, |ts| &mut ts.active_streak, |ts| ts.ideal_processor.is_assigned);
-
-        let is_prime_set: HashSet<u32> = selection.iter().filter(|(_, _, p)| *p).map(|(t, _, _)| *t).collect();
+        prime_scheduler.select_top_threads_with_hysteresis(pid, &mut selection, rule.cpus.len(), |ts| ts.ideal_processor.is_assigned);
+        let selected_set: HashSet<u32> = selection.iter().filter(|(_, _, p)| *p).map(|(t, _, _)| *t).collect();
 
         let mut claimed: HashSet<u32> = HashSet::new();
         for &(tid, _, is_prime) in &selection {
             if is_prime {
-                let ts = prime_scheduler.get_thread_stats(pid, tid);
-                if ts.ideal_processor.is_assigned {
-                    claimed.insert(ts.ideal_processor.current_number as u32);
+                let thread_stats = prime_scheduler.get_thread_stats(pid, tid);
+                if thread_stats.ideal_processor.is_assigned {
+                    claimed.insert(thread_stats.ideal_processor.current_number as u32);
+                } else {
+                    let handle = match thread_stats.handle {
+                        Some(h) if !h.is_invalid() => h,
+                        _ => continue,
+                    };
+                    match get_thread_ideal_processor_ex(handle) {
+                        Err(_) => {
+                            let error_code = unsafe { GetLastError().0 };
+                            apply_config_result.add_error(format!(
+                                "apply_ideal_processor: [GET_IDEAL][{}] {:>5}-{}-{}",
+                                error_from_code(error_code),
+                                pid,
+                                tid,
+                                config.name
+                            ));
+                        }
+                        Ok(previous_processor_number) => {
+                            thread_stats.ideal_processor.previous_group = previous_processor_number.Group;
+                            thread_stats.ideal_processor.previous_number = previous_processor_number.Number;
+                            thread_stats.ideal_processor.current_group = previous_processor_number.Group;
+                            thread_stats.ideal_processor.current_number = previous_processor_number.Number;
+                            if previous_processor_number.Group == 0 && rule.cpus.contains(&(previous_processor_number.Number as u32)) {
+                                thread_stats.ideal_processor.is_assigned = true;
+                                claimed.insert(previous_processor_number.Number as u32);
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        let mut free_pool: Vec<u32> = rule.cpus.iter().copied().filter(|c| !claimed.contains(c)).collect();
-
-        for &(tid, _, is_prime) in &selection {
-            if !is_prime {
+        let free_pool: Vec<u32> = rule.cpus.iter().copied().filter(|c| !claimed.contains(c)).collect();
+        let mut counter_free_pool = 0;
+        for tid in &selected_set {
+            let thread_stats = prime_scheduler.get_thread_stats(pid, *tid);
+            if thread_stats.ideal_processor.is_assigned {
                 continue;
             }
-            let ts = prime_scheduler.get_thread_stats(pid, tid);
-            if ts.ideal_processor.is_assigned {
-                continue;
-            }
-
-            let handle = match ts.handle {
+            let handle = match thread_stats.handle {
                 Some(h) if !h.is_invalid() => h,
                 _ => continue,
             };
 
-            let mut got_current = false;
-            match get_thread_ideal_processor_ex(handle) {
+            let target_cpu = if counter_free_pool < free_pool.len() {
+                free_pool[counter_free_pool]
+            } else {
+                break;
+            };
+            counter_free_pool += 1;
+            match set_thread_ideal_processor_ex(handle, 0, target_cpu as u8) {
                 Err(_) => {
                     let error_code = unsafe { GetLastError().0 };
                     apply_config_result.add_error(format!(
-                        "apply_ideal_processor: [GET_IDEAL][{}] {:>5}-{}-{}",
+                        "apply_ideal_processor: [SET_IDEAL][{}] {:>5}-{}-{}",
                         error_from_code(error_code),
                         pid,
                         tid,
                         config.name
                     ));
                 }
-                Ok(prev) => {
-                    ts.ideal_processor.previous_group = prev.Group;
-                    ts.ideal_processor.previous_number = prev.Number;
-                    ts.ideal_processor.current_group = prev.Group;
-                    ts.ideal_processor.current_number = prev.Number;
-                    got_current = true;
+                Ok(_) => {
+                    thread_stats.ideal_processor.current_group = 0;
+                    thread_stats.ideal_processor.current_number = target_cpu as u8;
+                    thread_stats.ideal_processor.is_assigned = true;
+                    let start_module = all_threads.iter().find(|(t, _, _, _)| *t == *tid).map(|(_, _, _, m)| m.as_str()).unwrap_or("?");
+                    apply_config_result.add_change(format!("Thread {} -> ideal CPU {} (group 0) start={}", tid, target_cpu, start_module));
                 }
-            }
-
-            let free_pos = if got_current && ts.ideal_processor.current_group == 0 {
-                free_pool.iter().position(|&c| c == ts.ideal_processor.current_number as u32)
-            } else {
-                None
             };
-
-            let (target_cpu, need_set) = if let Some(pos) = free_pos {
-                (free_pool.remove(pos), false)
-            } else {
-                if free_pool.is_empty() {
-                    break;
-                }
-                (free_pool.remove(0), true)
-            };
-
-            let set_ok = if need_set {
-                match set_thread_ideal_processor_ex(handle, 0, target_cpu as u8) {
-                    Ok(_) => true,
-                    Err(_) => {
-                        let error_code = unsafe { GetLastError().0 };
-                        apply_config_result.add_error(format!(
-                            "apply_ideal_processor: [SET_IDEAL][{}] {:>5}-{}-{}",
-                            error_from_code(error_code),
-                            pid,
-                            tid,
-                            config.name
-                        ));
-                        false
-                    }
-                }
-            } else {
-                true
-            };
-
-            if set_ok {
-                ts.ideal_processor.current_group = 0;
-                ts.ideal_processor.current_number = target_cpu as u8;
-                ts.ideal_processor.is_assigned = true;
-                let start_module = all_threads.iter().find(|(t, _, _, _)| *t == tid).map(|(_, _, _, m)| m.as_str()).unwrap_or("?");
-                apply_config_result.add_change(format!("Thread {} -> ideal CPU {} (group 0) start={}", tid, target_cpu, start_module));
-            }
         }
 
+        // restore old candidates who failed to meet the active streak threshold
         for &(tid, _, _, ref start_module) in &thread_infos {
-            let ts = prime_scheduler.get_thread_stats(pid, tid);
-            if !ts.ideal_processor.is_assigned || is_prime_set.contains(&tid) {
+            let thread_stats = prime_scheduler.get_thread_stats(pid, tid);
+            if !thread_stats.ideal_processor.is_assigned || selected_set.contains(&tid) {
                 continue;
             }
-            let prev_group = ts.ideal_processor.previous_group;
-            let prev_number = ts.ideal_processor.previous_number;
-            let cur_group = ts.ideal_processor.current_group;
-            let cur_number = ts.ideal_processor.current_number;
+            let prev_group = thread_stats.ideal_processor.previous_group;
+            let prev_number = thread_stats.ideal_processor.previous_number;
+            let cur_group = thread_stats.ideal_processor.current_group;
+            let cur_number = thread_stats.ideal_processor.current_number;
             if (prev_group != cur_group || prev_number != cur_number)
-                && let Some(handle) = ts.handle
+                && let Some(handle) = thread_stats.handle
                 && !handle.is_invalid()
             {
                 match set_thread_ideal_processor_ex(handle, prev_group, prev_number) {
@@ -944,8 +880,8 @@ pub fn apply_ideal_processors(
                         ));
                     }
                     Ok(_) => {
-                        ts.ideal_processor.current_group = prev_group;
-                        ts.ideal_processor.current_number = prev_number;
+                        thread_stats.ideal_processor.current_group = prev_group;
+                        thread_stats.ideal_processor.current_number = prev_number;
                         apply_config_result.add_change(format!(
                             "Thread {} -> restored ideal CPU {} (group {}) start={}",
                             tid, prev_number, prev_group, start_module
@@ -953,7 +889,7 @@ pub fn apply_ideal_processors(
                     }
                 }
             }
-            ts.ideal_processor.is_assigned = false;
+            thread_stats.ideal_processor.is_assigned = false;
         }
     }
 }

@@ -664,8 +664,8 @@ pub fn reset_thread_ideal_processors(
                 let error_code = unsafe { GetLastError().0 };
                 let open_thread_error = error_from_code(error_code);
                 apply_config_result.add_error(format!(
-                    "reset_ideal_processor: [OPEN][{}] {:>5}-{} - OpenThread failed: {}",
-                    open_thread_error, pid, tid, open_thread_error,
+                    "reset_ideal_processor: [OPEN][{}] {:>5}-{}-{:>5} - OpenThread failed: {}",
+                    open_thread_error, pid, config.name, tid, open_thread_error,
                 ));
             }
             Ok(thread_handle) => {

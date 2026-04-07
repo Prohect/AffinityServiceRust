@@ -2,17 +2,16 @@ use chrono::{DateTime, Datelike, Local};
 use once_cell::sync::Lazy;
 use std::{
     collections::{HashMap, HashSet},
-    fs::{self, File, OpenOptions},
+    fs::{File, OpenOptions, create_dir_all},
     io::Write,
     path::PathBuf,
     sync::Mutex,
 };
 
 pub static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
-
-pub static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
-
+static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 pub static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 #[derive(PartialEq, Eq, Hash)]
 pub enum Operation {
@@ -45,8 +44,6 @@ struct ApplyFailEntry {
     error_code: u32,
 }
 
-static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-
 /// Tracks operation failures to avoid spamming logs.
 ///
 /// Returns true if this is the first failure for this pid/process_name/operation/error_code combination.
@@ -74,7 +71,11 @@ pub fn is_new_error(pid: u32, process_name: &str, operation: Operation, error_co
             }) {
                 false
             } else {
-                if fail_entry_set.keys().next().is_some_and(|fail_entry| fail_entry.process_name != entry.process_name) {
+                if fail_entry_set
+                    .keys()
+                    .next()
+                    .is_some_and(|fail_entry| fail_entry.process_name != entry.process_name)
+                {
                     fail_entry_set.clear();
                 }
                 fail_entry_set.insert(entry, true);
@@ -136,7 +137,7 @@ fn get_log_path(suffix: &str) -> PathBuf {
     drop(time);
     let log_dir = PathBuf::from("logs");
     if !log_dir.exists() {
-        let _ = fs::create_dir_all(&log_dir);
+        let _ = create_dir_all(&log_dir);
     }
     log_dir.join(format!("{:04}{:02}{:02}{}.log", year, month, day, suffix))
 }

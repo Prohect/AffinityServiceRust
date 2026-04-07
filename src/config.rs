@@ -7,8 +7,8 @@ use crate::{
 
 use std::{
     collections::HashMap,
-    fs::{self, File},
-    io::{self, BufRead, Write},
+    fs::{File, read, read_to_string},
+    io::{BufRead, BufReader, Write},
     path::Path,
 };
 
@@ -240,9 +240,10 @@ fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut Conf
                 log_message(&format!("Config: MIN_ACTIVE_STREAK = {}", v));
                 result.constants_count += 1;
             } else {
-                result
-                    .errors
-                    .push(format!("Line {}: Invalid constant value '{}' for '{}' (expected u8)", line_number, value, name));
+                result.errors.push(format!(
+                    "Line {}: Invalid constant value '{}' for '{}' (expected u8)",
+                    line_number, value, name
+                ));
             }
         }
         "KEEP_THRESHOLD" | "ENTRY_THRESHOLD" => {
@@ -260,11 +261,15 @@ fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut Conf
                 }
                 result.constants_count += 1;
             } else {
-                result.errors.push(format!("Line {}: Invalid constant value '{}' for '{}'", line_number, value, name));
+                result
+                    .errors
+                    .push(format!("Line {}: Invalid constant value '{}' for '{}'", line_number, value, name));
             }
         }
         _ => {
-            result.warnings.push(format!("Line {}: Unknown constant '{}' - will be ignored", line_number, name));
+            result
+                .warnings
+                .push(format!("Line {}: Unknown constant '{}' - will be ignored", line_number, name));
         }
     }
 }
@@ -292,7 +297,12 @@ fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut Ha
 /// - `@prefix` optionally filters threads by their start module name
 ///
 /// Multiple segments can be chained: `*p@engine.dll*e@helper.dll`
-fn parse_ideal_processor_spec(spec: &str, line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, errors: &mut Vec<String>) -> Vec<IdealProcessorRule> {
+fn parse_ideal_processor_spec(
+    spec: &str,
+    line_number: usize,
+    cpu_aliases: &HashMap<String, Vec<u32>>,
+    errors: &mut Vec<String>,
+) -> Vec<IdealProcessorRule> {
     let spec = spec.trim();
     if spec.is_empty() || spec == "0" {
         return Vec::new();
@@ -324,7 +334,10 @@ fn parse_ideal_processor_spec(spec: &str, line_number: usize, cpu_aliases: &Hash
         let cpus = if let Some(alias_cpus) = cpu_aliases.get(&alias) {
             alias_cpus.clone()
         } else {
-            errors.push(format!("Line {}: Unknown CPU alias '*{}' in ideal processor specification", line_number, alias));
+            errors.push(format!(
+                "Line {}: Unknown CPU alias '*{}' in ideal processor specification",
+                line_number, alias
+            ));
             Vec::new()
         };
 
@@ -332,7 +345,11 @@ fn parse_ideal_processor_spec(spec: &str, line_number: usize, cpu_aliases: &Hash
             continue;
         }
 
-        let prefixes: Vec<String> = prefixes_str.split(';').map(|p| p.trim().to_lowercase()).filter(|p| !p.is_empty()).collect();
+        let prefixes: Vec<String> = prefixes_str
+            .split(';')
+            .map(|p| p.trim().to_lowercase())
+            .filter(|p| !p.is_empty())
+            .collect();
 
         rules.push(IdealProcessorRule { cpus, prefixes });
     }
@@ -378,7 +395,13 @@ fn collect_group_block(lines: &[String], start_index: usize, first_line_content:
 ///
 /// Rule format: priority:affinity:cpuset:prime_cpus:io_priority:memory_priority:ideal_processor:grade
 /// Each field is optional with sensible defaults.
-fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, result: &mut ConfigResult) {
+fn parse_and_insert_rules(
+    members: &[String],
+    rule_parts: &[&str],
+    line_number: usize,
+    cpu_aliases: &HashMap<String, Vec<u32>>,
+    result: &mut ConfigResult,
+) {
     if rule_parts.len() < 2 {
         result.errors.push(format!(
             "Line {}: Too few fields ({}) - expected at least 2 (priority,affinity)",
@@ -391,9 +414,10 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
     let priority_str = rule_parts[0].trim();
     let priority = ProcessPriority::from_str(priority_str);
     if priority == ProcessPriority::None && !priority_str.eq_ignore_ascii_case("none") {
-        result
-            .warnings
-            .push(format!("Line {}: Unknown priority '{}' - will be treated as 'none'", line_number, priority_str));
+        result.warnings.push(format!(
+            "Line {}: Unknown priority '{}' - will be treated as 'none'",
+            line_number, priority_str
+        ));
     }
 
     let affinity_cpus = resolve_cpu_spec(rule_parts[1], "affinity", line_number, cpu_aliases, &mut result.errors);
@@ -551,9 +575,10 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
         let io_str = rule_parts[4].trim();
         let io_p = IOPriority::from_str(io_str);
         if io_p == IOPriority::None && !io_str.eq_ignore_ascii_case("none") {
-            result
-                .warnings
-                .push(format!("Line {}: Unknown IO priority '{}' - will be treated as 'none'", line_number, io_str));
+            result.warnings.push(format!(
+                "Line {}: Unknown IO priority '{}' - will be treated as 'none'",
+                line_number, io_str
+            ));
         }
         io_p
     } else {
@@ -564,9 +589,10 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
         let mem_str = rule_parts[5].trim();
         let mem_p = MemoryPriority::from_str(mem_str);
         if mem_p == MemoryPriority::None && !mem_str.eq_ignore_ascii_case("none") {
-            result
-                .warnings
-                .push(format!("Line {}: Unknown memory priority '{}' - will be treated as 'none'", line_number, mem_str));
+            result.warnings.push(format!(
+                "Line {}: Unknown memory priority '{}' - will be treated as 'none'",
+                line_number, mem_str
+            ));
         }
         mem_p
     } else {
@@ -587,7 +613,9 @@ fn parse_and_insert_rules(members: &[String], rule_parts: &[&str], line_number: 
                         1
                     }
                     _ => {
-                        result.warnings.push(format!("Line {}: Invalid grade '{}', using 1", line_number, grade_str));
+                        result
+                            .warnings
+                            .push(format!("Line {}: Invalid grade '{}', using 1", line_number, grade_str));
                         1
                     }
                 }
@@ -649,7 +677,7 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
         }
     };
 
-    let reader = io::BufReader::new(file);
+    let reader = BufReader::new(file);
     let mut cpu_aliases: HashMap<String, Vec<u32>> = HashMap::new();
     let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
     let mut i = 0;
@@ -665,9 +693,16 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
 
         if line.starts_with('@') {
             if let Some(eq_pos) = line.find('=') {
-                parse_constant(&line[1..eq_pos].trim().to_uppercase(), line[eq_pos + 1..].trim(), line_number, &mut result);
+                parse_constant(
+                    &line[1..eq_pos].trim().to_uppercase(),
+                    line[eq_pos + 1..].trim(),
+                    line_number,
+                    &mut result,
+                );
             } else {
-                result.errors.push(format!("Line {}: Invalid constant - expected '@NAME = value'", line_number));
+                result
+                    .errors
+                    .push(format!("Line {}: Invalid constant - expected '@NAME = value'", line_number));
             }
             i += 1;
             continue;
@@ -683,7 +718,9 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
                     &mut result,
                 );
             } else {
-                result.errors.push(format!("Line {}: Invalid alias - expected '*name = cpu_spec'", line_number));
+                result
+                    .errors
+                    .push(format!("Line {}: Invalid alias - expected '*name = cpu_spec'", line_number));
             }
             i += 1;
             continue;
@@ -708,7 +745,9 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
                 match collect_group_block(&lines, i + 1, first_content) {
                     Some((members, suffix, next)) => (members, suffix, next),
                     None => {
-                        result.errors.push(format!("Line {}: Unclosed group '{}' - missing }}", line_number, group_label));
+                        result
+                            .errors
+                            .push(format!("Line {}: Unclosed group '{}' - missing }}", line_number, group_label));
                         i += 1;
                         continue;
                     }
@@ -718,7 +757,9 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
             i = next_i;
 
             if members.is_empty() {
-                result.warnings.push(format!("Line {}: Group '{}' has no members", line_number, group_label));
+                result
+                    .warnings
+                    .push(format!("Line {}: Group '{}' has no members", line_number, group_label));
                 continue;
             }
 
@@ -729,9 +770,10 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
                 let rule_parts: Vec<&str> = suffix.split(':').collect();
                 parse_and_insert_rules(&members, &rule_parts, line_number, &cpu_aliases, &mut result);
             } else {
-                result
-                    .errors
-                    .push(format!("Line {}: Group '{}' missing rule - use }}:priority:affinity,...", line_number, group_label));
+                result.errors.push(format!(
+                    "Line {}: Group '{}' missing rule - use }}:priority:affinity,...",
+                    line_number, group_label
+                ));
             }
         } else {
             let parts: Vec<&str> = line.split(':').collect();
@@ -758,9 +800,9 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
     result
 }
 
-pub fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> {
+pub fn read_list<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<String>> {
     let file = File::open(path)?;
-    let reader = io::BufReader::new(file);
+    let reader = BufReader::new(file);
     Ok(reader
         .lines()
         .map_while(Result::ok)
@@ -769,8 +811,8 @@ pub fn read_list<P: AsRef<Path>>(path: P) -> io::Result<Vec<String>> {
         .collect())
 }
 
-pub fn read_utf16le_file(path: &str) -> io::Result<String> {
-    let bytes = fs::read(path)?;
+pub fn read_utf16le_file(path: &str) -> std::io::Result<String> {
+    let bytes = read(path)?;
     let utf16: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
     Ok(String::from_utf16_lossy(&utf16))
 }
@@ -967,7 +1009,7 @@ pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
         }
     };
 
-    let content = match fs::read_to_string(&in_path) {
+    let content = match read_to_string(&in_path) {
         Ok(c) => c,
         Err(e) => {
             log!("Failed to read {}: {}", in_path, e);

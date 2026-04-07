@@ -12,17 +12,17 @@ use apply::{
     ApplyConfigResult, apply_affinity, apply_ideal_processors, apply_io_priority, apply_memory_priority, apply_prime_threads, apply_priority,
     apply_process_default_cpuset, prefetch_all_thread_cycles, update_thread_stats,
 };
-use chrono::Local;
 use cli::{CliArgs, parse_args, print_help, print_help_all};
 use config::{ProcessConfig, convert, read_config, read_list, sort_and_group_config};
-use encoding_rs::Encoding;
 use logging::{
-    DUST_BIN_MODE, FINDS_FAIL_SET, LOCALTIME_BUFFER, find_logger, log_message, log_process_find, log_pure_message, log_to_find, logger, purge_fail_map, use_console,
+    DUST_BIN_MODE, FINDS_FAIL_SET, LOCALTIME_BUFFER, find_logger, log_message, log_process_find, log_pure_message, log_to_find, logger,
+    purge_fail_map, use_console,
 };
-use winapi::get_process_handle;
-
 use process::ProcessSnapshot;
 use scheduler::PrimeThreadScheduler;
+
+use chrono::Local;
+use encoding_rs::Encoding;
 use std::{
     collections::{HashMap, HashSet},
     env,
@@ -33,8 +33,8 @@ use std::{
     time::Duration,
 };
 use winapi::{
-    NtSetTimerResolution, drop_module_cache, enable_debug_privilege, enable_inc_base_priority_privilege, is_affinity_unset, is_running_as_admin, request_uac_elevation,
-    terminate_child_processes,
+    NtSetTimerResolution, drop_module_cache, enable_debug_privilege, enable_inc_base_priority_privilege, get_process_handle, is_affinity_unset,
+    is_running_as_admin, request_uac_elevation, terminate_child_processes,
 };
 use windows::Win32::{
     Foundation::CloseHandle,
@@ -55,22 +55,48 @@ use windows::Win32::{
 /// * `prime_core_scheduler` - Scheduler for managing prime threads
 /// * `processes` - Current process snapshot for thread enumeration
 /// * `dry_run` - If true, only reports what would change without applying
-fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut PrimeThreadScheduler, processes: &mut ProcessSnapshot, dry_run: bool) -> ApplyConfigResult {
+fn apply_config(
+    pid: u32,
+    config: &ProcessConfig,
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    processes: &mut ProcessSnapshot,
+    dry_run: bool,
+) -> ApplyConfigResult {
     let mut apply_config_result = ApplyConfigResult::new();
     let Some(process_handle) = get_process_handle(pid, &config.name) else {
         return apply_config_result;
     };
     let mut current_mask: usize = 0;
     apply_priority(pid, config, dry_run, &process_handle, &mut apply_config_result);
-    apply_affinity(pid, config, dry_run, &process_handle, &mut current_mask, &mut apply_config_result, processes);
+    apply_affinity(
+        pid,
+        config,
+        dry_run,
+        &process_handle,
+        &mut current_mask,
+        &mut apply_config_result,
+        processes,
+    );
     apply_process_default_cpuset(pid, config, dry_run, &process_handle, &mut apply_config_result);
     apply_io_priority(pid, config, dry_run, &process_handle, &mut apply_config_result);
     apply_memory_priority(pid, config, dry_run, &process_handle, &mut apply_config_result);
-    if !config.prime_threads_cpus.is_empty() || !config.prime_threads_prefixes.is_empty() || !config.ideal_processor_rules.is_empty() || config.track_top_x_threads != 0 {
+    if !config.prime_threads_cpus.is_empty()
+        || !config.prime_threads_prefixes.is_empty()
+        || !config.ideal_processor_rules.is_empty()
+        || config.track_top_x_threads != 0
+    {
         drop_module_cache(pid);
         prime_core_scheduler.set_alive(pid);
         prefetch_all_thread_cycles(pid, config, processes, prime_core_scheduler, &mut apply_config_result);
-        apply_prime_threads(pid, config, prime_core_scheduler, processes, dry_run, &mut current_mask, &mut apply_config_result);
+        apply_prime_threads(
+            pid,
+            config,
+            prime_core_scheduler,
+            processes,
+            dry_run,
+            &mut current_mask,
+            &mut apply_config_result,
+        );
         apply_ideal_processors(pid, config, processes, prime_core_scheduler, dry_run, &mut apply_config_result);
         update_thread_stats(pid, prime_core_scheduler);
     }
@@ -97,7 +123,11 @@ fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklis
                 for line in content.lines() {
                     if let Some(idx) = line.find("find ") {
                         let rest = &line[idx + 5..];
-                        let proc = if let Some(space_idx) = rest.find(' ') { &rest[..space_idx] } else { rest.trim() };
+                        let proc = if let Some(space_idx) = rest.find(' ') {
+                            &rest[..space_idx]
+                        } else {
+                            rest.trim()
+                        };
                         if proc.ends_with(".exe") {
                             all_processes.insert(proc.to_lowercase());
                         }
@@ -188,7 +218,10 @@ fn main() -> windows::core::Result<()> {
     };
 
     let mut last_config_mod_time = std::fs::metadata(&cli.config_file_name).and_then(|m| m.modified()).ok();
-    let mut last_blacklist_mod_time = cli.blacklist_file_name.as_ref().and_then(|bf| std::fs::metadata(bf).and_then(|m| m.modified()).ok());
+    let mut last_blacklist_mod_time = cli
+        .blacklist_file_name
+        .as_ref()
+        .and_then(|bf| std::fs::metadata(bf).and_then(|m| m.modified()).ok());
     let is_config_empty = configs.is_empty();
     let is_blacklist_empty = blacklist.is_empty();
     if cli.process_logs_mode {
@@ -316,7 +349,8 @@ fn main() -> windows::core::Result<()> {
                 };
                 if Process32FirstW(snapshot, &mut pe32).is_ok() {
                     loop {
-                        let process_name = String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]).to_lowercase();
+                        let process_name =
+                            String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]).to_lowercase();
 
                         let in_configs = configs.values().any(|grade_configs| grade_configs.contains_key(&process_name));
                         if !FINDS_FAIL_SET.lock().unwrap().contains(&process_name)
@@ -363,7 +397,10 @@ fn main() -> windows::core::Result<()> {
                     prime_core_scheduler.constants = new_config_result.constants;
                     log!("Configuration reload complete: {} rules loaded.", total_rules);
                 } else {
-                    log!("Configuration file '{}' has errors, keeping previous configuration.", cli.config_file_name);
+                    log!(
+                        "Configuration file '{}' has errors, keeping previous configuration.",
+                        cli.config_file_name
+                    );
                     for error in &new_config_result.errors {
                         log!("  - {}", error);
                     }

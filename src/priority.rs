@@ -1,7 +1,7 @@
 use windows::Win32::System::Threading::{
-    ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, MEMORY_PRIORITY, MEMORY_PRIORITY_BELOW_NORMAL,
-    MEMORY_PRIORITY_LOW, MEMORY_PRIORITY_MEDIUM, MEMORY_PRIORITY_NORMAL, MEMORY_PRIORITY_VERY_LOW, NORMAL_PRIORITY_CLASS, PROCESS_CREATION_FLAGS,
-    REALTIME_PRIORITY_CLASS, THREAD_PRIORITY,
+    ABOVE_NORMAL_PRIORITY_CLASS, BELOW_NORMAL_PRIORITY_CLASS, HIGH_PRIORITY_CLASS, IDLE_PRIORITY_CLASS, MEMORY_PRIORITY,
+    MEMORY_PRIORITY_BELOW_NORMAL, MEMORY_PRIORITY_LOW, MEMORY_PRIORITY_MEDIUM, MEMORY_PRIORITY_NORMAL, MEMORY_PRIORITY_VERY_LOW,
+    NORMAL_PRIORITY_CLASS, PROCESS_CREATION_FLAGS, REALTIME_PRIORITY_CLASS, THREAD_PRIORITY,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,7 +27,11 @@ impl ProcessPriority {
     ];
 
     pub fn as_str(&self) -> &'static str {
-        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, name, _)| *name).unwrap_or("unknown")
+        Self::TABLE
+            .iter()
+            .find(|(v, _, _)| v == self)
+            .map(|(_, name, _)| *name)
+            .unwrap_or("unknown")
     }
 
     pub fn as_win_const(&self) -> Option<PROCESS_CREATION_FLAGS> {
@@ -36,7 +40,11 @@ impl ProcessPriority {
 
     pub fn from_str(s: &str) -> Self {
         let s = s.to_lowercase();
-        Self::TABLE.iter().find(|(_, name, _)| *name == s.as_str()).map(|(v, _, _)| *v).unwrap_or(Self::None)
+        Self::TABLE
+            .iter()
+            .find(|(_, name, _)| *name == s.as_str())
+            .map(|(v, _, _)| *v)
+            .unwrap_or(Self::None)
     }
 
     pub fn from_win_const(val: u32) -> &'static str {
@@ -67,7 +75,11 @@ impl IOPriority {
     ];
 
     pub fn as_str(&self) -> &'static str {
-        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, name, _)| *name).unwrap_or("unknown")
+        Self::TABLE
+            .iter()
+            .find(|(v, _, _)| v == self)
+            .map(|(_, name, _)| *name)
+            .unwrap_or("unknown")
     }
 
     pub fn as_win_const(&self) -> Option<u32> {
@@ -76,7 +88,11 @@ impl IOPriority {
 
     pub fn from_str(s: &str) -> Self {
         let s = s.to_lowercase();
-        Self::TABLE.iter().find(|(_, name, _)| *name == s.as_str()).map(|(v, _, _)| *v).unwrap_or(Self::None)
+        Self::TABLE
+            .iter()
+            .find(|(_, name, _)| *name == s.as_str())
+            .map(|(v, _, _)| *v)
+            .unwrap_or(Self::None)
     }
 
     pub fn from_win_const(val: u32) -> &'static str {
@@ -113,7 +129,11 @@ impl MemoryPriority {
     ];
 
     pub fn as_str(&self) -> &'static str {
-        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, name, _)| *name).unwrap_or("unknown")
+        Self::TABLE
+            .iter()
+            .find(|(v, _, _)| v == self)
+            .map(|(_, name, _)| *name)
+            .unwrap_or("unknown")
     }
 
     pub fn as_win_const(&self) -> Option<MEMORY_PRIORITY> {
@@ -122,7 +142,11 @@ impl MemoryPriority {
 
     pub fn from_str(s: &str) -> Self {
         let s = s.to_lowercase();
-        Self::TABLE.iter().find(|(_, name, _)| *name == s.as_str()).map(|(v, _, _)| *v).unwrap_or(Self::None)
+        Self::TABLE
+            .iter()
+            .find(|(_, name, _)| *name == s.as_str())
+            .map(|(v, _, _)| *v)
+            .unwrap_or(Self::None)
     }
 
     pub fn from_win_const(val: u32) -> &'static str {
@@ -172,7 +196,11 @@ impl ThreadPriority {
     ];
 
     pub fn as_str(&self) -> &'static str {
-        Self::TABLE.iter().find(|(v, _, _)| v == self).map(|(_, name, _)| *name).unwrap_or("unknown")
+        Self::TABLE
+            .iter()
+            .find(|(v, _, _)| v == self)
+            .map(|(_, name, _)| *name)
+            .unwrap_or("unknown")
     }
 
     pub fn as_win_const(&self) -> Option<i32> {
@@ -181,7 +209,11 @@ impl ThreadPriority {
 
     pub fn from_str(s: &str) -> Self {
         let s = s.to_lowercase();
-        Self::TABLE.iter().find(|(_, name, _)| *name == s.as_str()).map(|(v, _, _)| *v).unwrap_or(Self::None)
+        Self::TABLE
+            .iter()
+            .find(|(_, name, _)| *name == s.as_str())
+            .map(|(v, _, _)| *v)
+            .unwrap_or(Self::None)
     }
 
     pub fn from_win_const(val: i32) -> Self {

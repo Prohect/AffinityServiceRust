@@ -1,24 +1,24 @@
-use crate::config::{ProcessConfig, cpu_indices_to_mask, format_cpu_indices};
-use crate::error_codes::{error_from_code_win32, error_from_ntstatus};
-use crate::logging::{Operation, is_new_error};
-use crate::process::ProcessSnapshot;
-use crate::scheduler::PrimeThreadScheduler;
-use crate::winapi::ProcessHandle;
-
-use crate::winapi::{
-    NtQueryInformationProcess, NtSetInformationProcess, cpusetids_from_indices, filter_indices_by_mask, get_cpu_set_information, get_thread_ideal_processor_ex,
-    get_thread_start_address, indices_from_cpusetids, resolve_address_to_module, set_thread_ideal_processor_ex,
+use crate::{
+    config::{ProcessConfig, cpu_indices_to_mask, format_cpu_indices},
+    error_codes::{error_from_code_win32, error_from_ntstatus},
+    logging::{Operation, is_new_error},
+    process::ProcessSnapshot,
+    scheduler::PrimeThreadScheduler,
+    winapi::{
+        NtQueryInformationProcess, NtSetInformationProcess, ProcessHandle, cpusetids_from_indices, filter_indices_by_mask, get_cpu_set_information,
+        get_thread_ideal_processor_ex, get_thread_start_address, indices_from_cpusetids, resolve_address_to_module, set_thread_ideal_processor_ex,
+    },
 };
-use std::collections::HashSet;
-use std::mem::size_of;
 
+use std::{collections::HashSet, mem::size_of};
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE},
     System::{
         Threading::{
-            GetPriorityClass, GetProcessAffinityMask, GetProcessDefaultCpuSets, GetProcessInformation, GetThreadPriority, OpenThread, ProcessMemoryPriority,
-            SetPriorityClass, SetProcessAffinityMask, SetProcessDefaultCpuSets, SetProcessInformation, SetThreadPriority, SetThreadSelectedCpuSets,
-            THREAD_QUERY_INFORMATION, THREAD_QUERY_LIMITED_INFORMATION, THREAD_SET_INFORMATION, THREAD_SET_LIMITED_INFORMATION,
+            GetPriorityClass, GetProcessAffinityMask, GetProcessDefaultCpuSets, GetProcessInformation, GetThreadPriority, OpenThread,
+            ProcessMemoryPriority, SetPriorityClass, SetProcessAffinityMask, SetProcessDefaultCpuSets, SetProcessInformation, SetThreadPriority,
+            SetThreadSelectedCpuSets, THREAD_QUERY_INFORMATION, THREAD_QUERY_LIMITED_INFORMATION, THREAD_SET_INFORMATION,
+            THREAD_SET_LIMITED_INFORMATION,
         },
         WindowsProgramming::QueryThreadCycleTime,
     },
@@ -153,7 +153,13 @@ pub fn apply_affinity(
     }
 }
 
-pub fn apply_process_default_cpuset(pid: u32, config: &ProcessConfig, dry_run: bool, process_handle: &ProcessHandle, apply_config_result: &mut ApplyConfigResult) {
+pub fn apply_process_default_cpuset(
+    pid: u32,
+    config: &ProcessConfig,
+    dry_run: bool,
+    process_handle: &ProcessHandle,
+    apply_config_result: &mut ApplyConfigResult,
+) {
     let Some(r_handle) = process_handle.r_handle.or(Some(process_handle.r_limited_handle)) else {
         return;
     };
@@ -186,7 +192,8 @@ pub fn apply_process_default_cpuset(pid: u32, config: &ProcessConfig, dry_run: b
                         }
                     } else {
                         current_cpusetids = vec![0u32; requiredidcount as usize];
-                        let second_query = unsafe { GetProcessDefaultCpuSets(w_handle, Some(&mut current_cpusetids[..]), &mut requiredidcount) }.as_bool();
+                        let second_query =
+                            unsafe { GetProcessDefaultCpuSets(w_handle, Some(&mut current_cpusetids[..]), &mut requiredidcount) }.as_bool();
                         if !second_query {
                             let error_code = unsafe { GetLastError().0 };
                             if is_new_error(pid, &config.name, Operation::GetProcessDefaultCpuSets, error_code) {
@@ -421,7 +428,14 @@ pub fn apply_prime_threads(
         .collect();
 
     apply_prime_threads_select(&mut tid_with_delta_cycles, prime_core_scheduler, pid, prime_count);
-    apply_prime_threads_promote(&tid_with_delta_cycles, prime_core_scheduler, pid, config, current_mask, apply_config_result);
+    apply_prime_threads_promote(
+        &tid_with_delta_cycles,
+        prime_core_scheduler,
+        pid,
+        config,
+        current_mask,
+        apply_config_result,
+    );
     apply_prime_threads_demote(process, &tid_with_delta_cycles, prime_core_scheduler, pid, config, apply_config_result);
 
     // Clean up handles for threads that no longer exist in the process
@@ -444,8 +458,15 @@ pub fn apply_prime_threads(
 /// Hysteresis prevents threads from rapidly flipping between prime/non-prime:
 /// - Currently prime threads stay prime if cycles >= keep_threshold% of max
 /// - Non-prime threads become prime if cycles >= entry_threshold% of max AND active_streak >= min_active_streak
-pub fn apply_prime_threads_select(tid_with_delta_cycles: &mut [(u32, u64, bool)], prime_core_scheduler: &mut PrimeThreadScheduler, pid: u32, prime_count: usize) {
-    prime_core_scheduler.select_top_threads_with_hysteresis(pid, tid_with_delta_cycles, prime_count, |thread_stats| !thread_stats.pinned_cpu_set_ids.is_empty());
+pub fn apply_prime_threads_select(
+    tid_with_delta_cycles: &mut [(u32, u64, bool)],
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    pid: u32,
+    prime_count: usize,
+) {
+    prime_core_scheduler.select_top_threads_with_hysteresis(pid, tid_with_delta_cycles, prime_count, |thread_stats| {
+        !thread_stats.pinned_cpu_set_ids.is_empty()
+    });
 }
 
 /// Promotes selected threads to prime status with CPU pinning and optional priority boost.
@@ -619,7 +640,13 @@ pub fn apply_prime_threads_demote(
     }
 }
 
-pub fn apply_io_priority(pid: u32, config: &ProcessConfig, dry_run: bool, process_handle: &ProcessHandle, apply_config_result: &mut ApplyConfigResult) {
+pub fn apply_io_priority(
+    pid: u32,
+    config: &ProcessConfig,
+    dry_run: bool,
+    process_handle: &ProcessHandle,
+    apply_config_result: &mut ApplyConfigResult,
+) {
     let Some(r_handle) = process_handle.r_handle.or(Some(process_handle.r_limited_handle)) else {
         return;
     };
@@ -642,7 +669,12 @@ pub fn apply_io_priority(pid: u32, config: &ProcessConfig, dry_run: bool, proces
         .0;
         let query_result_u32 = i32::cast_unsigned(query_result);
         if query_result < 0 {
-            if is_new_error(pid, &config.name, Operation::NtQueryInformationProcess2ProcessInformationIOPriority, query_result_u32) {
+            if is_new_error(
+                pid,
+                &config.name,
+                Operation::NtQueryInformationProcess2ProcessInformationIOPriority,
+                query_result_u32,
+            ) {
                 apply_config_result.add_error(format!(
                     "apply_io_priority: [QUERY_IO_PRIORITY][{}] {:>5}-{} -> {}",
                     error_from_ntstatus(query_result),
@@ -670,7 +702,12 @@ pub fn apply_io_priority(pid: u32, config: &ProcessConfig, dry_run: bool, proces
                 .0;
                 let set_result_u32 = i32::cast_unsigned(set_result);
                 if set_result < 0 {
-                    if is_new_error(pid, &config.name, Operation::NtSetInformationProcess2ProcessInformationIOPriority, set_result_u32) {
+                    if is_new_error(
+                        pid,
+                        &config.name,
+                        Operation::NtSetInformationProcess2ProcessInformationIOPriority,
+                        set_result_u32,
+                    ) {
                         apply_config_result.add_error(format!(
                             "apply_config: [SET_IO_PRIORITY][{}] {:>5}-{} -> {}",
                             error_from_ntstatus(set_result),
@@ -691,7 +728,13 @@ pub fn apply_io_priority(pid: u32, config: &ProcessConfig, dry_run: bool, proces
     }
 }
 
-pub fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, process_handle: &ProcessHandle, apply_config_result: &mut ApplyConfigResult) {
+pub fn apply_memory_priority(
+    pid: u32,
+    config: &ProcessConfig,
+    dry_run: bool,
+    process_handle: &ProcessHandle,
+    apply_config_result: &mut ApplyConfigResult,
+) {
     let Some(r_handle) = process_handle.r_handle.or(Some(process_handle.r_limited_handle)) else {
         return;
     };
@@ -765,13 +808,22 @@ pub fn apply_memory_priority(pid: u32, config: &ProcessConfig, dry_run: bool, pr
 /// When process affinity is changed, Windows may reset thread ideal processors.
 /// This redistributes threads across the new affinity CPUs with a random shift
 /// to avoid always assigning the same threads to the same CPUs.
-pub fn reset_thread_ideal_processors(pid: u32, config: &ProcessConfig, dry_run: bool, apply_config_result: &mut ApplyConfigResult, processes: &mut ProcessSnapshot) {
+pub fn reset_thread_ideal_processors(
+    pid: u32,
+    config: &ProcessConfig,
+    dry_run: bool,
+    apply_config_result: &mut ApplyConfigResult,
+    processes: &mut ProcessSnapshot,
+) {
     if config.affinity_cpus.is_empty() {
         return;
     }
 
     if dry_run {
-        apply_config_result.add_change(format!("Reset Ideal Processors: {} threads based on CPU time", config.affinity_cpus.len()));
+        apply_config_result.add_change(format!(
+            "Reset Ideal Processors: {} threads based on CPU time",
+            config.affinity_cpus.len()
+        ));
         return;
     }
 
@@ -894,7 +946,12 @@ pub fn apply_ideal_processors(
             continue;
         }
         let start_addr = thread_stats.start_address;
-        all_threads.push((tid, cycles - thread_stats.last_cycles, start_addr, resolve_address_to_module(pid, start_addr)));
+        all_threads.push((
+            tid,
+            cycles - thread_stats.last_cycles,
+            start_addr,
+            resolve_address_to_module(pid, start_addr),
+        ));
     }
 
     for rule in &config.ideal_processor_rules {
@@ -993,7 +1050,11 @@ pub fn apply_ideal_processors(
                     thread_stats.ideal_processor.current_group = 0;
                     thread_stats.ideal_processor.current_number = target_cpu as u8;
                     thread_stats.ideal_processor.is_assigned = true;
-                    let start_module = all_threads.iter().find(|(t, _, _, _)| *t == *tid).map(|(_, _, _, m)| m.as_str()).unwrap_or("?");
+                    let start_module = all_threads
+                        .iter()
+                        .find(|(t, _, _, _)| *t == *tid)
+                        .map(|(_, _, _, m)| m.as_str())
+                        .unwrap_or("?");
                     apply_config_result.add_change(format!("Thread {} -> ideal CPU {} (group 0) start={}", tid, target_cpu, start_module));
                 }
             };

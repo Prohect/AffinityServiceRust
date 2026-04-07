@@ -5,8 +5,7 @@ use crate::{
     winapi::{drop_module_cache, resolve_address_to_module},
 };
 use ntapi::ntexapi::SYSTEM_THREAD_INFORMATION;
-use std::cmp::Reverse;
-use std::collections::HashMap;
+use std::{cmp::Reverse, collections::HashMap};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 
 #[derive(Debug)]
@@ -132,7 +131,10 @@ impl PrimeThreadScheduler {
                     threads.sort_by(|a, b| b.1.last_cycles.cmp(&a.1.last_cycles));
 
                     let top_x = threads.into_iter().take(x);
-                    let mut report = format!("Process {} ({}) exited. Top {} threads by CPU cycles:\n", process_stats.process_name, pid, x);
+                    let mut report = format!(
+                        "Process {} ({}) exited. Top {} threads by CPU cycles:\n",
+                        process_stats.process_name, pid, x
+                    );
                     for (i, (tid, stats)) in top_x.enumerate() {
                         let module_name = resolve_address_to_module(*pid, stats.start_address);
                         report.push_str(&format!(

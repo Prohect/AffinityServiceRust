@@ -5,21 +5,21 @@ use crate::{
 };
 use once_cell::sync::Lazy;
 use std::{collections::HashMap, env, io, mem::size_of, process::Command, sync::Mutex};
-use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS};
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE, LUID, NTSTATUS},
     Security::{
-        AdjustTokenPrivileges, GetTokenInformation, LookupPrivilegeValueW, SE_DEBUG_NAME, SE_INC_BASE_PRIORITY_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_ELEVATION,
-        TOKEN_PRIVILEGES, TOKEN_QUERY, TokenElevation,
+        AdjustTokenPrivileges, GetTokenInformation, LookupPrivilegeValueW, SE_DEBUG_NAME, SE_INC_BASE_PRIORITY_NAME, TOKEN_ADJUST_PRIVILEGES,
+        TOKEN_ELEVATION, TOKEN_PRIVILEGES, TOKEN_QUERY, TokenElevation,
     },
     System::{
+        Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
         Kernel::PROCESSOR_NUMBER,
         ProcessStatus::{EnumProcessModulesEx, GetModuleBaseNameW, GetModuleInformation, LIST_MODULES_ALL, MODULEINFO},
         SystemInformation::{GetSystemCpuSetInformation, SYSTEM_CPU_SET_INFORMATION},
         Threading::{
-            GetCurrentProcess, GetCurrentProcessId, GetProcessAffinityMask, GetThreadIdealProcessorEx, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION,
-            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_SET_LIMITED_INFORMATION, PROCESS_TERMINATE, PROCESS_VM_READ, SetThreadIdealProcessorEx,
-            TerminateProcess,
+            GetCurrentProcess, GetCurrentProcessId, GetProcessAffinityMask, GetThreadIdealProcessorEx, OpenProcess, OpenProcessToken,
+            PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_SET_LIMITED_INFORMATION,
+            PROCESS_TERMINATE, PROCESS_VM_READ, SetThreadIdealProcessorEx, TerminateProcess,
         },
     },
 };
@@ -27,7 +27,13 @@ use windows::Win32::{
 #[link(name = "ntdll")]
 unsafe extern "system" {
 
-    pub fn NtQueryInformationProcess(h_prc: HANDLE, process_information_class: u32, p_out: *mut std::ffi::c_void, out_length: u32, return_length: *mut u32) -> NTSTATUS;
+    pub fn NtQueryInformationProcess(
+        h_prc: HANDLE,
+        process_information_class: u32,
+        p_out: *mut std::ffi::c_void,
+        out_length: u32,
+        return_length: *mut u32,
+    ) -> NTSTATUS;
 
     pub fn NtQueryInformationThread(
         thread_handle: HANDLE,
@@ -474,7 +480,12 @@ pub fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
     let h_proc = match unsafe { OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) } {
         Err(_) => {
             let code = unsafe { GetLastError() }.0;
-            log_to_find(&format!("is_affinity_unset: [OPEN][{}] {:>5}-{}", error_from_code_win32(code), pid, process_name));
+            log_to_find(&format!(
+                "is_affinity_unset: [OPEN][{}] {:>5}-{}",
+                error_from_code_win32(code),
+                pid,
+                process_name
+            ));
             if code == 5 {
                 FINDS_FAIL_SET.lock().unwrap().insert(process_name.to_string());
             }

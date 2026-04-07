@@ -164,8 +164,12 @@
 - [L11:L11]static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
 - [L13:L13]static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 - [L15:L15]static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
-- [L18:L36]enum Operation {
+- [L18:L40]enum Operation {
     OpenProcess,
+    OpenProcess2processQueryLimitedInformation,
+    OpenProcess2processSetLimitedInformation,
+    OpenProcess2processQueryInformation,
+    OpenProcess2processSetInformation,
     OpenThread,
     SetPriorityClass,
     GetProcessAffinityMask,
@@ -183,28 +187,28 @@
     GetThreadIdealProcessorEx,
     InvalidHandle,
 }
-- [L38:L43]struct ApplyFailEntry {
+- [L42:L47]struct ApplyFailEntry {
     pid: u32,
     process_name: String,
     operation: Operation,
     error_code: u32,
 }
-- [L45:L45]static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-- [L47:L83]fn is_new_error(pid: u32, process_name: &str, operation: Operation, error_code: u32) -> bool 
-- [L85:L105]fn purge_fail_map(pids_and_names: &[(u32, String)]) 
-- [L107:L107]static USE_CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
-- [L109:L109]static DUST_BIN_MODE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
-- [L111:L111]static LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path("")).unwrap()));
-- [L113:L113]static FIND_LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path(".find")).unwrap()));
-- [L115:L117]fn use_console() -> &'static Mutex<bool> 
-- [L119:L121]fn logger() -> &'static Mutex<File> 
-- [L123:L125]fn find_logger() -> &'static Mutex<File> 
-- [L127:L136]fn get_log_path(suffix: &str) -> PathBuf 
-- [L145:L155]fn log_message(args: &str) 
-- [L157:L163]fn log_pure_message(args: &str) 
-- [L165:L172]fn log_to_find(msg: &str) 
-- [L174:L182]fn log_process_find(process_name: &str) 
-- [L184:L204]fn error_from_code(code: u32) -> String 
+- [L49:L49]static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+- [L51:L90]fn is_new_error(pid: u32, process_name: &str, operation: Operation, error_code: u32) -> bool 
+- [L92:L112]fn purge_fail_map(pids_and_names: &[(u32, String)]) 
+- [L114:L114]static USE_CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
+- [L116:L116]static DUST_BIN_MODE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
+- [L118:L118]static LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path("")).unwrap()));
+- [L120:L120]static FIND_LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path(".find")).unwrap()));
+- [L122:L124]fn use_console() -> &'static Mutex<bool> 
+- [L126:L128]fn logger() -> &'static Mutex<File> 
+- [L130:L132]fn find_logger() -> &'static Mutex<File> 
+- [L134:L143]fn get_log_path(suffix: &str) -> PathBuf 
+- [L152:L162]fn log_message(args: &str) 
+- [L164:L170]fn log_pure_message(args: &str) 
+- [L172:L179]fn log_to_find(msg: &str) 
+- [L181:L189]fn log_process_find(process_name: &str) 
+- [L191:L211]fn error_from_code(code: u32) -> String 
 
 ## src/main.rs
 - [L46:L102]fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut PrimeThreadScheduler, processes: &mut ProcessSnapshot, dry_run: bool) -> ApplyConfigResult 
@@ -310,25 +314,25 @@
     pub w_limited_handle: HANDLE,
     pub w_handle: Option<HANDLE>,
 }
-- [L84:L163]fn get_process_handle(pid: u32) -> Option<ProcessHandle> 
-- [L174:L174]static CPU_SET_INFORMATION: Lazy<Mutex<Vec<CpuSetData>>> = Lazy::new(|| {
-- [L215:L217]fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>> 
-- [L219:L236]fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32> 
-- [L239:L252]fn cpusetids_from_mask(mask: usize) -> Vec<u32> 
-- [L254:L270]fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32> 
-- [L273:L288]fn mask_from_cpusetids(cpuids: &[u32]) -> usize 
-- [L290:L300]fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<u32> 
-- [L302:L331]fn is_running_as_admin() -> bool 
-- [L333:L366]fn request_uac_elevation(console: bool) -> io::Result<()> 
-- [L368:L406]fn enable_debug_privilege() 
-- [L408:L446]fn enable_inc_base_priority_privilege() 
-- [L448:L490]fn is_affinity_unset(pid: u32, process_name: &str) -> bool 
-- [L492:L511]fn get_thread_start_address(thread_handle: HANDLE) -> usize 
-- [L513:L524]fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: u8) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
-- [L526:L532]fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
-- [L535:L535]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-- [L537:L563]fn resolve_address_to_module(pid: u32, address: usize) -> String 
-- [L565:L568]fn drop_module_cache(pid: u32) 
-- [L570:L616]fn terminate_child_processes() 
-- [L618:L671]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
+- [L84:L185]fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle> 
+- [L196:L196]static CPU_SET_INFORMATION: Lazy<Mutex<Vec<CpuSetData>>> = Lazy::new(|| {
+- [L237:L239]fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>> 
+- [L241:L258]fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32> 
+- [L261:L274]fn cpusetids_from_mask(mask: usize) -> Vec<u32> 
+- [L276:L292]fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32> 
+- [L295:L310]fn mask_from_cpusetids(cpuids: &[u32]) -> usize 
+- [L312:L322]fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<u32> 
+- [L324:L353]fn is_running_as_admin() -> bool 
+- [L355:L388]fn request_uac_elevation(console: bool) -> io::Result<()> 
+- [L390:L428]fn enable_debug_privilege() 
+- [L430:L468]fn enable_inc_base_priority_privilege() 
+- [L470:L512]fn is_affinity_unset(pid: u32, process_name: &str) -> bool 
+- [L514:L533]fn get_thread_start_address(thread_handle: HANDLE) -> usize 
+- [L535:L546]fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: u8) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
+- [L548:L554]fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
+- [L557:L557]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+- [L559:L585]fn resolve_address_to_module(pid: u32, address: usize) -> String 
+- [L587:L590]fn drop_module_cache(pid: u32) 
+- [L592:L638]fn terminate_child_processes() 
+- [L640:L693]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
 

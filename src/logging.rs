@@ -17,6 +17,10 @@ pub static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::ne
 #[derive(PartialEq, Eq, Hash)]
 pub enum Operation {
     OpenProcess,
+    OpenProcess2processQueryLimitedInformation,
+    OpenProcess2processSetLimitedInformation,
+    OpenProcess2processQueryInformation,
+    OpenProcess2processSetInformation,
     OpenThread,
     SetPriorityClass,
     GetProcessAffinityMask,
@@ -78,7 +82,10 @@ pub fn is_new_error(pid: u32, process_name: &str, operation: Operation, error_co
                 true
             }
         }
-        _ => true,
+        _ => {
+            map.insert(pid, HashMap::from([(entry, true)]));
+            true
+        }
     }
 }
 

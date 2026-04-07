@@ -1,6 +1,6 @@
 use crate::{
     log,
-    logging::{FINDS_FAIL_SET, error_from_code, log_to_find},
+    logging::{FINDS_FAIL_SET, Operation, error_from_code, is_new_error, log_to_find},
 };
 use once_cell::sync::Lazy;
 use std::{collections::HashMap, env, io, mem::size_of, process::Command, sync::Mutex};
@@ -83,20 +83,30 @@ impl Drop for ProcessHandle {
 
 /// Opens a process handle for the given PID, returning a `ProcessHandle` if successful.
 /// All Some variants in the return value are confirmed valid handles.
+///
+/// internal error_code for invalid handle:
+/// 0 -> PROCESS_QUERY_LIMITED_INFORMATION
+/// 1 -> PROCESS_SET_LIMITED_INFORMATION
+/// 2 -> PROCESS_QUERY_INFORMATION
+/// 3 -> PROCESS_SET_INFORMATION
 #[allow(dead_code)]
-fn get_process_handle(pid: u32) -> Option<ProcessHandle> {
+fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle> {
     let r_limited_request = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) };
     let Some(r_limited_handle) = r_limited_request.ok() else {
         let error_code = unsafe { GetLastError().0 };
-        log_to_find(&format!(
-            "[get_process_handle][{}]Failed to open r_limited_handle for PID {}",
-            error_from_code(error_code),
-            pid
-        ));
+        if is_new_error(pid, process_name, Operation::OpenProcess2processQueryLimitedInformation, error_code) {
+            log_to_find(&format!(
+                "[get_process_handle][{}]Failed to open r_limited_handle for PID {}",
+                error_from_code(error_code),
+                pid
+            ));
+        }
         return None;
     };
     if r_limited_handle.is_invalid() {
-        log_to_find(&format!("[get_process_handle]Invalid r_limited_handle for PID {}", pid));
+        if is_new_error(pid, process_name, Operation::InvalidHandle, 0) {
+            log_to_find(&format!("[get_process_handle]Invalid r_limited_handle for PID {}", pid));
+        }
         return None;
     }
     let w_limited_request = unsafe { OpenProcess(PROCESS_SET_LIMITED_INFORMATION, false, pid) };
@@ -105,18 +115,22 @@ fn get_process_handle(pid: u32) -> Option<ProcessHandle> {
             let _ = CloseHandle(r_limited_handle);
         };
         let error_code = unsafe { GetLastError().0 };
-        log_to_find(&format!(
-            "[get_process_handle][{}]Failed to open w_limited_handle for PID {}",
-            error_from_code(error_code),
-            pid
-        ));
+        if is_new_error(pid, process_name, Operation::OpenProcess2processSetLimitedInformation, error_code) {
+            log_to_find(&format!(
+                "[get_process_handle][{}]Failed to open w_limited_handle for PID {}",
+                error_from_code(error_code),
+                pid
+            ));
+        }
         return None;
     };
     if w_limited_handle.is_invalid() {
         unsafe {
             let _ = CloseHandle(r_limited_handle);
         };
-        log_to_find(&format!("[get_process_handle]Invalid w_limited_handle for PID {}", pid));
+        if is_new_error(pid, process_name, Operation::InvalidHandle, 1) {
+            log_to_find(&format!("[get_process_handle]Invalid w_limited_handle for PID {}", pid));
+        }
         return None;
     }
     let r_request = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) };
@@ -124,16 +138,20 @@ fn get_process_handle(pid: u32) -> Option<ProcessHandle> {
         if !r_handle.is_invalid() {
             Some(r_handle)
         } else {
-            log_to_find(&format!("[get_process_handle]Invalid r_handle for PID {}", pid));
+            if is_new_error(pid, process_name, Operation::InvalidHandle, 2) {
+                log_to_find(&format!("[get_process_handle]Invalid r_handle for PID {}", pid));
+            }
             None
         }
     } else {
         let error_code = unsafe { GetLastError().0 };
-        log_to_find(&format!(
-            "[get_process_handle][{}]Failed to open r_handle for PID {}",
-            error_from_code(error_code),
-            pid
-        ));
+        if is_new_error(pid, process_name, Operation::OpenProcess2processQueryInformation, error_code) {
+            log_to_find(&format!(
+                "[get_process_handle][{}]Failed to open r_handle for PID {}",
+                error_from_code(error_code),
+                pid
+            ));
+        }
         None
     };
     let w_request = unsafe { OpenProcess(PROCESS_SET_INFORMATION, false, pid) };
@@ -141,16 +159,20 @@ fn get_process_handle(pid: u32) -> Option<ProcessHandle> {
         if !w_handle.is_invalid() {
             Some(w_handle)
         } else {
-            log_to_find(&format!("[get_process_handle]Invalid w_handle for PID {}", pid));
+            if is_new_error(pid, process_name, Operation::InvalidHandle, 3) {
+                log_to_find(&format!("[get_process_handle]Invalid w_handle for PID {}", pid));
+            }
             None
         }
     } else {
         let error_code = unsafe { GetLastError().0 };
-        log_to_find(&format!(
-            "[get_process_handle][{}]Failed to open w_handle for PID {}",
-            error_from_code(error_code),
-            pid
-        ));
+        if is_new_error(pid, process_name, Operation::OpenProcess2processSetInformation, error_code) {
+            log_to_find(&format!(
+                "[get_process_handle][{}]Failed to open w_handle for PID {}",
+                error_from_code(error_code),
+                pid
+            ));
+        }
         None
     };
 

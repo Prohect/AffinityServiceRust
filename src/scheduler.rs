@@ -4,6 +4,7 @@ use crate::{
     priority::ThreadPriority,
     winapi::{drop_module_cache, resolve_address_to_module},
 };
+
 use ntapi::ntexapi::SYSTEM_THREAD_INFORMATION;
 use std::{cmp::Reverse, collections::HashMap};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};

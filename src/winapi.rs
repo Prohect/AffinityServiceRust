@@ -3,6 +3,7 @@ use crate::{
     log,
     logging::{FINDS_FAIL_SET, Operation, is_new_error, log_to_find},
 };
+
 use once_cell::sync::Lazy;
 use std::{collections::HashMap, env, io, mem::size_of, process::Command, sync::Mutex};
 use windows::Win32::{

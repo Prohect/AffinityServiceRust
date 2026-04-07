@@ -1,7 +1,7 @@
 use crate::{
+    error_codes::error_from_code_win32,
     log,
     logging::{FINDS_FAIL_SET, Operation, is_new_error, log_to_find},
-    win32_error_codes::error_from_code,
 };
 use once_cell::sync::Lazy;
 use std::{collections::HashMap, env, io, mem::size_of, process::Command, sync::Mutex};
@@ -55,7 +55,6 @@ pub struct CpuSetData {
 
 /// Make sure all handles are valid when newing this.
 /// Automatically close any valid handle when dropped.
-#[allow(dead_code)]
 pub struct ProcessHandle {
     pub r_limited_handle: HANDLE,
     pub r_handle: Option<HANDLE>,
@@ -89,16 +88,15 @@ impl Drop for ProcessHandle {
 /// 0 -> PROCESS_QUERY_LIMITED_INFORMATION
 /// 1 -> PROCESS_SET_LIMITED_INFORMATION
 /// 2 -> PROCESS_QUERY_INFORMATION
-/// 3 -> PROCESS_SET_INFORMATION
-#[allow(dead_code)]
-fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle> {
+/// 3 -> PROCESS_SET_INFORMATIONW
+pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle> {
     let r_limited_request = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) };
     let Some(r_limited_handle) = r_limited_request.ok() else {
         let error_code = unsafe { GetLastError().0 };
         if is_new_error(pid, process_name, Operation::OpenProcess2processQueryLimitedInformation, error_code) {
             log_to_find(&format!(
                 "[get_process_handle][{}]Failed to open r_limited_handle for PID {}",
-                error_from_code(error_code),
+                error_from_code_win32(error_code),
                 pid
             ));
         }
@@ -119,7 +117,7 @@ fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle> {
         if is_new_error(pid, process_name, Operation::OpenProcess2processSetLimitedInformation, error_code) {
             log_to_find(&format!(
                 "[get_process_handle][{}]Failed to open w_limited_handle for PID {}",
-                error_from_code(error_code),
+                error_from_code_win32(error_code),
                 pid
             ));
         }
@@ -149,7 +147,7 @@ fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle> {
         if is_new_error(pid, process_name, Operation::OpenProcess2processQueryInformation, error_code) {
             log_to_find(&format!(
                 "[get_process_handle][{}]Failed to open r_handle for PID {}",
-                error_from_code(error_code),
+                error_from_code_win32(error_code),
                 pid
             ));
         }
@@ -170,7 +168,7 @@ fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle> {
         if is_new_error(pid, process_name, Operation::OpenProcess2processSetInformation, error_code) {
             log_to_find(&format!(
                 "[get_process_handle][{}]Failed to open w_handle for PID {}",
-                error_from_code(error_code),
+                error_from_code_win32(error_code),
                 pid
             ));
         }
@@ -476,7 +474,7 @@ pub fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
     let h_proc = match unsafe { OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION, false, pid) } {
         Err(_) => {
             let code = unsafe { GetLastError() }.0;
-            log_to_find(&format!("is_affinity_unset: [OPEN][{}] {:>5}-{}", error_from_code(code), pid, process_name));
+            log_to_find(&format!("is_affinity_unset: [OPEN][{}] {:>5}-{}", error_from_code_win32(code), pid, process_name));
             if code == 5 {
                 FINDS_FAIL_SET.lock().unwrap().insert(process_name.to_string());
             }
@@ -498,7 +496,12 @@ pub fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
     let result = match affinity_result {
         Err(_) => {
             let code = unsafe { GetLastError() }.0;
-            log_to_find(&format!("is_affinity_unset: [AFFINITY_QUERY][{}] {:>5}-{}", error_from_code(code), pid, process_name));
+            log_to_find(&format!(
+                "is_affinity_unset: [AFFINITY_QUERY][{}] {:>5}-{}",
+                error_from_code_win32(code),
+                pid,
+                process_name
+            ));
             if code == 5 {
                 FINDS_FAIL_SET.lock().unwrap().insert(process_name.to_string());
             }

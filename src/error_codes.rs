@@ -1,4 +1,4 @@
-pub fn error_from_code(code: u32) -> String {
+pub fn error_from_code_win32(code: u32) -> String {
     match code {
         0 => "SUCCESS".to_string(),
         2 => "FILE_NOT_FOUND".to_string(),
@@ -40,5 +40,29 @@ pub fn error_from_code(code: u32) -> String {
         1500 => "EVT_INVALID_CHANNEL".to_string(),
         1503 => "EVT_CHANNEL_ALREADY_EXISTS".to_string(),
         _ => format!("ERROR_CODE_{}", code),
+    }
+}
+pub fn error_from_ntstatus(status: i32) -> String {
+    match i32::cast_unsigned(status) {
+        0 => "STATUS_SUCCESS".to_string(),
+        1 => "STATUS_WAIT_1".to_string(),
+
+        0xC0000001 => "STATUS_UNSUCCESSFUL".to_string(),
+        0xC0000002 => "STATUS_NOT_IMPLEMENTED".to_string(),
+        0xC0000003 => "STATUS_INVALID_INFO_CLASS".to_string(),
+        0xC0000004 => "STATUS_INFO_LENGTH_MISMATCH".to_string(),
+        0xC0000008 => "STATUS_INVALID_HANDLE".to_string(),
+        0xC000000D => "STATUS_INVALID_PARAMETER".to_string(),
+        0xC0000017 => "STATUS_NO_MEMORY".to_string(),
+        0xC0000018 => "STATUS_CONFLICTING_ADDRESSES".to_string(),
+        0xC0000022 => "STATUS_ACCESS_DENIED".to_string(),
+        0xC0000023 => "STATUS_BUFFER_TOO_SMALL".to_string(),
+        0xC0000034 => "STATUS_OBJECT_NAME_NOT_FOUND".to_string(),
+        0xC000004B => "STATUS_THREAD_IS_TERMINATING".to_string(),
+        0xC0000061 => "STATUS_PRIVILEGE_NOT_HELD".to_string(),
+        0xC00000BB => "STATUS_NOT_SUPPORTED".to_string(),
+        0xC000010A => "STATUS_PROCESS_IS_TERMINATING".to_string(),
+
+        _ => format!("NTSTATUS_0x{:08X}", status as u32),
     }
 }

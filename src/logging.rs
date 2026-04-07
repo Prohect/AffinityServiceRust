@@ -16,7 +16,6 @@ pub static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::ne
 
 #[derive(PartialEq, Eq, Hash)]
 pub enum Operation {
-    OpenProcess,
     OpenProcess2processQueryLimitedInformation,
     OpenProcess2processSetLimitedInformation,
     OpenProcess2processQueryInformation,

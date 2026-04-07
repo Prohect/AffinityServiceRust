@@ -1,11 +1,11 @@
 mod apply;
 mod cli;
 mod config;
+mod error_codes;
 mod logging;
 mod priority;
 mod process;
 mod scheduler;
-mod win32_error_codes;
 mod winapi;
 
 use apply::{
@@ -17,10 +17,9 @@ use cli::{CliArgs, parse_args, print_help, print_help_all};
 use config::{ProcessConfig, convert, read_config, read_list, sort_and_group_config};
 use encoding_rs::Encoding;
 use logging::{
-    DUST_BIN_MODE, FINDS_FAIL_SET, LOCALTIME_BUFFER, Operation, find_logger, is_new_error, log_message, log_process_find, log_pure_message, log_to_find, logger,
-    purge_fail_map, use_console,
+    DUST_BIN_MODE, FINDS_FAIL_SET, LOCALTIME_BUFFER, find_logger, log_message, log_process_find, log_pure_message, log_to_find, logger, purge_fail_map, use_console,
 };
-use win32_error_codes::error_from_code;
+use winapi::get_process_handle;
 
 use process::ProcessSnapshot;
 use scheduler::PrimeThreadScheduler;
@@ -38,11 +37,10 @@ use winapi::{
     terminate_child_processes,
 };
 use windows::Win32::{
-    Foundation::{CloseHandle, GetLastError},
+    Foundation::CloseHandle,
     System::{
         Console::GetConsoleOutputCP,
         Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
-        Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_SET_LIMITED_INFORMATION},
     },
 };
 
@@ -59,39 +57,15 @@ use windows::Win32::{
 /// * `dry_run` - If true, only reports what would change without applying
 fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut PrimeThreadScheduler, processes: &mut ProcessSnapshot, dry_run: bool) -> ApplyConfigResult {
     let mut apply_config_result = ApplyConfigResult::new();
-    let access_flags = if dry_run {
-        PROCESS_QUERY_INFORMATION
-    } else {
-        PROCESS_QUERY_INFORMATION | PROCESS_SET_LIMITED_INFORMATION | PROCESS_SET_INFORMATION
-    };
-    let h_prc = match unsafe { OpenProcess(access_flags, false, pid) } {
-        Err(_) => {
-            let error_code = unsafe { GetLastError().0 };
-            if dry_run {
-                apply_config_result.add_change("[SKIP] OpenProcess failed".to_owned());
-            } else if is_new_error(pid, &config.name, Operation::OpenProcess, error_code) {
-                apply_config_result.add_error(format!("apply_config: [OPEN][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
-            }
-            return apply_config_result;
-        }
-        Ok(h_prc) => h_prc,
-    };
-    if h_prc.is_invalid() {
-        if dry_run {
-            apply_config_result.add_change("[SKIP] Invalid handle".to_owned());
-            return apply_config_result;
-        }
-        if is_new_error(pid, &config.name, Operation::InvalidHandle, 0) {
-            apply_config_result.add_error(format!("apply_config: [INVALID_HANDLE] {:>5}-{}", pid, config.name));
-        }
+    let Some(process_handle) = get_process_handle(pid, &config.name) else {
         return apply_config_result;
-    }
+    };
     let mut current_mask: usize = 0;
-    apply_priority(pid, config, dry_run, h_prc, &mut apply_config_result);
-    apply_affinity(pid, config, dry_run, h_prc, &mut current_mask, &mut apply_config_result, processes);
-    apply_process_default_cpuset(pid, config, dry_run, h_prc, &mut apply_config_result);
-    apply_io_priority(pid, config, dry_run, h_prc, &mut apply_config_result);
-    apply_memory_priority(pid, config, dry_run, h_prc, &mut apply_config_result);
+    apply_priority(pid, config, dry_run, &process_handle, &mut apply_config_result);
+    apply_affinity(pid, config, dry_run, &process_handle, &mut current_mask, &mut apply_config_result, processes);
+    apply_process_default_cpuset(pid, config, dry_run, &process_handle, &mut apply_config_result);
+    apply_io_priority(pid, config, dry_run, &process_handle, &mut apply_config_result);
+    apply_memory_priority(pid, config, dry_run, &process_handle, &mut apply_config_result);
     if !config.prime_threads_cpus.is_empty() || !config.prime_threads_prefixes.is_empty() || !config.ideal_processor_rules.is_empty() || config.track_top_x_threads != 0 {
         drop_module_cache(pid);
         prime_core_scheduler.set_alive(pid);
@@ -100,7 +74,6 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
         apply_ideal_processors(pid, config, processes, prime_core_scheduler, dry_run, &mut apply_config_result);
         update_thread_stats(pid, prime_core_scheduler);
     }
-    let _ = unsafe { CloseHandle(h_prc) };
     apply_config_result
 }
 

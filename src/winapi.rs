@@ -95,7 +95,7 @@ impl Drop for ProcessHandle {
 /// All Some variants in the return value are confirmed valid handles.
 /// Handles in returned result automatically close when dropped.
 ///
-/// internal error_code mapped to invalid handle for is_new_error checker:
+/// internal error_code mapped to invalid handle for is_new_error check func:
 /// 0 -> PROCESS_QUERY_LIMITED_INFORMATION
 /// 1 -> PROCESS_SET_LIMITED_INFORMATION
 /// 2 -> PROCESS_QUERY_INFORMATION

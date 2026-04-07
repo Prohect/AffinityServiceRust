@@ -1,8 +1,12 @@
 # Src Code Structure Outline, auto-generated during cargo build/check
 
 ## src/apply.rs
-- [L30:L36]fn get_handles(process_handle: &ProcessHandle) -> (Option<HANDLE>, Option<HANDLE>) 
-- [L38:L51]fn log_error_if_new(
+- [L31:L34]struct ApplyConfigResult {
+    pub changes: Vec<String>,
+    pub errors: Vec<String>,
+}
+- [L59:L65]fn get_handles(process_handle: &ProcessHandle) -> (Option<HANDLE>, Option<HANDLE>) 
+- [L67:L80]fn log_error_if_new(
     pid: u32,
     process_name: &str,
     operation: Operation,
@@ -10,10 +14,6 @@
     apply_config_result: &mut ApplyConfigResult,
     format_msg: impl FnOnce() -> String,
 ) 
-- [L54:L57]struct ApplyConfigResult {
-    pub changes: Vec<String>,
-    pub errors: Vec<String>,
-}
 - [L82:L127]fn apply_priority(
     pid: u32,
     config: &ProcessConfig,

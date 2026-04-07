@@ -27,29 +27,6 @@ use windows::Win32::{
     },
 };
 
-/// Extracts read and write handles from ProcessHandle, preferring full handles over limited.
-#[inline(always)]
-fn get_handles(process_handle: &ProcessHandle) -> (Option<HANDLE>, Option<HANDLE>) {
-    let r = process_handle.r_handle.or(Some(process_handle.r_limited_handle));
-    let w = process_handle.w_handle.or(Some(process_handle.w_limited_handle));
-    (r, w)
-}
-
-/// Logs an error if it hasn't been logged before for this pid/operation combination.
-#[inline(always)]
-fn log_error_if_new(
-    pid: u32,
-    process_name: &str,
-    operation: Operation,
-    error_code: u32,
-    apply_config_result: &mut ApplyConfigResult,
-    format_msg: impl FnOnce() -> String,
-) {
-    if is_new_error(pid, process_name, operation, error_code) {
-        apply_config_result.add_error(format_msg());
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct ApplyConfigResult {
     pub changes: Vec<String>,
@@ -76,6 +53,29 @@ impl ApplyConfigResult {
 
     pub fn is_empty(&self) -> bool {
         self.changes.is_empty() && self.errors.is_empty()
+    }
+}
+
+/// Extracts read and write handles from ProcessHandle, preferring full handles over limited.
+#[inline(always)]
+fn get_handles(process_handle: &ProcessHandle) -> (Option<HANDLE>, Option<HANDLE>) {
+    let r = process_handle.r_handle.or(Some(process_handle.r_limited_handle));
+    let w = process_handle.w_handle.or(Some(process_handle.w_limited_handle));
+    (r, w)
+}
+
+/// Logs an error if it hasn't been logged before for this pid/operation combination.
+#[inline(always)]
+fn log_error_if_new(
+    pid: u32,
+    process_name: &str,
+    operation: Operation,
+    error_code: u32,
+    apply_config_result: &mut ApplyConfigResult,
+    format_msg: impl FnOnce() -> String,
+) {
+    if is_new_error(pid, process_name, operation, error_code) {
+        apply_config_result.add_error(format_msg());
     }
 }
 

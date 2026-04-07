@@ -2,7 +2,8 @@ use crate::{
     config::{ProcessConfig, cpu_indices_to_mask, format_cpu_indices},
     error_codes::{error_from_code_win32, error_from_ntstatus},
     logging::{Operation, is_new_error},
-    process::ProcessSnapshot,
+    priority::{IOPriority, MemoryPriority, MemoryPriorityInformation, ProcessPriority, ThreadPriority},
+    process::{ProcessEntry, ProcessSnapshot},
     scheduler::PrimeThreadScheduler,
     winapi::{
         NtQueryInformationProcess, NtSetInformationProcess, ProcessHandle, cpusetids_from_indices, filter_indices_by_mask,
@@ -25,6 +26,29 @@ use windows::Win32::{
     },
 };
 
+/// Extracts read and write handles from ProcessHandle, preferring full handles over limited.
+#[inline(always)]
+fn get_handles(process_handle: &ProcessHandle) -> (Option<HANDLE>, Option<HANDLE>) {
+    let r = process_handle.r_handle.or(Some(process_handle.r_limited_handle));
+    let w = process_handle.w_handle.or(Some(process_handle.w_limited_handle));
+    (r, w)
+}
+
+/// Logs an error if it hasn't been logged before for this pid/operation combination.
+#[inline(always)]
+fn log_error_if_new(
+    pid: u32,
+    process_name: &str,
+    operation: Operation,
+    error_code: u32,
+    apply_config_result: &mut ApplyConfigResult,
+    format_msg: impl FnOnce() -> String,
+) {
+    if is_new_error(pid, process_name, operation, error_code) {
+        apply_config_result.add_error(format_msg());
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct ApplyConfigResult {
     pub changes: Vec<String>,
@@ -36,6 +60,8 @@ impl ApplyConfigResult {
         Self::default()
     }
 
+    /// format: r#"$operation details"#
+    /// attached to auto-generated "{pid:>5}::{config.name}::"
     pub fn add_change(&mut self, change: String) {
         self.changes.push(change);
     }
@@ -57,39 +83,40 @@ pub fn apply_priority(
     process_handle: &ProcessHandle,
     apply_config_result: &mut ApplyConfigResult,
 ) {
-    let Some(r_handle) = process_handle.r_handle.or(Some(process_handle.r_limited_handle)) else {
-        return;
-    };
-    let Some(w_handle) = process_handle.w_handle.or(Some(process_handle.w_limited_handle)) else {
+    let (Some(r_handle), Some(w_handle)) = get_handles(process_handle) else {
         return;
     };
     if let Some(priority_flag) = config.priority.as_win_const() {
         let current_priority = unsafe { GetPriorityClass(r_handle) };
         if current_priority != priority_flag.0 {
+            let change_msg = format!(
+                "Priority: {} -> {}",
+                ProcessPriority::from_win_const(current_priority),
+                config.priority.as_str()
+            );
             if dry_run {
-                apply_config_result.add_change(format!(
-                    "Priority: {} -> {}",
-                    crate::priority::ProcessPriority::from_win_const(current_priority),
-                    config.priority.as_str()
-                ));
+                apply_config_result.add_change(change_msg);
             } else {
                 let set_result = unsafe { SetPriorityClass(w_handle, priority_flag) };
                 if set_result.is_ok() {
-                    apply_config_result.add_change(format!(
-                        "Priority: {} -> {}",
-                        crate::priority::ProcessPriority::from_win_const(current_priority),
-                        config.priority.as_str()
-                    ));
+                    apply_config_result.add_change(change_msg);
                 } else {
                     let error_code = unsafe { GetLastError().0 };
-                    if is_new_error(pid, &config.name, Operation::SetPriorityClass, error_code) {
-                        apply_config_result.add_error(format!(
-                            "apply_priority: [SET_PRIORITY_CLASS][{}] {:>5}-{}",
-                            error_from_code_win32(error_code),
-                            pid,
-                            config.name
-                        ));
-                    }
+                    log_error_if_new(
+                        pid,
+                        &config.name,
+                        Operation::SetPriorityClass,
+                        error_code,
+                        apply_config_result,
+                        || {
+                            format!(
+                                "apply_priority: [SET_PRIORITY_CLASS][{}] {:>5}-{}",
+                                error_from_code_win32(error_code),
+                                pid,
+                                config.name
+                            )
+                        },
+                    );
                 }
             }
         }
@@ -105,10 +132,7 @@ pub fn apply_affinity(
     apply_config_result: &mut ApplyConfigResult,
     processes: &mut ProcessSnapshot,
 ) {
-    let Some(r_handle) = process_handle.r_handle.or(Some(process_handle.r_limited_handle)) else {
-        return;
-    };
-    let Some(w_handle) = process_handle.w_handle.or(Some(process_handle.w_limited_handle)) else {
+    let (Some(r_handle), Some(w_handle)) = get_handles(process_handle) else {
         return;
     };
     let mut system_mask: usize = 0;
@@ -120,35 +144,50 @@ pub fn apply_affinity(
             Err(_) => {
                 if !dry_run {
                     let error_code = unsafe { GetLastError().0 };
-                    if is_new_error(pid, &config.name, Operation::GetProcessAffinityMask, error_code) {
-                        apply_config_result.add_error(format!(
-                            "apply_affinity: [GET_PROCESS_AFFINITY_MASK][{}] {:>5}-{}",
-                            error_from_code_win32(error_code),
-                            pid,
-                            config.name
-                        ));
-                    }
+                    log_error_if_new(
+                        pid,
+                        &config.name,
+                        Operation::GetProcessAffinityMask,
+                        error_code,
+                        apply_config_result,
+                        || {
+                            format!(
+                                "apply_affinity: [GET_PROCESS_AFFINITY_MASK][{}] {:>5}-{}",
+                                error_from_code_win32(error_code),
+                                pid,
+                                config.name
+                            )
+                        },
+                    );
                 }
             }
             Ok(_) => {
                 if has_affinity && affinity_mask != 0 && affinity_mask != *current_mask {
+                    let change_msg = format!("Affinity: {:#X} -> {:#X}", current_mask, affinity_mask);
                     if dry_run {
-                        apply_config_result.add_change(format!("Affinity: {:#X} -> {:#X}", current_mask, affinity_mask));
+                        apply_config_result.add_change(change_msg);
                     } else {
                         match unsafe { SetProcessAffinityMask(w_handle, affinity_mask) } {
                             Err(_) => {
                                 let error_code = unsafe { GetLastError().0 };
-                                if is_new_error(pid, &config.name, Operation::SetProcessAffinityMask, error_code) {
-                                    apply_config_result.add_error(format!(
-                                        "apply_affinity: [SET_PROCESS_AFFINITY_MASK][{}] {:>5}-{}",
-                                        error_from_code_win32(error_code),
-                                        pid,
-                                        config.name
-                                    ));
-                                }
+                                log_error_if_new(
+                                    pid,
+                                    &config.name,
+                                    Operation::SetProcessAffinityMask,
+                                    error_code,
+                                    apply_config_result,
+                                    || {
+                                        format!(
+                                            "apply_affinity: [SET_PROCESS_AFFINITY_MASK][{}] {:>5}-{}",
+                                            error_from_code_win32(error_code),
+                                            pid,
+                                            config.name
+                                        )
+                                    },
+                                );
                             }
                             Ok(_) => {
-                                apply_config_result.add_change(format!("Affinity: {:#X} -> {:#X}", current_mask, affinity_mask));
+                                apply_config_result.add_change(change_msg);
                                 *current_mask = affinity_mask;
                                 reset_thread_ideal_processors(pid, config, false, apply_config_result, processes);
                             }
@@ -167,10 +206,7 @@ pub fn apply_process_default_cpuset(
     process_handle: &ProcessHandle,
     apply_config_result: &mut ApplyConfigResult,
 ) {
-    let Some(r_handle) = process_handle.r_handle.or(Some(process_handle.r_limited_handle)) else {
-        return;
-    };
-    let Some(w_handle) = process_handle.w_handle.or(Some(process_handle.w_limited_handle)) else {
+    let (Some(r_handle), Some(w_handle)) = get_handles(process_handle) else {
         return;
     };
     if !config.cpu_set_cpus.is_empty() && !get_cpu_set_information().lock().unwrap().is_empty() {
@@ -188,28 +224,42 @@ pub fn apply_process_default_cpuset(
                 } else {
                     let error_code = unsafe { GetLastError().0 };
                     if error_code != 122 {
-                        if is_new_error(pid, &config.name, Operation::GetProcessDefaultCpuSets, error_code) {
-                            apply_config_result.add_error(format!(
-                                "apply_process_default_cpuset: [GET_PROCESS_DEFAULT_CPUSETS][{}] {:>5}-{}",
-                                error_from_code_win32(error_code),
-                                pid,
-                                config.name
-                            ));
-                        }
+                        log_error_if_new(
+                            pid,
+                            &config.name,
+                            Operation::GetProcessDefaultCpuSets,
+                            error_code,
+                            apply_config_result,
+                            || {
+                                format!(
+                                    "apply_process_default_cpuset: [GET_PROCESS_DEFAULT_CPUSETS][{}] {:>5}-{}",
+                                    error_from_code_win32(error_code),
+                                    pid,
+                                    config.name
+                                )
+                            },
+                        );
                     } else {
                         current_cpusetids = vec![0u32; requiredidcount as usize];
                         let second_query =
                             unsafe { GetProcessDefaultCpuSets(r_handle, Some(&mut current_cpusetids[..]), &mut requiredidcount) }.as_bool();
                         if !second_query {
                             let error_code = unsafe { GetLastError().0 };
-                            if is_new_error(pid, &config.name, Operation::GetProcessDefaultCpuSets, error_code) {
-                                apply_config_result.add_error(format!(
-                                    "apply_process_default_cpuset: [GET_PROCESS_DEFAULT_CPUSETS][{}] {:>5}-{}",
-                                    error_from_code_win32(error_code),
-                                    pid,
-                                    config.name
-                                ));
-                            }
+                            log_error_if_new(
+                                pid,
+                                &config.name,
+                                Operation::GetProcessDefaultCpuSets,
+                                error_code,
+                                apply_config_result,
+                                || {
+                                    format!(
+                                        "apply_process_default_cpuset: [GET_PROCESS_DEFAULT_CPUSETS][{}] {:>5}-{}",
+                                        error_from_code_win32(error_code),
+                                        pid,
+                                        config.name
+                                    )
+                                },
+                            );
                         } else {
                             toset = current_cpusetids != target_cpusetids;
                         }
@@ -219,14 +269,21 @@ pub fn apply_process_default_cpuset(
                     let set_result = unsafe { SetProcessDefaultCpuSets(w_handle, Some(&target_cpusetids)) }.as_bool();
                     if !set_result {
                         let error_code = unsafe { GetLastError().0 };
-                        if is_new_error(pid, &config.name, Operation::SetProcessDefaultCpuSets, error_code) {
-                            apply_config_result.add_error(format!(
-                                "apply_process_default_cpuset: [SET_PROCESS_DEFAULT_CPUSETS][{}] {:>5}-{}",
-                                error_from_code_win32(error_code),
-                                pid,
-                                config.name
-                            ));
-                        }
+                        log_error_if_new(
+                            pid,
+                            &config.name,
+                            Operation::SetProcessDefaultCpuSets,
+                            error_code,
+                            apply_config_result,
+                            || {
+                                format!(
+                                    "apply_process_default_cpuset: [SET_PROCESS_DEFAULT_CPUSETS][{}] {:>5}-{}",
+                                    error_from_code_win32(error_code),
+                                    pid,
+                                    config.name
+                                )
+                            },
+                        );
                     } else {
                         apply_config_result.add_change(format!(
                             "CPU Set: [{}] -> [{}]",
@@ -287,15 +344,15 @@ pub fn prefetch_all_thread_cycles(
             } {
                 Err(_) => {
                     let error_code = unsafe { GetLastError().0 };
-                    if is_new_error(pid, &config.name, Operation::OpenThread, error_code) {
-                        apply_config_result.add_error(format!(
+                    log_error_if_new(pid, &config.name, Operation::OpenThread, error_code, apply_config_result, || {
+                        format!(
                             "prefetch_thread_cycles: [OPEN_THREAD][{}] {:>5}-{}-{}",
                             error_from_code_win32(error_code),
                             pid,
                             tid,
                             config.name
-                        ));
-                    }
+                        )
+                    });
                     continue;
                 }
                 Ok(thread_handle) => thread_stats.handle = Some(thread_handle),
@@ -315,15 +372,22 @@ pub fn prefetch_all_thread_cycles(
             }
             Err(_) => {
                 let error_code = unsafe { GetLastError().0 };
-                if is_new_error(pid, &config.name, Operation::QueryThreadCycleTime, error_code) {
-                    apply_config_result.add_error(format!(
-                        "prefetch_thread_cycles: [QUERY_THREAD_CYCLE_TIME][{}] {:>5}-{}-{}",
-                        error_from_code_win32(error_code),
-                        pid,
-                        tid,
-                        config.name
-                    ));
-                }
+                log_error_if_new(
+                    pid,
+                    &config.name,
+                    Operation::QueryThreadCycleTime,
+                    error_code,
+                    apply_config_result,
+                    || {
+                        format!(
+                            "prefetch_thread_cycles: [QUERY_THREAD_CYCLE_TIME][{}] {:>5}-{}-{}",
+                            error_from_code_win32(error_code),
+                            pid,
+                            tid,
+                            config.name
+                        )
+                    },
+                );
             }
         }
         counter += 1;
@@ -511,7 +575,7 @@ pub fn apply_prime_threads_promote(
             let start_module = resolve_address_to_module(pid, thread_stats.start_address);
             let mut matched = false;
             let mut prime_cpus_to_set = &config.prime_threads_cpus;
-            let mut thread_priority_to_set = crate::priority::ThreadPriority::None;
+            let mut thread_priority_to_set = ThreadPriority::None;
             for prefix in &config.prime_threads_prefixes {
                 if start_module.to_lowercase().starts_with(&prefix.prefix.to_lowercase()) {
                     matched = true;
@@ -534,15 +598,22 @@ pub fn apply_prime_threads_promote(
             if !cpu_setids.is_empty() {
                 if !unsafe { SetThreadSelectedCpuSets(handle, &cpu_setids) }.as_bool() {
                     let error_code = unsafe { GetLastError().0 };
-                    if is_new_error(pid, &config.name, Operation::SetThreadSelectedCpuSets, error_code) {
-                        apply_config_result.add_error(format!(
-                            "apply_prime_threads_promote: [SET_THREAD_SELECTED_CPU_SETS][{}] {:>5}-{:>5}-{}",
-                            error_from_code_win32(error_code),
-                            pid,
-                            tid,
-                            config.name
-                        ));
-                    }
+                    log_error_if_new(
+                        pid,
+                        &config.name,
+                        Operation::SetThreadSelectedCpuSets,
+                        error_code,
+                        apply_config_result,
+                        || {
+                            format!(
+                                "apply_prime_threads_promote: [SET_THREAD_SELECTED_CPU_SETS][{}] {:>5}-{:>5}-{}",
+                                error_from_code_win32(error_code),
+                                pid,
+                                tid,
+                                config.name
+                            )
+                        },
+                    );
                 } else {
                     thread_stats.pinned_cpu_set_ids = cpu_setids.clone();
                     let promoted_cpus = indices_from_cpusetids(&cpu_setids);
@@ -557,9 +628,9 @@ pub fn apply_prime_threads_promote(
                 let current_priority = unsafe { GetThreadPriority(handle) };
 
                 if current_priority != 0x7FFFFFFF_i32 {
-                    let current_priority = crate::priority::ThreadPriority::from_win_const(current_priority);
+                    let current_priority = ThreadPriority::from_win_const(current_priority);
                     thread_stats.original_priority = Some(current_priority);
-                    let new_priority = if thread_priority_to_set != crate::priority::ThreadPriority::None {
+                    let new_priority = if thread_priority_to_set != ThreadPriority::None {
                         thread_priority_to_set
                     } else {
                         current_priority.boost_one()
@@ -567,19 +638,26 @@ pub fn apply_prime_threads_promote(
                     if new_priority != current_priority {
                         if unsafe { SetThreadPriority(handle, new_priority.to_thread_priority_struct()) }.is_err() {
                             let error_code = unsafe { GetLastError().0 };
-                            if is_new_error(pid, &config.name, Operation::SetThreadPriority, error_code) {
-                                apply_config_result.add_error(format!(
-                                    "apply_prime_threads_promote: [SET_THREAD_PRIORITY][{}] {:>5}-{:>5}-{}",
-                                    error_from_code_win32(error_code),
-                                    pid,
-                                    tid,
-                                    config.name
-                                ));
-                            }
+                            log_error_if_new(
+                                pid,
+                                &config.name,
+                                Operation::SetThreadPriority,
+                                error_code,
+                                apply_config_result,
+                                || {
+                                    format!(
+                                        "apply_prime_threads_promote: [SET_THREAD_PRIORITY][{}] {:>5}-{:>5}-{}",
+                                        error_from_code_win32(error_code),
+                                        pid,
+                                        tid,
+                                        config.name
+                                    )
+                                },
+                            );
                         } else {
                             let old_name = current_priority.as_str();
                             let new_name = new_priority.as_str();
-                            let action = if thread_priority_to_set != crate::priority::ThreadPriority::None {
+                            let action = if thread_priority_to_set != ThreadPriority::None {
                                 "priority set"
                             } else {
                                 "priority boosted"
@@ -598,7 +676,7 @@ pub fn apply_prime_threads_promote(
 /// Removes CPU set pinning and restores original thread priority.
 /// Clears pinned_cpu_set_ids even on failure to prevent infinite retry loops.
 pub fn apply_prime_threads_demote(
-    process: &mut crate::process::ProcessEntry,
+    process: &mut ProcessEntry,
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
     pid: u32,
@@ -623,15 +701,22 @@ pub fn apply_prime_threads_demote(
         }
         if !unsafe { SetThreadSelectedCpuSets(handle, &[]) }.as_bool() {
             let error_code = unsafe { GetLastError().0 };
-            if is_new_error(pid, &config.name, Operation::SetThreadSelectedCpuSets, error_code) {
-                apply_config_result.add_error(format!(
-                    "apply_prime_threads_demote: [SET_THREAD_SELECTED_CPU_SETS][{}] {:>5}-{:>5}-{}",
-                    error_from_code_win32(error_code),
-                    pid,
-                    tid,
-                    config.name
-                ));
-            }
+            log_error_if_new(
+                pid,
+                &config.name,
+                Operation::SetThreadSelectedCpuSets,
+                error_code,
+                apply_config_result,
+                || {
+                    format!(
+                        "apply_prime_threads_demote: [SET_THREAD_SELECTED_CPU_SETS][{}] {:>5}-{:>5}-{}",
+                        error_from_code_win32(error_code),
+                        pid,
+                        tid,
+                        config.name
+                    )
+                },
+            );
         } else {
             let start_module = resolve_address_to_module(pid, thread_stats.start_address);
             apply_config_result.add_change(format!("Thread {} -> (demoted, start={})", tid, start_module));
@@ -643,15 +728,22 @@ pub fn apply_prime_threads_demote(
             && unsafe { SetThreadPriority(handle, original_priority.to_thread_priority_struct()) }.is_err()
         {
             let error_code = unsafe { GetLastError().0 };
-            if is_new_error(pid, &config.name, Operation::SetThreadPriority, error_code) {
-                apply_config_result.add_error(format!(
-                    "apply_prime_threads_promote: [RESTORE_SET_THREAD_PRIORITY][{}] {:>5}-{:>5}-{}",
-                    error_from_code_win32(error_code),
-                    pid,
-                    tid,
-                    config.name
-                ));
-            }
+            log_error_if_new(
+                pid,
+                &config.name,
+                Operation::SetThreadPriority,
+                error_code,
+                apply_config_result,
+                || {
+                    format!(
+                        "apply_prime_threads_promote: [RESTORE_SET_THREAD_PRIORITY][{}] {:>5}-{:>5}-{}",
+                        error_from_code_win32(error_code),
+                        pid,
+                        tid,
+                        config.name
+                    )
+                },
+            );
         }
     }
 }
@@ -663,10 +755,7 @@ pub fn apply_io_priority(
     process_handle: &ProcessHandle,
     apply_config_result: &mut ApplyConfigResult,
 ) {
-    let Some(r_handle) = process_handle.r_handle.or(Some(process_handle.r_limited_handle)) else {
-        return;
-    };
-    let Some(w_handle) = process_handle.w_handle.or(Some(process_handle.w_limited_handle)) else {
+    let (Some(r_handle), Some(w_handle)) = get_handles(process_handle) else {
         return;
     };
     if let Some(io_priority_flag) = config.io_priority.as_win_const() {
@@ -684,28 +773,31 @@ pub fn apply_io_priority(
         }
         .0;
         let query_result_u32 = i32::cast_unsigned(query_result);
+        let change_msg = format!(
+            "IO Priority: {} -> {}",
+            IOPriority::from_win_const(current_io_priority),
+            config.io_priority.as_str()
+        );
         if query_result < 0 {
-            if is_new_error(
+            log_error_if_new(
                 pid,
                 &config.name,
                 Operation::NtQueryInformationProcess2ProcessInformationIOPriority,
                 query_result_u32,
-            ) {
-                apply_config_result.add_error(format!(
-                    "apply_io_priority: [QUERY_IO_PRIORITY][{}] {:>5}-{} -> {}",
-                    error_from_ntstatus(query_result),
-                    pid,
-                    config.name,
-                    config.io_priority.as_str()
-                ));
-            }
+                apply_config_result,
+                || {
+                    format!(
+                        "apply_io_priority: [QUERY_IO_PRIORITY][{}] {:>5}-{} -> {}",
+                        error_from_ntstatus(query_result),
+                        pid,
+                        config.name,
+                        config.io_priority.as_str()
+                    )
+                },
+            );
         } else if current_io_priority != io_priority_flag {
             if dry_run {
-                apply_config_result.add_change(format!(
-                    "IO Priority: {} -> {}",
-                    crate::priority::IOPriority::from_win_const(current_io_priority),
-                    config.io_priority.as_str()
-                ));
+                apply_config_result.add_change(change_msg);
             } else {
                 let set_result = unsafe {
                     NtSetInformationProcess(
@@ -718,26 +810,24 @@ pub fn apply_io_priority(
                 .0;
                 let set_result_u32 = i32::cast_unsigned(set_result);
                 if set_result < 0 {
-                    if is_new_error(
+                    log_error_if_new(
                         pid,
                         &config.name,
                         Operation::NtSetInformationProcess2ProcessInformationIOPriority,
                         set_result_u32,
-                    ) {
-                        apply_config_result.add_error(format!(
-                            "apply_config: [SET_IO_PRIORITY][{}] {:>5}-{} -> {}",
-                            error_from_ntstatus(set_result),
-                            pid,
-                            config.name,
-                            config.io_priority.as_str()
-                        ));
-                    }
+                        apply_config_result,
+                        || {
+                            format!(
+                                "apply_config: [SET_IO_PRIORITY][{}] {:>5}-{} -> {}",
+                                error_from_ntstatus(set_result),
+                                pid,
+                                config.name,
+                                config.io_priority.as_str()
+                            )
+                        },
+                    );
                 } else {
-                    apply_config_result.add_change(format!(
-                        "IO Priority: {} -> {}",
-                        crate::priority::IOPriority::from_win_const(current_io_priority),
-                        config.io_priority.as_str()
-                    ));
+                    apply_config_result.add_change(change_msg);
                 }
             }
         }
@@ -751,75 +841,77 @@ pub fn apply_memory_priority(
     process_handle: &ProcessHandle,
     apply_config_result: &mut ApplyConfigResult,
 ) {
-    let Some(r_handle) = process_handle.r_handle.or(Some(process_handle.r_limited_handle)) else {
-        return;
-    };
-    let Some(w_handle) = process_handle.w_handle.or(Some(process_handle.w_limited_handle)) else {
+    let (Some(r_handle), Some(w_handle)) = get_handles(process_handle) else {
         return;
     };
     if let Some(memory_priority_flag) = config.memory_priority.as_win_const() {
-        let mut current_mem_prio = crate::priority::MemoryPriorityInformation(0);
+        let mut current_mem_prio = MemoryPriorityInformation(0);
         match unsafe {
             GetProcessInformation(
                 r_handle,
                 ProcessMemoryPriority,
                 &mut current_mem_prio as *mut _ as *mut std::ffi::c_void,
-                size_of::<crate::priority::MemoryPriorityInformation>() as u32,
+                size_of::<MemoryPriorityInformation>() as u32,
             )
         } {
             Err(_) => {
                 let error_code = unsafe { GetLastError().0 };
-                if is_new_error(
+                log_error_if_new(
                     pid,
                     &config.name,
                     Operation::GetProcessInformation2ProcessMemoryPriority,
                     error_code,
-                ) {
-                    apply_config_result.add_error(format!(
-                        "apply_config: [QUERY_MEMORY_PRIORITY][{}] {:>5}-{}",
-                        error_from_code_win32(error_code),
-                        pid,
-                        config.name
-                    ));
-                }
+                    apply_config_result,
+                    || {
+                        format!(
+                            "apply_config: [QUERY_MEMORY_PRIORITY][{}] {:>5}-{}",
+                            error_from_code_win32(error_code),
+                            pid,
+                            config.name
+                        )
+                    },
+                );
             }
             Ok(_) => {
                 if current_mem_prio.0 != memory_priority_flag.0 {
+                    let change_msg = format!(
+                        "Memory Priority: {} -> {}",
+                        MemoryPriority::from_win_const(current_mem_prio.0),
+                        config.memory_priority.as_str()
+                    );
                     if dry_run {
                         apply_config_result.add_change(format!("Memory Priority: -> {}", config.io_priority.as_str()));
                     } else {
-                        let mem_prio_info = crate::priority::MemoryPriorityInformation(memory_priority_flag.0);
+                        let mem_prio_info = MemoryPriorityInformation(memory_priority_flag.0);
                         match unsafe {
                             SetProcessInformation(
                                 w_handle,
                                 ProcessMemoryPriority,
                                 &mem_prio_info as *const _ as *const std::ffi::c_void,
-                                size_of::<crate::priority::MemoryPriorityInformation>() as u32,
+                                size_of::<MemoryPriorityInformation>() as u32,
                             )
                         } {
                             Err(_) => {
                                 let error_code = unsafe { GetLastError().0 };
-                                if is_new_error(
+                                log_error_if_new(
                                     pid,
                                     &config.name,
                                     Operation::SetProcessInformation2ProcessMemoryPriority,
                                     error_code,
-                                ) {
-                                    apply_config_result.add_error(format!(
-                                        "apply_config: [SET_MEMORY_PRIORITY][{}] {:>5}-{} -> {}",
-                                        error_from_code_win32(error_code),
-                                        pid,
-                                        config.name,
-                                        config.memory_priority.as_str()
-                                    ));
-                                }
+                                    apply_config_result,
+                                    || {
+                                        format!(
+                                            "apply_config: [SET_MEMORY_PRIORITY][{}] {:>5}-{} -> {}",
+                                            error_from_code_win32(error_code),
+                                            pid,
+                                            config.name,
+                                            config.memory_priority.as_str()
+                                        )
+                                    },
+                                );
                             }
                             Ok(_) => {
-                                apply_config_result.add_change(format!(
-                                    "Memory Priority: {} -> {}",
-                                    crate::priority::MemoryPriority::from_win_const(current_mem_prio.0),
-                                    config.memory_priority.as_str()
-                                ));
+                                apply_config_result.add_change(change_msg);
                             }
                         }
                     }
@@ -871,15 +963,15 @@ pub fn reset_thread_ideal_processors(
         } {
             Err(_) => {
                 let error_code = unsafe { GetLastError().0 };
-                if is_new_error(pid, &config.name, Operation::OpenThread, error_code) {
-                    apply_config_result.add_error(format!(
+                log_error_if_new(pid, &config.name, Operation::OpenThread, error_code, apply_config_result, || {
+                    format!(
                         "reset_ideal_processor: [OPEN_THREAD][{}] {:>5}-{}-{:>5}",
                         error_from_code_win32(error_code),
                         pid,
                         config.name,
                         tid,
-                    ));
-                }
+                    )
+                });
             }
             Ok(thread_handle) => {
                 tid_time_handles.push((*tid, total_time, thread_handle));
@@ -903,15 +995,22 @@ pub fn reset_thread_ideal_processors(
         match set_thread_ideal_processor_ex(*thread_handle, 0, target_cpu as u8) {
             Err(_) => {
                 let error_code = unsafe { GetLastError().0 };
-                if is_new_error(pid, &config.name, Operation::SetThreadIdealProcessorEx, error_code) {
-                    apply_config_result.add_error(format!(
-                        "reset_ideal_processor: [SET_IDEAL][{}] {:>5}-{}-{} - SetThreadIdealProcessorEx failed",
-                        error_from_code_win32(error_code),
-                        pid,
-                        tid,
-                        config.name
-                    ));
-                }
+                log_error_if_new(
+                    pid,
+                    &config.name,
+                    Operation::SetThreadIdealProcessorEx,
+                    error_code,
+                    apply_config_result,
+                    || {
+                        format!(
+                            "reset_ideal_processor: [SET_IDEAL][{}] {:>5}-{}-{} - SetThreadIdealProcessorEx failed",
+                            error_from_code_win32(error_code),
+                            pid,
+                            tid,
+                            config.name
+                        )
+                    },
+                );
             }
             Ok(_) => {
                 counter_set_success += 1;
@@ -1020,15 +1119,22 @@ pub fn apply_ideal_processors(
                     match get_thread_ideal_processor_ex(handle) {
                         Err(_) => {
                             let error_code = unsafe { GetLastError().0 };
-                            if is_new_error(pid, &config.name, Operation::GetThreadIdealProcessorEx, error_code) {
-                                apply_config_result.add_error(format!(
-                                    "apply_ideal_processor: [GET_IDEAL][{}] {:>5}-{}-{}",
-                                    error_from_code_win32(error_code),
-                                    pid,
-                                    tid,
-                                    config.name
-                                ));
-                            }
+                            log_error_if_new(
+                                pid,
+                                &config.name,
+                                Operation::GetThreadIdealProcessorEx,
+                                error_code,
+                                apply_config_result,
+                                || {
+                                    format!(
+                                        "apply_ideal_processor: [GET_IDEAL][{}] {:>5}-{}-{}",
+                                        error_from_code_win32(error_code),
+                                        pid,
+                                        tid,
+                                        config.name
+                                    )
+                                },
+                            );
                         }
                         Ok(previous_processor_number) => {
                             thread_stats.ideal_processor.previous_group = previous_processor_number.Group;
@@ -1066,15 +1172,22 @@ pub fn apply_ideal_processors(
             match set_thread_ideal_processor_ex(handle, 0, target_cpu as u8) {
                 Err(_) => {
                     let error_code = unsafe { GetLastError().0 };
-                    if is_new_error(pid, &config.name, Operation::SetThreadIdealProcessorEx, error_code) {
-                        apply_config_result.add_error(format!(
-                            "apply_ideal_processor: [SET_IDEAL][{}] {:>5}-{}-{}",
-                            error_from_code_win32(error_code),
-                            pid,
-                            tid,
-                            config.name
-                        ));
-                    }
+                    log_error_if_new(
+                        pid,
+                        &config.name,
+                        Operation::SetThreadIdealProcessorEx,
+                        error_code,
+                        apply_config_result,
+                        || {
+                            format!(
+                                "apply_ideal_processor: [SET_IDEAL][{}] {:>5}-{}-{}",
+                                error_from_code_win32(error_code),
+                                pid,
+                                tid,
+                                config.name
+                            )
+                        },
+                    );
                 }
                 Ok(_) => {
                     thread_stats.ideal_processor.current_group = 0;
@@ -1109,15 +1222,22 @@ pub fn apply_ideal_processors(
                 match set_thread_ideal_processor_ex(handle, prev_group, prev_number) {
                     Err(_) => {
                         let error_code = unsafe { GetLastError().0 };
-                        if is_new_error(pid, &config.name, Operation::SetThreadIdealProcessorEx, error_code) {
-                            apply_config_result.add_error(format!(
-                                "apply_ideal_processor: [RESTORE_IDEAL][{}] {:>5}-{}-{}",
-                                error_from_code_win32(error_code),
-                                pid,
-                                tid,
-                                config.name
-                            ));
-                        }
+                        log_error_if_new(
+                            pid,
+                            &config.name,
+                            Operation::SetThreadIdealProcessorEx,
+                            error_code,
+                            apply_config_result,
+                            || {
+                                format!(
+                                    "apply_ideal_processor: [RESTORE_IDEAL][{}] {:>5}-{}-{}",
+                                    error_from_code_win32(error_code),
+                                    pid,
+                                    tid,
+                                    config.name
+                                )
+                            },
+                        );
                     }
                     Ok(_) => {
                         thread_stats.ideal_processor.current_group = prev_group;

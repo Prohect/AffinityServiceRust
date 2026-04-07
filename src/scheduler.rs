@@ -5,8 +5,9 @@ use crate::{
     winapi::{drop_module_cache, resolve_address_to_module},
 };
 
+use chrono::{DateTime, Local};
 use ntapi::ntexapi::SYSTEM_THREAD_INFORMATION;
-use std::{cmp::Reverse, collections::HashMap};
+use std::{cmp::Reverse, collections::HashMap, fmt};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 
 #[derive(Debug)]
@@ -265,8 +266,8 @@ pub struct ThreadStats {
     pub process_id: u32,
 }
 
-impl std::fmt::Debug for ThreadStats {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for ThreadStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ThreadStats")
             .field("last_total_time", &self.last_total_time)
             .field("cached_total_time", &self.cached_total_time)
@@ -314,8 +315,8 @@ fn format_100ns(time: i64) -> String {
 
 fn format_filetime(time: i64) -> String {
     let unix_time = time / 10_000_000 - 11644473600;
-    if let Some(dt) = chrono::DateTime::from_timestamp(unix_time, ((time % 10_000_000) * 100) as u32) {
-        dt.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+    if let Some(dt) = DateTime::from_timestamp(unix_time, ((time % 10_000_000) * 100) as u32) {
+        dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S%.3f").to_string()
     } else {
         time.to_string()
     }

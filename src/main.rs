@@ -26,6 +26,8 @@ use encoding_rs::Encoding;
 use std::{
     collections::{HashMap, HashSet},
     env,
+    ffi::c_void,
+    fs::{metadata, read_dir, read_to_string, write},
     io::Write,
     mem::size_of,
     process::Command,
@@ -119,11 +121,11 @@ fn process_logs(
     let output_file = output_file.unwrap_or("new_processes_results.txt");
 
     let mut all_processes = HashSet::new();
-    if let Ok(entries) = std::fs::read_dir(logs_path) {
+    if let Ok(entries) = read_dir(logs_path) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".find.log"))
-                && let Ok(content) = std::fs::read_to_string(&path)
+                && let Ok(content) = read_to_string(&path)
             {
                 for line in content.lines() {
                     if let Some(idx) = line.find("find ") {
@@ -186,7 +188,7 @@ fn process_logs(
         output.push_str("---\n");
     }
 
-    if let Err(e) = std::fs::write(output_file, output) {
+    if let Err(e) = write(output_file, output) {
         log!("Failed to write output: {}", e);
     } else {
         log!("Results saved to {}", output_file);
@@ -231,11 +233,11 @@ fn main() -> windows::core::Result<()> {
         Vec::new()
     };
 
-    let mut last_config_mod_time = std::fs::metadata(&cli.config_file_name).and_then(|m| m.modified()).ok();
+    let mut last_config_mod_time = metadata(&cli.config_file_name).and_then(|m| m.modified()).ok();
     let mut last_blacklist_mod_time = cli
         .blacklist_file_name
         .as_ref()
-        .and_then(|bf| std::fs::metadata(bf).and_then(|m| m.modified()).ok());
+        .and_then(|bf| metadata(bf).and_then(|m| m.modified()).ok());
     let is_config_empty = configs.is_empty();
     let is_blacklist_empty = blacklist.is_empty();
     if cli.process_logs_mode {
@@ -265,13 +267,7 @@ fn main() -> windows::core::Result<()> {
     if cli.time_resolution != 0 {
         unsafe {
             let mut current_resolution = 0u32;
-            match NtSetTimerResolution(
-                cli.time_resolution,
-                true,
-                &mut current_resolution as *mut _ as *mut std::ffi::c_void,
-            )
-            .0
-            {
+            match NtSetTimerResolution(cli.time_resolution, true, &mut current_resolution as *mut _ as *mut c_void).0 {
                 ntstatus if ntstatus < 0 => {
                     log!("Failed to set timer resolution: 0x{:08X}", ntstatus);
                 }
@@ -408,7 +404,7 @@ fn main() -> windows::core::Result<()> {
             thread::sleep(Duration::from_millis(cli.interval_ms));
 
             *LOCALTIME_BUFFER.lock().unwrap() = Local::now();
-            if let Ok(metadata) = std::fs::metadata(&cli.config_file_name)
+            if let Ok(metadata) = metadata(&cli.config_file_name)
                 && let Ok(mod_time) = metadata.modified()
                 && Some(mod_time) != last_config_mod_time
             {
@@ -432,7 +428,7 @@ fn main() -> windows::core::Result<()> {
                 }
             }
             if let Some(ref blacklist_file) = cli.blacklist_file_name {
-                match std::fs::metadata(blacklist_file) {
+                match metadata(blacklist_file) {
                     Err(_) => {
                         if last_blacklist_mod_time.is_some() {
                             last_blacklist_mod_time = None;

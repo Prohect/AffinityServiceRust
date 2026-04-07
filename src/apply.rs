@@ -12,7 +12,8 @@ use crate::{
     },
 };
 
-use std::{collections::HashSet, mem::size_of};
+use rand::random;
+use std::{collections::HashSet, ffi::c_void, mem::size_of};
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE},
     System::{
@@ -766,7 +767,7 @@ pub fn apply_io_priority(
             NtQueryInformationProcess(
                 r_handle,
                 PROCESS_INFORMATION_IO_PRIORITY,
-                &mut current_io_priority as *mut _ as *mut std::ffi::c_void,
+                &mut current_io_priority as *mut _ as *mut c_void,
                 size_of::<u32>() as u32,
                 &mut return_length,
             )
@@ -803,7 +804,7 @@ pub fn apply_io_priority(
                     NtSetInformationProcess(
                         w_handle,
                         PROCESS_INFORMATION_IO_PRIORITY,
-                        &io_priority_flag as *const _ as *const std::ffi::c_void,
+                        &io_priority_flag as *const _ as *const c_void,
                         size_of::<u32>() as u32,
                     )
                 }
@@ -850,7 +851,7 @@ pub fn apply_memory_priority(
             GetProcessInformation(
                 r_handle,
                 ProcessMemoryPriority,
-                &mut current_mem_prio as *mut _ as *mut std::ffi::c_void,
+                &mut current_mem_prio as *mut _ as *mut c_void,
                 size_of::<MemoryPriorityInformation>() as u32,
             )
         } {
@@ -887,7 +888,7 @@ pub fn apply_memory_priority(
                             SetProcessInformation(
                                 w_handle,
                                 ProcessMemoryPriority,
-                                &mem_prio_info as *const _ as *const std::ffi::c_void,
+                                &mem_prio_info as *const _ as *const c_void,
                                 size_of::<MemoryPriorityInformation>() as u32,
                             )
                         } {
@@ -986,7 +987,7 @@ pub fn reset_thread_ideal_processors(
     tid_time_handles.sort_by(|a, b| b.1.cmp(&a.1));
 
     let target_cpu_count = config.affinity_cpus.len();
-    let random_shift = rand::random::<u8>();
+    let random_shift = random::<u8>();
     let mut counter_set_success = 0;
     for (i, (tid, _cpu_time, thread_handle)) in tid_time_handles.iter().enumerate() {
         let target_cpu_index = (i + random_shift as usize) % target_cpu_count;

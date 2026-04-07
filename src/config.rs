@@ -6,9 +6,9 @@ use crate::{
 };
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{File, read, read_to_string},
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Result, Write},
     path::Path,
 };
 
@@ -823,7 +823,7 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
     result
 }
 
-pub fn read_list<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<String>> {
+pub fn read_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     Ok(reader
@@ -834,7 +834,7 @@ pub fn read_list<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<String>> {
         .collect())
 }
 
-pub fn read_utf16le_file(path: &str) -> std::io::Result<String> {
+pub fn read_utf16le_file(path: &str) -> Result<String> {
     let bytes = read(path)?;
     let utf16: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
     Ok(String::from_utf16_lossy(&utf16))
@@ -954,7 +954,7 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
         output_lines.push(String::new());
     }
 
-    let mut all_processes: std::collections::HashSet<String> = priorities.keys().cloned().collect();
+    let mut all_processes: HashSet<String> = priorities.keys().cloned().collect();
     all_processes.extend(affinities.keys().cloned());
 
     let mut sorted_processes: Vec<String> = all_processes.into_iter().collect();

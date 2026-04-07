@@ -3,7 +3,7 @@ use once_cell::sync::Lazy;
 use std::{
     collections::{HashMap, HashSet},
     fs::{File, OpenOptions, create_dir_all},
-    io::Write,
+    io::{Write, stdout},
     path::PathBuf,
     sync::Mutex,
 };
@@ -156,7 +156,7 @@ pub fn log_message(args: &str) {
     }
     let time_prefix = LOCALTIME_BUFFER.lock().unwrap().format("%H:%M:%S").to_string();
     if *use_console().lock().unwrap() {
-        let _ = writeln!(std::io::stdout(), "[{}]{}", time_prefix, args);
+        let _ = writeln!(stdout(), "[{}]{}", time_prefix, args);
     } else {
         let _ = writeln!(logger().lock().unwrap(), "[{}]{}", time_prefix, args);
     }
@@ -164,7 +164,7 @@ pub fn log_message(args: &str) {
 
 pub fn log_pure_message(args: &str) {
     if *use_console().lock().unwrap() {
-        let _ = writeln!(std::io::stdout(), "{}", args);
+        let _ = writeln!(stdout(), "{}", args);
     } else {
         let _ = writeln!(logger().lock().unwrap(), "{}", args);
     }
@@ -173,7 +173,7 @@ pub fn log_pure_message(args: &str) {
 pub fn log_to_find(msg: &str) {
     let time_prefix = LOCALTIME_BUFFER.lock().unwrap().format("%H:%M:%S").to_string();
     if *use_console().lock().unwrap() {
-        let _ = writeln!(std::io::stdout(), "[{}]{}", time_prefix, msg);
+        let _ = writeln!(stdout(), "[{}]{}", time_prefix, msg);
     } else {
         let _ = writeln!(find_logger().lock().unwrap(), "[{}]{}", time_prefix, msg);
     }

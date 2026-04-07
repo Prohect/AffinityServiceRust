@@ -5,24 +5,27 @@ use crate::{
 };
 
 use once_cell::sync::Lazy;
-use std::{collections::HashMap, env, io, mem::size_of, process::Command, sync::Mutex};
-use windows::Win32::{
-    Foundation::{CloseHandle, GetLastError, HANDLE, LUID, NTSTATUS},
-    Security::{
-        AdjustTokenPrivileges, GetTokenInformation, LookupPrivilegeValueW, SE_DEBUG_NAME, SE_INC_BASE_PRIORITY_NAME, TOKEN_ADJUST_PRIVILEGES,
-        TOKEN_ELEVATION, TOKEN_PRIVILEGES, TOKEN_QUERY, TokenElevation,
-    },
-    System::{
-        Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
-        Kernel::PROCESSOR_NUMBER,
-        ProcessStatus::{EnumProcessModulesEx, GetModuleBaseNameW, GetModuleInformation, LIST_MODULES_ALL, MODULEINFO},
-        SystemInformation::{GetSystemCpuSetInformation, SYSTEM_CPU_SET_INFORMATION},
-        Threading::{
-            GetCurrentProcess, GetCurrentProcessId, GetProcessAffinityMask, GetThreadIdealProcessorEx, OpenProcess, OpenProcessToken,
-            PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_SET_LIMITED_INFORMATION,
-            PROCESS_TERMINATE, PROCESS_VM_READ, SetThreadIdealProcessorEx, TerminateProcess,
+use std::{collections::HashMap, env, ffi::c_void, io, mem::size_of, process::Command, process::exit, sync::Mutex};
+use windows::{
+    Win32::{
+        Foundation::{CloseHandle, GetLastError, HANDLE, HMODULE, LUID, NTSTATUS},
+        Security::{
+            AdjustTokenPrivileges, GetTokenInformation, LUID_AND_ATTRIBUTES, LookupPrivilegeValueW, SE_DEBUG_NAME, SE_INC_BASE_PRIORITY_NAME,
+            SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_ELEVATION, TOKEN_PRIVILEGES, TOKEN_QUERY, TokenElevation,
+        },
+        System::{
+            Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
+            Kernel::PROCESSOR_NUMBER,
+            ProcessStatus::{EnumProcessModulesEx, GetModuleBaseNameW, GetModuleInformation, LIST_MODULES_ALL, MODULEINFO},
+            SystemInformation::{GetSystemCpuSetInformation, SYSTEM_CPU_SET_INFORMATION},
+            Threading::{
+                GetCurrentProcess, GetCurrentProcessId, GetProcessAffinityMask, GetThreadIdealProcessorEx, OpenProcess, OpenProcessToken,
+                PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_SET_LIMITED_INFORMATION,
+                PROCESS_TERMINATE, PROCESS_VM_READ, SetThreadIdealProcessorEx, TerminateProcess,
+            },
         },
     },
+    core::Error,
 };
 
 #[link(name = "ntdll")]
@@ -31,7 +34,7 @@ unsafe extern "system" {
     pub fn NtQueryInformationProcess(
         h_prc: HANDLE,
         process_information_class: u32,
-        p_out: *mut std::ffi::c_void,
+        p_out: *mut c_void,
         out_length: u32,
         return_length: *mut u32,
     ) -> NTSTATUS;
@@ -39,7 +42,7 @@ unsafe extern "system" {
     pub fn NtQueryInformationThread(
         thread_handle: HANDLE,
         thread_information_class: u32,
-        thread_information: *mut std::ffi::c_void,
+        thread_information: *mut c_void,
         thread_information_length: u32,
         return_length: *mut u32,
     ) -> NTSTATUS;
@@ -47,11 +50,11 @@ unsafe extern "system" {
     pub fn NtSetInformationProcess(
         process_handle: HANDLE,
         process_information_class: u32,
-        process_information: *const std::ffi::c_void,
+        process_information: *const c_void,
         process_information_length: u32,
     ) -> NTSTATUS;
 
-    pub fn NtSetTimerResolution(desired_resolution: u32, set_resolution: bool, p_current_resolution: *mut std::ffi::c_void) -> NTSTATUS;
+    pub fn NtSetTimerResolution(desired_resolution: u32, set_resolution: bool, p_current_resolution: *mut c_void) -> NTSTATUS;
 }
 
 #[derive(Clone, Copy)]
@@ -395,7 +398,7 @@ pub fn request_uac_elevation(console: bool) -> io::Result<()> {
                     "Warning: process is running as non-administrator without 'noUAC' flag with 'console' flag, the log after elevation will not be shown in currerent session."
                 );
             }
-            std::process::exit(0);
+            exit(0);
         }
         Err(e) => {
             log!("Failed to request UAC elevation: {}", e);
@@ -427,9 +430,9 @@ pub fn enable_debug_privilege() {
 
     let tp = TOKEN_PRIVILEGES {
         PrivilegeCount: 1,
-        Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
+        Privileges: [LUID_AND_ATTRIBUTES {
             Luid: l_uid,
-            Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
+            Attributes: SE_PRIVILEGE_ENABLED,
         }],
     };
 
@@ -467,9 +470,9 @@ pub fn enable_inc_base_priority_privilege() {
 
     let tp = TOKEN_PRIVILEGES {
         PrivilegeCount: 1,
-        Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
+        Privileges: [LUID_AND_ATTRIBUTES {
             Luid: l_uid,
-            Attributes: windows::Win32::Security::SE_PRIVILEGE_ENABLED,
+            Attributes: SE_PRIVILEGE_ENABLED,
         }],
     };
 
@@ -550,7 +553,7 @@ pub fn get_thread_start_address(thread_handle: HANDLE) -> usize {
         NtQueryInformationThread(
             thread_handle,
             9,
-            &mut start_address as *mut _ as *mut std::ffi::c_void,
+            &mut start_address as *mut _ as *mut c_void,
             size_of::<usize>() as u32,
             &mut return_len,
         )
@@ -559,7 +562,7 @@ pub fn get_thread_start_address(thread_handle: HANDLE) -> usize {
     if status.is_ok() { start_address } else { 0 }
 }
 
-pub fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: u8) -> Result<PROCESSOR_NUMBER, windows::core::Error> {
+pub fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: u8) -> Result<PROCESSOR_NUMBER, Error> {
     let ideal = PROCESSOR_NUMBER {
         Group: group,
         Number: number,
@@ -572,7 +575,7 @@ pub fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: 
     Ok(previous)
 }
 
-pub fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, windows::core::Error> {
+pub fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, Error> {
     let mut ideal = PROCESSOR_NUMBER::default();
     unsafe {
         GetThreadIdealProcessorEx(thread_handle, &mut ideal)?;
@@ -676,14 +679,14 @@ fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> {
         _ => return result,
     };
 
-    let mut modules: [windows::Win32::Foundation::HMODULE; 1024] = [windows::Win32::Foundation::HMODULE::default(); 1024];
+    let mut modules: [HMODULE; 1024] = [HMODULE::default(); 1024];
     let mut cb_needed: u32 = 0;
 
     let enum_result = unsafe {
         EnumProcessModulesEx(
             h_proc,
             modules.as_mut_ptr(),
-            (modules.len() * size_of::<windows::Win32::Foundation::HMODULE>()) as u32,
+            (modules.len() * size_of::<HMODULE>()) as u32,
             &mut cb_needed,
             LIST_MODULES_ALL,
         )
@@ -694,7 +697,7 @@ fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> {
         return result;
     }
 
-    let module_count = (cb_needed as usize) / size_of::<windows::Win32::Foundation::HMODULE>();
+    let module_count = (cb_needed as usize) / size_of::<HMODULE>();
 
     for h_module in modules.iter().take(module_count) {
         let mut mod_info = MODULEINFO::default();

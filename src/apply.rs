@@ -1,7 +1,8 @@
 use crate::config::{ProcessConfig, cpu_indices_to_mask, format_cpu_indices};
-use crate::logging::{Operation, error_from_code, is_new_error};
+use crate::logging::{Operation, is_new_error};
 use crate::process::ProcessSnapshot;
 use crate::scheduler::PrimeThreadScheduler;
+use crate::win32_error_codes::error_from_code;
 use crate::winapi::{
     NtQueryInformationProcess, NtSetInformationProcess, cpusetids_from_indices, filter_indices_by_mask, get_cpu_set_information, get_thread_ideal_processor_ex,
     get_thread_start_address, indices_from_cpusetids, resolve_address_to_module, set_thread_ideal_processor_ex,
@@ -230,7 +231,7 @@ pub fn prefetch_all_thread_cycles(
                     if is_new_error(pid, &config.name, Operation::OpenThread, error_code) {
                         apply_config_result.add_error(format!(
                             "prefetch_thread_cycles: [OPEN_THREAD][{}] {:>5}-{}-{}",
-                            crate::logging::error_from_code(error_code),
+                            error_from_code(error_code),
                             pid,
                             tid,
                             config.name
@@ -258,7 +259,7 @@ pub fn prefetch_all_thread_cycles(
                 if is_new_error(pid, &config.name, Operation::QueryThreadCycleTime, error_code) {
                     apply_config_result.add_error(format!(
                         "prefetch_thread_cycles: [QUERY_CYCLES][{}] {:>5}-{}-{}",
-                        crate::logging::error_from_code(error_code),
+                        error_from_code(error_code),
                         pid,
                         tid,
                         config.name

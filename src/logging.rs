@@ -54,7 +54,7 @@ static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, b
 /// `A`: The fail_entry_set(get from map) is expected that all of its entries have same process_name as the given process_name.
 /// This func clears the fail entry set if `A` is not satisfied before inserting the new entry.
 ///
-/// if there's no error_code from the api call, leave error_code as 0.
+/// if there's no error_code from contextual codes, leave error_code as 0 or custom one if you need to differ them.
 pub fn is_new_error(pid: u32, process_name: &str, operation: Operation, error_code: u32) -> bool {
     let entry = ApplyFailEntry {
         pid,
@@ -185,27 +185,5 @@ pub fn log_to_find(msg: &str) {
 pub fn log_process_find(process_name: &str) {
     if FINDS_SET.lock().unwrap().insert(process_name.to_string()) {
         log_to_find(&format!("find {}", process_name));
-    }
-}
-
-pub fn error_from_code(code: u32) -> String {
-    match code {
-        0 => "SUCCESS".to_string(),
-        2 => "FILE_NOT_FOUND".to_string(),
-        5 => "ACCESS_DENIED".to_string(),
-        6 => "INVALID_HANDLE".to_string(),
-        8 => "NOT_ENOUGH_MEMORY".to_string(),
-        87 => "INVALID_PARAMETER".to_string(),
-        122 => "INSUFFICIENT_BUFFER".to_string(),
-        126 => "MOD_NOT_FOUND".to_string(),
-        127 => "PROC_NOT_FOUND".to_string(),
-        1314 => "PRIVILEGE_NOT_HELD".to_string(),
-        1450 => "NO_SYSTEM_RESOURCES".to_string(),
-        1460 => "TIMEOUT".to_string(),
-        998 => "NOACCESS".to_string(),
-        1008 => "INVALID_HANDLE_STATE".to_string(),
-        1060 => "SERVICE_DOES_NOT_EXIST".to_string(),
-        193 => "BAD_EXE_FORMAT".to_string(),
-        _ => ("code=".to_string()) + &code.to_string(),
     }
 }

@@ -1,6 +1,7 @@
 use crate::{
     log,
-    logging::{FINDS_FAIL_SET, Operation, error_from_code, is_new_error, log_to_find},
+    logging::{FINDS_FAIL_SET, Operation, is_new_error, log_to_find},
+    win32_error_codes::error_from_code,
 };
 use once_cell::sync::Lazy;
 use std::{collections::HashMap, env, io, mem::size_of, process::Command, sync::Mutex};

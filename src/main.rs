@@ -5,6 +5,7 @@ mod logging;
 mod priority;
 mod process;
 mod scheduler;
+mod win32_error_codes;
 mod winapi;
 
 use apply::{
@@ -16,9 +17,11 @@ use cli::{CliArgs, parse_args, print_help, print_help_all};
 use config::{ProcessConfig, convert, read_config, read_list, sort_and_group_config};
 use encoding_rs::Encoding;
 use logging::{
-    DUST_BIN_MODE, FINDS_FAIL_SET, LOCALTIME_BUFFER, Operation, error_from_code, find_logger, is_new_error, log_message, log_process_find, log_pure_message, log_to_find,
-    logger, purge_fail_map, use_console,
+    DUST_BIN_MODE, FINDS_FAIL_SET, LOCALTIME_BUFFER, Operation, find_logger, is_new_error, log_message, log_process_find, log_pure_message, log_to_find, logger,
+    purge_fail_map, use_console,
 };
+use win32_error_codes::error_from_code;
+
 use process::ProcessSnapshot;
 use scheduler::PrimeThreadScheduler;
 use std::{

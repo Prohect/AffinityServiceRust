@@ -267,20 +267,20 @@
 - [L182:L190]fn log_process_find(process_name: &str) 
 
 ## src/main.rs
-- [L49:L106]fn apply_config(
+- [L49:L107]fn apply_config(
     pid: u32,
     config: &ProcessConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
     processes: &mut ProcessSnapshot,
     dry_run: bool,
 ) -> ApplyConfigResult 
-- [L108:L196]fn process_logs(
+- [L109:L197]fn process_logs(
     configs: &HashMap<u32, HashMap<String, ProcessConfig>>,
     blacklist: &[String],
     logs_path: Option<&str>,
     output_file: Option<&str>,
 ) 
-- [L198:L454]fn main() -> windows::core::Result<()> 
+- [L199:L455]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L8:L16]enum ProcessPriority {

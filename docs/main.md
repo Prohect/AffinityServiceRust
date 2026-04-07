@@ -321,4 +321,4 @@ if cli.time_resolution != 0 {
 | Hot reload check | O(1) | Metadata check |
 | Find mode | O(P) | Additional iteration |
 
-**Typical Loop:** 50-200ms depending on thread counts and configuration.
+**Typical Loop:** from 1.6ms to 10ms depending on thread counts and mainly configuration.

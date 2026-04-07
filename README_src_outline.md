@@ -339,21 +339,21 @@
     pub pid_to_process_stats: HashMap<u32, ProcessStats>,
     pub constants: ConfigConstants,
 }
-- [L187:L194]struct ProcessStats {
+- [L185:L192]struct ProcessStats {
     pub alive: bool,
     pub tid_to_thread_stats: HashMap<u32, ThreadStats>,
     pub track_top_x_threads: i32,
     pub process_name: String,
     pub process_id: u32,
 }
-- [L215:L225]struct IdealProcessorState {
+- [L213:L223]struct IdealProcessorState {
     pub current_group: u16,
     pub current_number: u8,
     pub previous_group: u16,
     pub previous_number: u8,
     pub is_assigned: bool,
 }
-- [L245:L267]struct ThreadStats {
+- [L243:L265]struct ThreadStats {
     pub last_total_time: i64,
     pub cached_total_time: i64,
     pub last_cycles: u64,
@@ -367,8 +367,8 @@
     pub ideal_processor: IdealProcessorState,
     pub process_id: u32,
 }
-- [L310:L314]fn format_100ns(time: i64) -> String 
-- [L316:L323]fn format_filetime(time: i64) -> String 
+- [L308:L312]fn format_100ns(time: i64) -> String 
+- [L314:L321]fn format_filetime(time: i64) -> String 
 
 ## src/winapi.rs
 - [L61:L64]struct CpuSetData {
@@ -388,18 +388,18 @@
 - [L281:L294]fn cpusetids_from_mask(mask: usize) -> Vec<u32> 
 - [L296:L312]fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32> 
 - [L315:L330]fn mask_from_cpusetids(cpuids: &[u32]) -> usize 
-- [L332:L342]fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<u32> 
-- [L344:L373]fn is_running_as_admin() -> bool 
-- [L375:L408]fn request_uac_elevation(console: bool) -> io::Result<()> 
-- [L410:L448]fn enable_debug_privilege() 
-- [L450:L488]fn enable_inc_base_priority_privilege() 
-- [L490:L542]fn is_affinity_unset(pid: u32, process_name: &str) -> bool 
-- [L544:L563]fn get_thread_start_address(thread_handle: HANDLE) -> usize 
-- [L565:L576]fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: u8) -> Result<PROCESSOR_NUMBER, Error> 
-- [L578:L584]fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, Error> 
-- [L587:L587]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-- [L589:L615]fn resolve_address_to_module(pid: u32, address: usize) -> String 
-- [L617:L620]fn drop_module_cache(pid: u32) 
-- [L622:L672]fn terminate_child_processes() 
-- [L674:L727]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
+- [L332:L339]fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<u32> 
+- [L341:L370]fn is_running_as_admin() -> bool 
+- [L372:L405]fn request_uac_elevation(console: bool) -> io::Result<()> 
+- [L407:L445]fn enable_debug_privilege() 
+- [L447:L485]fn enable_inc_base_priority_privilege() 
+- [L487:L539]fn is_affinity_unset(pid: u32, process_name: &str) -> bool 
+- [L541:L560]fn get_thread_start_address(thread_handle: HANDLE) -> usize 
+- [L562:L573]fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: u8) -> Result<PROCESSOR_NUMBER, Error> 
+- [L575:L581]fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, Error> 
+- [L584:L584]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+- [L586:L612]fn resolve_address_to_module(pid: u32, address: usize) -> String 
+- [L614:L617]fn drop_module_cache(pid: u32) 
+- [L619:L669]fn terminate_child_processes() 
+- [L671:L724]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
 

@@ -174,13 +174,6 @@ pub enum ThreadPriority {
 }
 
 impl ThreadPriority {
-    /// Lookup table mapping enum variants to Windows API constants.
-    ///
-    /// Windows thread priority values:
-    /// - -15 = Idle, -2 = Lowest, -1 = Below Normal
-    /// - 0 = Normal
-    /// - 1 = Above Normal, 2 = Highest, 15 = Time Critical
-    /// - 0x10000/0x20000 = Background mode begin/end
     const TABLE: &'static [(Self, &'static str, Option<i32>)] = &[
         (Self::None, "none", None),
         (Self::ErrorReturn, "error", Some(0x7FFFFFFF_i32)),
@@ -225,9 +218,6 @@ impl ThreadPriority {
     }
 
     /// Returns the next higher priority level, capped at Highest.
-    ///
-    /// Used for auto-boosting prime threads when no explicit priority is configured.
-    /// TimeCritical is not used as auto-boost target to avoid extreme priorities.
     pub fn boost_one(&self) -> Self {
         match self {
             ThreadPriority::None => ThreadPriority::None,

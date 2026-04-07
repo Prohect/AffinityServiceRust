@@ -120,8 +120,6 @@ impl PrimeThreadScheduler {
         }
     }
 
-    /// Cleans up resources for processes that no longer exist.
-    ///
     /// Closes thread handles, clears module cache, and optionally logs
     /// top N threads by cycles for debugging/analysis purposes.
     pub fn close_dead_process_handles(&mut self) {

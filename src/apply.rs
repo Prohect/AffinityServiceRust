@@ -207,7 +207,7 @@ pub fn apply_affinity(
 ///
 /// When process affinity is changed, Windows may reset thread ideal processors.
 /// This redistributes threads across the new affinity CPUs with a random shift
-/// to avoid always assigning the same threads to the same CPUs.
+/// to avoid always assigning too much threads to the same CPUs.
 pub fn reset_thread_ideal_processors(
     pid: u32,
     config: &ProcessConfig,
@@ -801,7 +801,7 @@ pub fn apply_prime_threads(
     }
 }
 
-/// Selects top threads for prime status using hysteresis to prevent thrashing.
+/// Selects top threads for prime status using hysteresis.
 ///
 /// Hysteresis prevents threads from rapidly flipping between prime/non-prime:
 /// - Currently prime threads stay prime if cycles >= keep_threshold% of max

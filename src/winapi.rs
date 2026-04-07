@@ -93,7 +93,7 @@ impl Drop for ProcessHandle {
 
 /// Opens a process handle for the given PID, returning a `ProcessHandle` if successful.
 /// All Some variants in the return value are confirmed valid handles.
-/// Handles in returned result automatically close when dropped.
+/// Handles in returned result get automatically close when dropped.
 ///
 /// internal error_code mapped to invalid handle for is_new_error check func:
 /// 0 -> PROCESS_QUERY_LIMITED_INFORMATION
@@ -295,7 +295,7 @@ pub fn cpusetids_from_mask(mask: usize) -> Vec<u32> {
 
 /// Converts CPU Set IDs back to logical CPU indices.
 ///
-/// Inverse of cpusetids_from_indices, used when reading back CPU Set assignments.
+/// Used when reading back CPU Set assignments.
 pub fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32> {
     if cpuids.is_empty() {
         return Vec::new();
@@ -330,9 +330,6 @@ pub fn mask_from_cpusetids(cpuids: &[u32]) -> usize {
 }
 
 /// Filters CPU indices to only those allowed by the affinity mask.
-///
-/// Ensures prime thread CPU assignments respect process affinity limits.
-/// CPUs outside the mask (above bit 63) are excluded.
 pub fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<u32> {
     cpu_indices
         .iter()
@@ -376,7 +373,7 @@ pub fn is_running_as_admin() -> bool {
 ///
 /// Uses Start-Process -Verb RunAs to trigger UAC prompt.
 /// Current process exits after spawning the elevated child.
-/// The -skip_log_before_elevation flag prevents duplicate logging.
+/// The -skip_log_before_elevation flag attached prevents duplicate logging.
 pub fn request_uac_elevation(console: bool) -> io::Result<()> {
     let exe_path = env::current_exe()?;
     let mut args: Vec<String> = env::args().skip(1).collect();
@@ -589,7 +586,7 @@ static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = La
 /// Resolves a memory address to a module name with offset.
 ///
 /// Uses cached module enumeration to map addresses like 0x7FF12345 to "kernel32.dll+0x345".
-/// Cache is populated on first call per process and cleared when process exits.
+/// Cache is populated on first call per process and cleared when process exits or next main loop iteration.
 pub fn resolve_address_to_module(pid: u32, address: usize) -> String {
     if address == 0 {
         return "0x0".to_string();
@@ -621,7 +618,7 @@ pub fn drop_module_cache(pid: u32) {
 
 /// Terminates any child processes spawned by this process.
 ///
-/// Called on startup to clean up orphaned child processes from previous runs,
+/// Called on startup to clean up orphaned child console host processes,
 /// particularly the elevated PowerShell instance from UAC elevation.
 pub fn terminate_child_processes() {
     let current_pid = unsafe { GetCurrentProcessId() };

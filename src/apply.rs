@@ -184,17 +184,16 @@ pub fn apply_process_default_cpuset(
                 let mut requiredidcount: u32 = 0;
                 let query_result = unsafe { GetProcessDefaultCpuSets(r_handle, None, &mut requiredidcount) }.as_bool();
                 if query_result {
-                    toset = true;
+                    toset = true; // query succeeded with None, it doesn't have a default CPU set. Otherwise, it has.
                 } else {
                     let error_code = unsafe { GetLastError().0 };
                     if error_code != 122 {
                         if is_new_error(pid, &config.name, Operation::GetProcessDefaultCpuSets, error_code) {
                             apply_config_result.add_error(format!(
-                                "apply_process_default_cpuset: [GET_PROCESS_DEFAULT_CPUSETS][{}] {:>5}-{}-{}",
+                                "apply_process_default_cpuset: [GET_PROCESS_DEFAULT_CPUSETS][{}] {:>5}-{}",
                                 error_from_code_win32(error_code),
                                 pid,
-                                config.name,
-                                requiredidcount
+                                config.name
                             ));
                         }
                     } else {
@@ -205,11 +204,10 @@ pub fn apply_process_default_cpuset(
                             let error_code = unsafe { GetLastError().0 };
                             if is_new_error(pid, &config.name, Operation::GetProcessDefaultCpuSets, error_code) {
                                 apply_config_result.add_error(format!(
-                                    "apply_process_default_cpuset: [GET_PROCESS_DEFAULT_CPUSETS][{}] {:>5}-{}-{}",
+                                    "apply_process_default_cpuset: [GET_PROCESS_DEFAULT_CPUSETS][{}] {:>5}-{}",
                                     error_from_code_win32(error_code),
                                     pid,
-                                    config.name,
-                                    requiredidcount
+                                    config.name
                                 ));
                             }
                         } else {

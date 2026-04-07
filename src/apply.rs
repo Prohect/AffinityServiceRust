@@ -199,7 +199,7 @@ pub fn apply_process_default_cpuset(
                     } else {
                         current_cpusetids = vec![0u32; requiredidcount as usize];
                         let second_query =
-                            unsafe { GetProcessDefaultCpuSets(w_handle, Some(&mut current_cpusetids[..]), &mut requiredidcount) }.as_bool();
+                            unsafe { GetProcessDefaultCpuSets(r_handle, Some(&mut current_cpusetids[..]), &mut requiredidcount) }.as_bool();
                         if !second_query {
                             let error_code = unsafe { GetLastError().0 };
                             if is_new_error(pid, &config.name, Operation::GetProcessDefaultCpuSets, error_code) {

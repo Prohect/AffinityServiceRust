@@ -103,16 +103,17 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
         let error_code = unsafe { GetLastError().0 };
         if is_new_error(pid, process_name, Operation::OpenProcess2processQueryLimitedInformation, error_code) {
             log_to_find(&format!(
-                "[get_process_handle][{}]Failed to open r_limited_handle for PID {}",
+                "[get_process_handle][{}] r_limited_handle {:>5}-{}",
                 error_from_code_win32(error_code),
-                pid
+                pid,
+                process_name
             ));
         }
         return None;
     };
     if r_limited_handle.is_invalid() {
         if is_new_error(pid, process_name, Operation::InvalidHandle, 0) {
-            log_to_find(&format!("[get_process_handle]Invalid r_limited_handle for PID {}", pid));
+            log_to_find(&format!("[get_process_handle]Invalid r_limited_handle {:>5}-{}", pid, process_name));
         }
         return None;
     }
@@ -124,9 +125,10 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
         let error_code = unsafe { GetLastError().0 };
         if is_new_error(pid, process_name, Operation::OpenProcess2processSetLimitedInformation, error_code) {
             log_to_find(&format!(
-                "[get_process_handle][{}]Failed to open w_limited_handle for PID {}",
+                "[get_process_handle][{}] w_limited_handle {:>5}-{}",
                 error_from_code_win32(error_code),
-                pid
+                pid,
+                process_name
             ));
         }
         return None;
@@ -136,7 +138,7 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
             let _ = CloseHandle(r_limited_handle);
         };
         if is_new_error(pid, process_name, Operation::InvalidHandle, 1) {
-            log_to_find(&format!("[get_process_handle]Invalid w_limited_handle for PID {}", pid));
+            log_to_find(&format!("[get_process_handle]Invalid w_limited_handle {:>5}-{}", pid, process_name));
         }
         return None;
     }
@@ -146,7 +148,7 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
             Some(r_handle)
         } else {
             if is_new_error(pid, process_name, Operation::InvalidHandle, 2) {
-                log_to_find(&format!("[get_process_handle]Invalid r_handle for PID {}", pid));
+                log_to_find(&format!("[get_process_handle]Invalid r_handle {:>5}-{}", pid, process_name));
             }
             None
         }
@@ -154,9 +156,10 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
         let error_code = unsafe { GetLastError().0 };
         if is_new_error(pid, process_name, Operation::OpenProcess2processQueryInformation, error_code) {
             log_to_find(&format!(
-                "[get_process_handle][{}]Failed to open r_handle for PID {}",
+                "[get_process_handle][{}] r_handle {:>5}-{}",
                 error_from_code_win32(error_code),
-                pid
+                pid,
+                process_name,
             ));
         }
         None
@@ -167,7 +170,7 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
             Some(w_handle)
         } else {
             if is_new_error(pid, process_name, Operation::InvalidHandle, 3) {
-                log_to_find(&format!("[get_process_handle]Invalid w_handle for PID {}", pid));
+                log_to_find(&format!("[get_process_handle]Invalid w_handle {:>5}-{}", pid, process_name));
             }
             None
         }
@@ -175,9 +178,10 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
         let error_code = unsafe { GetLastError().0 };
         if is_new_error(pid, process_name, Operation::OpenProcess2processSetInformation, error_code) {
             log_to_find(&format!(
-                "[get_process_handle][{}]Failed to open w_handle for PID {}",
+                "[get_process_handle][{}] w_handle {:>5}-{}",
                 error_from_code_win32(error_code),
-                pid
+                pid,
+                process_name,
             ));
         }
         None

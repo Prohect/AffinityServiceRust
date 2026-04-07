@@ -372,25 +372,25 @@
     pub w_limited_handle: HANDLE,
     pub w_handle: Option<HANDLE>,
 }
-- [L91:L192]fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle> 
-- [L203:L203]static CPU_SET_INFORMATION: Lazy<Mutex<Vec<CpuSetData>>> = Lazy::new(|| {
-- [L244:L246]fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>> 
-- [L248:L265]fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32> 
-- [L268:L281]fn cpusetids_from_mask(mask: usize) -> Vec<u32> 
-- [L283:L299]fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32> 
-- [L302:L317]fn mask_from_cpusetids(cpuids: &[u32]) -> usize 
-- [L319:L329]fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<u32> 
-- [L331:L360]fn is_running_as_admin() -> bool 
-- [L362:L395]fn request_uac_elevation(console: bool) -> io::Result<()> 
-- [L397:L435]fn enable_debug_privilege() 
-- [L437:L475]fn enable_inc_base_priority_privilege() 
-- [L477:L529]fn is_affinity_unset(pid: u32, process_name: &str) -> bool 
-- [L531:L550]fn get_thread_start_address(thread_handle: HANDLE) -> usize 
-- [L552:L563]fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: u8) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
-- [L565:L571]fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
-- [L574:L574]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-- [L576:L602]fn resolve_address_to_module(pid: u32, address: usize) -> String 
-- [L604:L607]fn drop_module_cache(pid: u32) 
-- [L609:L659]fn terminate_child_processes() 
-- [L661:L714]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
+- [L91:L196]fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle> 
+- [L207:L207]static CPU_SET_INFORMATION: Lazy<Mutex<Vec<CpuSetData>>> = Lazy::new(|| {
+- [L248:L250]fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>> 
+- [L252:L269]fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32> 
+- [L272:L285]fn cpusetids_from_mask(mask: usize) -> Vec<u32> 
+- [L287:L303]fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32> 
+- [L306:L321]fn mask_from_cpusetids(cpuids: &[u32]) -> usize 
+- [L323:L333]fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<u32> 
+- [L335:L364]fn is_running_as_admin() -> bool 
+- [L366:L399]fn request_uac_elevation(console: bool) -> io::Result<()> 
+- [L401:L439]fn enable_debug_privilege() 
+- [L441:L479]fn enable_inc_base_priority_privilege() 
+- [L481:L533]fn is_affinity_unset(pid: u32, process_name: &str) -> bool 
+- [L535:L554]fn get_thread_start_address(thread_handle: HANDLE) -> usize 
+- [L556:L567]fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: u8) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
+- [L569:L575]fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
+- [L578:L578]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+- [L580:L606]fn resolve_address_to_module(pid: u32, address: usize) -> String 
+- [L608:L611]fn drop_module_cache(pid: u32) 
+- [L613:L663]fn terminate_child_processes() 
+- [L665:L718]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
 

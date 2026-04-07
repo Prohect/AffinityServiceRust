@@ -13,10 +13,10 @@ This module provides safe wrappers around Windows APIs:
 
 ## Called By
 
-- `main.rs` - UAC elevation, timer resolution, privilege enabling
-- `apply.rs` - Process/thread handles, CPU Sets, ideal processors
-- `scheduler.rs` - Module resolution for thread tracking
-- `logging.rs` - Error tracking
+- [main.rs](main.md) - UAC elevation, timer resolution, privilege enabling
+- [apply.rs](apply.md) - Process/thread handles, CPU Sets, ideal processors
+- [scheduler.rs](scheduler.md) - Module resolution for thread tracking
+- [logging.rs](logging.md) - Error tracking
 
 ## NTDLL Imports
 
@@ -35,7 +35,7 @@ unsafe extern "system" {
 **Called By:**
 - `apply_io_priority()` - Process I/O priority query/set
 - `get_thread_start_address()` - Thread start address query
-- `main.rs` - Timer resolution setting
+- [main.rs](main.md) - Timer resolution setting
 
 ## Data Structures
 
@@ -89,7 +89,7 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
 - `2` - `PROCESS_QUERY_INFORMATION` failed (warning)
 - `3` - `PROCESS_SET_INFORMATION` failed (warning)
 
-**Called By:** `apply_config()` in `main.rs`
+**Called By:** `apply_config()` in [main.rs](main.md)
 
 ## CPU Set Operations
 
@@ -130,7 +130,7 @@ Converts CPU Set IDs back to logical indices.
 pub fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32>
 ```
 
-**Called By:** `apply.rs` - Logging CPU Set changes
+**Called By:** [apply.rs](apply.md) - Logging CPU Set changes
 
 ### filter_indices_by_mask
 
@@ -174,7 +174,7 @@ pub fn request_uac_elevation(console: bool) -> io::Result<()>
 
 **Side Effect:** Current process exits after spawning elevated child.
 
-**Called By:** `main.rs` on startup if not admin and `-noUAC` not set
+**Called By:** [main.rs](main.md) on startup if not admin and `-noUAC` not set
 
 ### enable_debug_privilege
 
@@ -191,7 +191,7 @@ pub fn enable_debug_privilege()
 2. Lookup `SE_DEBUG_NAME` LUID
 3. Adjust token privileges to enable
 
-**Called By:** `main.rs` on startup (unless `-noDebugPriv`)
+**Called By:** [main.rs](main.md) on startup (unless `-noDebugPriv`)
 
 ### enable_inc_base_priority_privilege
 
@@ -203,7 +203,7 @@ pub fn enable_inc_base_priority_privilege()
 
 **Purpose:** Required for I/O Priority "high" setting.
 
-**Called By:** `main.rs` on startup (unless `-noIncBasePriority`)
+**Called By:** [main.rs](main.md) on startup (unless `-noIncBasePriority`)
 
 ## Affinity Utilities
 
@@ -217,7 +217,7 @@ pub fn is_affinity_unset(pid: u32, process_name: &str) -> bool
 
 **Returns:** `true` if `current_mask == system_mask`
 
-**Called By:** `main.rs` `-find` mode to identify unconfigured processes
+**Called By:** [main.rs](main.md#-find-flag) `-find` mode to identify unconfigured processes
 
 **Error Handling:** Logs access denied errors to `.find.log` once per process name.
 
@@ -285,7 +285,7 @@ pub fn resolve_address_to_module(pid: u32, address: usize) -> String
 **Called By:**
 - `apply_prime_threads_promote()` - For change logging
 - `apply_prime_threads_demote()` - For change logging
-- `scheduler.rs` - For thread tracking report
+- [scheduler.rs](scheduler.md) - For thread tracking report
 
 ### drop_module_cache
 
@@ -296,8 +296,8 @@ pub fn drop_module_cache(pid: u32)
 ```
 
 **Called By:**
-- `main.rs` - Before prime scheduling each loop
-- `scheduler.rs` - When process exits
+- [main.rs](main.md#main-loop) - Before prime scheduling each loop
+- [scheduler.rs](scheduler.md) - When process exits
 
 ## Process Management
 
@@ -311,7 +311,7 @@ pub fn terminate_child_processes()
 
 **Purpose:** Cleanup orphaned console host processes after UAC elevation.
 
-**Called By:** `main.rs` on startup
+**Called By:** [main.rs](main.md) on startup
 
 **Targets:** Any process with `th32ParentProcessID == current_pid`
 

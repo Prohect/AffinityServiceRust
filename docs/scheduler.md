@@ -12,10 +12,10 @@ The `PrimeThreadScheduler` manages dynamic thread-to-CPU assignment for CPU-inte
 
 ## Called By
 
-- `apply_prime_threads()` in `apply.rs` - Main scheduling entry point
-- `apply_ideal_processors()` in `apply.rs` - Ideal processor assignment
-- `prefetch_all_thread_cycles()` in `apply.rs` - Cycle data collection
-- `main.rs` - Process lifecycle management
+- `apply_prime_threads()` in [apply.rs](apply.md#prime-thread-scheduling) - Main scheduling entry point
+- `apply_ideal_processors()` in [apply.rs](apply.md#ideal-processor-assignment) - Ideal processor assignment
+- `prefetch_all_thread_cycles()` in [apply.rs](apply.md#prefetch_all_thread_cycles) - Cycle data collection
+- [main.rs](main.md) - Process lifecycle management
 
 ## Data Structures
 

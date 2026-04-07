@@ -11,8 +11,8 @@ This module provides efficient process snapshotting using the native Windows API
 
 ## Called By
 
-- `main.rs` - Main loop process enumeration
-- `apply.rs` - Thread iteration for affinity/ideal processor operations
+- [main.rs](main.md#main-loop) - Main loop process enumeration
+- [apply.rs](apply.md) - Thread iteration for affinity/ideal processor operations
 
 ## Data Structures
 

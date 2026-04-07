@@ -11,7 +11,7 @@ This module handles:
 
 ## Called By
 
-- `main()` in `main.rs` - Entry point for CLI parsing
+- `main()` in [main.rs](main.md) - Entry point for CLI parsing
 - User via `-help`, `-helpall` flags
 
 ## Configuration

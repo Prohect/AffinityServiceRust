@@ -8,10 +8,10 @@ This module defines enums for all Windows priority types with bidirectional conv
 
 ## Called By
 
-- `config.rs` - Parsing priority strings from config
-- `apply.rs` - Converting to Windows API constants
-- `scheduler.rs` - Thread priority manipulation
-- `logging.rs` - Converting back to strings for output
+- [config.rs](config.md) - Parsing priority strings from config
+- [apply.rs](apply.md) - Converting to Windows API constants
+- [scheduler.rs](scheduler.md) - Thread priority manipulation
+- [logging.rs](logging.md) - Converting back to strings for output
 
 ## Enums
 

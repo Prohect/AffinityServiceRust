@@ -196,7 +196,7 @@ if cli.convert_mode {
 }
 ```
 
-See `config.rs` for conversion details.
+See [config.md](config.md#process-lasso-conversion) for conversion details.
 
 ### -autogroup
 
@@ -209,7 +209,7 @@ if cli.autogroup_mode {
 }
 ```
 
-See `config.rs` for grouping algorithm.
+See [config.md](config.md#auto-grouping) for grouping algorithm.
 
 ### -processlogs
 

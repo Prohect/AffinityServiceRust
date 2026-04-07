@@ -13,7 +13,7 @@ This module provides:
 
 ## Called By
 
-- `main.rs` - Main config loading via `read_config()`
+- [main.rs](main.md) - Main config loading via `read_config()`
 - CLI `-convert` mode - Process Lasso conversion
 - CLI `-autogroup` mode - Rule grouping optimization
 

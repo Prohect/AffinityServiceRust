@@ -13,9 +13,9 @@ This module provides:
 ## Called By
 
 - All modules via `log!` macro
-- `main.rs` - General logging
-- `apply.rs` - Error logging with deduplication
-- `winapi.rs` - Find mode logging
+- [main.rs](main.md) - General logging
+- [apply.rs](apply.md) - Error logging with deduplication
+- [winapi.rs](winapi.md) - Find mode logging
 
 ## Macros
 
@@ -53,7 +53,7 @@ Shared timestamp for consistent time display.
 pub static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>>
 ```
 
-**Updated:** Each loop iteration in `main.rs`
+**Updated:** Each loop iteration in [main.rs](main.md#main-loop)
 
 **Purpose:** Ensures all log entries in same loop share identical timestamp
 
@@ -97,7 +97,7 @@ pub static DUST_BIN_MODE: Lazy<Mutex<bool>>
 
 **Purpose:** Avoids duplicate logs when process restarts with elevation.
 
-**Set By:** `main.rs` initially, cleared after elevation.
+**Set By:** [main.rs](main.md) initially, cleared after elevation.
 
 ### USE_CONSOLE
 
@@ -197,7 +197,7 @@ pub fn purge_fail_map(pids_and_names: &[(u32, String)])
 2. Mark currently-running processes as alive
 3. Remove all dead entries
 
-**Called By:** `main.rs` each loop iteration after process enumeration
+**Called By:** [main.rs](main.md#main-loop) each loop iteration after process enumeration
 
 **Purpose:** Prevents unbounded growth and handles PID reuse
 
@@ -250,7 +250,7 @@ pub fn log_process_find(process_name: &str)
 
 **Output:** `[HH:MM:SS] find process.exe`
 
-**Called By:** `main.rs` `-find` mode
+**Called By:** [main.rs](main.md#-find-flag) `-find` mode
 
 ## Accessors
 

@@ -15,7 +15,7 @@ This module implements the core logic for applying process configurations:
 
 ## Called By
 
-- `apply_config()` in `main.rs` - Main orchestration function
+- `apply_config()` in [main.rs](main.md) - Main orchestration function
 - Internal cross-calls between apply functions
 
 ## Data Structures
@@ -43,7 +43,7 @@ pub struct ApplyConfigResult {
 
 Orchestrates applying all configuration settings to a target process.
 
-**Called By:** `main.rs` main loop
+**Called By:** [main.rs](main.md#main-loop) main loop
 
 **Flow:**
 1. Get process handle

@@ -8,9 +8,9 @@ This module maps Windows error codes to human-readable strings for logging.
 
 ## Called By
 
-- `apply.rs` - Translating API errors
-- `winapi.rs` - Translating handle operation errors
-- `logging.rs` - Error message formatting
+- [apply.rs](apply.md) - Translating API errors
+- [winapi.rs](winapi.md) - Translating handle operation errors
+- [logging.rs](logging.md) - Error message formatting
 
 ## Functions
 

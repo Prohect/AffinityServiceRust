@@ -12,34 +12,73 @@ pub static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::
 
 pub static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
-pub static FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+pub static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
+#[derive(PartialEq, Eq, Hash)]
+pub enum Operation {
+    OpenProcess,
+    OpenThread,
+    SetPriorityClass,
+    GetProcessAffinityMask,
+    SetProcessAffinityMask,
+    GetProcessDefaultCpuSets,
+    SetProcessDefaultCpuSets,
+    QueryThreadCycleTime,
+    SetThreadSelectedCpuSets,
+    SetThreadPriority,
+    NtQueryInformationProcess2ProcessInformationIOPriority,
+    NtSetInformationProcess2ProcessInformationIOPriority,
+    GetProcessInformation2ProcessMemoryPriority,
+    SetProcessInformation2ProcessMemoryPriority,
+    SetThreadIdealProcessorEx,
+    GetThreadIdealProcessorEx,
+    InvalidHandle,
+}
+#[derive(PartialEq, Eq, Hash)]
 struct ApplyFailEntry {
-    proc_name: String,
-    alive: bool,
+    pid: u32,
+    process_name: String,
+    operation: Operation,
+    error_code: u32,
 }
 
-static APPLY_FAIL_MAP: Lazy<Mutex<HashMap<u32, ApplyFailEntry>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
-/// Tracks process open failures to avoid spamming logs.
+/// Tracks operation failures to avoid spamming logs.
 ///
-/// Returns true if this is the first failure for this PID/name combination,
-/// allowing one error log per process instance.
-pub fn apply_fail_insert_if_new(pid: u32, proc_name: &str) -> bool {
-    let mut map = APPLY_FAIL_MAP.lock().unwrap();
-    match map.get(&pid) {
-        Some(entry) if entry.proc_name == proc_name => false,
-
-        _ => {
-            map.insert(
-                pid,
-                ApplyFailEntry {
-                    proc_name: proc_name.to_string(),
-                    alive: true,
-                },
-            );
-            true
+/// Returns true if this is the first failure for this pid/process_name/operation/error_code combination.
+/// `A`: The fail_entry_set(get from map) is expected that all of its entries have same process_name as the given process_name.
+/// This func clears the fail entry set if `A` is not satisfied before inserting the new entry.
+///
+/// if there's no error_code from the api call, leave error_code as 0.
+pub fn is_new_error(pid: u32, process_name: &str, operation: Operation, error_code: u32) -> bool {
+    let entry = ApplyFailEntry {
+        pid,
+        process_name: process_name.to_string(),
+        operation,
+        error_code,
+    };
+    let mut map = PID_MAP_FAIL_ENTRY_SET.lock().unwrap();
+    match map.get_mut(&pid) {
+        Some(fail_entry_set) => {
+            if fail_entry_set.iter_mut().any(|(fail_entry, alive)| {
+                if fail_entry == &entry {
+                    *alive = true;
+                    true
+                } else {
+                    false
+                }
+            }) {
+                false
+            } else {
+                if fail_entry_set.keys().next().is_some_and(|fail_entry| fail_entry.process_name != entry.process_name) {
+                    fail_entry_set.clear();
+                }
+                fail_entry_set.insert(entry, true);
+                true
+            }
         }
+        _ => true,
     }
 }
 
@@ -47,19 +86,22 @@ pub fn apply_fail_insert_if_new(pid: u32, proc_name: &str) -> bool {
 ///
 /// Marks all entries as dead, then re-marks currently running processes as alive.
 /// Dead entries are removed to prevent unbounded growth.
-pub fn purge_apply_fail_map(pids_and_names: &[(u32, String)]) {
-    let mut map = APPLY_FAIL_MAP.lock().unwrap();
-    for entry in map.values_mut() {
-        entry.alive = false;
+pub fn purge_fail_map(pids_and_names: &[(u32, String)]) {
+    let mut map = PID_MAP_FAIL_ENTRY_SET.lock().unwrap();
+    for fail_entry_set in map.values_mut() {
+        fail_entry_set.values_mut().for_each(|alive| *alive = false);
     }
     for (pid, name) in pids_and_names {
-        if let Some(entry) = map.get_mut(pid)
-            && entry.proc_name == *name
+        if let Some(fail_entry_set) = map.get_mut(pid)
+            && fail_entry_set.iter().any(|fail_entry| fail_entry.0.process_name == *name)
         {
-            entry.alive = true;
+            let _ = fail_entry_set.values_mut().next().is_some_and(|alive| {
+                *alive = true;
+                false
+            });
         }
     }
-    map.retain(|_, entry| entry.alive);
+    map.retain(|_, fail_entry_set| fail_entry_set.iter().any(|(_, alive)| *alive));
 }
 
 static USE_CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));

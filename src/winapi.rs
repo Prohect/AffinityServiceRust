@@ -1,6 +1,6 @@
 use crate::{
     log,
-    logging::{FAIL_SET, error_from_code, log_to_find},
+    logging::{FINDS_FAIL_SET, error_from_code, log_to_find},
 };
 use once_cell::sync::Lazy;
 use std::{collections::HashMap, env, io, mem::size_of, process::Command, sync::Mutex};
@@ -53,6 +53,7 @@ pub struct CpuSetData {
 }
 
 /// Make sure all handles are valid when newing this.
+/// Automatically close any valid handle when dropped.
 #[allow(dead_code)]
 pub struct ProcessHandle {
     pub r_limited_handle: HANDLE,
@@ -86,7 +87,12 @@ impl Drop for ProcessHandle {
 fn get_process_handle(pid: u32) -> Option<ProcessHandle> {
     let r_limited_request = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) };
     let Some(r_limited_handle) = r_limited_request.ok() else {
-        log_to_find(&format!("[get_process_handle]Failed to open r_limited_handle for PID {}", pid));
+        let error_code = unsafe { GetLastError().0 };
+        log_to_find(&format!(
+            "[get_process_handle][{}]Failed to open r_limited_handle for PID {}",
+            error_from_code(error_code),
+            pid
+        ));
         return None;
     };
     if r_limited_handle.is_invalid() {
@@ -98,7 +104,12 @@ fn get_process_handle(pid: u32) -> Option<ProcessHandle> {
         unsafe {
             let _ = CloseHandle(r_limited_handle);
         };
-        log_to_find(&format!("[get_process_handle]Failed to open w_limited_handle for PID {}", pid));
+        let error_code = unsafe { GetLastError().0 };
+        log_to_find(&format!(
+            "[get_process_handle][{}]Failed to open w_limited_handle for PID {}",
+            error_from_code(error_code),
+            pid
+        ));
         return None;
     };
     if w_limited_handle.is_invalid() {
@@ -109,29 +120,45 @@ fn get_process_handle(pid: u32) -> Option<ProcessHandle> {
         return None;
     }
     let r_request = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) };
+    let r_handle = if let Ok(r_handle) = r_request {
+        if !r_handle.is_invalid() {
+            Some(r_handle)
+        } else {
+            log_to_find(&format!("[get_process_handle]Invalid r_handle for PID {}", pid));
+            None
+        }
+    } else {
+        let error_code = unsafe { GetLastError().0 };
+        log_to_find(&format!(
+            "[get_process_handle][{}]Failed to open r_handle for PID {}",
+            error_from_code(error_code),
+            pid
+        ));
+        None
+    };
     let w_request = unsafe { OpenProcess(PROCESS_SET_INFORMATION, false, pid) };
+    let w_handle = if let Ok(w_handle) = w_request {
+        if !w_handle.is_invalid() {
+            Some(w_handle)
+        } else {
+            log_to_find(&format!("[get_process_handle]Invalid w_handle for PID {}", pid));
+            None
+        }
+    } else {
+        let error_code = unsafe { GetLastError().0 };
+        log_to_find(&format!(
+            "[get_process_handle][{}]Failed to open w_handle for PID {}",
+            error_from_code(error_code),
+            pid
+        ));
+        None
+    };
 
     Some(ProcessHandle {
         r_limited_handle,
         w_limited_handle,
-        r_handle: {
-            if let Some(r) = r_request.ok()
-                && !r.is_invalid()
-            {
-                Some(r)
-            } else {
-                None
-            }
-        },
-        w_handle: {
-            if let Some(w) = w_request.ok()
-                && !w.is_invalid()
-            {
-                Some(w)
-            } else {
-                None
-            }
-        },
+        r_handle,
+        w_handle,
     })
 }
 
@@ -428,7 +455,7 @@ pub fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
             let code = unsafe { GetLastError() }.0;
             log_to_find(&format!("is_affinity_unset: [OPEN][{}] {:>5}-{}", error_from_code(code), pid, process_name));
             if code == 5 {
-                FAIL_SET.lock().unwrap().insert(process_name.to_string());
+                FINDS_FAIL_SET.lock().unwrap().insert(process_name.to_string());
             }
             return false;
         }
@@ -450,7 +477,7 @@ pub fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
             let code = unsafe { GetLastError() }.0;
             log_to_find(&format!("is_affinity_unset: [AFFINITY_QUERY][{}] {:>5}-{}", error_from_code(code), pid, process_name));
             if code == 5 {
-                FAIL_SET.lock().unwrap().insert(process_name.to_string());
+                FINDS_FAIL_SET.lock().unwrap().insert(process_name.to_string());
             }
             false
         }

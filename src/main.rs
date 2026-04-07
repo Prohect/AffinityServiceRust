@@ -16,8 +16,8 @@ use cli::{CliArgs, parse_args, print_help, print_help_all};
 use config::{ProcessConfig, convert, read_config, read_list, sort_and_group_config};
 use encoding_rs::Encoding;
 use logging::{
-    DUST_BIN_MODE, FAIL_SET, LOCALTIME_BUFFER, apply_fail_insert_if_new, error_from_code, find_logger, log_message, log_process_find, log_pure_message, log_to_find,
-    logger, purge_apply_fail_map, use_console,
+    DUST_BIN_MODE, FINDS_FAIL_SET, LOCALTIME_BUFFER, Operation, error_from_code, find_logger, is_new_error, log_message, log_process_find, log_pure_message, log_to_find,
+    logger, purge_fail_map, use_console,
 };
 use process::ProcessSnapshot;
 use scheduler::PrimeThreadScheduler;
@@ -66,7 +66,7 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
             let error_code = unsafe { GetLastError().0 };
             if dry_run {
                 apply_config_result.add_change("[SKIP] OpenProcess failed".to_owned());
-            } else if apply_fail_insert_if_new(pid, &config.name) {
+            } else if is_new_error(pid, &config.name, Operation::OpenProcess, error_code) {
                 apply_config_result.add_error(format!("apply_config: [OPEN][{}] {:>5}-{}", error_from_code(error_code), pid, config.name));
             }
             return apply_config_result;
@@ -78,7 +78,9 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
             apply_config_result.add_change("[SKIP] Invalid handle".to_owned());
             return apply_config_result;
         }
-        apply_config_result.add_error(format!("apply_config: [INVALID_HANDLE] {:>5}-{}", pid, config.name));
+        if is_new_error(pid, &config.name, Operation::InvalidHandle, 0) {
+            apply_config_result.add_error(format!("apply_config: [INVALID_HANDLE] {:>5}-{}", pid, config.name));
+        }
         return apply_config_result;
     }
     let mut current_mask: usize = 0;
@@ -90,7 +92,7 @@ fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut Pri
     if !config.prime_threads_cpus.is_empty() || !config.prime_threads_prefixes.is_empty() || !config.ideal_processor_rules.is_empty() || config.track_top_x_threads != 0 {
         drop_module_cache(pid);
         prime_core_scheduler.set_alive(pid);
-        prefetch_all_thread_cycles(pid, &config.name, processes, prime_core_scheduler, &mut apply_config_result);
+        prefetch_all_thread_cycles(pid, config, processes, prime_core_scheduler, &mut apply_config_result);
         apply_prime_threads(pid, config, prime_core_scheduler, processes, dry_run, &mut current_mask, &mut apply_config_result);
         apply_ideal_processors(pid, config, processes, prime_core_scheduler, dry_run, &mut apply_config_result);
         update_thread_stats(pid, prime_core_scheduler);
@@ -288,7 +290,7 @@ fn main() -> windows::core::Result<()> {
             Ok(mut processes) => {
                 let mut total_changes = 0;
                 let pids_and_names: Vec<(u32, String)> = processes.pid_to_process.values().map(|p| (p.pid(), p.get_name().to_string())).collect();
-                purge_apply_fail_map(&pids_and_names);
+                purge_fail_map(&pids_and_names);
                 prime_core_scheduler.reset_alive();
 
                 // Grade-based scheduling: rules with higher grade values run less frequently
@@ -341,7 +343,7 @@ fn main() -> windows::core::Result<()> {
                         let process_name = String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]).to_lowercase();
 
                         let in_configs = configs.values().any(|grade_configs| grade_configs.contains_key(&process_name));
-                        if !FAIL_SET.lock().unwrap().contains(&process_name)
+                        if !FINDS_FAIL_SET.lock().unwrap().contains(&process_name)
                             && !in_configs
                             && !blacklist.contains(&process_name)
                             && is_affinity_unset(pe32.th32ProcessID, process_name.as_str())

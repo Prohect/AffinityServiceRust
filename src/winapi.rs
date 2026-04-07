@@ -17,7 +17,8 @@ use windows::Win32::{
         SystemInformation::{GetSystemCpuSetInformation, SYSTEM_CPU_SET_INFORMATION},
         Threading::{
             GetCurrentProcess, GetCurrentProcessId, GetProcessAffinityMask, GetThreadIdealProcessorEx, OpenProcess, OpenProcessToken, PROCESS_QUERY_INFORMATION,
-            PROCESS_SET_INFORMATION, PROCESS_TERMINATE, PROCESS_VM_READ, SetThreadIdealProcessorEx, TerminateProcess,
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_SET_LIMITED_INFORMATION, PROCESS_TERMINATE, PROCESS_VM_READ, SetThreadIdealProcessorEx,
+            TerminateProcess,
         },
     },
 };
@@ -49,6 +50,89 @@ unsafe extern "system" {
 pub struct CpuSetData {
     id: u32,
     logical_processor_index: u8,
+}
+
+/// Make sure all handles are valid when newing this.
+#[allow(dead_code)]
+pub struct ProcessHandle {
+    pub r_limited_handle: HANDLE,
+    pub r_handle: Option<HANDLE>,
+    pub w_limited_handle: HANDLE,
+    pub w_handle: Option<HANDLE>,
+}
+
+impl Drop for ProcessHandle {
+    fn drop(&mut self) {
+        if let Some(handle) = self.r_handle {
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+        }
+        if let Some(handle) = self.w_handle {
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+        }
+        unsafe {
+            let _ = CloseHandle(self.r_limited_handle);
+            let _ = CloseHandle(self.w_limited_handle);
+        }
+    }
+}
+
+/// Opens a process handle for the given PID, returning a `ProcessHandle` if successful.
+/// All Some variants in the return value are confirmed valid handles.
+#[allow(dead_code)]
+fn get_process_handle(pid: u32) -> Option<ProcessHandle> {
+    let r_limited_request = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) };
+    let Some(r_limited_handle) = r_limited_request.ok() else {
+        log_to_find(&format!("[get_process_handle]Failed to open r_limited_handle for PID {}", pid));
+        return None;
+    };
+    if r_limited_handle.is_invalid() {
+        log_to_find(&format!("[get_process_handle]Invalid r_limited_handle for PID {}", pid));
+        return None;
+    }
+    let w_limited_request = unsafe { OpenProcess(PROCESS_SET_LIMITED_INFORMATION, false, pid) };
+    let Some(w_limited_handle) = w_limited_request.ok() else {
+        unsafe {
+            let _ = CloseHandle(r_limited_handle);
+        };
+        log_to_find(&format!("[get_process_handle]Failed to open w_limited_handle for PID {}", pid));
+        return None;
+    };
+    if w_limited_handle.is_invalid() {
+        unsafe {
+            let _ = CloseHandle(r_limited_handle);
+        };
+        log_to_find(&format!("[get_process_handle]Invalid w_limited_handle for PID {}", pid));
+        return None;
+    }
+    let r_request = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, false, pid) };
+    let w_request = unsafe { OpenProcess(PROCESS_SET_INFORMATION, false, pid) };
+
+    Some(ProcessHandle {
+        r_limited_handle,
+        w_limited_handle,
+        r_handle: {
+            if let Some(r) = r_request.ok()
+                && !r.is_invalid()
+            {
+                Some(r)
+            } else {
+                None
+            }
+        },
+        w_handle: {
+            if let Some(w) = w_request.ok()
+                && !w.is_invalid()
+            {
+                Some(w)
+            } else {
+                None
+            }
+        },
+    })
 }
 
 unsafe fn extract_cpu_set_data(entry: &SYSTEM_CPU_SET_INFORMATION) -> CpuSetData {
@@ -502,10 +586,6 @@ pub fn terminate_child_processes() {
         }
         let _ = CloseHandle(snapshot);
     }
-}
-
-pub fn clear_module_cache(pid: u32) {
-    MODULE_CACHE.lock().unwrap().remove(&pid);
 }
 
 fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> {

@@ -282,6 +282,9 @@ fn main() -> windows::core::Result<()> {
             log!("Loop {} started", current_loop + 1);
         }
         match ProcessSnapshot::take() {
+            Err(err) => {
+                log!("Failed to take process snapshot: {}", err);
+            }
             Ok(mut processes) => {
                 let mut total_changes = 0;
                 let pids_and_names: Vec<(u32, String)> = processes.pid_to_process.values().map(|p| (p.pid(), p.get_name().to_string())).collect();
@@ -306,7 +309,7 @@ fn main() -> windows::core::Result<()> {
                                 if !result.changes.is_empty() {
                                     let first = format!("{:>5}::{}::{}", pid, config.name, result.changes[0]);
                                     log_message(&first);
-                                    let padding = " ".repeat(first.len() - result.changes[0].len() + 10);
+                                    let padding = " ".repeat(first.len() - result.changes[0].len() + 10); //10 for time prefix, eg."[04:55:16]"
                                     for change in &result.changes[1..] {
                                         log_pure_message(&format!("{}{}", padding, change));
                                     }
@@ -319,20 +322,11 @@ fn main() -> windows::core::Result<()> {
                 }
                 prime_core_scheduler.close_dead_process_handles();
                 if cli.dry_run {
-                    let total_rules: usize = configs.values().map(|g| g.len()).sum();
-                    log!(
-                        "[DRY RUN] Checking {} running processes against {} config rules...",
-                        processes.pid_to_process.len(),
-                        total_rules
-                    );
                     log!("[DRY RUN] {} change(s) would be made. Run without -dryrun to apply.", total_changes);
                     should_continue = false;
                 }
 
                 drop(processes);
-            }
-            Err(err) => {
-                log!("Failed to take process snapshot: {}", err);
             }
         };
         if cli.find_mode {
@@ -375,8 +369,8 @@ fn main() -> windows::core::Result<()> {
         }
         if should_continue {
             thread::sleep(Duration::from_millis(cli.interval_ms));
-            *LOCALTIME_BUFFER.lock().unwrap() = Local::now();
 
+            *LOCALTIME_BUFFER.lock().unwrap() = Local::now();
             if let Ok(metadata) = std::fs::metadata(&cli.config_file_name)
                 && let Ok(mod_time) = metadata.modified()
                 && Some(mod_time) != last_config_mod_time
@@ -397,13 +391,12 @@ fn main() -> windows::core::Result<()> {
                     }
                 }
             }
-
-            if let Some(ref bf) = cli.blacklist_file_name {
-                match std::fs::metadata(bf) {
+            if let Some(ref blacklist_file) = cli.blacklist_file_name {
+                match std::fs::metadata(blacklist_file) {
                     Err(_) => {
                         if last_blacklist_mod_time.is_some() {
                             last_blacklist_mod_time = None;
-                            log!("Blacklist file '{}' no longer accessible, clearing blacklist.", bf);
+                            log!("Blacklist file '{}' no longer accessible, clearing blacklist.", blacklist_file);
                             blacklist.clear();
                         }
                     }
@@ -412,8 +405,8 @@ fn main() -> windows::core::Result<()> {
                             && Some(mod_time) != last_blacklist_mod_time
                         {
                             last_blacklist_mod_time = Some(mod_time);
-                            log!("Blacklist file '{}' changed, reloading...", bf);
-                            blacklist = read_list(bf).unwrap_or_default();
+                            log!("Blacklist file '{}' changed, reloading...", blacklist_file);
+                            blacklist = read_list(blacklist_file).unwrap_or_default();
                             log!("Blacklist reload complete: {} items loaded.", blacklist.len());
                         }
                     }

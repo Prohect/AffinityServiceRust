@@ -2,7 +2,7 @@ use crate::{
     config::ConfigConstants,
     logging::log_message,
     priority::ThreadPriority,
-    winapi::{clear_module_cache, resolve_address_to_module},
+    winapi::{drop_module_cache, resolve_address_to_module},
 };
 use ntapi::ntexapi::SYSTEM_THREAD_INFORMATION;
 use std::cmp::Reverse;
@@ -165,7 +165,7 @@ impl PrimeThreadScheduler {
                     log_message(&report);
                 }
 
-                clear_module_cache(*pid);
+                drop_module_cache(*pid);
                 for stats in process_stats.tid_to_thread_stats.values() {
                     if let Some(handle) = stats.handle {
                         unsafe {

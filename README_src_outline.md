@@ -188,7 +188,7 @@
 ## src/main.rs
 - [L46:L100]fn apply_config(pid: u32, config: &ProcessConfig, prime_core_scheduler: &mut PrimeThreadScheduler, processes: &mut ProcessSnapshot, dry_run: bool) -> ApplyConfigResult 
 - [L102:L172]fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
-- [L174:L425]fn main() -> windows::core::Result<()> 
+- [L174:L418]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L8:L16]enum ProcessPriority {
@@ -279,28 +279,35 @@
 - [L312:L319]fn format_filetime(time: i64) -> String 
 
 ## src/winapi.rs
-- [L49:L52]struct CpuSetData {
+- [L50:L53]struct CpuSetData {
     id: u32,
     logical_processor_index: u8,
 }
-- [L63:L63]static CPU_SET_INFORMATION: Lazy<Mutex<Vec<CpuSetData>>> = Lazy::new(|| {
-- [L104:L106]fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>> 
-- [L108:L125]fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32> 
-- [L128:L141]fn cpusetids_from_mask(mask: usize) -> Vec<u32> 
-- [L143:L159]fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32> 
-- [L162:L177]fn mask_from_cpusetids(cpuids: &[u32]) -> usize 
-- [L179:L189]fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<u32> 
-- [L191:L220]fn is_running_as_admin() -> bool 
-- [L222:L255]fn request_uac_elevation(console: bool) -> io::Result<()> 
-- [L257:L295]fn enable_debug_privilege() 
-- [L297:L335]fn enable_inc_base_priority_privilege() 
-- [L337:L379]fn is_affinity_unset(pid: u32, process_name: &str) -> bool 
-- [L381:L400]fn get_thread_start_address(thread_handle: HANDLE) -> usize 
-- [L402:L413]fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: u8) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
-- [L415:L421]fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
-- [L424:L424]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-- [L426:L452]fn resolve_address_to_module(pid: u32, address: usize) -> String 
-- [L454:L457]fn drop_module_cache(pid: u32) 
-- [L459:L505]fn terminate_child_processes() 
-- [L507:L509]fn clear_module_cache(pid: u32) 
-- [L511:L564]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)>
+- [L55:L62]struct ProcessHandle {
+    pub r_limited_handle: HANDLE,
+    pub r_handle: Option<HANDLE>,
+    pub w_limited_handle: HANDLE,
+    pub w_handle: Option<HANDLE>,
+}
+- [L83:L136]fn get_process_handle(pid: u32) -> Option<ProcessHandle> 
+- [L147:L147]static CPU_SET_INFORMATION: Lazy<Mutex<Vec<CpuSetData>>> = Lazy::new(|| {
+- [L188:L190]fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>> 
+- [L192:L209]fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32> 
+- [L212:L225]fn cpusetids_from_mask(mask: usize) -> Vec<u32> 
+- [L227:L243]fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32> 
+- [L246:L261]fn mask_from_cpusetids(cpuids: &[u32]) -> usize 
+- [L263:L273]fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<u32> 
+- [L275:L304]fn is_running_as_admin() -> bool 
+- [L306:L339]fn request_uac_elevation(console: bool) -> io::Result<()> 
+- [L341:L379]fn enable_debug_privilege() 
+- [L381:L419]fn enable_inc_base_priority_privilege() 
+- [L421:L463]fn is_affinity_unset(pid: u32, process_name: &str) -> bool 
+- [L465:L484]fn get_thread_start_address(thread_handle: HANDLE) -> usize 
+- [L486:L497]fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: u8) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
+- [L499:L505]fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, windows::core::Error> 
+- [L508:L508]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+- [L510:L536]fn resolve_address_to_module(pid: u32, address: usize) -> String 
+- [L538:L541]fn drop_module_cache(pid: u32) 
+- [L543:L589]fn terminate_child_processes() 
+- [L591:L644]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
+

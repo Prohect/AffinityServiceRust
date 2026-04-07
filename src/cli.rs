@@ -1,4 +1,5 @@
 use crate::{log, logging::use_console};
+use windows::core::Result;
 
 #[derive(Debug, Default)]
 pub struct CliArgs {
@@ -34,7 +35,7 @@ impl CliArgs {
     }
 }
 
-pub fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<()> {
+pub fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()> {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {

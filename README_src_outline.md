@@ -107,7 +107,7 @@
 ) 
 
 ## src/cli.rs
-- [L4:L25]struct CliArgs {
+- [L5:L26]struct CliArgs {
     pub interval_ms: u64,
     pub help_mode: bool,
     pub help_all_mode: bool,
@@ -129,12 +129,12 @@
     pub no_debug_priv: bool,
     pub no_inc_base_priority: bool,
 }
-- [L37:L118]fn parse_args(args: &[String], cli: &mut CliArgs) -> windows::core::Result<()> 
-- [L120:L146]fn print_help() 
-- [L148:L196]fn print_cli_help() 
-- [L198:L304]fn get_config_help_lines() -> Vec<&'static str> 
-- [L306:L310]fn print_config_help() 
-- [L312:L317]fn print_help_all() 
+- [L38:L119]fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()> 
+- [L121:L147]fn print_help() 
+- [L149:L197]fn print_cli_help() 
+- [L199:L305]fn get_config_help_lines() -> Vec<&'static str> 
+- [L307:L311]fn print_config_help() 
+- [L313:L318]fn print_help_all() 
 
 ## src/config.rs
 - [L16:L20]struct PrimePrefix {

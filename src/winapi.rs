@@ -90,6 +90,7 @@ impl Drop for ProcessHandle {
 
 /// Opens a process handle for the given PID, returning a `ProcessHandle` if successful.
 /// All Some variants in the return value are confirmed valid handles.
+/// Handles in returned result automatically close when dropped.
 ///
 /// internal error_code for invalid handle:
 /// 0 -> PROCESS_QUERY_LIMITED_INFORMATION

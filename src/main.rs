@@ -20,6 +20,10 @@ use logging::{
 };
 use process::ProcessSnapshot;
 use scheduler::PrimeThreadScheduler;
+use winapi::{
+    NtSetTimerResolution, drop_module_cache, enable_debug_privilege, enable_inc_base_priority_privilege, get_process_handle,
+    is_affinity_unset, is_running_as_admin, request_uac_elevation, terminate_child_processes,
+};
 
 use chrono::Local;
 use encoding_rs::Encoding;
@@ -33,10 +37,6 @@ use std::{
     process::Command,
     thread,
     time::Duration,
-};
-use winapi::{
-    NtSetTimerResolution, drop_module_cache, enable_debug_privilege, enable_inc_base_priority_privilege, get_process_handle,
-    is_affinity_unset, is_running_as_admin, request_uac_elevation, terminate_child_processes,
 };
 use windows::Win32::{
     Foundation::CloseHandle,

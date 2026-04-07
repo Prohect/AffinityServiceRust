@@ -47,14 +47,14 @@ fn main() -> windows::core::Result<()>
 1. Parse CLI arguments ([`parse_args()`](cli.md#parse_args))
 2. Handle help modes (`-help`, `-helpall`)
 3. Handle utility modes ([`-convert`](#-convert), [`-autogroup`](#-autogroup))
-4. Load configuration ([`read_config()`](config.md#read_config))
+4. Load configuration ([`read_config()`](config.md#config-file-format))
 5. Enable privileges ([`enable_debug_privilege()`](winapi.md#enable_debug_privilege), [`enable_inc_base_priority_privilege()`](winapi.md#enable_inc_base_priority_privilege))
 6. Set timer resolution (if specified)
 7. Request UAC elevation ([`request_uac_elevation()`](winapi.md#request_uac_elevation))
 8. Cleanup child processes ([`terminate_child_processes()`](winapi.md#terminate_child_processes))
 9. Initialize prime thread scheduler
 10. **Main loop:**
-    - Take process snapshot ([`ProcessSnapshot::take()`](process.md#processsnapshottake))
+    - Take process snapshot ([`ProcessSnapshot::take()`](process.md#processsnapshottake) in [process.rs](process.md))
     - Apply configs by grade
     - Handle [`-find` mode](#-find-flag)
     - Sleep for interval
@@ -251,9 +251,9 @@ fn apply_config(
 5. **Memory Priority** - [`apply_memory_priority()`](apply.md#apply_memory_priority)
 6. **Prime Scheduling** (if configured):
    - Drop module cache ([`drop_module_cache()`](winapi.md#drop_module_cache))
-   - Set alive in scheduler ([`set_alive()`](scheduler.md#set_alive))
+   - Set alive in scheduler ([`set_alive()`](scheduler.md#reset_alive--set_alive))
    - Prefetch cycles ([`prefetch_all_thread_cycles()`](apply.md#prefetch_all_thread_cycles))
-   - Apply prime threads ([`apply_prime_threads()`](apply.md#apply_prime_threads))
+   - Apply prime threads ([`apply_prime_threads()`](apply.md#apply_prime_threads) in [apply.rs](apply.md))
    - Apply ideal processors ([`apply_ideal_processors()`](apply.md#apply_ideal_processors))
    - Update thread stats ([`update_active_streaks()`](scheduler.md#update_active_streaks))
 

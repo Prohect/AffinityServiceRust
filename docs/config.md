@@ -92,7 +92,7 @@ parse_cpu_spec("0")       // → []
 ```
 
 **Called By:**
-- [`read_config()`](config.md#read_config) - Parsing CPU fields in rules
+- [`read_config()`](config.md#config-file-format) - Main config loading function
 - `resolve_cpu_spec()` (internal) - Alias resolution
 - [`convert()`](config.md#process-lasso-conversion) - Process Lasso conversion
 

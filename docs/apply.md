@@ -252,7 +252,7 @@ pub fn apply_prime_threads_select(
 )
 ```
 
-Calls `select_top_threads_with_hysteresis()` with `|ts| !ts.pinned_cpu_set_ids.is_empty()` as the "currently assigned" check.
+Calls [`select_top_threads_with_hysteresis()`](scheduler.md#select_top_threads_with_hysteresis) with `|ts| !ts.pinned_cpu_set_ids.is_empty()` as the "currently assigned" check.
 
 ### apply_prime_threads_promote
 

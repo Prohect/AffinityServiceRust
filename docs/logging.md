@@ -236,7 +236,7 @@ pub fn log_to_find(msg: &str)
 
 **Output:** `[HH:MM:SS] message` to `.find.log`
 
-**Called By:** Error functions when logging access denied for `-find` mode
+**Called By:** Error functions when logging access denied for [`-find` mode](main.md#-find-flag)
 
 ### log_process_find
 

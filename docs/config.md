@@ -92,9 +92,9 @@ parse_cpu_spec("0")       // → []
 ```
 
 **Called By:**
-- `read_config()` - Parsing CPU fields in rules
-- `resolve_cpu_spec()` - Alias resolution
-- `convert()` - Process Lasso conversion
+- [`read_config()`](config.md#read_config) - Parsing CPU fields in rules
+- `resolve_cpu_spec()` (internal) - Alias resolution
+- [`convert()`](config.md#process-lasso-conversion) - Process Lasso conversion
 
 ### cpu_indices_to_mask
 
@@ -149,7 +149,7 @@ parse_ideal_processor_spec("*pN01@cs2.exe;nvwgf2umx.dll", ...)
 // → [IdealProcessorRule { cpus: [2,3,4,5,6,7], prefixes: ["cs2.exe", "nvwgf2umx.dll"] }]
 ```
 
-**Called By:** `parse_and_insert_rules()` - When parsing rule field 6 or 7
+**Called By:** `parse_and_insert_rules()` (internal) - When parsing rule field 6 or 7
 
 ## Prime Thread Specification Parsing
 

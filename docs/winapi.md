@@ -33,8 +33,8 @@ unsafe extern "system" {
 ```
 
 **Called By:**
-- `apply_io_priority()` - Process I/O priority query/set
-- `get_thread_start_address()` - Thread start address query
+- [`apply_io_priority()`](apply.md#apply_io_priority) - Process I/O priority query/set
+- [`get_thread_start_address()`](winapi.md#get_thread_start_address) - Thread start address query
 - [main.rs](main.md) - Timer resolution setting
 
 ## Data Structures
@@ -89,7 +89,7 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
 - `2` - `PROCESS_QUERY_INFORMATION` failed (warning)
 - `3` - `PROCESS_SET_INFORMATION` failed (warning)
 
-**Called By:** `apply_config()` in [main.rs](main.md)
+**Called By:** `apply_config()` in source (orchestration function)
 
 ## CPU Set Operations
 
@@ -119,8 +119,8 @@ cpusetids_from_indices(&[0, 1, 2])  // → [cpu_set_id_0, cpu_set_id_1, cpu_set_
 ```
 
 **Called By:**
-- `apply_process_default_cpuset()` - Process CPU Sets
-- `apply_prime_threads_promote()` - Thread CPU Sets
+- [`apply_process_default_cpuset()`](apply.md#apply_process_default_cpuset) - Process CPU Sets
+- [`apply_prime_threads_promote()`](apply.md#apply_prime_threads_promote) - Thread CPU Sets
 
 ### indices_from_cpusetids
 
@@ -235,7 +235,7 @@ pub fn get_thread_start_address(thread_handle: HANDLE) -> usize
 
 **Info Class:** 9 (`ThreadQuerySetWin32StartAddress`)
 
-**Called By:** `prefetch_all_thread_cycles()` for module identification
+**Called By:** [`prefetch_all_thread_cycles()`](apply.md#prefetch_all_thread_cycles) for module identification
 
 ### set_thread_ideal_processor_ex
 
@@ -252,8 +252,8 @@ pub fn set_thread_ideal_processor_ex(
 **Returns:** Previous ideal processor
 
 **Called By:**
-- `reset_thread_ideal_processors()` - After affinity change
-- `apply_ideal_processors()` - Ideal processor assignment
+- [`reset_thread_ideal_processors()`](apply.md#reset_thread_ideal_processors) - After affinity change
+- [`apply_ideal_processors()`](apply.md#apply_ideal_processors) - Ideal processor assignment
 
 ### get_thread_ideal_processor_ex
 
@@ -263,7 +263,7 @@ Gets current ideal processor.
 pub fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, Error>
 ```
 
-**Called By:** `apply_ideal_processors()` for lazy set optimization
+**Called By:** [`apply_ideal_processors()`](apply.md#apply_ideal_processors) for lazy set optimization
 
 ## Module Resolution
 
@@ -283,8 +283,8 @@ pub fn resolve_address_to_module(pid: u32, address: usize) -> String
 **Caching:** Module list cached per process in `MODULE_CACHE`.
 
 **Called By:**
-- `apply_prime_threads_promote()` - For change logging
-- `apply_prime_threads_demote()` - For change logging
+- [`apply_prime_threads_promote()`](apply.md#apply_prime_threads_promote) - For change logging
+- [`apply_prime_threads_demote()`](apply.md#apply_prime_threads_demote) - For change logging
 - [scheduler.rs](scheduler.md) - For thread tracking report
 
 ### drop_module_cache

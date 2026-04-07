@@ -9,8 +9,8 @@ This module implements:
 - Privilege management
 - Configuration file monitoring and hot-reload
 - Main service loop with grade-based scheduling
-- Process discovery (`-find` mode)
-- Utility modes (`-convert`, `-validate`, `-processlogs`)
+- Process discovery ([`-find` mode](#-find-flag))
+- Utility modes ([`-convert`](#-convert), [`-validate`](#-validate), [`-processlogs`](#-processlogs))
 
 ## Called By
 
@@ -44,19 +44,19 @@ fn main() -> windows::core::Result<()>
 ```
 
 **Flow:**
-1. Parse CLI arguments (`parse_args`)
+1. Parse CLI arguments ([`parse_args()`](cli.md#parse_args))
 2. Handle help modes (`-help`, `-helpall`)
-3. Handle utility modes (`-convert`, `-autogroup`)
-4. Load configuration (`read_config`)
-5. Enable privileges (`enable_debug_privilege`, `enable_inc_base_priority_privilege`)
+3. Handle utility modes ([`-convert`](#-convert), [`-autogroup`](#-autogroup))
+4. Load configuration ([`read_config()`](config.md#read_config))
+5. Enable privileges ([`enable_debug_privilege()`](winapi.md#enable_debug_privilege), [`enable_inc_base_priority_privilege()`](winapi.md#enable_inc_base_priority_privilege))
 6. Set timer resolution (if specified)
-7. Request UAC elevation (if needed and not disabled)
-8. Cleanup child processes (`terminate_child_processes`)
+7. Request UAC elevation ([`request_uac_elevation()`](winapi.md#request_uac_elevation))
+8. Cleanup child processes ([`terminate_child_processes()`](winapi.md#terminate_child_processes))
 9. Initialize prime thread scheduler
 10. **Main loop:**
-    - Take process snapshot
+    - Take process snapshot ([`ProcessSnapshot::take()`](process.md#processsnapshottake))
     - Apply configs by grade
-    - Handle `-find` mode
+    - Handle [`-find` mode](#-find-flag)
     - Sleep for interval
     - Check for config file changes (hot reload)
 
@@ -92,7 +92,7 @@ let result = apply_config(pid, config, &mut scheduler, &mut processes, cli.dry_r
 ```
 
 **Result Processing:**
-- Errors logged to `.find.log` via `log_to_find()`
+- Errors logged to `.find.log` via [`log_to_find()`](logging.md#log_to_find)
 - Changes logged to main log with formatting:
   ```
   [HH:MM:SS] 12345::process.exe::Change 1
@@ -168,7 +168,7 @@ if cli.find_mode {
 
 **Output:** `logs/YYYYMMDD.find.log`
 
-**Deduplication:** Each process logged once per session via `FINDS_SET`
+**Deduplication:** Each process logged once per session via [`FINDS_SET`](logging.md#finds_set)
 
 ## Utility Modes
 
@@ -244,18 +244,18 @@ fn apply_config(
 ```
 
 **Operations (in order):**
-1. **Priority** - `apply_priority()`
-2. **Affinity** - `apply_affinity()`
-3. **CPU Sets** - `apply_process_default_cpuset()`
-4. **I/O Priority** - `apply_io_priority()`
-5. **Memory Priority** - `apply_memory_priority()`
+1. **Priority** - [`apply_priority()`](apply.md#apply_priority)
+2. **Affinity** - [`apply_affinity()`](apply.md#apply_affinity)
+3. **CPU Sets** - [`apply_process_default_cpuset()`](apply.md#apply_process_default_cpuset)
+4. **I/O Priority** - [`apply_io_priority()`](apply.md#apply_io_priority)
+5. **Memory Priority** - [`apply_memory_priority()`](apply.md#apply_memory_priority)
 6. **Prime Scheduling** (if configured):
-   - Drop module cache
-   - Set alive in scheduler
-   - Prefetch cycles
-   - Apply prime threads
-   - Apply ideal processors
-   - Update thread stats
+   - Drop module cache ([`drop_module_cache()`](winapi.md#drop_module_cache))
+   - Set alive in scheduler ([`set_alive()`](scheduler.md#set_alive))
+   - Prefetch cycles ([`prefetch_all_thread_cycles()`](apply.md#prefetch_all_thread_cycles))
+   - Apply prime threads ([`apply_prime_threads()`](apply.md#apply_prime_threads))
+   - Apply ideal processors ([`apply_ideal_processors()`](apply.md#apply_ideal_processors))
+   - Update thread stats ([`update_active_streaks()`](scheduler.md#update_active_streaks))
 
 **Early Exit:** If process handle cannot be obtained, returns empty result immediately.
 

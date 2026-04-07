@@ -1,6 +1,6 @@
 
-max_width = 150
+max_width = 143
 
-comment_width = 150
+comment_width = 143
 
 wrap_comments = true

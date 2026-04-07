@@ -25,7 +25,12 @@ impl ProcessSnapshot {
         unsafe {
             loop {
                 buffer = vec![0u8; buf_len];
-                let status = NtQuerySystemInformation(SystemProcessInformation, buffer.as_mut_ptr() as *mut _, buf_len as u32, &mut return_len);
+                let status = NtQuerySystemInformation(
+                    SystemProcessInformation,
+                    buffer.as_mut_ptr() as *mut _,
+                    buf_len as u32,
+                    &mut return_len,
+                );
 
                 const STATUS_INFO_LENGTH_MISMATCH: i32 = -1073741820i32;
                 if status == STATUS_INFO_LENGTH_MISMATCH {

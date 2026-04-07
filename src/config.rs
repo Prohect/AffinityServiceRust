@@ -185,7 +185,11 @@ impl ConfigResult {
     pub fn print_report(&self) {
         if self.is_valid() {
             if self.groups_count > 0 {
-                log!("Parsed {} process groups ({} processes)", self.groups_count, self.group_members_count);
+                log!(
+                    "Parsed {} process groups ({} processes)",
+                    self.groups_count,
+                    self.group_members_count
+                );
             }
             log!("Parsed {} process rules", self.process_rules_count);
             if !self.warnings.is_empty() {
@@ -210,12 +214,21 @@ impl ConfigResult {
     }
 }
 
-fn resolve_cpu_spec(spec: &str, field_name: &str, line_number: usize, cpu_aliases: &HashMap<String, Vec<u32>>, errors: &mut Vec<String>) -> Vec<u32> {
+fn resolve_cpu_spec(
+    spec: &str,
+    field_name: &str,
+    line_number: usize,
+    cpu_aliases: &HashMap<String, Vec<u32>>,
+    errors: &mut Vec<String>,
+) -> Vec<u32> {
     let spec = spec.trim();
     if spec.starts_with('*') {
         let alias = spec.trim_start_matches('*').to_lowercase();
         if !cpu_aliases.contains_key(&alias) {
-            errors.push(format!("Line {}: Undefined alias '*{}' in {} field", line_number, alias, field_name));
+            errors.push(format!(
+                "Line {}: Undefined alias '*{}' in {} field",
+                line_number, alias, field_name
+            ));
         }
         cpu_aliases.get(&alias).cloned().unwrap_or_default()
     } else {
@@ -280,9 +293,10 @@ fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut Ha
     } else {
         let cpus = parse_cpu_spec(value);
         if cpus.is_empty() && value != "0" {
-            result
-                .warnings
-                .push(format!("Line {}: Alias '*{}' has empty CPU set from '{}'", line_number, name, value));
+            result.warnings.push(format!(
+                "Line {}: Alias '*{}' has empty CPU set from '{}'",
+                line_number, name, value
+            ));
         }
         cpu_aliases.insert(name.to_string(), cpus);
         result.aliases_count += 1;
@@ -309,7 +323,10 @@ fn parse_ideal_processor_spec(
     }
 
     if !spec.starts_with('*') {
-        errors.push(format!("Line {}: Ideal processor spec must start with '*', got '{}'", line_number, spec));
+        errors.push(format!(
+            "Line {}: Ideal processor spec must start with '*', got '{}'",
+            line_number, spec
+        ));
         return Vec::new();
     }
 
@@ -492,9 +509,10 @@ fn parse_and_insert_rules(
                             if let Some(alias_cpus) = cpu_aliases.get(alias_lower.as_str()) {
                                 alias_cpus.clone()
                             } else {
-                                result
-                                    .errors
-                                    .push(format!("Line {}: Unknown CPU alias '*{}' in prime specification", line_number, alias));
+                                result.errors.push(format!(
+                                    "Line {}: Unknown CPU alias '*{}' in prime specification",
+                                    line_number, alias
+                                ));
                                 Vec::new()
                             }
                         };
@@ -609,7 +627,9 @@ fn parse_and_insert_rules(
                 match grade_str.parse::<u32>() {
                     Ok(val) if val >= 1 => val,
                     Ok(0) => {
-                        result.warnings.push(format!("Line {}: Grade cannot be 0, using 1 instead", line_number));
+                        result
+                            .warnings
+                            .push(format!("Line {}: Grade cannot be 0, using 1 instead", line_number));
                         1
                     }
                     _ => {
@@ -625,7 +645,9 @@ fn parse_and_insert_rules(
             (ideal, g)
         } else if let Ok(g) = field6.parse::<u32>() {
             if g == 0 {
-                result.warnings.push(format!("Line {}: Grade cannot be 0, using 1 instead", line_number));
+                result
+                    .warnings
+                    .push(format!("Line {}: Grade cannot be 0, using 1 instead", line_number));
                 (Vec::new(), 1)
             } else {
                 (Vec::new(), g)
@@ -778,9 +800,10 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
         } else {
             let parts: Vec<&str> = line.split(':').collect();
             if parts.len() < 3 {
-                result
-                    .errors
-                    .push(format!("Line {}: Too few fields - expected name:priority:affinity,...", line_number));
+                result.errors.push(format!(
+                    "Line {}: Too few fields - expected name:priority:affinity,...",
+                    line_number
+                ));
                 i += 1;
                 continue;
             }
@@ -1104,7 +1127,11 @@ pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
 
     let mut output_lines: Vec<String> = Vec::new();
 
-    let preamble_end = preamble_lines.iter().rposition(|l| !l.trim().is_empty()).map(|p| p + 1).unwrap_or(0);
+    let preamble_end = preamble_lines
+        .iter()
+        .rposition(|l| !l.trim().is_empty())
+        .map(|p| p + 1)
+        .unwrap_or(0);
     for line in &preamble_lines[..preamble_end] {
         output_lines.push(line.clone());
     }

@@ -33,8 +33,8 @@ use std::{
     time::Duration,
 };
 use winapi::{
-    NtSetTimerResolution, drop_module_cache, enable_debug_privilege, enable_inc_base_priority_privilege, get_process_handle, is_affinity_unset,
-    is_running_as_admin, request_uac_elevation, terminate_child_processes,
+    NtSetTimerResolution, drop_module_cache, enable_debug_privilege, enable_inc_base_priority_privilege, get_process_handle,
+    is_affinity_unset, is_running_as_admin, request_uac_elevation, terminate_child_processes,
 };
 use windows::Win32::{
     Foundation::CloseHandle,
@@ -108,7 +108,12 @@ fn apply_config(
 /// Scans .find.log files for discovered processes, filters out known ones,
 /// and uses Everything search (es.exe) to locate executable paths.
 /// Results are written to a text file for manual review.
-fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) {
+fn process_logs(
+    configs: &HashMap<u32, HashMap<String, ProcessConfig>>,
+    blacklist: &[String],
+    logs_path: Option<&str>,
+    output_file: Option<&str>,
+) {
     *use_console().lock().unwrap() = true;
     let logs_path = logs_path.unwrap_or("logs");
     let output_file = output_file.unwrap_or("new_processes_results.txt");
@@ -138,7 +143,10 @@ fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklis
     }
 
     let in_any_grade = |p: &String| configs.values().any(|grade_configs| grade_configs.contains_key(p));
-    let new_processes: Vec<String> = all_processes.into_iter().filter(|p| !in_any_grade(p) && !blacklist.contains(p)).collect();
+    let new_processes: Vec<String> = all_processes
+        .into_iter()
+        .filter(|p| !in_any_grade(p) && !blacklist.contains(p))
+        .collect();
 
     let mut output = String::new();
     let acp = unsafe { GetConsoleOutputCP() };
@@ -148,12 +156,18 @@ fn process_logs(configs: &HashMap<u32, HashMap<String, ProcessConfig>>, blacklis
         output.push_str(&format!("Process: {}\n", proc));
 
         let escaped_proc = proc.replace(".", r"\.");
-        let es_output = Command::new("es").args(["-utf8-bom", "-r", &format!("^{}$", escaped_proc)]).output();
+        let es_output = Command::new("es")
+            .args(["-utf8-bom", "-r", &format!("^{}$", escaped_proc)])
+            .output();
         match es_output {
             Ok(output_result) if output_result.status.success() => {
                 let stdout = &output_result.stdout;
 
-                let ansi_bytes = if stdout.starts_with(&[0xEF, 0xBB, 0xBF]) { &stdout[3..] } else { stdout };
+                let ansi_bytes = if stdout.starts_with(&[0xEF, 0xBB, 0xBF]) {
+                    &stdout[3..]
+                } else {
+                    stdout
+                };
 
                 let (result, _, _) = encoding.decode(ansi_bytes);
                 if !result.trim().is_empty() {
@@ -251,7 +265,13 @@ fn main() -> windows::core::Result<()> {
     if cli.time_resolution != 0 {
         unsafe {
             let mut current_resolution = 0u32;
-            match NtSetTimerResolution(cli.time_resolution, true, &mut current_resolution as *mut _ as *mut std::ffi::c_void).0 {
+            match NtSetTimerResolution(
+                cli.time_resolution,
+                true,
+                &mut current_resolution as *mut _ as *mut std::ffi::c_void,
+            )
+            .0
+            {
                 ntstatus if ntstatus < 0 => {
                     log!("Failed to set timer resolution: 0x{:08X}", ntstatus);
                 }
@@ -298,7 +318,11 @@ fn main() -> windows::core::Result<()> {
             }
             Ok(mut processes) => {
                 let mut total_changes = 0;
-                let pids_and_names: Vec<(u32, String)> = processes.pid_to_process.values().map(|p| (p.pid(), p.get_name().to_string())).collect();
+                let pids_and_names: Vec<(u32, String)> = processes
+                    .pid_to_process
+                    .values()
+                    .map(|p| (p.pid(), p.get_name().to_string()))
+                    .collect();
                 purge_fail_map(&pids_and_names);
                 prime_core_scheduler.reset_alive();
 
@@ -350,7 +374,8 @@ fn main() -> windows::core::Result<()> {
                 if Process32FirstW(snapshot, &mut pe32).is_ok() {
                     loop {
                         let process_name =
-                            String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]).to_lowercase();
+                            String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)])
+                                .to_lowercase();
 
                         let in_configs = configs.values().any(|grade_configs| grade_configs.contains_key(&process_name));
                         if !FINDS_FAIL_SET.lock().unwrap().contains(&process_name)

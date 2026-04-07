@@ -636,7 +636,11 @@ pub fn terminate_child_processes() {
                         Ok(h) => {
                             match TerminateProcess(h, 0) {
                                 Ok(_) => log!("terminate_child_processes: terminated '{}' (PID {})", child_name, child_pid),
-                                Err(_) => log!("terminate_child_processes: failed to terminate '{}' (PID {})", child_name, child_pid),
+                                Err(_) => log!(
+                                    "terminate_child_processes: failed to terminate '{}' (PID {})",
+                                    child_name,
+                                    child_pid
+                                ),
                             }
                             let _ = CloseHandle(h);
                         }

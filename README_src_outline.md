@@ -215,8 +215,8 @@
 - [L1014:L1226]fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
 
 ## src/error_codes.rs
-- [L1:L44]fn error_from_code_win32(code: u32) -> String 
-- [L45:L68]fn error_from_ntstatus(status: i32) -> String 
+- [L1:L46]fn error_from_code_win32(code: u32) -> String 
+- [L47:L70]fn error_from_ntstatus(status: i32) -> String 
 
 ## src/logging.rs
 - [L11:L11]static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));

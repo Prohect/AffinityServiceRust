@@ -5,6 +5,7 @@ pub fn error_from_code_win32(code: u32) -> String {
         5 => "ACCESS_DENIED".to_string(),
         6 => "INVALID_HANDLE".to_string(),
         8 => "NOT_ENOUGH_MEMORY".to_string(),
+        31 => "ERROR_GEN_FAILURE".to_string(),
         87 => "INVALID_PARAMETER".to_string(),
         122 => "INSUFFICIENT_BUFFER".to_string(),
         126 => "MOD_NOT_FOUND".to_string(),
@@ -39,7 +40,8 @@ pub fn error_from_code_win32(code: u32) -> String {
         1455 => "PAGEFILE_TOO_SMALL".to_string(),
         1500 => "EVT_INVALID_CHANNEL".to_string(),
         1503 => "EVT_CHANNEL_ALREADY_EXISTS".to_string(),
-        _ => format!("ERROR_CODE_{}", code),
+
+        _ => format!("WIN32_ERROR_CODE_0x{:08X}", code),
     }
 }
 pub fn error_from_ntstatus(status: i32) -> String {

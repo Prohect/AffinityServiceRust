@@ -148,7 +148,10 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
             Some(r_handle)
         } else {
             if is_new_error(pid, process_name, Operation::InvalidHandle, 2) {
-                log_to_find(&format!("get_process_handle: Invalid r_handle {:>5}-{}", pid, process_name));
+                log_to_find(&format!(
+                    "get_process_handle: [WARNING] Invalid r_handle {:>5}-{}",
+                    pid, process_name
+                ));
             }
             None
         }
@@ -156,7 +159,7 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
         let error_code = unsafe { GetLastError().0 };
         if is_new_error(pid, process_name, Operation::OpenProcess2processQueryInformation, error_code) {
             log_to_find(&format!(
-                "get_process_handle: [{}] r_handle {:>5}-{}",
+                "get_process_handle: [{}][WARNING] r_handle {:>5}-{}",
                 error_from_code_win32(error_code),
                 pid,
                 process_name,
@@ -170,7 +173,10 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
             Some(w_handle)
         } else {
             if is_new_error(pid, process_name, Operation::InvalidHandle, 3) {
-                log_to_find(&format!("get_process_handle: Invalid w_handle {:>5}-{}", pid, process_name));
+                log_to_find(&format!(
+                    "get_process_handle: [WARNING] Invalid w_handle {:>5}-{}",
+                    pid, process_name
+                ));
             }
             None
         }
@@ -178,7 +184,7 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
         let error_code = unsafe { GetLastError().0 };
         if is_new_error(pid, process_name, Operation::OpenProcess2processSetInformation, error_code) {
             log_to_find(&format!(
-                "get_process_handle: [{}] w_handle {:>5}-{}",
+                "get_process_handle: [{}][WARNING] w_handle {:>5}-{}",
                 error_from_code_win32(error_code),
                 pid,
                 process_name,

@@ -10,7 +10,7 @@ mod winapi;
 
 use apply::{
     ApplyConfigResult, apply_affinity, apply_ideal_processors, apply_io_priority, apply_memory_priority, apply_prime_threads, apply_priority,
-    apply_process_default_cpuset, prefetch_all_thread_cycles, reset_thread_ideal_processors, update_thread_stats,
+    apply_process_default_cpuset, prefetch_all_thread_cycles, update_thread_stats,
 };
 use cli::{CliArgs, parse_args, print_help, print_help_all};
 use config::{ProcessConfig, convert, read_config, read_list, sort_and_group_config};
@@ -18,7 +18,7 @@ use logging::{
     DUST_BIN_MODE, FINDS_FAIL_SET, LOCALTIME_BUFFER, find_logger, log_message, log_process_find, log_pure_message, log_to_find, logger,
     purge_fail_map, use_console,
 };
-use process::ProcessSnapshot;
+use process::{ProcessEntry, ProcessSnapshot};
 use scheduler::PrimeThreadScheduler;
 use winapi::{
     NtSetTimerResolution, drop_module_cache, enable_debug_privilege, enable_inc_base_priority_privilege, get_process_handle,
@@ -61,7 +61,7 @@ fn apply_config(
     pid: u32,
     config: &ProcessConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
-    processes: &mut ProcessSnapshot,
+    process: &mut ProcessEntry,
     dry_run: bool,
 ) -> ApplyConfigResult {
     let mut apply_config_result = ApplyConfigResult::new();
@@ -77,12 +77,9 @@ fn apply_config(
         &process_handle,
         &mut current_mask,
         &mut apply_config_result,
-        processes,
+        process,
     );
-    apply_process_default_cpuset(pid, config, dry_run, &process_handle, &mut apply_config_result);
-    if config.cpu_set_reset_ideal {
-        reset_thread_ideal_processors(pid, config, dry_run, &config.cpu_set_cpus, &mut apply_config_result, processes);
-    }
+    apply_process_default_cpuset(pid, config, dry_run, &process_handle, process, &mut apply_config_result);
     apply_io_priority(pid, config, dry_run, &process_handle, &mut apply_config_result);
     apply_memory_priority(pid, config, dry_run, &process_handle, &mut apply_config_result);
     if !config.prime_threads_cpus.is_empty()
@@ -92,17 +89,17 @@ fn apply_config(
     {
         drop_module_cache(pid);
         prime_core_scheduler.set_alive(pid);
-        prefetch_all_thread_cycles(pid, config, processes, prime_core_scheduler, &mut apply_config_result);
+        prefetch_all_thread_cycles(pid, config, process, prime_core_scheduler, &mut apply_config_result);
         apply_prime_threads(
             pid,
             config,
             prime_core_scheduler,
-            processes,
+            process,
             dry_run,
             &mut current_mask,
             &mut apply_config_result,
         );
-        apply_ideal_processors(pid, config, processes, prime_core_scheduler, dry_run, &mut apply_config_result);
+        apply_ideal_processors(pid, config, process, prime_core_scheduler, dry_run, &mut apply_config_result);
         update_thread_stats(pid, prime_core_scheduler);
     }
     drop(process_handle);
@@ -335,7 +332,10 @@ fn main() -> windows::core::Result<()> {
 
                     for (pid, name) in &pids_and_names {
                         if let Some(config) = grade_configs.get(name) {
-                            let result = apply_config(*pid, config, &mut prime_core_scheduler, &mut processes, cli.dry_run);
+                            let Some(process) = processes.pid_to_process.get_mut(pid) else {
+                                continue;
+                            };
+                            let result = apply_config(*pid, config, &mut prime_core_scheduler, process, cli.dry_run);
                             if !result.is_empty() {
                                 for error in &result.errors {
                                     log_to_find(error);

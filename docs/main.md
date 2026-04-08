@@ -238,7 +238,7 @@ fn apply_config(
     pid: u32,
     config: &ProcessConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
-    processes: &mut ProcessSnapshot,
+    process: &mut ProcessEntry,
     dry_run: bool,
 ) -> ApplyConfigResult
 ```
@@ -246,7 +246,7 @@ fn apply_config(
 **Parameters:**
 - `config`: [`ProcessConfig`](config.md#processconfig)
 - `prime_core_scheduler`: [`PrimeThreadScheduler`](scheduler.md#primethreadscheduler)
-- `processes`: [`ProcessSnapshot`](process.md#processsnapshot)
+- `process`: [`ProcessEntry`](process.md#processentry)
 - Returns: [`ApplyConfigResult`](apply.md#applyconfigresult)
 
 **Operations (in order):**

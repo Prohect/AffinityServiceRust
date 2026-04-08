@@ -97,7 +97,7 @@ pub fn apply_affinity(
     process_handle: &ProcessHandle,
     current_mask: &mut usize,  // Output: filled with current mask
     apply_config_result: &mut ApplyConfigResult,
-    processes: &mut ProcessSnapshot,
+    process: &mut ProcessEntry,
 )
 ```
 
@@ -105,7 +105,7 @@ pub fn apply_affinity(
 - `config`: [`ProcessConfig`](config.md#processconfig)
 - `process_handle`: [`ProcessHandle`](winapi.md#processhandle)
 - `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
-- `processes`: [`ProcessSnapshot`](process.md#processsnapshot)
+- `process`: [`ProcessEntry`](process.md#processentry)
 
 **Side Effect:** `current_mask` is filled with the process's current affinity mask
 
@@ -125,15 +125,15 @@ pub fn reset_thread_ideal_processors(
     config: &ProcessConfig,
     dry_run: bool,
     cpus: &[u32],
+    process: &mut ProcessEntry,
     apply_config_result: &mut ApplyConfigResult,
-    processes: &mut ProcessSnapshot,
 )
 ```
 
 **Parameters:**
 - `config`: [`ProcessConfig`](config.md#processconfig)
+- `process`: [`ProcessEntry`](process.md#processentry)
 - `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
-- `processes`: [`ProcessSnapshot`](process.md#processsnapshot)
 
 **Purpose:** Redistributes thread ideal processors across specified CPUs. Used after affinity changes or CPU set changes (when `cpu_set_reset_ideal` is enabled).
 
@@ -162,6 +162,7 @@ pub fn apply_process_default_cpuset(
     config: &ProcessConfig,
     dry_run: bool,
     process_handle: &ProcessHandle,
+    process: &mut ProcessEntry,
     apply_config_result: &mut ApplyConfigResult,
 )
 ```
@@ -169,6 +170,7 @@ pub fn apply_process_default_cpuset(
 **Parameters:**
 - `config`: [`ProcessConfig`](config.md#processconfig)
 - `process_handle`: [`ProcessHandle`](winapi.md#processhandle)
+- `process`: [`ProcessEntry`](process.md#processentry)
 - `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
 
 **Windows API:** `GetProcessDefaultCpuSets`, `SetProcessDefaultCpuSets`
@@ -235,7 +237,7 @@ Prefetches thread cycle counts for prime thread selection.
 pub fn prefetch_all_thread_cycles(
     pid: u32,
     config: &ProcessConfig,
-    processes: &mut ProcessSnapshot,
+    process: &mut ProcessEntry,
     prime_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 )
@@ -243,7 +245,7 @@ pub fn prefetch_all_thread_cycles(
 
 **Parameters:**
 - `config`: [`ProcessConfig`](config.md#processconfig)
-- `processes`: [`ProcessSnapshot`](process.md#processsnapshot)
+- `process`: [`ProcessEntry`](process.md#processentry)
 - `prime_scheduler`: [`PrimeThreadScheduler`](scheduler.md#primethreadscheduler)
 - `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
 
@@ -268,7 +270,7 @@ pub fn apply_prime_threads(
     pid: u32,
     config: &ProcessConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
-    processes: &mut ProcessSnapshot,
+    process: &mut ProcessEntry,
     dry_run: bool,
     current_mask: &mut usize,
     apply_config_result: &mut ApplyConfigResult,
@@ -278,7 +280,7 @@ pub fn apply_prime_threads(
 **Parameters:**
 - `config`: [`ProcessConfig`](config.md#processconfig)
 - `prime_core_scheduler`: [`PrimeThreadScheduler`](scheduler.md#primethreadscheduler)
-- `processes`: [`ProcessSnapshot`](process.md#processsnapshot)
+- `process`: [`ProcessEntry`](process.md#processentry)
 - `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
 
 **Algorithm:**
@@ -378,7 +380,7 @@ Assigns ideal processors to threads based on start module.
 pub fn apply_ideal_processors(
     pid: u32,
     config: &ProcessConfig,
-    processes: &mut ProcessSnapshot,
+    process: &mut ProcessEntry,
     prime_scheduler: &mut PrimeThreadScheduler,
     dry_run: bool,
     apply_config_result: &mut ApplyConfigResult,
@@ -387,7 +389,7 @@ pub fn apply_ideal_processors(
 
 **Parameters:**
 - `config`: [`ProcessConfig`](config.md#processconfig)
-- `processes`: [`ProcessSnapshot`](process.md#processsnapshot)
+- `process`: [`ProcessEntry`](process.md#processentry)
 - `prime_scheduler`: [`PrimeThreadScheduler`](scheduler.md#primethreadscheduler)
 - `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
 

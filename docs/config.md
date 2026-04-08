@@ -26,16 +26,54 @@ Complete configuration for a single process.
 ```rust
 pub struct ProcessConfig {
     pub name: String,                           // Process executable name
-    pub priority: ProcessPriority,              // Process priority class
+    pub priority: ProcessPriority,              // Process priority class — see [priority.md](priority.md#processpriority)
     pub affinity_cpus: Vec<u32>,                // Hard affinity CPU list
     pub cpu_set_cpus: Vec<u32>,                 // CPU Set CPU list
     pub cpu_set_reset_ideal: bool,              // Reset ideal processors after CPU set change
     pub prime_threads_cpus: Vec<u32>,           // Prime scheduling CPUs
-    pub prime_threads_prefixes: Vec<PrimePrefix>, // Module-specific rules
+    pub prime_threads_prefixes: Vec<PrimePrefix>, // Module-specific rules — see [PrimePrefix](#primeprefix) below
     pub track_top_x_threads: i32,               // Track top N threads (0=off, >0=track, <0=track only)
-    pub io_priority: IOPriority,                // I/O priority
-    pub memory_priority: MemoryPriority,        // Memory priority
-    pub ideal_processor_rules: Vec<IdealProcessorRule>, // Ideal processor assignments
+    pub io_priority: IOPriority,                // I/O priority — see [priority.md](priority.md#iopriority)
+    pub memory_priority: MemoryPriority,        // Memory priority — see [priority.md](priority.md#memorypriority)
+    pub ideal_processor_rules: Vec<IdealProcessorRule>, // Ideal processor assignments — see [IdealProcessorRule](#idealprocessorrule) below
+}
+```
+
+### PrimePrefix
+
+Module-specific prefix rule for prime thread scheduling.
+
+```rust
+pub struct PrimePrefix {
+    pub prefix: String,              // Module name prefix to match
+    pub cpus: Option<Vec<u32>>,      // Specific CPUs for this prefix (None = use prime_threads_cpus)
+    pub thread_priority: ThreadPriority, // Thread priority to apply — see [priority.md](priority.md#threadpriority)
+}
+```
+
+Used in [`ProcessConfig::prime_threads_prefixes`](#processconfig) for per-module CPU and priority assignments.
+
+### IdealProcessorRule
+
+Rule for assigning ideal processors to threads based on module prefix.
+
+```rust
+pub struct IdealProcessorRule {
+    pub cpus: Vec<u32>,              // CPU indices for ideal processor assignment
+    pub prefixes: Vec<String>,       // Module name prefixes to match (empty = all threads)
+}
+```
+
+Used in [`ProcessConfig::ideal_processor_rules`](#processconfig). When `prefixes` is empty, the rule applies to all threads.
+
+### IdealProcessorPrefix
+
+Module prefix with specific CPUs (internal helper for parsing).
+
+```rust
+pub struct IdealProcessorPrefix {
+    pub prefix: String,              // Module name prefix
+    pub cpus: Vec<u32>,              // CPU indices for this prefix
 }
 ```
 

@@ -261,7 +261,7 @@ fn apply_config(
    - Prefetch cycles ([`prefetch_all_thread_cycles()`](apply.md#prefetch_all_thread_cycles))
    - Apply prime threads ([`apply_prime_threads()`](apply.md#apply_prime_threads) in [apply.rs](apply.md))
    - Apply ideal processors ([`apply_ideal_processors()`](apply.md#apply_ideal_processors))
-   - Update thread stats ([`update_active_streaks()`](scheduler.md#update_active_streaks))
+   - Update thread stats ([`update_thread_stats()`](apply.md#update_thread_stats))
 
 **Early Exit:** If process handle cannot be obtained, returns empty result immediately.
 

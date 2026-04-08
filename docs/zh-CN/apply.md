@@ -440,6 +440,28 @@ fn log_error_if_new(
 
 使用 `logging::is_new_error()` 进行去重。
 
+### update_thread_stats
+
+在每次循环迭代结束时更新缓存的线程统计。
+
+```rust
+pub fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler)
+```
+
+**参数：**
+- `pid` - 进程 ID
+- `prime_scheduler`: [`PrimeThreadScheduler`](scheduler.md#primethreadscheduler)
+
+**目的：**将缓存的周期和时间数据持久化到 last_* 字段，用于下次迭代的增量计算。
+
+**被调用者：**每次循环结束时的 [`apply_config()`](main.md#apply_config-function)
+
+**算法：**
+1. 从调度器获取进程统计
+2. 对于进程中的每个线程：
+   - 如果 cached_cycles > 0：复制到 last_cycles，清除 cached_cycles
+   - 如果 cached_total_time > 0：复制到 last_total_time，清除 cached_total_time
+
 ## 错误处理
 
 所有函数使用 `log_error_if_new()` 防止日志垃圾：

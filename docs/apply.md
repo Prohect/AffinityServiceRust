@@ -440,6 +440,28 @@ fn log_error_if_new(
 
 Uses `logging::is_new_error()` for deduplication.
 
+### update_thread_stats
+
+Updates cached thread statistics at the end of each loop iteration.
+
+```rust
+pub fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler)
+```
+
+**Parameters:**
+- `pid` - Process ID
+- `prime_scheduler`: [`PrimeThreadScheduler`](scheduler.md#primethreadscheduler)
+
+**Purpose:** Persists cached cycle and time data to last_* fields for delta calculation in the next iteration.
+
+**Called By:** [`apply_config()`](main.md#apply_config-function) at the end of each loop
+
+**Algorithm:**
+1. Get process stats from scheduler
+2. For each thread in the process:
+   - If cached_cycles > 0: copy to last_cycles, clear cached_cycles
+   - If cached_total_time > 0: copy to last_total_time, clear cached_total_time
+
 ## Error Handling
 
 All functions use `log_error_if_new()` to prevent log spam:

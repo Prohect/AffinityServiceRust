@@ -263,7 +263,7 @@ fn apply_config(
    - 预取周期 ([`prefetch_all_thread_cycles()`](apply.md#prefetch_all_thread_cycles))
    - 应用 prime 线程 ([`apply_prime_threads()`](apply.md#apply_prime_threads) 在 [apply.rs](apply.md))
    - 应用理想处理器 ([`apply_ideal_processors()`](apply.md#apply_ideal_processors))
-   - 更新线程统计 ([`update_active_streaks()`](scheduler.md#update_active_streaks))
+   - 更新线程统计 ([`update_thread_stats()`](apply.md#update_thread_stats))
 
 **提前退出：**如果无法获取进程句柄，立即返回空结果。
 

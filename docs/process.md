@@ -27,6 +27,9 @@ pub struct ProcessSnapshot {
 }
 ```
 
+**Fields:**
+- `pid_to_process`: HashMap of [`ProcessEntry`](#processentry) indexed by PID
+
 **Lifetime:** The `buffer` must outlive any references in `ProcessEntry` (threads pointer).
 
 **Drop Implementation:** Clears both collections to release memory.

@@ -26,18 +26,25 @@ Complete configuration for a single process.
 ```rust
 pub struct ProcessConfig {
     pub name: String,                           // Process executable name
-    pub priority: ProcessPriority,              // Process priority class — see [priority.md](priority.md#processpriority)
+    pub priority: ProcessPriority,              // Process priority class
     pub affinity_cpus: Vec<u32>,                // Hard affinity CPU list
     pub cpu_set_cpus: Vec<u32>,                 // CPU Set CPU list
     pub cpu_set_reset_ideal: bool,              // Reset ideal processors after CPU set change
     pub prime_threads_cpus: Vec<u32>,           // Prime scheduling CPUs
-    pub prime_threads_prefixes: Vec<PrimePrefix>, // Module-specific rules — see [PrimePrefix](#primeprefix) below
+    pub prime_threads_prefixes: Vec<PrimePrefix>, // Module-specific rules
     pub track_top_x_threads: i32,               // Track top N threads (0=off, >0=track, <0=track only)
-    pub io_priority: IOPriority,                // I/O priority — see [priority.md](priority.md#iopriority)
-    pub memory_priority: MemoryPriority,        // Memory priority — see [priority.md](priority.md#memorypriority)
-    pub ideal_processor_rules: Vec<IdealProcessorRule>, // Ideal processor assignments — see [IdealProcessorRule](#idealprocessorrule) below
+    pub io_priority: IOPriority,                // I/O priority
+    pub memory_priority: MemoryPriority,        // Memory priority
+    pub ideal_processor_rules: Vec<IdealProcessorRule>, // Ideal processor assignments
 }
 ```
+
+**Type References:**
+- `priority`: [`ProcessPriority`](priority.md#processpriority)
+- `io_priority`: [`IOPriority`](priority.md#iopriority)
+- `memory_priority`: [`MemoryPriority`](priority.md#memorypriority)
+- `prime_threads_prefixes`: [`PrimePrefix`](#primeprefix)
+- `ideal_processor_rules`: [`IdealProcessorRule`](#idealprocessorrule)
 
 ### PrimePrefix
 
@@ -47,11 +54,14 @@ Module-specific prefix rule for prime thread scheduling.
 pub struct PrimePrefix {
     pub prefix: String,              // Module name prefix to match
     pub cpus: Option<Vec<u32>>,      // Specific CPUs for this prefix (None = use prime_threads_cpus)
-    pub thread_priority: ThreadPriority, // Thread priority to apply — see [priority.md](priority.md#threadpriority)
+    pub thread_priority: ThreadPriority, // Thread priority to apply
 }
 ```
 
 Used in [`ProcessConfig::prime_threads_prefixes`](#processconfig) for per-module CPU and priority assignments.
+
+**Type References:**
+- `thread_priority`: [`ThreadPriority`](priority.md#threadpriority)
 
 ### IdealProcessorRule
 

@@ -29,8 +29,8 @@ pub struct PrimeThreadScheduler {
 ```
 
 **Fields:**
-- `pid_to_process_stats` - Per-process thread statistics
-- `constants` - Hysteresis thresholds from config
+- `pid_to_process_stats` - Per-process thread statistics ([`ProcessStats`](#processstats))
+- `constants` - Hysteresis thresholds from config ([`ConfigConstants`](config.md#configconstants))
 
 ### ProcessStats
 
@@ -66,6 +66,10 @@ pub struct ThreadStats {
     pub process_id: u32,
 }
 ```
+
+**Type References:**
+- `original_priority`: [`ThreadPriority`](priority.md#threadpriority)
+- `ideal_processor`: [`IdealProcessorState`](#idealprocessorstate)
 
 ### IdealProcessorState
 

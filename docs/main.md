@@ -243,6 +243,12 @@ fn apply_config(
 ) -> ApplyConfigResult
 ```
 
+**Parameters:**
+- `config`: [`ProcessConfig`](config.md#processconfig)
+- `prime_core_scheduler`: [`PrimeThreadScheduler`](scheduler.md#primethreadscheduler)
+- `processes`: [`ProcessSnapshot`](process.md#processsnapshot)
+- Returns: [`ApplyConfigResult`](apply.md#applyconfigresult)
+
 **Operations (in order):**
 1. **Priority** - [`apply_priority()`](apply.md#apply_priority)
 2. **Affinity** - [`apply_affinity()`](apply.md#apply_affinity)

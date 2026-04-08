@@ -31,6 +31,8 @@ pub struct ApplyConfigResult {
 }
 ```
 
+Returned by [`apply_config()`](main.md#apply_config-function) in main.rs.
+
 **Methods:**
 - `new()` - Create empty result
 - `add_change(change: String)` - Add change message (format: `"$operation details"`)
@@ -74,6 +76,11 @@ pub fn apply_priority(
 )
 ```
 
+**Parameters:**
+- `config`: [`ProcessConfig`](config.md#processconfig)
+- `process_handle`: [`ProcessHandle`](winapi.md#processhandle)
+- `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
+
 **Windows API:** `GetPriorityClass`, `SetPriorityClass`
 
 **Change Logged:** `"Priority: {old} -> {new}"`
@@ -93,6 +100,12 @@ pub fn apply_affinity(
     processes: &mut ProcessSnapshot,
 )
 ```
+
+**Parameters:**
+- `config`: [`ProcessConfig`](config.md#processconfig)
+- `process_handle`: [`ProcessHandle`](winapi.md#processhandle)
+- `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
+- `processes`: [`ProcessSnapshot`](process.md#processsnapshot)
 
 **Side Effect:** `current_mask` is filled with the process's current affinity mask
 
@@ -116,6 +129,11 @@ pub fn reset_thread_ideal_processors(
     processes: &mut ProcessSnapshot,
 )
 ```
+
+**Parameters:**
+- `config`: [`ProcessConfig`](config.md#processconfig)
+- `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
+- `processes`: [`ProcessSnapshot`](process.md#processsnapshot)
 
 **Purpose:** Redistributes thread ideal processors across specified CPUs. Used after affinity changes or CPU set changes (when `cpu_set_reset_ideal` is enabled).
 
@@ -148,6 +166,11 @@ pub fn apply_process_default_cpuset(
 )
 ```
 
+**Parameters:**
+- `config`: [`ProcessConfig`](config.md#processconfig)
+- `process_handle`: [`ProcessHandle`](winapi.md#processhandle)
+- `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
+
 **Windows API:** `GetProcessDefaultCpuSets`, `SetProcessDefaultCpuSets`
 
 **Note:** Query may fail with error 122 (INSUFFICIENT_BUFFER) initially - this is expected.
@@ -167,6 +190,11 @@ pub fn apply_io_priority(
     apply_config_result: &mut ApplyConfigResult,
 )
 ```
+
+**Parameters:**
+- `config`: [`ProcessConfig`](config.md#processconfig)
+- `process_handle`: [`ProcessHandle`](winapi.md#processhandle)
+- `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
 
 **Windows API:** `NtQueryInformationProcess`, `NtSetInformationProcess` (class 33)
 
@@ -188,6 +216,11 @@ pub fn apply_memory_priority(
 )
 ```
 
+**Parameters:**
+- `config`: [`ProcessConfig`](config.md#processconfig)
+- `process_handle`: [`ProcessHandle`](winapi.md#processhandle)
+- `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
+
 **Windows API:** `GetProcessInformation`, `SetProcessInformation` (`ProcessMemoryPriority`)
 
 **Change Logged:** `"Memory Priority: {old} -> {new}"`
@@ -207,6 +240,12 @@ pub fn prefetch_all_thread_cycles(
     apply_config_result: &mut ApplyConfigResult,
 )
 ```
+
+**Parameters:**
+- `config`: [`ProcessConfig`](config.md#processconfig)
+- `processes`: [`ProcessSnapshot`](process.md#processsnapshot)
+- `prime_scheduler`: [`PrimeThreadScheduler`](scheduler.md#primethreadscheduler)
+- `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
 
 **Algorithm:**
 1. Get threads sorted by CPU time delta
@@ -235,6 +274,12 @@ pub fn apply_prime_threads(
     apply_config_result: &mut ApplyConfigResult,
 )
 ```
+
+**Parameters:**
+- `config`: [`ProcessConfig`](config.md#processconfig)
+- `prime_core_scheduler`: [`PrimeThreadScheduler`](scheduler.md#primethreadscheduler)
+- `processes`: [`ProcessSnapshot`](process.md#processsnapshot)
+- `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
 
 **Algorithm:**
 1. Set tracking info if enabled
@@ -279,6 +324,11 @@ pub fn apply_prime_threads_promote(
 )
 ```
 
+**Parameters:**
+- `prime_core_scheduler`: [`PrimeThreadScheduler`](scheduler.md#primethreadscheduler)
+- `config`: [`ProcessConfig`](config.md#processconfig)
+- `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
+
 **For each selected thread:**
 1. Resolve start address to module name
 2. Match against prefix rules
@@ -305,6 +355,12 @@ pub fn apply_prime_threads_demote(
 )
 ```
 
+**Parameters:**
+- `process`: [`ProcessEntry`](process.md#processentry)
+- `prime_core_scheduler`: [`PrimeThreadScheduler`](scheduler.md#primethreadscheduler)
+- `config`: [`ProcessConfig`](config.md#processconfig)
+- `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
+
 **For each thread not in selected set but with pinned CPUs:**
 1. Clear CPU Set assignment (`SetThreadSelectedCpuSets` with empty)
 2. Restore original thread priority
@@ -328,6 +384,12 @@ pub fn apply_ideal_processors(
     apply_config_result: &mut ApplyConfigResult,
 )
 ```
+
+**Parameters:**
+- `config`: [`ProcessConfig`](config.md#processconfig)
+- `processes`: [`ProcessSnapshot`](process.md#processsnapshot)
+- `prime_scheduler`: [`PrimeThreadScheduler`](scheduler.md#primethreadscheduler)
+- `apply_config_result`: [`ApplyConfigResult`](#applyconfigresult)
 
 **Algorithm per rule:**
 1. Filter threads by module prefix (if specified)

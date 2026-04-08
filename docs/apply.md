@@ -104,25 +104,33 @@ pub fn apply_affinity(
 
 ### reset_thread_ideal_processors
 
-Resets ideal processors after affinity change.
+Resets ideal processors for all threads.
 
 ```rust
 pub fn reset_thread_ideal_processors(
     pid: u32,
     config: &ProcessConfig,
     dry_run: bool,
+    cpus: &[u32],
     apply_config_result: &mut ApplyConfigResult,
     processes: &mut ProcessSnapshot,
 )
 ```
 
-**Purpose:** When process affinity changes, Windows may clamp thread ideal processors. This redistributes threads across new affinity CPUs.
+**Purpose:** Redistributes thread ideal processors across specified CPUs. Used after affinity changes or CPU set changes (when `cpu_set_reset_ideal` is enabled).
+
+**Arguments:**
+- `cpus` - The set of CPU indices to distribute thread ideal processors across
 
 **Algorithm:**
 1. Sort threads by total CPU time (kernel + user)
-2. Assign ideal processors round-robin across affinity CPUs
+2. Assign ideal processors round-robin across specified CPUs
 3. Apply random shift to avoid clumping
 4. Skip assignment if already on target CPU (lazy set)
+
+**Called By:**
+- `apply_affinity()` - After affinity change (passes `&config.affinity_cpus`)
+- `apply_config()` in main.rs - After CPU set change when `config.cpu_set_reset_ideal` is true (passes `&config.cpu_set_cpus`)
 
 **Windows API:** `OpenThread`, `SetThreadIdealProcessorEx`
 
@@ -143,6 +151,8 @@ pub fn apply_process_default_cpuset(
 **Windows API:** `GetProcessDefaultCpuSets`, `SetProcessDefaultCpuSets`
 
 **Note:** Query may fail with error 122 (INSUFFICIENT_BUFFER) initially - this is expected.
+
+**Post-Action:** If `config.cpu_set_reset_ideal` is true, caller should call `reset_thread_ideal_processors()` with `&config.cpu_set_cpus` to redistribute thread ideal processors.
 
 ### apply_io_priority
 

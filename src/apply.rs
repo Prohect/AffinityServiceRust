@@ -56,7 +56,8 @@ impl ApplyConfigResult {
     }
 }
 
-/// Extracts read and write handles from ProcessHandle, preferring full handles over limited.
+/// Extracts read and write handles from ProcessHandle, preferring full access handles over limited.
+/// results in (read_handle, write_handle)
 #[inline(always)]
 fn get_handles(process_handle: &ProcessHandle) -> (Option<HANDLE>, Option<HANDLE>) {
     let r = process_handle.r_handle.or(Some(process_handle.r_limited_handle));
@@ -193,7 +194,7 @@ pub fn apply_affinity(
                             Ok(_) => {
                                 apply_config_result.add_change(change_msg);
                                 *current_mask = affinity_mask;
-                                reset_thread_ideal_processors(pid, config, false, apply_config_result, processes);
+                                reset_thread_ideal_processors(pid, config, false, &config.affinity_cpus, apply_config_result, processes);
                             }
                         }
                     }
@@ -203,27 +204,29 @@ pub fn apply_affinity(
     }
 }
 
-/// Resets ideal processors for all threads after affinity change.
+/// Resets ideal processors for all threads.
 ///
 /// When process affinity is changed, Windows may reset thread ideal processors.
 /// This redistributes threads across the new affinity CPUs with a random shift
 /// to avoid always assigning too much threads to the same CPUs.
+/// # Arguments
+/// * `cpus` - The set of CPU indices to distribute thread ideal processors across.
+///   Callers pass `&config.affinity_cpus` after an affinity change, or
+///   `&config.cpu_set_cpus` after a CPU-set change (when `cpu_set_reset_ideal` is set).
 pub fn reset_thread_ideal_processors(
     pid: u32,
     config: &ProcessConfig,
     dry_run: bool,
+    cpus: &[u32],
     apply_config_result: &mut ApplyConfigResult,
     processes: &mut ProcessSnapshot,
 ) {
-    if config.affinity_cpus.is_empty() {
+    if cpus.is_empty() {
         return;
     }
 
     if dry_run {
-        apply_config_result.add_change(format!(
-            "Reset Ideal Processors: {} threads based on CPU time",
-            config.affinity_cpus.len()
-        ));
+        apply_config_result.add_change(format!("Reset Ideal Processors: {} threads based on CPU time", cpus.len()));
         return;
     }
 
@@ -267,12 +270,12 @@ pub fn reset_thread_ideal_processors(
 
     tid_time_handles.sort_by(|a, b| b.1.cmp(&a.1));
 
-    let target_cpu_count = config.affinity_cpus.len();
+    let target_cpu_count = cpus.len();
     let random_shift = random::<u8>();
     let mut counter_set_success = 0;
     for (i, (tid, _cpu_time, thread_handle)) in tid_time_handles.iter().enumerate() {
         let target_cpu_index = (i + random_shift as usize) % target_cpu_count;
-        let target_cpu = config.affinity_cpus[target_cpu_index];
+        let target_cpu = cpus[target_cpu_index];
 
         match set_thread_ideal_processor_ex(*thread_handle, 0, target_cpu as u8) {
             Err(_) => {

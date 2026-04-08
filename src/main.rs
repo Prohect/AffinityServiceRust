@@ -10,7 +10,7 @@ mod winapi;
 
 use apply::{
     ApplyConfigResult, apply_affinity, apply_ideal_processors, apply_io_priority, apply_memory_priority, apply_prime_threads, apply_priority,
-    apply_process_default_cpuset, prefetch_all_thread_cycles, update_thread_stats,
+    apply_process_default_cpuset, prefetch_all_thread_cycles, reset_thread_ideal_processors, update_thread_stats,
 };
 use cli::{CliArgs, parse_args, print_help, print_help_all};
 use config::{ProcessConfig, convert, read_config, read_list, sort_and_group_config};
@@ -80,6 +80,9 @@ fn apply_config(
         processes,
     );
     apply_process_default_cpuset(pid, config, dry_run, &process_handle, &mut apply_config_result);
+    if config.cpu_set_reset_ideal {
+        reset_thread_ideal_processors(pid, config, dry_run, &config.cpu_set_cpus, &mut apply_config_result, processes);
+    }
     apply_io_priority(pid, config, dry_run, &process_handle, &mut apply_config_result);
     apply_memory_priority(pid, config, dry_run, &process_handle, &mut apply_config_result);
     if !config.prime_threads_cpus.is_empty()

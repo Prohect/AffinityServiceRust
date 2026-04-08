@@ -38,6 +38,10 @@ pub struct ProcessConfig {
     pub priority: ProcessPriority,
     pub affinity_cpus: Vec<u32>,
     pub cpu_set_cpus: Vec<u32>,
+    /// When true, `reset_thread_ideal_processors` will be called after applying the CPU set,
+    /// distributing thread ideal processors across `cpu_set_cpus`.
+    /// Enabled by prefixing the cpuset field value with `@` in the config rule.
+    pub cpu_set_reset_ideal: bool,
     pub prime_threads_cpus: Vec<u32>,
     pub prime_threads_prefixes: Vec<PrimePrefix>,
     pub track_top_x_threads: i32,
@@ -439,10 +443,21 @@ fn parse_and_insert_rules(
 
     let affinity_cpus = resolve_cpu_spec(rule_parts[1], "affinity", line_number, cpu_aliases, &mut result.errors);
 
-    let cpu_set_cpus = if rule_parts.len() >= 3 {
-        resolve_cpu_spec(rule_parts[2], "cpuset", line_number, cpu_aliases, &mut result.errors)
+    let (cpu_set_cpus, cpu_set_reset_ideal) = if rule_parts.len() >= 3 {
+        let spec = rule_parts[2].trim();
+        if let Some(stripped) = spec.strip_prefix('@') {
+            (
+                resolve_cpu_spec(stripped, "cpuset", line_number, cpu_aliases, &mut result.errors),
+                true,
+            )
+        } else {
+            (
+                resolve_cpu_spec(spec, "cpuset", line_number, cpu_aliases, &mut result.errors),
+                false,
+            )
+        }
     } else {
-        Vec::new()
+        (Vec::new(), false)
     };
 
     let (prime_threads_cpus, prime_threads_prefixes, track_top_x_threads) = if rule_parts.len() >= 4 {
@@ -676,6 +691,7 @@ fn parse_and_insert_rules(
                 priority,
                 affinity_cpus: affinity_cpus.clone(),
                 cpu_set_cpus: cpu_set_cpus.clone(),
+                cpu_set_reset_ideal,
                 prime_threads_cpus: prime_threads_cpus.clone(),
                 prime_threads_prefixes: prime_threads_prefixes.clone(),
                 track_top_x_threads,

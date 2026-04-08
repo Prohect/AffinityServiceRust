@@ -29,6 +29,7 @@ pub struct ProcessConfig {
     pub priority: ProcessPriority,              // Process priority class
     pub affinity_cpus: Vec<u32>,                // Hard affinity CPU list
     pub cpu_set_cpus: Vec<u32>,                 // CPU Set CPU list
+    pub cpu_set_reset_ideal: bool,              // Reset ideal processors after CPU set change
     pub prime_threads_cpus: Vec<u32>,           // Prime scheduling CPUs
     pub prime_threads_prefixes: Vec<PrimePrefix>, // Module-specific rules
     pub track_top_x_threads: i32,               // Track top N threads (0=off, >0=track, <0=track only)
@@ -210,6 +211,16 @@ Aliases support all CPU specification formats including multiple ranges for >64 
 process.exe:priority:affinity:cpuset:prime:io:memory:ideal:grade
 ```
 
+**CPU Set Reset Ideal:**
+
+Prefix the cpuset field with `@` to enable resetting thread ideal processors after applying the CPU set:
+```ini
+# After setting CPU set to 0-3, redistribute thread ideal processors across CPUs 0-3
+game.exe:normal:*a:@0-3:*p:normal:normal:1
+```
+
+This prevents Windows from clamping threads to narrow CPU ranges after CPU set changes.
+
 **Examples:**
 ```ini
 # Simple rule (grade defaults to 1)
@@ -217,6 +228,9 @@ cs2.exe:normal:*a:*p:*pN01:normal:normal
 
 # With ideal processor and explicit grade
 background.exe:normal:*a:*p:*p:normal:normal:*p:5
+
+# CPU set with ideal processor reset
+game.exe:normal:*a:@0-3:*p:normal:normal:1
 
 # Process group
 browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal:1

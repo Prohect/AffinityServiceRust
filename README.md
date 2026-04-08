@@ -90,10 +90,22 @@ An optional `ideal` specification assigns preferred processors to the most CPU-a
 - Each assignment log line includes `start=module+offset` (e.g. `start=cs2.exe+0xEA60`)
 - Multi-rule syntax allows different CPU sets for different module prefixes
 
-Note about affinity changes and ideal processor resetting:
-- When a process's CPU affinity is changed by the service, AffinityServiceRust will proactively reset per-thread ideal processor assignments for that process. This prevents the Windows kernel from clamping many threads toward a narrow CPU range after an affinity change.
-- The reset logic collects threads' total CPU time and cycle counts, sorts by total CPU time (descending) with cycle count as secondary key, then assigns ideal processors round-robin across the configured affinity CPUs with a small random shift to avoid clumping.
-- This behavior runs automatically when affinity is applied and does not require additional configuration.
+### Ideal Processor Reset
+
+When a process's CPU affinity is changed, AffinityServiceRust automatically resets per-thread ideal processor assignments to prevent Windows from clamping threads to narrow CPU ranges.
+
+This can also be enabled for CPU Set changes by prefixing the cpuset field with `@`:
+
+```ini
+# After setting CPU set to 0-3, redistribute thread ideal processors across CPUs 0-3
+game.exe:normal:*a:@0-3:*p:normal:normal:1
+```
+
+**How it works:**
+- Collects threads' total CPU time and sorts in descending order
+- Assigns ideal processors round-robin across the configured CPUs
+- Applies a small random shift to avoid clumping
+- Runs automatically after affinity changes, or after CPU set changes when `@` prefix is used
 
 ## Configuration
 

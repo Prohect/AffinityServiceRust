@@ -74,10 +74,10 @@ fn apply_config(
         pid,
         config,
         dry_run,
-        &process_handle,
         &mut current_mask,
-        &mut apply_config_result,
+        &process_handle,
         process,
+        &mut apply_config_result,
     );
     apply_process_default_cpuset(pid, config, dry_run, &process_handle, process, &mut apply_config_result);
     apply_io_priority(pid, config, dry_run, &process_handle, &mut apply_config_result);
@@ -93,13 +93,13 @@ fn apply_config(
         apply_prime_threads(
             pid,
             config,
-            prime_core_scheduler,
-            process,
             dry_run,
             &mut current_mask,
+            process,
+            prime_core_scheduler,
             &mut apply_config_result,
         );
-        apply_ideal_processors(pid, config, process, prime_core_scheduler, dry_run, &mut apply_config_result);
+        apply_ideal_processors(pid, config, dry_run, process, prime_core_scheduler, &mut apply_config_result);
         update_thread_stats(pid, prime_core_scheduler);
     }
     drop(process_handle);

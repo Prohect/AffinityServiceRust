@@ -94,10 +94,10 @@ pub fn apply_affinity(
     pid: u32,
     config: &ProcessConfig,
     dry_run: bool,
-    process_handle: &ProcessHandle,
     current_mask: &mut usize,  // 输出：填充当前掩码
-    apply_config_result: &mut ApplyConfigResult,
+    process_handle: &ProcessHandle,
     process: &mut ProcessEntry,
+    apply_config_result: &mut ApplyConfigResult,
 )
 ```
 
@@ -269,10 +269,10 @@ Prime 线程调度的主编排函数。
 pub fn apply_prime_threads(
     pid: u32,
     config: &ProcessConfig,
-    prime_core_scheduler: &mut PrimeThreadScheduler,
-    process: &mut ProcessEntry,
     dry_run: bool,
     current_mask: &mut usize,
+    process: &mut ProcessEntry,
+    prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 )
 ```
@@ -302,10 +302,10 @@ pub fn apply_prime_threads(
 
 ```rust
 pub fn apply_prime_threads_select(
-    tid_with_delta_cycles: &mut [(u32, u64, bool)],
-    prime_core_scheduler: &mut PrimeThreadScheduler,
     pid: u32,
     prime_count: usize,
+    tid_with_delta_cycles: &mut [(u32, u64, bool)],
+    prime_core_scheduler: &mut PrimeThreadScheduler,
 )
 ```
 
@@ -317,11 +317,11 @@ pub fn apply_prime_threads_select(
 
 ```rust
 pub fn apply_prime_threads_promote(
-    tid_with_delta_cycles: &[(u32, u64, bool)],
-    prime_core_scheduler: &mut PrimeThreadScheduler,
     pid: u32,
     config: &ProcessConfig,
     current_mask: &mut usize,
+    tid_with_delta_cycles: &[(u32, u64, bool)],
+    prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 )
 ```
@@ -348,11 +348,11 @@ pub fn apply_prime_threads_promote(
 
 ```rust
 pub fn apply_prime_threads_demote(
+    pid: u32,
+    config: &ProcessConfig,
     process: &mut ProcessEntry,
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
-    pid: u32,
-    config: &ProcessConfig,
     apply_config_result: &mut ApplyConfigResult,
 )
 ```
@@ -380,9 +380,9 @@ pub fn apply_prime_threads_demote(
 pub fn apply_ideal_processors(
     pid: u32,
     config: &ProcessConfig,
+    dry_run: bool,
     process: &mut ProcessEntry,
     prime_scheduler: &mut PrimeThreadScheduler,
-    dry_run: bool,
     apply_config_result: &mut ApplyConfigResult,
 )
 ```

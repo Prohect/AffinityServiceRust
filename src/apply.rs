@@ -132,10 +132,10 @@ pub fn apply_affinity(
     pid: u32,
     config: &ProcessConfig,
     dry_run: bool,
-    process_handle: &ProcessHandle,
     current_mask: &mut usize,
-    apply_config_result: &mut ApplyConfigResult,
+    process_handle: &ProcessHandle,
     process: &mut ProcessEntry,
+    apply_config_result: &mut ApplyConfigResult,
 ) {
     let (Some(r_handle), Some(w_handle)) = get_handles(process_handle) else {
         return;
@@ -711,10 +711,10 @@ pub fn prefetch_all_thread_cycles(
 pub fn apply_prime_threads(
     pid: u32,
     config: &ProcessConfig,
-    prime_core_scheduler: &mut PrimeThreadScheduler,
-    process: &mut ProcessEntry,
     dry_run: bool,
     current_mask: &mut usize,
+    process: &mut ProcessEntry,
+    prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) {
     let has_prime_cpus = !config.prime_threads_cpus.is_empty() || !config.prime_threads_prefixes.is_empty();
@@ -767,21 +767,21 @@ pub fn apply_prime_threads(
         })
         .collect();
 
-    apply_prime_threads_select(&mut tid_with_delta_cycles, prime_core_scheduler, pid, prime_count);
+    apply_prime_threads_select(pid, prime_count, &mut tid_with_delta_cycles, prime_core_scheduler);
     apply_prime_threads_promote(
-        &tid_with_delta_cycles,
-        prime_core_scheduler,
         pid,
         config,
         current_mask,
+        &tid_with_delta_cycles,
+        prime_core_scheduler,
         apply_config_result,
     );
     apply_prime_threads_demote(
+        pid,
+        config,
         process,
         &tid_with_delta_cycles,
         prime_core_scheduler,
-        pid,
-        config,
         apply_config_result,
     );
 
@@ -806,10 +806,10 @@ pub fn apply_prime_threads(
 /// - Currently prime threads stay prime if cycles >= keep_threshold% of max
 /// - Non-prime threads become prime if cycles >= entry_threshold% of max AND active_streak >= min_active_streak
 pub fn apply_prime_threads_select(
-    tid_with_delta_cycles: &mut [(u32, u64, bool)],
-    prime_core_scheduler: &mut PrimeThreadScheduler,
     pid: u32,
     prime_count: usize,
+    tid_with_delta_cycles: &mut [(u32, u64, bool)],
+    prime_core_scheduler: &mut PrimeThreadScheduler,
 ) {
     prime_core_scheduler.select_top_threads_with_hysteresis(pid, tid_with_delta_cycles, prime_count, |thread_stats| {
         !thread_stats.pinned_cpu_set_ids.is_empty()
@@ -823,11 +823,11 @@ pub fn apply_prime_threads_select(
 /// - Applies module-specific CPU set if prefixes are configured
 /// - Boosts thread priority (either explicitly configured or auto-boosted by one level)
 pub fn apply_prime_threads_promote(
-    tid_with_delta_cycles: &[(u32, u64, bool)],
-    prime_core_scheduler: &mut PrimeThreadScheduler,
     pid: u32,
     config: &ProcessConfig,
     current_mask: &mut usize,
+    tid_with_delta_cycles: &[(u32, u64, bool)],
+    prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) {
     for &(tid, delta_cycles, is_prime) in tid_with_delta_cycles {
@@ -943,11 +943,11 @@ pub fn apply_prime_threads_promote(
 /// Removes CPU set pinning and restores original thread priority.
 /// Clears pinned_cpu_set_ids even on failure to prevent infinite retry loops.
 pub fn apply_prime_threads_demote(
+    pid: u32,
+    config: &ProcessConfig,
     process: &mut ProcessEntry,
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
-    pid: u32,
-    config: &ProcessConfig,
     apply_config_result: &mut ApplyConfigResult,
 ) {
     let prime_set: HashSet<u32> = tid_with_delta_cycles
@@ -1024,9 +1024,9 @@ pub fn apply_prime_threads_demote(
 pub fn apply_ideal_processors(
     pid: u32,
     config: &ProcessConfig,
+    dry_run: bool,
     process: &mut ProcessEntry,
     prime_scheduler: &mut PrimeThreadScheduler,
-    dry_run: bool,
     apply_config_result: &mut ApplyConfigResult,
 ) {
     if config.ideal_processor_rules.is_empty() {

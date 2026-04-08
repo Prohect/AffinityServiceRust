@@ -237,9 +237,9 @@ Applies all configuration to a single process.
 fn apply_config(
     pid: u32,
     config: &ProcessConfig,
-    prime_core_scheduler: &mut PrimeThreadScheduler,
-    process: &mut ProcessEntry,
     dry_run: bool,
+    process: &mut ProcessEntry,
+    prime_core_scheduler: &mut PrimeThreadScheduler,
 ) -> ApplyConfigResult
 ```
 

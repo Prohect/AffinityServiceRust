@@ -304,6 +304,9 @@ struct ApplyFailEntry {
 }
 ```
 
+**Fields:**
+- `operation`: [`Operation`](#operation) - The operation that failed
+
 **Equality:** All fields must match for entries to be considered equal.
 
 **Hashing:** Derived from all fields.

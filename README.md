@@ -10,15 +10,15 @@ A high-performance Windows process management service written in Rust that autom
 
 AffinityServiceRust continuously monitors running processes and applies customized scheduling policies based on rules defined in configuration files. It supports:
 
-- **[Process Priority Management](#process-priority)**: Set process priority class (Idle to Real-time)
-- **[CPU Affinity](#cpu-affinity)**: Hard-pin processes to specific logical processors (legacy ≤64 core systems)
-- **[CPU Sets](#cpu-sets)**: Soft CPU preferences across all processor groups (modern >64 core systems)
-- **[Prime Thread Scheduling](#prime-thread-scheduling)**: Dynamically identify and assign CPU-intensive threads to designated "prime" cores
-- **[Ideal Processor Assignment](#ideal-processor-assignment)**: Static thread-to-CPU assignment for top N busiest threads
-- **[I/O Priority Control](#io-priority)**: Control disk I/O scheduling priority
-- **[Memory Priority Control](#memory-priority)**: Adjust memory page priority for process working set
-- **[Hot Reload](#hot-reload)**: Automatically detect and apply config file changes
-- **[Rule Grades](#rule-grades)**: Control application frequency per process rule
+- **Process Priority Management**: Set process priority class (Idle to Real-time) — see [Priority Levels](#priority-levels)
+- **CPU Affinity**: Hard-pin processes to specific logical processors (legacy ≤64 core systems) — see [`apply_affinity()`](docs/apply.md#apply_affinity)
+- **CPU Sets**: Soft CPU preferences across all processor groups (modern >64 core systems) — see [`apply_process_default_cpuset()`](docs/apply.md#apply_process_default_cpuset)
+- **Prime Thread Scheduling**: Dynamically identify and assign CPU-intensive threads to designated "prime" cores — see [Prime Thread Scheduling](#prime-thread-scheduling) section below
+- **Ideal Processor Assignment**: Static thread-to-CPU assignment for top N busiest threads — see [Ideal Processor Assignment](#ideal-processor-assignment) section below
+- **I/O Priority Control**: Control disk I/O scheduling priority — see [`apply_io_priority()`](docs/apply.md#apply_io_priority)
+- **Memory Priority Control**: Adjust memory page priority for process working set — see [`apply_memory_priority()`](docs/apply.md#apply_memory_priority)
+- **Hot Reload**: Automatically detect and apply config file changes
+- **Rule Grades**: Control application frequency per process rule — see [Rule Grades](#rule-grades)
 
 ## Documentation
 

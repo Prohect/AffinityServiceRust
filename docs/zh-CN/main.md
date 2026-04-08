@@ -91,6 +91,8 @@ for (grade, grade_configs) in &configs {
 let result = apply_config(pid, config, &mut scheduler, &mut processes, cli.dry_run);
 ```
 
+参见：[apply_config-函数](main.md#apply_config-函数)
+
 **结果处理：**
 - 错误通过 [`log_to_find()`](logging.md#log_to_find) 记录到 `.find.log`
 - 更改记录到主日志，格式：

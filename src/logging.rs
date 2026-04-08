@@ -14,6 +14,7 @@ pub static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::ne
 static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 #[derive(PartialEq, Eq, Hash)]
+#[allow(dead_code)]
 pub enum Operation {
     OpenProcess2processQueryLimitedInformation,
     OpenProcess2processSetLimitedInformation,
@@ -39,6 +40,7 @@ pub enum Operation {
 #[derive(PartialEq, Eq, Hash)]
 struct ApplyFailEntry {
     pid: u32,
+    tid: u32,
     process_name: String,
     operation: Operation,
     error_code: u32,
@@ -51,9 +53,10 @@ struct ApplyFailEntry {
 /// This func clears the fail entry set if `A` is not satisfied before inserting the new entry.
 ///
 /// if there's no error_code from contextual codes, leave error_code as 0 or custom one if you need to differ them.
-pub fn is_new_error(pid: u32, process_name: &str, operation: Operation, error_code: u32) -> bool {
+pub fn is_new_error(pid: u32, tid: u32, process_name: &str, operation: Operation, error_code: u32) -> bool {
     let entry = ApplyFailEntry {
         pid,
+        tid,
         process_name: process_name.to_string(),
         operation,
         error_code,

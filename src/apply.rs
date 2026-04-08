@@ -6,22 +6,21 @@ use crate::{
     process::ProcessEntry,
     scheduler::PrimeThreadScheduler,
     winapi::{
-        NtQueryInformationProcess, NtSetInformationProcess, ProcessHandle, cpusetids_from_indices, filter_indices_by_mask,
-        get_cpu_set_information, get_thread_ideal_processor_ex, get_thread_start_address, indices_from_cpusetids, resolve_address_to_module,
-        set_thread_ideal_processor_ex,
+        NtQueryInformationProcess, NtSetInformationProcess, ProcessHandle, ThreadHandle, cpusetids_from_indices, filter_indices_by_mask,
+        get_cpu_set_information, get_thread_handle, get_thread_ideal_processor_ex, get_thread_start_address, indices_from_cpusetids,
+        resolve_address_to_module, set_thread_ideal_processor_ex,
     },
 };
 
 use rand::random;
 use std::{collections::HashSet, ffi::c_void, mem::size_of};
 use windows::Win32::{
-    Foundation::{CloseHandle, GetLastError, HANDLE},
+    Foundation::{GetLastError, HANDLE},
     System::{
         Threading::{
-            GetPriorityClass, GetProcessAffinityMask, GetProcessDefaultCpuSets, GetProcessInformation, GetThreadPriority, OpenThread,
+            GetPriorityClass, GetProcessAffinityMask, GetProcessDefaultCpuSets, GetProcessInformation, GetThreadPriority,
             ProcessMemoryPriority, SetPriorityClass, SetProcessAffinityMask, SetProcessDefaultCpuSets, SetProcessInformation,
-            SetThreadPriority, SetThreadSelectedCpuSets, THREAD_QUERY_INFORMATION, THREAD_QUERY_LIMITED_INFORMATION, THREAD_SET_INFORMATION,
-            THREAD_SET_LIMITED_INFORMATION,
+            SetThreadPriority, SetThreadSelectedCpuSets,
         },
         WindowsProgramming::QueryThreadCycleTime,
     },
@@ -69,13 +68,14 @@ fn get_handles(process_handle: &ProcessHandle) -> (Option<HANDLE>, Option<HANDLE
 #[inline(always)]
 fn log_error_if_new(
     pid: u32,
+    tid: u32,
     process_name: &str,
     operation: Operation,
     error_code: u32,
     apply_config_result: &mut ApplyConfigResult,
     format_msg: impl FnOnce() -> String,
 ) {
-    if is_new_error(pid, process_name, operation, error_code) {
+    if is_new_error(pid, tid, process_name, operation, error_code) {
         apply_config_result.add_error(format_msg());
     }
 }
@@ -108,6 +108,7 @@ pub fn apply_priority(
                     let error_code = unsafe { GetLastError().0 };
                     log_error_if_new(
                         pid,
+                        0,
                         &config.name,
                         Operation::SetPriorityClass,
                         error_code,
@@ -151,6 +152,7 @@ pub fn apply_affinity(
                     let error_code = unsafe { GetLastError().0 };
                     log_error_if_new(
                         pid,
+                        0,
                         &config.name,
                         Operation::GetProcessAffinityMask,
                         error_code,
@@ -177,6 +179,7 @@ pub fn apply_affinity(
                                 let error_code = unsafe { GetLastError().0 };
                                 log_error_if_new(
                                     pid,
+                                    0,
                                     &config.name,
                                     Operation::SetProcessAffinityMask,
                                     error_code,
@@ -230,54 +233,59 @@ pub fn reset_thread_ideal_processors(
         return;
     }
 
-    let mut tid_time_handles: Vec<(u32, i64, HANDLE)> = Vec::new();
-
+    // Collect thread IDs and their CPU times
+    let mut tid_time_list: Vec<(u32, i64)> = Vec::new();
     for (tid, thread_info) in process.get_threads() {
         let total_time = unsafe { *thread_info.KernelTime.QuadPart() + *thread_info.UserTime.QuadPart() };
-
-        match unsafe {
-            OpenThread(
-                THREAD_QUERY_LIMITED_INFORMATION | THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION | THREAD_SET_INFORMATION,
-                false,
-                *tid,
-            )
-        } {
-            Err(_) => {
-                let error_code = unsafe { GetLastError().0 };
-                log_error_if_new(pid, &config.name, Operation::OpenThread, error_code, apply_config_result, || {
-                    format!(
-                        "reset_ideal_processor: [OPEN_THREAD][{}] {:>5}-{}-{:>5}",
-                        error_from_code_win32(error_code),
-                        pid,
-                        config.name,
-                        tid,
-                    )
-                });
-            }
-            Ok(thread_handle) => {
-                tid_time_handles.push((*tid, total_time, thread_handle));
-            }
-        }
+        tid_time_list.push((*tid, total_time));
     }
 
-    if tid_time_handles.is_empty() {
+    if tid_time_list.is_empty() {
         return;
     }
 
-    tid_time_handles.sort_by(|a, b| b.1.cmp(&a.1));
+    // Sort by CPU time descending
+    tid_time_list.sort_by(|a, b| b.1.cmp(&a.1));
+
+    // Extract just the TIDs for batch handle opening
+    let tids: Vec<u32> = tid_time_list.iter().map(|(tid, _)| *tid).collect();
+
+    // Open handles for all threads
+    let tid_handles: Vec<(u32, Option<ThreadHandle>)> = tids.iter().map(|&tid| (tid, get_thread_handle(tid, pid, &config.name))).collect();
 
     let target_cpu_count = cpus.len();
     let random_shift = random::<u8>();
     let mut counter_set_success = 0;
-    for (i, (tid, _cpu_time, thread_handle)) in tid_time_handles.iter().enumerate() {
+
+    for (i, (tid, thread_handle_option)) in tid_handles.iter().enumerate() {
+        let handle: &HANDLE = match thread_handle_option {
+            Some(thread_handle) => match thread_handle.w_handle.is_invalid() {
+                true => match thread_handle.w_limited_handle.is_invalid() {
+                    true => {
+                        log_error_if_new(pid, *tid, &config.name, Operation::OpenThread, 0, apply_config_result, || {
+                            format!(
+                                "reset_thread_ideal_processors: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}",
+                                pid, tid, &config.name
+                            )
+                        });
+                        continue;
+                    }
+                    false => &thread_handle.w_limited_handle,
+                },
+                false => &thread_handle.w_handle,
+            },
+            _ => continue,
+        };
+
         let target_cpu_index = (i + random_shift as usize) % target_cpu_count;
         let target_cpu = cpus[target_cpu_index];
 
-        match set_thread_ideal_processor_ex(*thread_handle, 0, target_cpu as u8) {
+        match set_thread_ideal_processor_ex(*handle, 0, target_cpu as u8) {
             Err(_) => {
                 let error_code = unsafe { GetLastError().0 };
                 log_error_if_new(
                     pid,
+                    *tid,
                     &config.name,
                     Operation::SetThreadIdealProcessorEx,
                     error_code,
@@ -301,11 +309,7 @@ pub fn reset_thread_ideal_processors(
 
     apply_config_result.add_change(format!("reset ideal processor for {} threads", counter_set_success));
 
-    for (_tid, _cpu_time, thread_handle) in tid_time_handles {
-        unsafe {
-            let _ = CloseHandle(thread_handle);
-        }
-    }
+    // ThreadHandle's Drop will automatically close handles when tid_handles goes out of scope
 }
 
 pub fn apply_process_default_cpuset(
@@ -336,6 +340,7 @@ pub fn apply_process_default_cpuset(
                     if error_code != 122 {
                         log_error_if_new(
                             pid,
+                            0,
                             &config.name,
                             Operation::GetProcessDefaultCpuSets,
                             error_code,
@@ -357,6 +362,7 @@ pub fn apply_process_default_cpuset(
                             let error_code = unsafe { GetLastError().0 };
                             log_error_if_new(
                                 pid,
+                                0,
                                 &config.name,
                                 Operation::GetProcessDefaultCpuSets,
                                 error_code,
@@ -384,6 +390,7 @@ pub fn apply_process_default_cpuset(
                         let error_code = unsafe { GetLastError().0 };
                         log_error_if_new(
                             pid,
+                            0,
                             &config.name,
                             Operation::SetProcessDefaultCpuSets,
                             error_code,
@@ -400,7 +407,7 @@ pub fn apply_process_default_cpuset(
                     } else {
                         apply_config_result.add_change(format!(
                             "CPU Set: [{}] -> [{}]",
-                            format_cpu_indices(&current_cpusetids),
+                            format_cpu_indices(&indices_from_cpusetids(&current_cpusetids)),
                             format_cpu_indices(&config.cpu_set_cpus)
                         ));
                     }
@@ -443,6 +450,7 @@ pub fn apply_io_priority(
         if query_result < 0 {
             log_error_if_new(
                 pid,
+                0,
                 &config.name,
                 Operation::NtQueryInformationProcess2ProcessInformationIOPriority,
                 query_result_u32,
@@ -474,6 +482,7 @@ pub fn apply_io_priority(
                 if set_result < 0 {
                     log_error_if_new(
                         pid,
+                        0,
                         &config.name,
                         Operation::NtSetInformationProcess2ProcessInformationIOPriority,
                         set_result_u32,
@@ -520,6 +529,7 @@ pub fn apply_memory_priority(
                 let error_code = unsafe { GetLastError().0 };
                 log_error_if_new(
                     pid,
+                    0,
                     &config.name,
                     Operation::GetProcessInformation2ProcessMemoryPriority,
                     error_code,
@@ -557,6 +567,7 @@ pub fn apply_memory_priority(
                                 let error_code = unsafe { GetLastError().0 };
                                 log_error_if_new(
                                     pid,
+                                    0,
                                     &config.name,
                                     Operation::SetProcessInformation2ProcessMemoryPriority,
                                     error_code,
@@ -619,39 +630,29 @@ pub fn prefetch_all_thread_cycles(
         if counter > counter_limit {
             break;
         }
+        // Open thread handle if not already opened
         if thread_stats.handle.is_none() {
-            match unsafe {
-                OpenThread(
-                    THREAD_QUERY_LIMITED_INFORMATION | THREAD_QUERY_INFORMATION | THREAD_SET_LIMITED_INFORMATION | THREAD_SET_INFORMATION,
-                    false,
-                    tid,
-                )
-            } {
-                Err(_) => {
-                    let error_code = unsafe { GetLastError().0 };
-                    log_error_if_new(pid, &config.name, Operation::OpenThread, error_code, apply_config_result, || {
-                        format!(
-                            "prefetch_thread_cycles: [OPEN_THREAD][{}] {:>5}-{}-{}",
-                            error_from_code_win32(error_code),
-                            pid,
-                            tid,
-                            config.name
-                        )
-                    });
-                    continue;
-                }
-                Ok(thread_handle) => thread_stats.handle = Some(thread_handle),
+            if let Some(thread_handle) = get_thread_handle(tid, pid, &config.name) {
+                thread_stats.handle = Some(thread_handle);
+            } else {
+                continue; // Failed to open, get_thread_handle already logged error
             }
         }
-        let handle = match thread_stats.handle {
-            Some(handle) if !handle.is_invalid() => handle,
+        let thread_handle = match thread_stats.handle.as_ref() {
+            Some(h) => h,
             _ => continue,
         };
+
+        let r_handle = match thread_handle.r_handle.is_invalid() {
+            true => thread_handle.r_limited_handle,
+            false => thread_handle.r_handle,
+        };
+
         if thread_stats.start_address == 0 {
-            thread_stats.start_address = get_thread_start_address(handle);
+            thread_stats.start_address = get_thread_start_address(r_handle);
         }
         let mut cycles: u64 = 0;
-        match unsafe { QueryThreadCycleTime(handle, &mut cycles) } {
+        match unsafe { QueryThreadCycleTime(r_handle, &mut cycles) } {
             Ok(_) => {
                 prime_scheduler.get_thread_stats(pid, tid).cached_cycles = cycles;
             }
@@ -659,6 +660,7 @@ pub fn prefetch_all_thread_cycles(
                 let error_code = unsafe { GetLastError().0 };
                 log_error_if_new(
                     pid,
+                    tid,
                     &config.name,
                     Operation::QueryThreadCycleTime,
                     error_code,
@@ -789,12 +791,9 @@ pub fn apply_prime_threads(
     let live_set: HashSet<u32> = tid_with_time_deltas.iter().map(|&(tid, _)| tid).collect();
     if let Some(ps) = prime_core_scheduler.pid_to_process_stats.get_mut(&pid) {
         for (tid, ts) in ps.tid_to_thread_stats.iter_mut() {
-            if !live_set.contains(tid)
-                && let Some(h) = ts.handle.take()
-            {
-                unsafe {
-                    let _ = CloseHandle(h);
-                }
+            if !live_set.contains(tid) {
+                // Remove handle - ThreadHandle's Drop will close handles automatically
+                let _ = ts.handle.take();
             }
         }
     }
@@ -835,10 +834,24 @@ pub fn apply_prime_threads_promote(
             continue;
         }
         let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
-        if let Some(handle) = thread_stats.handle
-            && !handle.is_invalid()
+        if let Some(ref thread_handle) = thread_stats.handle
             && thread_stats.pinned_cpu_set_ids.is_empty()
         {
+            let handle: &HANDLE = match thread_handle.w_handle.is_invalid() {
+                true => match thread_handle.w_limited_handle.is_invalid() {
+                    true => {
+                        log_error_if_new(pid, tid, &config.name, Operation::OpenThread, 0, apply_config_result, || {
+                            format!(
+                                "apply_prime_threads_promote: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}",
+                                pid, tid, &config.name
+                            )
+                        });
+                        continue;
+                    }
+                    false => &thread_handle.w_limited_handle,
+                },
+                false => &thread_handle.w_handle,
+            };
             let start_module = resolve_address_to_module(pid, thread_stats.start_address);
             let mut matched = false;
             let mut prime_cpus_to_set = &config.prime_threads_cpus;
@@ -863,10 +876,11 @@ pub fn apply_prime_threads_promote(
             };
             let cpu_setids = cpusetids_from_indices(&filtered_cpus);
             if !cpu_setids.is_empty() {
-                if !unsafe { SetThreadSelectedCpuSets(handle, &cpu_setids) }.as_bool() {
+                if !unsafe { SetThreadSelectedCpuSets(*handle, &cpu_setids) }.as_bool() {
                     let error_code = unsafe { GetLastError().0 };
                     log_error_if_new(
                         pid,
+                        tid,
                         &config.name,
                         Operation::SetThreadSelectedCpuSets,
                         error_code,
@@ -892,7 +906,13 @@ pub fn apply_prime_threads_promote(
                         start_module
                     ));
                 }
-                let current_priority = unsafe { GetThreadPriority(handle) };
+
+                let current_priority = unsafe {
+                    GetThreadPriority(match thread_handle.r_handle.is_invalid() {
+                        true => thread_handle.r_limited_handle,
+                        false => thread_handle.r_handle,
+                    })
+                };
 
                 if current_priority != 0x7FFFFFFF_i32 {
                     let current_priority = ThreadPriority::from_win_const(current_priority);
@@ -903,10 +923,11 @@ pub fn apply_prime_threads_promote(
                         current_priority.boost_one()
                     };
                     if new_priority != current_priority {
-                        if unsafe { SetThreadPriority(handle, new_priority.to_thread_priority_struct()) }.is_err() {
+                        if unsafe { SetThreadPriority(*handle, new_priority.to_thread_priority_struct()) }.is_err() {
                             let error_code = unsafe { GetLastError().0 };
                             log_error_if_new(
                                 pid,
+                                tid,
                                 &config.name,
                                 Operation::SetThreadPriority,
                                 error_code,
@@ -962,14 +983,29 @@ pub fn apply_prime_threads_demote(
         if prime_set.contains(&tid) || thread_stats.pinned_cpu_set_ids.is_empty() {
             continue;
         }
-        let Some(handle) = thread_stats.handle else { continue };
-        if handle.is_invalid() {
-            continue;
-        }
-        if !unsafe { SetThreadSelectedCpuSets(handle, &[]) }.as_bool() {
+        let handle: &HANDLE = match &thread_stats.handle {
+            Some(thread_handle) => match thread_handle.w_handle.is_invalid() {
+                true => match thread_handle.w_limited_handle.is_invalid() {
+                    true => {
+                        log_error_if_new(pid, tid, &config.name, Operation::OpenThread, 0, apply_config_result, || {
+                            format!(
+                                "apply_prime_threads_demote: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}",
+                                pid, tid, &config.name
+                            )
+                        });
+                        continue;
+                    }
+                    false => &thread_handle.w_limited_handle,
+                },
+                false => &thread_handle.w_handle,
+            },
+            _ => continue,
+        };
+        if !unsafe { SetThreadSelectedCpuSets(*handle, &[]) }.as_bool() {
             let error_code = unsafe { GetLastError().0 };
             log_error_if_new(
                 pid,
+                tid,
                 &config.name,
                 Operation::SetThreadSelectedCpuSets,
                 error_code,
@@ -991,12 +1027,13 @@ pub fn apply_prime_threads_demote(
         // whether this failed or not, clear pinned_cpu_set_ids to avoid infinite retries which spam in the logs
         thread_stats.pinned_cpu_set_ids.clear();
 
-        if let Some(original_priority) = thread_stats.original_priority.take() // same as above
-            && unsafe { SetThreadPriority(handle, original_priority.to_thread_priority_struct()) }.is_err()
+        if let Some(original_priority) = thread_stats.original_priority.take()
+            && unsafe { SetThreadPriority(*handle, original_priority.to_thread_priority_struct()) }.is_err()
         {
             let error_code = unsafe { GetLastError().0 };
             log_error_if_new(
                 pid,
+                tid,
                 &config.name,
                 Operation::SetThreadPriority,
                 error_code,
@@ -1097,15 +1134,30 @@ pub fn apply_ideal_processors(
                 if thread_stats.ideal_processor.is_assigned {
                     claimed.insert(thread_stats.ideal_processor.current_number as u32);
                 } else {
-                    let handle = match thread_stats.handle {
-                        Some(h) if !h.is_invalid() => h,
+                    let handle: &HANDLE = match &thread_stats.handle {
+                        Some(thread_handle) => match thread_handle.w_handle.is_invalid() {
+                            true => match thread_handle.w_limited_handle.is_invalid() {
+                                true => {
+                                    log_error_if_new(pid, tid, &config.name, Operation::OpenThread, 0, apply_config_result, || {
+                                        format!(
+                                            "apply_ideal_processors: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}",
+                                            pid, tid, &config.name
+                                        )
+                                    });
+                                    continue;
+                                }
+                                false => &thread_handle.w_limited_handle,
+                            },
+                            false => &thread_handle.w_handle,
+                        },
                         _ => continue,
                     };
-                    match get_thread_ideal_processor_ex(handle) {
+                    match get_thread_ideal_processor_ex(*handle) {
                         Err(_) => {
                             let error_code = unsafe { GetLastError().0 };
                             log_error_if_new(
                                 pid,
+                                tid,
                                 &config.name,
                                 Operation::GetThreadIdealProcessorEx,
                                 error_code,
@@ -1143,9 +1195,24 @@ pub fn apply_ideal_processors(
             if thread_stats.ideal_processor.is_assigned {
                 continue;
             }
-            let handle = match thread_stats.handle {
-                Some(h) if !h.is_invalid() => h,
+            let thread_handle = match &thread_stats.handle {
+                Some(h) => h,
                 _ => continue,
+            };
+            let handle: &HANDLE = match thread_handle.w_handle.is_invalid() {
+                true => match thread_handle.w_limited_handle.is_invalid() {
+                    true => {
+                        log_error_if_new(pid, *tid, &config.name, Operation::OpenThread, 0, apply_config_result, || {
+                            format!(
+                                "apply_ideal_processors: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}",
+                                pid, tid, &config.name
+                            )
+                        });
+                        continue;
+                    }
+                    false => &thread_handle.w_limited_handle,
+                },
+                false => &thread_handle.w_handle,
             };
 
             let target_cpu = if counter_free_pool < free_pool.len() {
@@ -1154,11 +1221,12 @@ pub fn apply_ideal_processors(
                 break;
             };
             counter_free_pool += 1;
-            match set_thread_ideal_processor_ex(handle, 0, target_cpu as u8) {
+            match set_thread_ideal_processor_ex(*handle, 0, target_cpu as u8) {
                 Err(_) => {
                     let error_code = unsafe { GetLastError().0 };
                     log_error_if_new(
                         pid,
+                        *tid,
                         &config.name,
                         Operation::SetThreadIdealProcessorEx,
                         error_code,
@@ -1200,15 +1268,32 @@ pub fn apply_ideal_processors(
             let prev_number = thread_stats.ideal_processor.previous_number;
             let cur_group = thread_stats.ideal_processor.current_group;
             let cur_number = thread_stats.ideal_processor.current_number;
-            if (prev_group != cur_group || prev_number != cur_number)
-                && let Some(handle) = thread_stats.handle
-                && !handle.is_invalid()
-            {
-                match set_thread_ideal_processor_ex(handle, prev_group, prev_number) {
+            if prev_group != cur_group || prev_number != cur_number {
+                let handle: &HANDLE = match &thread_stats.handle {
+                    Some(thread_handle) => match thread_handle.w_handle.is_invalid() {
+                        true => match thread_handle.w_limited_handle.is_invalid() {
+                            true => {
+                                log_error_if_new(pid, tid, &config.name, Operation::OpenThread, 0, apply_config_result, || {
+                                    format!(
+                                        "apply_ideal_processors: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}",
+                                        pid, tid, &config.name
+                                    )
+                                });
+                                continue;
+                            }
+                            false => &thread_handle.w_limited_handle,
+                        },
+                        false => &thread_handle.w_handle,
+                    },
+                    _ => continue,
+                };
+
+                match set_thread_ideal_processor_ex(*handle, prev_group, prev_number) {
                     Err(_) => {
                         let error_code = unsafe { GetLastError().0 };
                         log_error_if_new(
                             pid,
+                            tid,
                             &config.name,
                             Operation::SetThreadIdealProcessorEx,
                             error_code,

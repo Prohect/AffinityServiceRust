@@ -2,13 +2,12 @@ use crate::{
     config::ConfigConstants,
     logging::log_message,
     priority::ThreadPriority,
-    winapi::{drop_module_cache, resolve_address_to_module},
+    winapi::{ThreadHandle, drop_module_cache, resolve_address_to_module},
 };
 
 use chrono::{DateTime, Local};
 use ntapi::ntexapi::SYSTEM_THREAD_INFORMATION;
 use std::{cmp::Reverse, collections::HashMap, fmt};
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
 
 #[derive(Debug)]
 pub struct PrimeThreadScheduler {
@@ -168,13 +167,7 @@ impl PrimeThreadScheduler {
                 }
 
                 drop_module_cache(*pid);
-                for stats in process_stats.tid_to_thread_stats.values() {
-                    if let Some(handle) = stats.handle {
-                        unsafe {
-                            let _ = CloseHandle(handle);
-                        }
-                    }
-                }
+                // SAFETY: ThreadHandle's Drop impl will close handles automatically
             }
             process_stats.alive
         });
@@ -249,7 +242,10 @@ pub struct ThreadStats {
 
     pub cached_cycles: u64,
 
-    pub handle: Option<HANDLE>,
+    /// Thread handle container. None = not opened yet.
+    /// When present, r_limited_handle is always valid.
+    /// Check is_valid_handle() before using other handles.
+    pub handle: Option<ThreadHandle>,
 
     pub pinned_cpu_set_ids: Vec<u32>,
 
@@ -271,7 +267,6 @@ impl fmt::Debug for ThreadStats {
             .field("cached_total_time", &self.cached_total_time)
             .field("last_cycles", &self.last_cycles)
             .field("cached_cycles", &self.cached_cycles)
-            .field("handle", &self.handle)
             .field("pinned_cpu_set_ids", &self.pinned_cpu_set_ids)
             .field("active_streak", &self.active_streak)
             .field("start_address", &resolve_address_to_module(self.process_id, self.start_address))

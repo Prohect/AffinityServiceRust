@@ -20,8 +20,10 @@ use windows::{
             SystemInformation::{GetSystemCpuSetInformation, SYSTEM_CPU_SET_INFORMATION},
             Threading::{
                 GetCurrentProcess, GetCurrentProcessId, GetProcessAffinityMask, GetThreadIdealProcessorEx, OpenProcess, OpenProcessToken,
-                PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_SET_LIMITED_INFORMATION,
-                PROCESS_TERMINATE, PROCESS_VM_READ, SetThreadIdealProcessorEx, TerminateProcess,
+                OpenThread, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION,
+                PROCESS_SET_LIMITED_INFORMATION, PROCESS_TERMINATE, PROCESS_VM_READ, SetThreadIdealProcessorEx, THREAD_ACCESS_RIGHTS,
+                THREAD_QUERY_INFORMATION, THREAD_QUERY_LIMITED_INFORMATION, THREAD_SET_INFORMATION, THREAD_SET_LIMITED_INFORMATION,
+                TerminateProcess,
             },
         },
     },
@@ -104,7 +106,13 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
     let r_limited_request = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) };
     let Some(r_limited_handle) = r_limited_request.ok() else {
         let error_code = unsafe { GetLastError().0 };
-        if is_new_error(pid, process_name, Operation::OpenProcess2processQueryLimitedInformation, error_code) {
+        if is_new_error(
+            pid,
+            0,
+            process_name,
+            Operation::OpenProcess2processQueryLimitedInformation,
+            error_code,
+        ) {
             log_to_find(&format!(
                 "get_process_handle: [{}] r_limited_handle {:>5}-{}",
                 error_from_code_win32(error_code),
@@ -115,7 +123,7 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
         return None;
     };
     if r_limited_handle.is_invalid() {
-        if is_new_error(pid, process_name, Operation::InvalidHandle, 0) {
+        if is_new_error(pid, 0, process_name, Operation::InvalidHandle, 0) {
             log_to_find(&format!("get_process_handle: Invalid r_limited_handle {:>5}-{}", pid, process_name));
         }
         return None;
@@ -126,7 +134,13 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
             let _ = CloseHandle(r_limited_handle);
         };
         let error_code = unsafe { GetLastError().0 };
-        if is_new_error(pid, process_name, Operation::OpenProcess2processSetLimitedInformation, error_code) {
+        if is_new_error(
+            pid,
+            0,
+            process_name,
+            Operation::OpenProcess2processSetLimitedInformation,
+            error_code,
+        ) {
             log_to_find(&format!(
                 "get_process_handle: [{}] w_limited_handle {:>5}-{}",
                 error_from_code_win32(error_code),
@@ -140,7 +154,7 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
         unsafe {
             let _ = CloseHandle(r_limited_handle);
         };
-        if is_new_error(pid, process_name, Operation::InvalidHandle, 1) {
+        if is_new_error(pid, 0, process_name, Operation::InvalidHandle, 1) {
             log_to_find(&format!("get_process_handle: Invalid w_limited_handle {:>5}-{}", pid, process_name));
         }
         return None;
@@ -150,24 +164,12 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
         if !r_handle.is_invalid() {
             Some(r_handle)
         } else {
-            if is_new_error(pid, process_name, Operation::InvalidHandle, 2) {
-                log_to_find(&format!(
-                    "get_process_handle: [WARNING] Invalid r_handle {:>5}-{}",
-                    pid, process_name
-                ));
-            }
+            // if is_new_error(pid, 0, process_name, Operation::InvalidHandle, 2) {}
             None
         }
     } else {
-        let error_code = unsafe { GetLastError().0 };
-        if is_new_error(pid, process_name, Operation::OpenProcess2processQueryInformation, error_code) {
-            log_to_find(&format!(
-                "get_process_handle: [{}][WARNING] r_handle {:>5}-{}",
-                error_from_code_win32(error_code),
-                pid,
-                process_name,
-            ));
-        }
+        // let error_code = unsafe { GetLastError().0 };
+        // if is_new_error(pid, 0, process_name, Operation::OpenProcess2processQueryInformation, error_code) {}
         None
     };
     let w_request = unsafe { OpenProcess(PROCESS_SET_INFORMATION, false, pid) };
@@ -175,24 +177,12 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
         if !w_handle.is_invalid() {
             Some(w_handle)
         } else {
-            if is_new_error(pid, process_name, Operation::InvalidHandle, 3) {
-                log_to_find(&format!(
-                    "get_process_handle: [WARNING] Invalid w_handle {:>5}-{}",
-                    pid, process_name
-                ));
-            }
+            // if is_new_error(pid, 0, process_name, Operation::InvalidHandle, 3) {}
             None
         }
     } else {
-        let error_code = unsafe { GetLastError().0 };
-        if is_new_error(pid, process_name, Operation::OpenProcess2processSetInformation, error_code) {
-            log_to_find(&format!(
-                "get_process_handle: [{}][WARNING] w_handle {:>5}-{}",
-                error_from_code_win32(error_code),
-                pid,
-                process_name,
-            ));
-        }
+        // let error_code = unsafe { GetLastError().0 };
+        // if is_new_error(pid, 0, process_name, Operation::OpenProcess2processSetInformation, error_code) {}
         None
     };
 
@@ -202,6 +192,112 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
         r_handle,
         w_handle,
     })
+}
+
+/// r_limited_handle is always valid (required when creating this struct).
+#[derive(Debug)]
+pub struct ThreadHandle {
+    pub r_limited_handle: HANDLE,
+    pub r_handle: HANDLE,
+    pub w_limited_handle: HANDLE,
+    pub w_handle: HANDLE,
+}
+
+impl Drop for ThreadHandle {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.r_limited_handle);
+        }
+        if !self.r_handle.is_invalid() {
+            unsafe {
+                let _ = CloseHandle(self.r_handle);
+            }
+        }
+        if !self.w_limited_handle.is_invalid() {
+            unsafe {
+                let _ = CloseHandle(self.w_limited_handle);
+            }
+        }
+        if !self.w_handle.is_invalid() {
+            unsafe {
+                let _ = CloseHandle(self.w_handle);
+            }
+        }
+    }
+}
+
+/// Opens a thread handle for the given TID, returning a ThreadHandle if successful.
+/// r_limited_handle is always valid. Other handles are tried but may be invalid if failed.
+///
+/// error_code mapping for is_new_error:
+/// 0 -> THREAD_QUERY_LIMITED_INFORMATION (required, fail = return None)
+/// 1 -> THREAD_QUERY_INFORMATION
+/// 2 -> THREAD_SET_LIMITED_INFORMATION
+/// 3 -> THREAD_SET_INFORMATION
+pub fn get_thread_handle(tid: u32, pid: u32, process_name: &str) -> Option<ThreadHandle> {
+    // Open required r_limited_handle
+    let r_limited_request = unsafe { OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, tid) };
+    let Some(r_limited_handle) = r_limited_request.ok() else {
+        let error_code = unsafe { GetLastError().0 };
+        if is_new_error(pid, tid, process_name, Operation::OpenThread, error_code) {
+            log_to_find(&format!(
+                "get_thread_handle: [{}] r_limited_handle {:>5}-{:>5}-{}",
+                error_from_code_win32(error_code),
+                pid,
+                tid,
+                process_name
+            ));
+        }
+        return None;
+    };
+    if r_limited_handle.is_invalid() {
+        if is_new_error(pid, tid, process_name, Operation::InvalidHandle, 0) {
+            log_to_find(&format!(
+                "get_thread_handle: Invalid r_limited_handle {:>5}-{:>5}-{}",
+                pid, tid, process_name
+            ));
+        }
+        return None;
+    }
+    let r_handle = try_open_thread(pid, tid, process_name, THREAD_QUERY_INFORMATION, 1);
+    let w_limited_handle = try_open_thread(tid, pid, process_name, THREAD_SET_LIMITED_INFORMATION, 2);
+    let w_handle = try_open_thread(pid, tid, process_name, THREAD_SET_INFORMATION, 3);
+    Some(ThreadHandle {
+        r_limited_handle,
+        r_handle,
+        w_limited_handle,
+        w_handle,
+    })
+}
+
+/// the return value is an invalid handle on failure.
+#[inline(always)]
+#[allow(unused_variables)]
+fn try_open_thread(pid: u32, tid: u32, process_name: &str, access: THREAD_ACCESS_RIGHTS, internal_op_code: u32) -> HANDLE {
+    #[allow(dead_code)]
+    fn error_detail(internal_op_code: &u32) -> String {
+        match internal_op_code {
+            1 => "r_handle".to_owned(),
+            2 => "w_limited_handle".to_owned(),
+            3 => "w_handle".to_owned(),
+            _ => "UNKNOWN_OP_CODE".to_owned(),
+        }
+    }
+    match unsafe { OpenThread(access, false, tid) } {
+        Ok(handle) => {
+            if handle.is_invalid() {
+                // if is_new_error(pid, tid, process_name, Operation::InvalidHandle, internal_op_code) {}
+                HANDLE::default() // Return invalid handle
+            } else {
+                handle
+            }
+        }
+        Err(_) => {
+            // let error_code = unsafe { GetLastError().0 };
+            // if is_new_error(pid, tid, process_name, Operation::OpenThread, error_code) {}
+            HANDLE::default() // Return invalid handle
+        }
+    }
 }
 
 unsafe fn extract_cpu_set_data(entry: &SYSTEM_CPU_SET_INFORMATION) -> CpuSetData {

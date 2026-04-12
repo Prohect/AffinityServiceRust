@@ -424,12 +424,13 @@ Prefers full handles over limited handles.
 
 ### log_error_if_new
 
-Logs error only if new for this pid/operation combination.
+Logs error only if new for this pid/tid/operation combination.
 
 ```rust
 #[inline(always)]
 fn log_error_if_new(
     pid: u32,
+    tid: u32,
     process_name: &str,
     operation: Operation,
     error_code: u32,
@@ -437,6 +438,15 @@ fn log_error_if_new(
     format_msg: impl FnOnce() -> String,
 )
 ```
+
+**Parameters:**
+- `pid` - Process ID
+- `tid` - Thread ID (0 for process-level operations)
+- `process_name` - Process name for context
+- `operation` - The operation that failed
+- `error_code` - Windows error code
+- `apply_config_result` - Result collector
+- `format_msg` - Lazy message formatter
 
 Uses `logging::is_new_error()` for deduplication.
 

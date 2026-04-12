@@ -43,19 +43,42 @@ log!("Error: {}", e);
 
 **Dust Bin Mode:** Messages suppressed if `DUST_BIN_MODE` is true.
 
+### Accessor Macros
+
+Convenient macros for accessing logging statics:
+
+| Macro | Returns | Purpose |
+|-------|---------|---------|
+| `get_use_console!()` | `MutexGuard<bool>` | Check console output mode |
+| `get_dust_bin_mod!()` | `MutexGuard<bool>` | Check dust bin mode |
+| `get_local_time!()` | `MutexGuard<DateTime<Local>>` | Get current log timestamp |
+| `get_logger!()` | `MutexGuard<File>` | Access general log file |
+| `get_logger_find!()` | `MutexGuard<File>` | Access find mode log file |
+| `get_fail_find_set!()` | `MutexGuard<HashSet<String>>` | Access find fail tracking set |
+| `get_pid_map_fail_entry_set!()` | `MutexGuard<HashMap<...>>` | Access error deduplication map |
+
+**Example:**
+```rust
+let console = *get_use_console!();
+let time = get_local_time!().format("%H:%M:%S").to_string();
+writeln!(get_logger!(), "[{}] {}", time, message);
+```
+
 ## Static State
 
-### LOCALTIME_BUFFER
+### LOCAL_TIME_BUFFER
 
 Shared timestamp for consistent time display.
 
 ```rust
-pub static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>>
+pub static LOCAL_TIME_BUFFER: Lazy<Mutex<DateTime<Local>>>
 ```
 
 **Updated:** Each loop iteration in [main.rs](main.md#main-loop)
 
 **Purpose:** Ensures all log entries in same loop share identical timestamp
+
+**Access:** Use `get_local_time!()` macro for convenient access.
 
 ### FINDS_SET
 
@@ -77,6 +100,8 @@ pub static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>>
 
 **Used By:** `is_affinity_unset()` - Skips retrying known-failed processes
 
+**Access:** Use `get_fail_find_set!()` macro for convenient access.
+
 ### PID_MAP_FAIL_ENTRY_SET
 
 Error deduplication map.
@@ -85,7 +110,11 @@ Error deduplication map.
 static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>>
 ```
 
-Structure: `pid → { (pid, name, operation, error_code) → alive }`
+Structure: `pid → { (pid, tid, name, operation, error_code) → alive }`
+
+The `tid` field enables per-thread error deduplication, preventing log spam from thread-specific operations like `SetThreadSelectedCpuSets`.
+
+**Access:** Use `get_pid_map_fail_entry_set!()` macro for convenient access.
 
 ### DUST_BIN_MODE
 
@@ -99,28 +128,34 @@ pub static DUST_BIN_MODE: Lazy<Mutex<bool>>
 
 **Set By:** [main.rs](main.md) initially, cleared after elevation.
 
+**Access:** Use `get_dust_bin_mod!()` macro for convenient access.
+
 ### USE_CONSOLE
 
 Output mode flag.
 
 ```rust
-static USE_CONSOLE: Lazy<Mutex<bool>>
+pub static USE_CONSOLE: Lazy<Mutex<bool>>
 ```
 
 **Set By:** `-console` CLI flag or `-validate` mode
+
+**Access:** Use `get_use_console!()` macro for convenient access.
 
 ### LOG_FILE / FIND_LOG_FILE
 
 Lazy-initialized log file handles.
 
 ```rust
-static LOG_FILE: Lazy<Mutex<File>>
-static FIND_LOG_FILE: Lazy<Mutex<File>>
+pub static LOG_FILE: Lazy<Mutex<File>>
+pub static FIND_LOG_FILE: Lazy<Mutex<File>>
 ```
 
 **Paths:**
 - `logs/YYYYMMDD.log` - General log
 - `logs/YYYYMMDD.find.log` - Find mode log
+
+**Access:** Use `get_logger!()` and `get_logger_find!()` macros for convenient access.
 
 ## Enums
 
@@ -162,13 +197,21 @@ Checks if this error hasn't been logged before.
 ```rust
 pub fn is_new_error(
     pid: u32,
+    tid: u32,
     process_name: &str,
     operation: Operation,
     error_code: u32
 ) -> bool
 ```
 
-**Returns:** `true` if first time seeing this (pid, name, operation, code) combination
+**Parameters:**
+- `pid` - Process ID where error occurred
+- `tid` - Thread ID where error occurred (0 for process-level operations)
+- `process_name` - Name of the process
+- `operation` - The operation that failed
+- `error_code` - Windows error code
+
+**Returns:** `true` if first time seeing this (pid, tid, name, operation, code) combination
 
 **Algorithm:**
 1. Create `ApplyFailEntry` key

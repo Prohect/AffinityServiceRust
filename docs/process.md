@@ -21,8 +21,8 @@ This module provides efficient process snapshotting using the native Windows API
 Captures system-wide process information.
 
 ```rust
-pub struct ProcessSnapshot {
-    buffer: Vec<u8>,                              // Raw SYSTEM_PROCESS_INFORMATION data
+pub struct ProcessSnapshot<'a> {
+    buffer: &'a mut Vec<u8>,                      // Borrowed buffer for SYSTEM_PROCESS_INFORMATION data
     pub pid_to_process: HashMap<u32, ProcessEntry>, // Parsed process entries
 }
 ```
@@ -30,7 +30,7 @@ pub struct ProcessSnapshot {
 **Fields:**
 - `pid_to_process`: HashMap of [`ProcessEntry`](#processentry) indexed by PID
 
-**Lifetime:** The `buffer` must outlive any references in `ProcessEntry` (threads pointer).
+**Lifetime:** The `buffer` must outlive any references in `ProcessEntry` (threads pointer). The `'a` lifetime ensures this at compile time.
 
 **Drop Implementation:** Clears both collections to release memory.
 
@@ -54,11 +54,14 @@ pub struct ProcessEntry {
 Captures a snapshot of all processes and threads.
 
 ```rust
-pub fn take() -> Result<Self, i32>
+pub fn take(buffer: &'a mut Vec<u8>) -> Result<Self, i32>
 ```
 
+**Parameters:**
+- `buffer` - Pre-allocated buffer to use for the snapshot. Reused across calls to avoid repeated allocations.
+
 **Algorithm:**
-1. Start with 1KB buffer
+1. Use provided buffer (grows dynamically if needed)
 2. Call `NtQuerySystemInformation(SystemProcessInformation, ...)`
 3. If `STATUS_INFO_LENGTH_MISMATCH`, grow buffer and retry
 4. Parse linked list of `SYSTEM_PROCESS_INFORMATION` structures
@@ -68,7 +71,8 @@ pub fn take() -> Result<Self, i32>
 
 **Example:**
 ```rust
-match ProcessSnapshot::take() {
+let mut buffer: Vec<u8> = Vec::with_capacity(1024 * 1024);
+match ProcessSnapshot::take(&mut buffer) {
     Ok(processes) => {
         for (pid, entry) in &processes.pid_to_process {
             println!("{}: {}", pid, entry.get_name());

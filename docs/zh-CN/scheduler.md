@@ -56,7 +56,7 @@ pub struct ThreadStats {
     pub cached_total_time: i64,               // 当前总 CPU 时间（来自系统信息）
     pub last_cycles: u64,                     // 之前的周期计数
     pub cached_cycles: u64,                   // 当前周期计数（来自 QueryThreadCycleTime）
-    pub handle: Option<HANDLE>,               // 线程句柄（缓存）
+    pub handle: Option<ThreadHandle>,         // 线程句柄容器（缓存）
     pub pinned_cpu_set_ids: Vec<u32>,         // 当前分配的 CPU 集 ID
     pub active_streak: u8,                    // 连续活跃间隔
     pub start_address: usize,                 // 线程起始地址（用于模块标识）
@@ -66,6 +66,15 @@ pub struct ThreadStats {
     pub process_id: u32,
 }
 ```
+
+**句柄使用：**
+`handle` 字段包含一个 [`ThreadHandle`](winapi.md#threadhandle)，它提供多个访问级别：
+- `r_limited_handle` - 句柄存在时始终有效
+- `r_handle` - 使用前检查 `is_invalid()`
+- `w_limited_handle` - 使用前检查 `is_invalid()`
+- `w_handle` - 使用前检查 `is_invalid()`
+
+**自动清理：**ThreadHandle 的 `Drop` 实现在句柄被移除或线程退出时自动关闭所有有效句柄。
 
 **类型引用：**
 - `original_priority`: [`ThreadPriority`](priority.md#threadpriority)
@@ -212,8 +221,9 @@ pub fn close_dead_process_handles(&mut self)
 **副作用：**
 - 如果启用了跟踪，记录前 N 个线程
 - 清除进程的模块缓存
-- 关闭所有缓存的线程句柄
 - 从映射中移除进程统计
+
+**句柄清理：**当统计从映射中移除时，线程句柄由 `ThreadHandle` 的 `Drop` 实现自动关闭。
 
 **跟踪输出格式：**
 ```

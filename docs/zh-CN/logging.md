@@ -43,19 +43,42 @@ log!("Error: {}", e);
 
 **垃圾箱模式：**如果 `DUST_BIN_MODE` 为 true，则消息被抑制。
 
+### 访问器宏
+
+方便访问日志静态量的宏：
+
+| 宏 | 返回 | 用途 |
+|-------|---------|---------|
+| `get_use_console!()` | `MutexGuard<bool>` | 检查控制台输出模式 |
+| `get_dust_bin_mod!()` | `MutexGuard<bool>` | 检查垃圾箱模式 |
+| `get_local_time!()` | `MutexGuard<DateTime<Local>>` | 获取当前日志时间戳 |
+| `get_logger!()` | `MutexGuard<File>` | 访问常规日志文件 |
+| `get_logger_find!()` | `MutexGuard<File>` | 访问 find 模式日志文件 |
+| `get_fail_find_set!()` | `MutexGuard<HashSet<String>>` | 访问 find 失败跟踪集合 |
+| `get_pid_map_fail_entry_set!()` | `MutexGuard<HashMap<...>>` | 访问错误去重映射 |
+
+**示例：**
+```rust
+let console = *get_use_console!();
+let time = get_local_time!().format("%H:%M:%S").to_string();
+writeln!(get_logger!(), "[{}] {}", time, message);
+```
+
 ## 静态状态
 
-### LOCALTIME_BUFFER
+### LOCAL_TIME_BUFFER
 
 一致时间显示的共享时间戳。
 
 ```rust
-pub static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>>
+pub static LOCAL_TIME_BUFFER: Lazy<Mutex<DateTime<Local>>>
 ```
 
 **更新：**[main.rs](main.md#main-loop) 每次循环迭代
 
 **目的：**确保同一次循环中的所有日志条目共享相同的时间戳
+
+**访问：**使用 `get_local_time!()` 宏方便访问。
 
 ### FINDS_SET
 
@@ -77,6 +100,8 @@ pub static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>>
 
 **使用者：**`is_affinity_unset()` - 跳过重试已知失败的进程
 
+**访问：**使用 `get_fail_find_set!()` 宏方便访问。
+
 ### PID_MAP_FAIL_ENTRY_SET
 
 错误去重映射。
@@ -85,7 +110,11 @@ pub static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>>
 static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>>
 ```
 
-结构：`pid → { (pid, name, operation, error_code) → alive }`
+结构：`pid → { (pid, tid, name, operation, error_code) → alive }`
+
+**访问：**使用 `get_pid_map_fail_entry_set!()` 宏方便访问。
+
+`tid` 字段启用每线程错误去重，防止来自线程特定操作（如 `SetThreadSelectedCpuSets`）的日志垃圾。
 
 ### DUST_BIN_MODE
 
@@ -99,28 +128,34 @@ pub static DUST_BIN_MODE: Lazy<Mutex<bool>>
 
 **设置者：**[main.rs](main.md) 最初设置，提升后清除。
 
+**访问：**使用 `get_dust_bin_mod!()` 宏方便访问。
+
 ### USE_CONSOLE
 
 输出模式标志。
 
 ```rust
-static USE_CONSOLE: Lazy<Mutex<bool>>
+pub static USE_CONSOLE: Lazy<Mutex<bool>>
 ```
 
 **设置者：**`-console` CLI 标志或 `-validate` 模式
+
+**访问：**使用 `get_use_console!()` 宏方便访问。
 
 ### LOG_FILE / FIND_LOG_FILE
 
 延迟初始化的日志文件句柄。
 
 ```rust
-static LOG_FILE: Lazy<Mutex<File>>
-static FIND_LOG_FILE: Lazy<Mutex<File>>
+pub static LOG_FILE: Lazy<Mutex<File>>
+pub static FIND_LOG_FILE: Lazy<Mutex<File>>
 ```
 
 **路径：**
 - `logs/YYYYMMDD.log` - 常规日志
 - `logs/YYYYMMDD.find.log` - Find 模式日志
+
+**访问：**使用 `get_logger!()` 和 `get_logger_find!()` 宏方便访问。
 
 ## 枚举
 
@@ -162,13 +197,21 @@ pub enum Operation {
 ```rust
 pub fn is_new_error(
     pid: u32,
+    tid: u32,
     process_name: &str,
     operation: Operation,
     error_code: u32
 ) -> bool
 ```
 
-**返回：**如果第一次看到此 (pid, name, operation, code) 组合则返回 `true`
+**参数：**
+- `pid` - 错误发生的进程 ID
+- `tid` - 错误发生的线程 ID（进程级操作为 0）
+- `process_name` - 进程名
+- `operation` - 失败的操作
+- `error_code` - Windows 错误代码
+
+**返回：**如果第一次看到此 (pid, tid, name, operation, code) 组合则返回 `true`
 
 **算法：**
 1. 创建 `ApplyFailEntry` 键

@@ -21,8 +21,8 @@
 捕获系统范围的进程信息。
 
 ```rust
-pub struct ProcessSnapshot {
-    buffer: Vec<u8>,                              // 原始 SYSTEM_PROCESS_INFORMATION 数据
+pub struct ProcessSnapshot<'a> {
+    buffer: &'a mut Vec<u8>,                      // 借用的 SYSTEM_PROCESS_INFORMATION 数据缓冲区
     pub pid_to_process: HashMap<u32, ProcessEntry>, // 解析的进程条目
 }
 ```
@@ -30,7 +30,7 @@ pub struct ProcessSnapshot {
 **字段：**
 - `pid_to_process`: 按 PID 索引的 [`ProcessEntry`](#processentry) HashMap
 
-**生命周期：**`buffer` 必须比 `ProcessEntry` 中的任何引用（threads 指针）存活更久。
+**生命周期：**`buffer` 必须比 `ProcessEntry` 中的任何引用（threads 指针）存活更久。`'a` 生命周期确保这在编译时被检查。
 
 **Drop 实现：**清除两个集合以释放内存。
 
@@ -54,11 +54,14 @@ pub struct ProcessEntry {
 捕获所有进程和线程的快照。
 
 ```rust
-pub fn take() -> Result<Self, i32>
+pub fn take(buffer: &'a mut Vec<u8>) -> Result<Self, i32>
 ```
 
+**参数：**
+- `buffer` - 用于快照的预分配缓冲区。跨调用重用以避免重复分配。
+
 **算法：**
-1. 从 1KB 缓冲区开始
+1. 使用提供的缓冲区（如需要则动态增长）
 2. 调用 `NtQuerySystemInformation(SystemProcessInformation, ...)`
 3. 如果 `STATUS_INFO_LENGTH_MISMATCH`，增长缓冲区并重试
 4. 解析 `SYSTEM_PROCESS_INFORMATION` 结构链表
@@ -68,7 +71,8 @@ pub fn take() -> Result<Self, i32>
 
 **示例：**
 ```rust
-match ProcessSnapshot::take() {
+let mut buffer: Vec<u8> = Vec::with_capacity(1024 * 1024);
+match ProcessSnapshot::take(&mut buffer) {
     Ok(processes) => {
         for (pid, entry) in &processes.pid_to_process {
             println!("{}: {}", pid, entry.get_name());

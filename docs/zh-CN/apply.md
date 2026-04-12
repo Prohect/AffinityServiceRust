@@ -424,12 +424,13 @@ fn get_handles(process_handle: &ProcessHandle) -> (Option<HANDLE>, Option<HANDLE
 
 ### log_error_if_new
 
-仅当对此 pid/操作组合是新的错误时才记录。
+仅当对此 pid/tid/操作组合是新的错误时才记录。
 
 ```rust
 #[inline(always)]
 fn log_error_if_new(
     pid: u32,
+    tid: u32,
     process_name: &str,
     operation: Operation,
     error_code: u32,
@@ -437,6 +438,15 @@ fn log_error_if_new(
     format_msg: impl FnOnce() -> String,
 )
 ```
+
+**参数：**
+- `pid` - 进程 ID
+- `tid` - 线程 ID（进程级操作为 0）
+- `process_name` - 进程名（用于上下文）
+- `operation` - 失败的操作
+- `error_code` - Windows 错误代码
+- `apply_config_result` - 结果收集器
+- `format_msg` - 延迟消息格式化器
 
 使用 `logging::is_new_error()` 进行去重。
 

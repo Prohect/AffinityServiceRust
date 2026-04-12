@@ -56,6 +56,23 @@ pub struct ProcessHandle {
 
 **Note:** Limited handles are always present. Full handles may be `None` for protected processes or without elevation.
 
+### ThreadHandle
+
+Safe thread handle container with automatic cleanup.
+
+```rust
+pub struct ThreadHandle {
+    pub r_limited_handle: HANDLE,      // THREAD_QUERY_LIMITED_INFORMATION (always valid)
+    pub r_handle: HANDLE,              // THREAD_QUERY_INFORMATION (invalid if failed)
+    pub w_limited_handle: HANDLE,      // THREAD_SET_LIMITED_INFORMATION (invalid if failed)
+    pub w_handle: HANDLE,              // THREAD_SET_INFORMATION (invalid if failed)
+}
+```
+
+**Drop Implementation:** Closes all valid handles automatically.
+
+**Note:** `r_limited_handle` is always valid when a ThreadHandle exists. Other handles may be invalid (check with `is_invalid()` before use).
+
 ### CpuSetData
 
 CPU Set ID to logical processor mapping.
@@ -90,6 +107,40 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
 - `3` - `PROCESS_SET_INFORMATION` failed (warning)
 
 **Called By:** `apply_config()` in source (orchestration function)
+
+### get_thread_handle
+
+Opens a thread handle with appropriate access rights.
+
+```rust
+pub fn get_thread_handle(tid: u32, pid: u32, process_name: &str) -> Option<ThreadHandle>
+```
+
+**Parameters:**
+- `tid` - Thread ID to open
+- `pid` - Parent process ID (for error logging)
+- `process_name` - Process name (for error logging)
+
+**Access Rights Requested:**
+1. `THREAD_QUERY_LIMITED_INFORMATION` (required)
+2. `THREAD_QUERY_INFORMATION` (best effort)
+3. `THREAD_SET_LIMITED_INFORMATION` (best effort)
+4. `THREAD_SET_INFORMATION` (best effort)
+
+**Error Mapping:** Internal error codes for `is_new_error()`:
+- `0` - `THREAD_QUERY_LIMITED_INFORMATION` failed
+- `1` - `THREAD_QUERY_INFORMATION` failed
+- `2` - `THREAD_SET_LIMITED_INFORMATION` failed
+- `3` - `THREAD_SET_INFORMATION` failed
+
+**Returns:** `Some(ThreadHandle)` if at least `r_limited_handle` could be opened, `None` otherwise.
+
+**Called By:**
+- [`reset_thread_ideal_processors()`](apply.md#reset_thread_ideal_processors) - Thread ideal processor operations
+- [`prefetch_all_thread_cycles()`](apply.md#prefetch_all_thread_cycles) - Cycle time querying
+- [`apply_prime_threads_promote()`](apply.md#apply_prime_threads_promote) - Prime thread operations
+- [`apply_prime_threads_demote()`](apply.md#apply_prime_threads_demote) - Prime thread demotion
+- [`apply_ideal_processors()`](apply.md#apply_ideal_processors) - Ideal processor assignment
 
 ## CPU Set Operations
 

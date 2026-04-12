@@ -56,7 +56,7 @@ pub struct ThreadStats {
     pub cached_total_time: i64,               // Current total CPU time (from system info)
     pub last_cycles: u64,                     // Previous cycle count
     pub cached_cycles: u64,                   // Current cycle count (from QueryThreadCycleTime)
-    pub handle: Option<HANDLE>,               // Thread handle (cached)
+    pub handle: Option<ThreadHandle>,         // Thread handle container (cached)
     pub pinned_cpu_set_ids: Vec<u32>,         // Currently assigned CPU Set IDs
     pub active_streak: u8,                    // Consecutive active intervals
     pub start_address: usize,                 // Thread start address (for module identification)
@@ -66,6 +66,15 @@ pub struct ThreadStats {
     pub process_id: u32,
 }
 ```
+
+**Handle Usage:**
+The `handle` field contains a [`ThreadHandle`](winapi.md#threadhandle) which provides multiple access levels:
+- `r_limited_handle` - Always valid when handle exists
+- `r_handle` - Check `is_invalid()` before use
+- `w_limited_handle` - Check `is_invalid()` before use  
+- `w_handle` - Check `is_invalid()` before use
+
+**Automatic Cleanup:** The ThreadHandle's `Drop` implementation automatically closes all valid handles when the handle is removed or the thread exits.
 
 **Type References:**
 - `original_priority`: [`ThreadPriority`](priority.md#threadpriority)
@@ -212,8 +221,9 @@ pub fn close_dead_process_handles(&mut self)
 **Side Effects:**
 - Logs top N threads if tracking enabled
 - Clears module cache for process
-- Closes all cached thread handles
 - Removes process stats from map
+
+**Handle Cleanup:** Thread handles are automatically closed by `ThreadHandle`'s `Drop` implementation when the stats are removed from the map.
 
 **Tracking Output Format:**
 ```

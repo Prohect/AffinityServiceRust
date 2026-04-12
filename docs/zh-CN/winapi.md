@@ -56,6 +56,23 @@ pub struct ProcessHandle {
 
 **注意：**受限句柄始终存在。完整句柄对于受保护进程或无提升可能为 `None`。
 
+### ThreadHandle
+
+带自动清理的线程安全句柄容器。
+
+```rust
+pub struct ThreadHandle {
+    pub r_limited_handle: HANDLE,      // THREAD_QUERY_LIMITED_INFORMATION（始终有效）
+    pub r_handle: HANDLE,              // THREAD_QUERY_INFORMATION（失败时无效）
+    pub w_limited_handle: HANDLE,      // THREAD_SET_LIMITED_INFORMATION（失败时无效）
+    pub w_handle: HANDLE,              // THREAD_SET_INFORMATION（失败时无效）
+}
+```
+
+**Drop 实现：**自动关闭所有有效句柄。
+
+**注意：**当 ThreadHandle 存在时，`r_limited_handle` 始终有效。其他句柄可能无效（使用前用 `is_invalid()` 检查）。
+
 ### CpuSetData
 
 CPU 集 ID 到逻辑处理器映射。
@@ -90,6 +107,40 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
 - `3` - `PROCESS_SET_INFORMATION` 失败（警告）
 
 **被调用者：**源中的 `apply_config()`（编排函数）
+
+### get_thread_handle
+
+使用适当的访问权限打开线程句柄。
+
+```rust
+pub fn get_thread_handle(tid: u32, pid: u32, process_name: &str) -> Option<ThreadHandle>
+```
+
+**参数：**
+- `tid` - 要打开的线程 ID
+- `pid` - 父进程 ID（用于错误日志）
+- `process_name` - 进程名（用于错误日志）
+
+**请求的访问权限：**
+1. `THREAD_QUERY_LIMITED_INFORMATION`（必需）
+2. `THREAD_QUERY_INFORMATION`（尽力）
+3. `THREAD_SET_LIMITED_INFORMATION`（尽力）
+4. `THREAD_SET_INFORMATION`（尽力）
+
+**错误映射：**`is_new_error()` 的内部错误代码：
+- `0` - `THREAD_QUERY_LIMITED_INFORMATION` 失败
+- `1` - `THREAD_QUERY_INFORMATION` 失败
+- `2` - `THREAD_SET_LIMITED_INFORMATION` 失败
+- `3` - `THREAD_SET_INFORMATION` 失败
+
+**返回：**如果至少可以打开 `r_limited_handle` 则返回 `Some(ThreadHandle)`，否则返回 `None`。
+
+**被调用者：**
+- [`reset_thread_ideal_processors()`](apply.md#reset_thread_ideal_processors) - 线程理想处理器操作
+- [`prefetch_all_thread_cycles()`](apply.md#prefetch_all_thread_cycles) - 周期时间查询
+- [`apply_prime_threads_promote()`](apply.md#apply_prime_threads_promote) - Prime 线程操作
+- [`apply_prime_threads_demote()`](apply.md#apply_prime_threads_demote) - Prime 线程降级
+- [`apply_ideal_processors()`](apply.md#apply_ideal_processors) - 理想处理器分配
 
 ## CPU 集操作
 

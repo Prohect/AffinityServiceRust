@@ -1,8 +1,8 @@
 # AffinityServiceRust
 
 <!-- languages -->
-- 🇺🇸 [English](https://github.com/Prohect/AffinityServiceRust/blob/master/README.md)
-- 🇨🇳 [中文 (简体)](https://github.com/Prohect/AffinityServiceRust/blob/master/README.zh-CN.md)
+- 🇺🇸 [English](README.md)
+- 🇨🇳 [中文 (简体)](README.zh-CN.md)
 
 A high-performance Windows process management service written in Rust that automatically applies CPU affinity, priority, I/O priority, and memory priority rules to running processes based on configuration files.
 
@@ -11,12 +11,12 @@ A high-performance Windows process management service written in Rust that autom
 AffinityServiceRust continuously monitors running processes and applies customized scheduling policies based on rules defined in configuration files. It supports:
 
 - **Process Priority Management**: Set process priority class (Idle to Real-time) — see [Priority Levels](#priority-levels)
-- **CPU Affinity**: Hard-pin processes to specific logical processors (legacy ≤64 core systems) — see [`apply_affinity()`](docs/apply.md#apply_affinity)
-- **CPU Sets**: Soft CPU preferences across all processor groups (modern >64 core systems) — see [`apply_process_default_cpuset()`](docs/apply.md#apply_process_default_cpuset)
+- **CPU Affinity**: Hard-pin processes to specific logical processors (legacy ≤64 core systems) — see [`apply_affinity()`](docs/en-US/apply.md#apply_affinity)
+- **CPU Sets**: Soft CPU preferences across all processor groups (modern >64 core systems) — see [`apply_process_default_cpuset()`](docs/en-US/apply.md#apply_process_default_cpuset)
 - **Prime Thread Scheduling**: Dynamically identify and assign CPU-intensive threads to designated "prime" cores — see [Prime Thread Scheduling](#prime-thread-scheduling) section below
 - **Ideal Processor Assignment**: Static thread-to-CPU assignment for top N busiest threads — see [Ideal Processor Assignment](#ideal-processor-assignment) section below
-- **I/O Priority Control**: Control disk I/O scheduling priority — see [`apply_io_priority()`](docs/apply.md#apply_io_priority)
-- **Memory Priority Control**: Adjust memory page priority for process working set — see [`apply_memory_priority()`](docs/apply.md#apply_memory_priority)
+- **I/O Priority Control**: Control disk I/O scheduling priority — see [`apply_io_priority()`](docs/en-US/apply.md#apply_io_priority)
+- **Memory Priority Control**: Adjust memory page priority for process working set — see [`apply_memory_priority()`](docs/en-US/apply.md#apply_memory_priority)
 - **Hot Reload**: Automatically detect and apply config file changes
 - **Rule Grades**: Control application frequency per process rule — see [Rule Grades](#rule-grades)
 
@@ -24,14 +24,14 @@ AffinityServiceRust continuously monitors running processes and applies customiz
 
 | Topic | Documentation |
 |-------|---------------|
-| **Architecture** | [docs/main.md](docs/main.md) - Main loop and entry point |
-| **Configuration** | [docs/config.md](docs/config.md) - Config parsing and CPU specifications |
-| **Apply Logic** | [docs/apply.md](docs/apply.md) - How settings are applied to processes |
-| **Scheduler** | [docs/scheduler.md](docs/scheduler.md) - Prime thread scheduler implementation |
-| **CLI Options** | [docs/cli.md](docs/cli.md) - Command-line arguments |
-| **Priority Levels** | [docs/priority.md](docs/priority.md) - Priority enum definitions |
-| **Windows API** | [docs/winapi.md](docs/winapi.md) - Windows API wrappers |
-| **Logging** | [docs/logging.md](docs/logging.md) - Error tracking and logging |
+| **Architecture** | [docs/main.md](docs/en-US/main.md) - Main loop and entry point |
+| **Configuration** | [docs/config.md](docs/en-US/config.md) - Config parsing and CPU specifications |
+| **Apply Logic** | [docs/apply.md](docs/en-US/apply.md) - How settings are applied to processes |
+| **Scheduler** | [docs/scheduler.md](docs/en-US/scheduler.md) - Prime thread scheduler implementation |
+| **CLI Options** | [docs/cli.md](docs/en-US/cli.md) - Command-line arguments |
+| **Priority Levels** | [docs/priority.md](docs/en-US/priority.md) - Priority enum definitions |
+| **Windows API** | [docs/winapi.md](docs/en-US/winapi.md) - Windows API wrappers |
+| **Logging** | [docs/logging.md](docs/en-US/logging.md) - Error tracking and logging |
 
 ## Quick Start
 
@@ -56,10 +56,10 @@ AffinityServiceRust.exe -helpall
 | Feature | Description |
 |---------|-------------|
 | **Process Priority** | Set priority class: Idle, BelowNormal, Normal, AboveNormal, High, Realtime |
-| **CPU Affinity** | Legacy mask-based affinity (≤64 cores, [`SetProcessAffinityMask`](docs/apply.md#apply_affinity)) |
-| **CPU Sets** | Modern soft CPU preferences (unlimited cores, [`SetProcessDefaultCpuSets`](docs/apply.md#apply_process_default_cpuset)) |
+| **CPU Affinity** | Legacy mask-based affinity (≤64 cores, [`SetProcessAffinityMask`](docs/en-US/apply.md#apply_affinity)) |
+| **CPU Sets** | Modern soft CPU preferences (unlimited cores, [`SetProcessDefaultCpuSets`](docs/en-US/apply.md#apply_process_default_cpuset)) |
 | **Prime Thread Scheduling** | Dynamic thread-to-core assignment using hysteresis-based algorithm |
-| **Ideal Processor Assignment** | Hysteresis-based ideal-processor assignment using the same algorithm and constants ([`MIN_ACTIVE_STREAK`](docs/config.md#configconstants), [`ENTRY_THRESHOLD`](docs/config.md#configconstants), [`KEEP_THRESHOLD`](docs/config.md#configconstants)) as Prime Thread Scheduling |
+| **Ideal Processor Assignment** | Hysteresis-based ideal-processor assignment using the same algorithm and constants ([`MIN_ACTIVE_STREAK`](docs/en-US/config.md#configconstants), [`ENTRY_THRESHOLD`](docs/en-US/config.md#configconstants), [`KEEP_THRESHOLD`](docs/en-US/config.md#configconstants)) as Prime Thread Scheduling |
 | **I/O Priority** | VeryLow, Low, Normal, High (requires admin for High) |
 | **Memory Priority** | VeryLow, Low, Medium, BelowNormal, Normal |
 | **Timer Resolution** | Configure system timer resolution for tighter loops |
@@ -71,7 +71,7 @@ AffinityServiceRust.exe -helpall
 The prime thread scheduler dynamically identifies the most CPU-intensive threads and assigns them to designated "prime" cores using Windows CPU Sets:
 
 **Algorithm:**
-- Monitors thread CPU cycle consumption at configurable intervals via [`prefetch_all_thread_cycles()`](docs/apply.md#prefetch_all_thread_cycles)
+- Monitors thread CPU cycle consumption at configurable intervals via [`prefetch_all_thread_cycles()`](docs/en-US/apply.md#prefetch_all_thread_cycles)
 - Applies hysteresis to prevent thrashing:
   - **Entry threshold**: Thread must exceed configured % of max cycles to become a candidate
   - **Keep threshold**: Once promoted, thread stays prime if above configured % of max cycles
@@ -81,7 +81,7 @@ The prime thread scheduler dynamically identifies the most CPU-intensive threads
 - Per-module thread priority control (explicit or auto-boost)
 - Thread tracking mode: logs detailed statistics when process exits
 
-See [`apply_prime_threads()`](docs/apply.md#apply_prime_threads) and the [scheduler module](docs/scheduler.md) for implementation details.
+See [`apply_prime_threads()`](docs/en-US/apply.md#apply_prime_threads) and the [scheduler module](docs/en-US/scheduler.md) for implementation details.
 
 **Thread Tracking Output:**
 When a tracked process exits, detailed statistics are logged for top N threads:
@@ -96,8 +96,8 @@ When a tracked process exits, detailed statistics are logged for top N threads:
 An optional `ideal` specification assigns preferred processors to the most CPU-active threads, using the **same hysteresis-based filter** as prime thread scheduling.
 
 **Algorithm:**
-- Per-iteration cycle data is provided by the shared [`prefetch_all_thread_cycles()`](docs/apply.md#prefetch_all_thread_cycles) pass (one `QueryThreadCycleTime` per thread, capped at the logical-CPU count)
-- Applies [`MIN_ACTIVE_STREAK`](docs/config.md#configconstants), [`ENTRY_THRESHOLD`](docs/config.md#configconstants), and [`KEEP_THRESHOLD`](docs/config.md#configconstants) constants — identical to prime thread scheduling:
+- Per-iteration cycle data is provided by the shared [`prefetch_all_thread_cycles()`](docs/en-US/apply.md#prefetch_all_thread_cycles) pass (one `QueryThreadCycleTime` per thread, capped at the logical-CPU count)
+- Applies [`MIN_ACTIVE_STREAK`](docs/en-US/config.md#configconstants), [`ENTRY_THRESHOLD`](docs/en-US/config.md#configconstants), and [`KEEP_THRESHOLD`](docs/en-US/config.md#configconstants) constants — identical to prime thread scheduling:
   - **Pass 1 (keep)**: threads already assigned and still above `KEEP_THRESHOLD` retain their slot with **zero write syscalls**
   - **Pass 2 (promote)**: new candidates above `ENTRY_THRESHOLD` whose streak counter has reached `MIN_ACTIVE_STREAK` receive a slot
 - Lazy set: if a newly-selected thread's current ideal processor is already in the free CPU pool, `SetThreadIdealProcessorEx` is skipped — the slot is claimed in-place
@@ -105,7 +105,7 @@ An optional `ideal` specification assigns preferred processors to the most CPU-a
 - Each assignment log line includes `start=module+offset` (e.g. `start=cs2.exe+0xEA60`)
 - Multi-rule syntax allows different CPU sets for different module prefixes
 
-See [`apply_ideal_processors()`](docs/apply.md#apply_ideal_processors) for implementation details.
+See [`apply_ideal_processors()`](docs/en-US/apply.md#apply_ideal_processors) for implementation details.
 
 ### Ideal Processor Reset
 
@@ -124,7 +124,7 @@ game.exe:normal:*a:@0-3:*p:normal:normal:1
 - Applies a small random shift to avoid clumping
 - Runs automatically after affinity changes, or after CPU set changes when `@` prefix is used
 
-See [`reset_thread_ideal_processors()`](docs/apply.md#reset_thread_ideal_processors) for implementation details.
+See [`reset_thread_ideal_processors()`](docs/en-US/apply.md#reset_thread_ideal_processors) for implementation details.
 
 ## Configuration
 
@@ -135,7 +135,7 @@ Process rules follow this format:
 process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority:ideal[@prefixes]:grade
 ```
 
-See [`ProcessConfig`](docs/config.md#processconfig) struct for the parsed representation.
+See [`ProcessConfig`](docs/en-US/config.md#processconfig) struct for the parsed representation.
 
 ### CPU Specification Formats
 
@@ -150,7 +150,7 @@ See [`ProcessConfig`](docs/config.md#processconfig) struct for the parsed repres
 
 **Important:** Plain numbers mean core indices, not bitmasks. Use `0-7` for cores 0-7, NOT `7`.
 
-See [`parse_cpu_spec()`](docs/config.md#parse_cpu_spec) for parsing implementation.
+See [`parse_cpu_spec()`](docs/en-US/config.md#parse_cpu_spec) for parsing implementation.
 
 ### Rule Grades
 
@@ -173,7 +173,7 @@ The `grade` field (default: 1) controls how often a rule is applied:
 
 **Memory Priority:** `none`, `very low`, `low`, `medium`, `below normal`, `normal`
 
-See [priority.md](docs/priority.md) for all priority level definitions.
+See [priority.md](docs/en-US/priority.md) for all priority level definitions.
 
 ### CPU Aliases
 
@@ -262,7 +262,7 @@ Configure prime thread scheduler behavior:
 ```
 These constants govern **both** prime thread scheduling and ideal processor assignment — they share the same hysteresis filter.
 
-See [`ConfigConstants`](docs/config.md#configconstants) for the struct definition.
+See [`ConfigConstants`](docs/en-US/config.md#configconstants) for the struct definition.
 
 ### Complete Example
 
@@ -342,7 +342,7 @@ browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal:
 | `-noDebugPriv` | Don't request SeDebugPrivilege |
 | `-noIncBasePriority` | Don't request SeIncreaseBasePriorityPrivilege |
 
-See [cli.md](docs/cli.md) for complete CLI documentation.
+See [cli.md](docs/en-US/cli.md) for complete CLI documentation.
 
 ## Tools
 
@@ -397,7 +397,7 @@ grp_0 { cmd.exe: explorer.exe: notepad.exe }:none:*a:*e:0:none:none:0:4
 
 The preamble (`@constants`, `*aliases`, and leading comments) is preserved verbatim. Per-process inline comments between rules are dropped during regrouping.
 
-See [`sort_and_group_config()`](docs/config.md#sort_and_group_config) for implementation.
+See [`sort_and_group_config()`](docs/en-US/config.md#sort_and_group_config) for implementation.
 
 ## Privileges and Capabilities
 
@@ -453,36 +453,36 @@ target/release/AffinityServiceRust.exe
 
 | File | Description | Documentation |
 |------|-------------|---------------|
-| `src/main.rs` | Main loop, config application logic | [main.md](docs/main.md) |
-| `src/config.rs` | Config file parsing, CPU spec parsing, validation | [config.md](docs/config.md) |
-| `src/cli.rs` | Command-line argument parsing | [cli.md](docs/cli.md) |
-| `src/priority.rs` | Priority enums (Process, Thread, I/O, Memory) | [priority.md](docs/priority.md) |
-| `src/logging.rs` | Logging infrastructure (file and console) | [logging.md](docs/logging.md) |
-| `src/process.rs` | Process enumeration and snapshot management | [process.md](docs/process.md) |
-| `src/scheduler.rs` | Prime thread scheduler implementation | [scheduler.md](docs/scheduler.md) |
-| `src/apply.rs` | Config application to processes | [apply.md](docs/apply.md) |
-| `src/winapi.rs` | Windows API wrappers, module resolution, privilege handling | [winapi.md](docs/winapi.md) |
+| `src/main.rs` | Main loop, config application logic | [main.md](docs/en-US/main.md) |
+| `src/config.rs` | Config file parsing, CPU spec parsing, validation | [config.md](docs/en-US/config.md) |
+| `src/cli.rs` | Command-line argument parsing | [cli.md](docs/en-US/cli.md) |
+| `src/priority.rs` | Priority enums (Process, Thread, I/O, Memory) | [priority.md](docs/en-US/priority.md) |
+| `src/logging.rs` | Logging infrastructure (file and console) | [logging.md](docs/en-US/logging.md) |
+| `src/process.rs` | Process enumeration and snapshot management | [process.md](docs/en-US/process.md) |
+| `src/scheduler.rs` | Prime thread scheduler implementation | [scheduler.md](docs/en-US/scheduler.md) |
+| `src/apply.rs` | Config application to processes | [apply.md](docs/en-US/apply.md) |
+| `src/winapi.rs` | Windows API wrappers, module resolution, privilege handling | [winapi.md](docs/en-US/winapi.md) |
 | `config.ini` | Default configuration file | - |
 | `blacklist.ini` | Default blacklist for process discovery | - |
 | `DEBUG.md` | Debug guide and troubleshooting | - |
 
 ## How It Works
 
-1. **Startup**: Parse config file via [`read_config()`](docs/config.md#read_config), request necessary privileges ([`enable_debug_privilege()`](docs/winapi.md#enable_debug_privilege), [`enable_inc_base_priority_privilege()`](docs/winapi.md#enable_inc_base_priority_privilege)), optionally elevate to admin; then terminate any child processes inherited from the launcher (e.g. `conhost.exe` attached by a scheduled task runner) before entering the main loop
+1. **Startup**: Parse config file via [`read_config()`](docs/en-US/config.md#read_config), request necessary privileges ([`enable_debug_privilege()`](docs/en-US/winapi.md#enable_debug_privilege), [`enable_inc_base_priority_privilege()`](docs/en-US/winapi.md#enable_inc_base_priority_privilege)), optionally elevate to admin; then terminate any child processes inherited from the launcher (e.g. `conhost.exe` attached by a scheduled task runner) before entering the main loop
 2. **Main Loop**: 
-   - Enumerate all running processes via [`ProcessSnapshot`](docs/process.md#processsnapshot)
+   - Enumerate all running processes via [`ProcessSnapshot`](docs/en-US/process.md#processsnapshot)
    - Match each process against configured rules
-   - Apply settings via [`apply_config()`](docs/main.md#apply_config): priority, affinity, CPU sets, prime scheduling, and more
+   - Apply settings via [`apply_config()`](docs/en-US/main.md#apply_config): priority, affinity, CPU sets, prime scheduling, and more
    - Sleep for configured interval
 3. **Hot Reload**: Monitor config files for changes, automatically reload and reapply
 4. **Prime Thread Scheduler**:
    - Track thread cycle time at each interval
-   - Apply hysteresis-based promotion/demotion logic via [`PrimeThreadScheduler`](docs/scheduler.md#primethreadscheduler)
+   - Apply hysteresis-based promotion/demotion logic via [`PrimeThreadScheduler`](docs/en-US/scheduler.md#primethreadscheduler)
    - Use Windows CPU Sets for fine-grained thread placement
 5. **Shared Cycle Prefetch** (per process, before prime and ideal scheduling):
    - Rank all threads by CPU-time delta from `NtQuerySystemInformation` data (no extra syscall)
    - Keep only the top-N threads (N = logical CPU count) — threads below cannot win any assignment slot
-   - Open handles and call `QueryThreadCycleTime` for the top-N only; results cached in [`ThreadStats::cached_cycles`](docs/scheduler.md#threadstats)
+   - Open handles and call `QueryThreadCycleTime` for the top-N only; results cached in [`ThreadStats::cached_cycles`](docs/en-US/scheduler.md#threadstats)
 6. **Ideal Processor Assignment** (per process, per interval):
    - Apply the same hysteresis filter (streak + keep/entry thresholds) as prime thread scheduling
    - Pass 1: already-assigned threads above `keep_threshold` keep their slot — no write syscall
@@ -499,9 +499,9 @@ target/release/AffinityServiceRust.exe
 
    to `.find.log`. This is **intentional** — the service applies rules to every matching process name it sees in the snapshot, including its own short-lived children. The child is terminated before the main loop starts (see startup cleanup), so this entry will appear at most once per run and can be safely ignored.
 
-8. **`[OPEN][ACCESS_DENIED]` per-PID deduplication**: When [`apply_config()`](docs/main.md#apply_config) fails to open a process due to `ACCESS_DENIED`, the error is written to `.find.log` exactly once per unique `(pid, process_name)` pair. After each snapshot, the deduplication map is reconciled: entries whose PID has exited or been reused for a different executable are evicted, so if the same process name later re-appears under a new PID the error fires once more. Multiple concurrent instances of the same executable (e.g. several `svchost.exe` processes with different PIDs) are tracked independently — one denied instance never silences errors for any other PID sharing the same name.
+8. **`[OPEN][ACCESS_DENIED]` per-PID deduplication**: When [`apply_config()`](docs/en-US/main.md#apply_config) fails to open a process due to `ACCESS_DENIED`, the error is written to `.find.log` exactly once per unique `(pid, process_name)` pair. After each snapshot, the deduplication map is reconciled: entries whose PID has exited or been reused for a different executable are evicted, so if the same process name later re-appears under a new PID the error fires once more. Multiple concurrent instances of the same executable (e.g. several `svchost.exe` processes with different PIDs) are tracked independently — one denied instance never silences errors for any other PID sharing the same name.
 
-See [`is_new_error()`](docs/logging.md#is_new_error) for error deduplication implementation.
+See [`is_new_error()`](docs/en-US/logging.md#is_new_error) for error deduplication implementation.
 
 ## Known Limitations
 

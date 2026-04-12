@@ -1,7 +1,7 @@
 use crate::{
     error_codes::error_from_code_win32,
-    log,
-    logging::{FINDS_FAIL_SET, Operation, is_new_error, log_to_find},
+    get_fail_find_set, log,
+    logging::{Operation, is_new_error, log_to_find},
 };
 
 use once_cell::sync::Lazy;
@@ -595,7 +595,7 @@ pub fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
                 process_name
             ));
             if code == 5 {
-                FINDS_FAIL_SET.lock().unwrap().insert(process_name.to_string());
+                get_fail_find_set!().insert(process_name.to_string());
             }
             return false;
         }
@@ -622,7 +622,7 @@ pub fn is_affinity_unset(pid: u32, process_name: &str) -> bool {
                 process_name
             ));
             if code == 5 {
-                FINDS_FAIL_SET.lock().unwrap().insert(process_name.to_string());
+                get_fail_find_set!().insert(process_name.to_string());
             }
             false
         }

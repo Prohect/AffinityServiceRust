@@ -8,8 +8,64 @@ use std::{
     sync::Mutex,
 };
 
-pub static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
-static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+pub static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+
+#[macro_export]
+macro_rules! log {
+    ($($arg:tt)*) => {
+        $crate::logging::log_message(format!($($arg)*).as_str())
+    };
+}
+
+#[macro_export]
+macro_rules! get_use_console {
+    () => {
+        $crate::logging::USE_CONSOLE.lock().unwrap()
+    };
+}
+#[macro_export]
+macro_rules! get_dust_bin_mod {
+    () => {
+        $crate::logging::DUST_BIN_MODE.lock().unwrap()
+    };
+}
+#[macro_export]
+macro_rules! get_local_time {
+    () => {
+        $crate::logging::LOCAL_TIME_BUFFER.lock().unwrap()
+    };
+}
+#[macro_export]
+macro_rules! get_logger {
+    () => {
+        $crate::logging::LOG_FILE.lock().unwrap()
+    };
+}
+#[macro_export]
+macro_rules! get_logger_find {
+    () => {
+        $crate::logging::FIND_LOG_FILE.lock().unwrap()
+    };
+}
+#[macro_export]
+macro_rules! get_fail_find_set {
+    () => {
+        $crate::logging::FINDS_FAIL_SET.lock().unwrap()
+    };
+}
+#[macro_export]
+macro_rules! get_pid_map_fail_entry_set {
+    () => {
+        $crate::logging::PID_MAP_FAIL_ENTRY_SET.lock().unwrap()
+    };
+}
+pub static USE_CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
+pub static DUST_BIN_MODE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
+pub static LOCAL_TIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
+pub static LOG_FILE: Lazy<Mutex<File>> =
+    Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path("")).unwrap()));
+pub static FIND_LOG_FILE: Lazy<Mutex<File>> =
+    Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path(".find")).unwrap()));
 pub static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
@@ -61,7 +117,7 @@ pub fn is_new_error(pid: u32, tid: u32, process_name: &str, operation: Operation
         operation,
         error_code,
     };
-    let mut map = PID_MAP_FAIL_ENTRY_SET.lock().unwrap();
+    let mut map = get_pid_map_fail_entry_set!();
     match map.get_mut(&pid) {
         Some(fail_entry_set) => {
             if fail_entry_set.iter_mut().any(|(fail_entry, alive)| {
@@ -96,8 +152,9 @@ pub fn is_new_error(pid: u32, tid: u32, process_name: &str, operation: Operation
 ///
 /// Marks all entries as dead, then re-marks currently running processes as alive.
 /// Dead entries are removed to prevent unbounded growth.
+#[inline]
 pub fn purge_fail_map(pids_and_names: &[(u32, String)]) {
-    let mut map = PID_MAP_FAIL_ENTRY_SET.lock().unwrap();
+    let mut map = get_pid_map_fail_entry_set!();
     for fail_entry_set in map.values_mut() {
         fail_entry_set.values_mut().for_each(|alive| *alive = false);
     }
@@ -114,29 +171,8 @@ pub fn purge_fail_map(pids_and_names: &[(u32, String)]) {
     map.retain(|_, fail_entry_set| fail_entry_set.iter().any(|(_, alive)| *alive));
 }
 
-static USE_CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
-
-pub static DUST_BIN_MODE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
-
-static LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path("")).unwrap()));
-
-static FIND_LOG_FILE: Lazy<Mutex<File>> =
-    Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path(".find")).unwrap()));
-
-pub fn use_console() -> &'static Mutex<bool> {
-    &USE_CONSOLE
-}
-
-pub fn logger() -> &'static Mutex<File> {
-    &LOG_FILE
-}
-
-pub fn find_logger() -> &'static Mutex<File> {
-    &FIND_LOG_FILE
-}
-
 fn get_log_path(suffix: &str) -> PathBuf {
-    let time = LOCALTIME_BUFFER.lock().unwrap();
+    let time = get_local_time!();
     let (year, month, day) = (time.year(), time.month(), time.day());
     drop(time);
     let log_dir = PathBuf::from("logs");
@@ -146,39 +182,32 @@ fn get_log_path(suffix: &str) -> PathBuf {
     log_dir.join(format!("{:04}{:02}{:02}{}.log", year, month, day, suffix))
 }
 
-#[macro_export]
-macro_rules! log {
-    ($($arg:tt)*) => {
-        $crate::logging::log_message(format!($($arg)*).as_str())
-    };
-}
-
 pub fn log_message(args: &str) {
-    if *DUST_BIN_MODE.lock().unwrap() {
+    if *get_dust_bin_mod!() {
         return;
     }
-    let time_prefix = LOCALTIME_BUFFER.lock().unwrap().format("%H:%M:%S").to_string();
-    if *use_console().lock().unwrap() {
+    let time_prefix = get_local_time!().format("%H:%M:%S").to_string();
+    if *get_use_console!() {
         let _ = writeln!(stdout(), "[{}]{}", time_prefix, args);
     } else {
-        let _ = writeln!(logger().lock().unwrap(), "[{}]{}", time_prefix, args);
+        let _ = writeln!(get_logger!(), "[{}]{}", time_prefix, args);
     }
 }
 
 pub fn log_pure_message(args: &str) {
-    if *use_console().lock().unwrap() {
+    if *get_use_console!() {
         let _ = writeln!(stdout(), "{}", args);
     } else {
-        let _ = writeln!(logger().lock().unwrap(), "{}", args);
+        let _ = writeln!(get_logger!(), "{}", args);
     }
 }
 
 pub fn log_to_find(msg: &str) {
-    let time_prefix = LOCALTIME_BUFFER.lock().unwrap().format("%H:%M:%S").to_string();
-    if *use_console().lock().unwrap() {
+    let time_prefix = get_local_time!().format("%H:%M:%S").to_string();
+    if *get_use_console!() {
         let _ = writeln!(stdout(), "[{}]{}", time_prefix, msg);
     } else {
-        let _ = writeln!(find_logger().lock().unwrap(), "[{}]{}", time_prefix, msg);
+        let _ = writeln!(get_logger!(), "[{}]{}", time_prefix, msg);
     }
 }
 
@@ -186,6 +215,7 @@ pub fn log_to_find(msg: &str) {
 ///
 /// Uses FINDS_SET to ensure each process is logged only once per session,
 /// preventing log spam from repeatedly discovered processes.
+#[inline]
 pub fn log_process_find(process_name: &str) {
     if FINDS_SET.lock().unwrap().insert(process_name.to_string()) {
         log_to_find(&format!("find {}", process_name));

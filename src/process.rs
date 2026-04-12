@@ -1,8 +1,5 @@
 use ntapi::ntexapi::{NtQuerySystemInformation, SYSTEM_PROCESS_INFORMATION, SYSTEM_THREAD_INFORMATION, SystemProcessInformation};
-use once_cell::sync::Lazy;
-use std::{collections::HashMap, slice, sync::Mutex};
-
-pub static PROCESS_SNAPSHOT_BUFFER: Lazy<Mutex<Vec<u8>>> = Lazy::new(|| Mutex::new(vec![0u8; 32]));
+use std::{collections::HashMap, slice};
 
 pub struct ProcessSnapshot<'a> {
     buffer: &'a mut Vec<u8>,

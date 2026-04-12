@@ -1,4 +1,4 @@
-use crate::{log, logging::use_console};
+use crate::{get_use_console, log};
 use windows::core::Result;
 
 #[derive(Debug, Default)]
@@ -28,8 +28,8 @@ pub struct CliArgs {
 impl CliArgs {
     pub fn new() -> Self {
         Self {
-            interval_ms: 5000,                          // Default from the original code
-            config_file_name: "config.ini".to_string(), // Default
+            interval_ms: 5000,
+            config_file_name: "config.ini".to_string(),
             ..Default::default()
         }
     }
@@ -46,7 +46,7 @@ pub fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()> {
                 cli.help_all_mode = true;
             }
             "-console" => {
-                *use_console().lock().unwrap() = true;
+                *get_use_console!() = true;
             }
             "-noUAC" | "-nouac" => {
                 cli.no_uac = true;
@@ -62,7 +62,7 @@ pub fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()> {
             }
             "-validate" => {
                 cli.validate_mode = true;
-                *use_console().lock().unwrap() = true;
+                *get_use_console!() = true;
             }
             "-processlogs" => {
                 cli.process_logs_mode = true;
@@ -119,7 +119,7 @@ pub fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()> {
 }
 
 pub fn print_help() {
-    *use_console().lock().unwrap() = true;
+    *get_use_console!() = true;
     log!(
         r#"
     A Windows service to manage process priority, CPU affinity, IO priority, and memory priority.
@@ -235,7 +235,7 @@ pub fn print_config_help() {
 }
 
 pub fn print_help_all() {
-    *use_console().lock().unwrap() = true;
+    *get_use_console!() = true;
     print_cli_help();
     log!("");
     print_config_help();

@@ -223,11 +223,15 @@
 - [L47:L70]fn error_from_ntstatus(status: i32) -> String 
 
 ## src/logging.rs
-- [L11:L11]static LOCALTIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
-- [L12:L12]static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
-- [L13:L13]static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
-- [L14:L14]static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
-- [L18:L39]enum Operation {
+- [L11:L11]static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+- [L62:L62]static USE_CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
+- [L63:L63]static DUST_BIN_MODE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
+- [L64:L64]static LOCAL_TIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
+- [L65:L65]static LOG_FILE: Lazy<Mutex<File>> =
+- [L67:L67]static FIND_LOG_FILE: Lazy<Mutex<File>> =
+- [L69:L69]static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+- [L70:L70]static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+- [L74:L95]enum Operation {
     OpenProcess2processQueryLimitedInformation,
     OpenProcess2processSetLimitedInformation,
     OpenProcess2processQueryInformation,
@@ -249,43 +253,36 @@
     GetThreadIdealProcessorEx,
     InvalidHandle,
 }
-- [L41:L47]struct ApplyFailEntry {
+- [L97:L103]struct ApplyFailEntry {
     pid: u32,
     tid: u32,
     process_name: String,
     operation: Operation,
     error_code: u32,
 }
-- [L49:L93]fn is_new_error(pid: u32, tid: u32, process_name: &str, operation: Operation, error_code: u32) -> bool 
-- [L95:L115]fn purge_fail_map(pids_and_names: &[(u32, String)]) 
-- [L117:L117]static USE_CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
-- [L119:L119]static DUST_BIN_MODE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
-- [L121:L121]static LOG_FILE: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path("")).unwrap()));
-- [L123:L123]static FIND_LOG_FILE: Lazy<Mutex<File>> =
-- [L126:L128]fn use_console() -> &'static Mutex<bool> 
-- [L130:L132]fn logger() -> &'static Mutex<File> 
-- [L134:L136]fn find_logger() -> &'static Mutex<File> 
-- [L138:L147]fn get_log_path(suffix: &str) -> PathBuf 
-- [L156:L166]fn log_message(args: &str) 
-- [L168:L174]fn log_pure_message(args: &str) 
-- [L176:L183]fn log_to_find(msg: &str) 
-- [L185:L193]fn log_process_find(process_name: &str) 
+- [L105:L149]fn is_new_error(pid: u32, tid: u32, process_name: &str, operation: Operation, error_code: u32) -> bool 
+- [L151:L172]fn purge_fail_map(pids_and_names: &[(u32, String)]) 
+- [L174:L183]fn get_log_path(suffix: &str) -> PathBuf 
+- [L185:L195]fn log_message(args: &str) 
+- [L197:L203]fn log_pure_message(args: &str) 
+- [L205:L212]fn log_to_find(msg: &str) 
+- [L214:L223]fn log_process_find(process_name: &str) 
 
 ## src/main.rs
-- [L51:L109]fn apply_config(
+- [L46:L104]fn apply_config(
     pid: u32,
     config: &ProcessConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
     process: &mut ProcessEntry,
     dry_run: bool,
 ) -> ApplyConfigResult 
-- [L111:L199]fn process_logs(
+- [L106:L194]fn process_logs(
     configs: &HashMap<u32, HashMap<String, ProcessConfig>>,
     blacklist: &[String],
     logs_path: Option<&str>,
     output_file: Option<&str>,
 ) 
-- [L201:L460]fn main() -> windows::core::Result<()> 
+- [L196:L456]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L8:L16]enum ProcessPriority {
@@ -328,12 +325,11 @@
 }
 
 ## src/process.rs
-- [L5:L5]static PROCESS_SNAPSHOT_BUFFER: Lazy<Mutex<Vec<u8>>> = Lazy::new(|| Mutex::new(vec![0u8; 32]));
-- [L7:L10]struct ProcessSnapshot<'a> {
+- [L4:L7]struct ProcessSnapshot<'a> {
     buffer: &'a mut Vec<u8>,
     pub pid_to_process: HashMap<u32, ProcessEntry>,
 }
-- [L77:L82]struct ProcessEntry {
+- [L74:L79]struct ProcessEntry {
     pub process: SYSTEM_PROCESS_INFORMATION,
     threads: HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     threads_base_ptr: usize,

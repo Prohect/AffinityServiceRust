@@ -14,10 +14,7 @@ use apply::{
 };
 use cli::{CliArgs, parse_args, print_help, print_help_all};
 use config::{ProcessConfig, convert, read_config, read_list, sort_and_group_config};
-use logging::{
-    DUST_BIN_MODE, FINDS_FAIL_SET, LOCALTIME_BUFFER, find_logger, log_message, log_process_find, log_pure_message, log_to_find, logger,
-    purge_fail_map, use_console,
-};
+use logging::{log_message, log_process_find, log_pure_message, log_to_find, purge_fail_map};
 use process::{ProcessEntry, ProcessSnapshot};
 use scheduler::PrimeThreadScheduler;
 use winapi::{
@@ -45,8 +42,6 @@ use windows::Win32::{
         Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
     },
 };
-
-use crate::process::PROCESS_SNAPSHOT_BUFFER;
 
 /// Applies all configuration settings to a target process.
 ///
@@ -119,7 +114,7 @@ fn process_logs(
     logs_path: Option<&str>,
     output_file: Option<&str>,
 ) {
-    *use_console().lock().unwrap() = true;
+    *get_use_console!() = true;
     let logs_path = logs_path.unwrap_or("logs");
     let output_file = output_file.unwrap_or("new_processes_results.txt");
 
@@ -220,7 +215,7 @@ fn main() -> windows::core::Result<()> {
     }
     let config_result = read_config(&cli.config_file_name);
 
-    *DUST_BIN_MODE.lock().unwrap() = cli.skip_log_before_elevation;
+    *get_dust_bin_mod!() = cli.skip_log_before_elevation;
     config_result.print_report();
     if !config_result.errors.is_empty() {
         log!("Configuration file has errors, please fix them before running the service.");
@@ -290,7 +285,7 @@ fn main() -> windows::core::Result<()> {
             log!("Warning: May not be able to manage all processes without admin privileges.");
         } else {
             log!("Not running as administrator. Requesting UAC elevation...");
-            match request_uac_elevation(*use_console().lock().unwrap()) {
+            match request_uac_elevation(*get_use_console!()) {
                 Ok(_) => {
                     log!("Running with administrator privileges.");
                 }
@@ -300,18 +295,19 @@ fn main() -> windows::core::Result<()> {
             }
         }
     }
-    *DUST_BIN_MODE.lock().unwrap() = false;
+    *get_dust_bin_mod!() = false;
     let mut prime_core_scheduler = PrimeThreadScheduler::new(config_result.constants);
     let mut current_loop = 0u32;
     let mut should_continue = true;
 
     terminate_child_processes();
 
+    let mut buffer: Vec<u8> = vec![0u8; 32];
     while should_continue {
         if cli.log_loop {
             log!("Loop {} started", current_loop + 1);
         }
-        match ProcessSnapshot::take(&mut PROCESS_SNAPSHOT_BUFFER.lock().unwrap()) {
+        match ProcessSnapshot::take(&mut buffer) {
             Err(err) => {
                 log!("Failed to take process snapshot: {}", err);
             }
@@ -380,7 +376,7 @@ fn main() -> windows::core::Result<()> {
                                 .to_lowercase();
 
                         let in_configs = configs.values().any(|grade_configs| grade_configs.contains_key(&process_name));
-                        if !FINDS_FAIL_SET.lock().unwrap().contains(&process_name)
+                        if !get_fail_find_set!().contains(&process_name)
                             && !in_configs
                             && !blacklist.contains(&process_name)
                             && is_affinity_unset(pe32.th32ProcessID, process_name.as_str())
@@ -395,8 +391,8 @@ fn main() -> windows::core::Result<()> {
                 let _ = CloseHandle(snapshot);
             }
         }
-        let _ = find_logger().lock().unwrap().flush();
-        let _ = logger().lock().unwrap().flush();
+        let _ = get_logger_find!().flush();
+        let _ = get_logger!().flush();
         current_loop += 1;
         if let Some(max_loops) = cli.loop_count
             && current_loop >= max_loops
@@ -409,7 +405,7 @@ fn main() -> windows::core::Result<()> {
         if should_continue {
             thread::sleep(Duration::from_millis(cli.interval_ms));
 
-            *LOCALTIME_BUFFER.lock().unwrap() = Local::now();
+            *get_local_time!() = Local::now();
             if let Ok(metadata) = metadata(&cli.config_file_name)
                 && let Ok(mod_time) = metadata.modified()
                 && Some(mod_time) != last_config_mod_time

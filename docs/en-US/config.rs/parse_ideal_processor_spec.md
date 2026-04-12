@@ -84,6 +84,5 @@ This function is called internally by [parse_and_insert_rules](parse_and_insert_
 ## See also
 
 - [IdealProcessorRule](IdealProcessorRule.md) — the struct produced by this function
-- [IdealProcessorPrefix](IdealProcessorPrefix.md) — internal helper for prefix-CPU associations
 - [parse_and_insert_rules](parse_and_insert_rules.md) — calls this function during rule parsing
 - [ProcessConfig](ProcessConfig.md) — stores the parsed rules in the `ideal_processor_rules` field

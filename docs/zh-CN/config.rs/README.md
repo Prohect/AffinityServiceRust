@@ -10,7 +10,6 @@
 | --- | --- |
 | [ProcessConfig](ProcessConfig.md) | 单个进程规则的完整配置 |
 | [PrimePrefix](PrimePrefix.md) | 模块特定前缀规则，用于主线程调度 |
-| [IdealProcessorPrefix](IdealProcessorPrefix.md) | 带特定 CPU 的模块前缀（内部解析辅助） |
 | [IdealProcessorRule](IdealProcessorRule.md) | 理想处理器分配规则，按模块前缀将线程分配到指定 CPU |
 | [ConfigConstants](ConfigConstants.md) | 调度器行为调优常量 |
 | [ConfigResult](ConfigResult.md) | 配置文件解析的聚合结果，含统计信息和诊断 |

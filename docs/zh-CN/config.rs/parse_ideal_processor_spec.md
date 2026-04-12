@@ -84,6 +84,5 @@ fn parse_ideal_processor_spec(
 ## 另请参阅
 
 - [IdealProcessorRule](IdealProcessorRule.md) — 本函数生成的结构体
-- [IdealProcessorPrefix](IdealProcessorPrefix.md) — 前缀与 CPU 关联的内部辅助结构体
 - [parse_and_insert_rules](parse_and_insert_rules.md) — 在规则解析过程中调用本函数
 - [ProcessConfig](ProcessConfig.md) — 在 `ideal_processor_rules` 字段中存储已解析的规则

@@ -20,13 +20,6 @@ pub struct PrimePrefix {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct IdealProcessorPrefix {
-    pub prefix: String,
-    pub cpus: Vec<u32>,
-}
-
-#[derive(Debug, Clone)]
 pub struct IdealProcessorRule {
     pub cpus: Vec<u32>,
     pub prefixes: Vec<String>,

@@ -48,7 +48,6 @@ A rule without `@` prefixes (e.g., `*p`) applies to all threads as a catch-all.
 
 ### Relationship to other types
 
-- [IdealProcessorPrefix](IdealProcessorPrefix.md) is an intermediate parsing helper; `IdealProcessorRule` is the resolved output stored in [ProcessConfig](ProcessConfig.md).
 - Rules are parsed by [parse_ideal_processor_spec](parse_ideal_processor_spec.md) and stored in `ProcessConfig::ideal_processor_rules`.
 - CPU alias references (e.g., `*p`) are resolved against aliases defined via [parse_alias](parse_alias.md).
 

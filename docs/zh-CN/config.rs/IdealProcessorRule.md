@@ -52,13 +52,11 @@ pub struct IdealProcessorRule {
 
 ### 与其他类型的关系
 
-- [IdealProcessorPrefix](IdealProcessorPrefix.md) 是解析阶段的中间辅助结构；`IdealProcessorRule` 是存储在 [ProcessConfig](ProcessConfig.md) 中的最终输出。
 - 规则由 [parse_ideal_processor_spec](parse_ideal_processor_spec.md) 解析，并存储在 `ProcessConfig::ideal_processor_rules` 中。
 - CPU 别名引用（如 `*p`）通过 [parse_alias](parse_alias.md) 定义的别名进行解析。
 
 | 结构体 | 用途 |
 | --- | --- |
-| [IdealProcessorPrefix](IdealProcessorPrefix.md) | 解析阶段将一个前缀与一组 CPU 配对的中间表示 |
 | **IdealProcessorRule** | 将多个前缀归入同一组 CPU 的最终表示 |
 
 ## 要求
@@ -71,7 +69,6 @@ pub struct IdealProcessorRule {
 
 ## 另请参阅
 
-- [IdealProcessorPrefix](IdealProcessorPrefix.md) — 解析阶段的中间辅助结构
 - [ProcessConfig](ProcessConfig.md) — 包含 `ideal_processor_rules` 字段
 - [parse_ideal_processor_spec](parse_ideal_processor_spec.md) — 解析理想处理器规格的函数
 - [parse_alias](parse_alias.md) — 定义 CPU 别名

@@ -10,7 +10,6 @@ This module is responsible for reading and interpreting the configuration file f
 | --- | --- |
 | [ProcessConfig](ProcessConfig.md) | Complete configuration for a single process rule |
 | [PrimePrefix](PrimePrefix.md) | Module-specific prefix rule for prime thread scheduling |
-| [IdealProcessorPrefix](IdealProcessorPrefix.md) | Internal helper pairing a module prefix with specific CPUs |
 | [IdealProcessorRule](IdealProcessorRule.md) | Rule for assigning ideal processors to threads by module prefix |
 | [ConfigConstants](ConfigConstants.md) | Scheduler behavior tuning constants |
 | [ConfigResult](ConfigResult.md) | Aggregate result of config file parsing with statistics and diagnostics |

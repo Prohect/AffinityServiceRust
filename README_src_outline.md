@@ -145,15 +145,11 @@
     pub cpus: Option<Vec<u32>>,
     pub thread_priority: ThreadPriority,
 }
-- [L24:L27]struct IdealProcessorPrefix {
-    pub prefix: String,
-    pub cpus: Vec<u32>,
-}
-- [L30:L33]struct IdealProcessorRule {
+- [L23:L26]struct IdealProcessorRule {
     pub cpus: Vec<u32>,
     pub prefixes: Vec<String>,
 }
-- [L36:L51]struct ProcessConfig {
+- [L29:L44]struct ProcessConfig {
     pub name: String,
     pub priority: ProcessPriority,
     pub affinity_cpus: Vec<u32>,
@@ -166,16 +162,16 @@
     pub memory_priority: MemoryPriority,
     pub ideal_processor_rules: Vec<IdealProcessorRule>,
 }
-- [L54:L58]struct ConfigConstants {
+- [L47:L51]struct ConfigConstants {
     pub min_active_streak: u8,
     pub keep_threshold: f64,
     pub entry_threshold: f64,
 }
-- [L70:L118]fn parse_cpu_spec(s: &str) -> Vec<u32> 
-- [L120:L122]fn mask_to_cpu_indices(mask: u64) -> Vec<u32> 
-- [L124:L132]fn cpu_indices_to_mask(cpus: &[u32]) -> usize 
-- [L134:L164]fn format_cpu_indices(cpus: &[u32]) -> String 
-- [L167:L178]struct ConfigResult {
+- [L63:L111]fn parse_cpu_spec(s: &str) -> Vec<u32> 
+- [L113:L115]fn mask_to_cpu_indices(mask: u64) -> Vec<u32> 
+- [L117:L125]fn cpu_indices_to_mask(cpus: &[u32]) -> usize 
+- [L127:L157]fn format_cpu_indices(cpus: &[u32]) -> String 
+- [L160:L171]struct ConfigResult {
     pub configs: HashMap<u32, HashMap<String, ProcessConfig>>,
     pub constants: ConfigConstants,
     pub constants_count: usize,
@@ -187,36 +183,36 @@
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
 }
-- [L221:L241]fn resolve_cpu_spec(
+- [L214:L234]fn resolve_cpu_spec(
     spec: &str,
     field_name: &str,
     line_number: usize,
     cpu_aliases: &HashMap<String, Vec<u32>>,
     errors: &mut Vec<String>,
 ) -> Vec<u32> 
-- [L243:L249]fn collect_members(text: &str, members: &mut Vec<String>) 
-- [L252:L292]fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut ConfigResult) 
-- [L294:L308]fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut HashMap<String, Vec<u32>>, result: &mut ConfigResult) 
-- [L310:L379]fn parse_ideal_processor_spec(
+- [L236:L242]fn collect_members(text: &str, members: &mut Vec<String>) 
+- [L245:L285]fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut ConfigResult) 
+- [L287:L301]fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut HashMap<String, Vec<u32>>, result: &mut ConfigResult) 
+- [L303:L372]fn parse_ideal_processor_spec(
     spec: &str,
     line_number: usize,
     cpu_aliases: &HashMap<String, Vec<u32>>,
     errors: &mut Vec<String>,
 ) -> Vec<IdealProcessorRule> 
-- [L381:L391]fn collect_group_block(lines: &[String], start_index: usize, first_line_content: &str) -> Option<(Vec<String>, Option<String>, usize)> 
-- [L415:L705]fn parse_and_insert_rules(
+- [L374:L384]fn collect_group_block(lines: &[String], start_index: usize, first_line_content: &str) -> Option<(Vec<String>, Option<String>, usize)> 
+- [L408:L698]fn parse_and_insert_rules(
     members: &[String],
     rule_parts: &[&str],
     line_number: usize,
     cpu_aliases: &HashMap<String, Vec<u32>>,
     result: &mut ConfigResult,
 ) 
-- [L707:L793]fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult 
-- [L842:L851]fn read_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>> 
-- [L853:L857]fn read_utf16le_file(path: &str) -> Result<String> 
-- [L860:L863]fn parse_mask(s: &str) -> usize 
-- [L865:L1028]fn convert(in_file: Option<String>, out_file: Option<String>) 
-- [L1030:L1242]fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
+- [L700:L786]fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult 
+- [L835:L844]fn read_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>> 
+- [L846:L850]fn read_utf16le_file(path: &str) -> Result<String> 
+- [L853:L856]fn parse_mask(s: &str) -> usize 
+- [L858:L1021]fn convert(in_file: Option<String>, out_file: Option<String>) 
+- [L1023:L1235]fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
 
 ## src/error_codes.rs
 - [L1:L46]fn error_from_code_win32(code: u32) -> String 

@@ -501,9 +501,9 @@ pub fn request_uac_elevation(console: bool) -> io::Result<()> {
 }
 
 pub fn enable_debug_privilege() {
-    let mut token: HANDLE = HANDLE::default();
+    let mut handle: HANDLE = HANDLE::default();
 
-    let open_result = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token) };
+    let open_result = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut handle) };
 
     if open_result.is_err() {
         log!("enable_debug_privilege: self OpenProcessToken failed");
@@ -517,7 +517,7 @@ pub fn enable_debug_privilege() {
     if lookup_result.is_err() {
         log!("enable_debug_privilege: LookupPrivilegeValueW failed");
 
-        let _ = unsafe { CloseHandle(token) };
+        let _ = unsafe { CloseHandle(handle) };
         return;
     }
 
@@ -529,7 +529,7 @@ pub fn enable_debug_privilege() {
         }],
     };
 
-    let adjust_result = unsafe { AdjustTokenPrivileges(token, false, Some(&tp as *const _), 0, None, None) };
+    let adjust_result = unsafe { AdjustTokenPrivileges(handle, false, Some(&tp as *const _), 0, None, None) };
 
     if adjust_result.is_err() {
         log!("enable_debug_privilege: AdjustTokenPrivileges failed");
@@ -537,13 +537,13 @@ pub fn enable_debug_privilege() {
         log!("enable_debug_privilege: AdjustTokenPrivileges succeeded");
     }
 
-    let _ = unsafe { CloseHandle(token) };
+    let _ = unsafe { CloseHandle(handle) };
 }
 
 pub fn enable_inc_base_priority_privilege() {
-    let mut token: HANDLE = HANDLE::default();
+    let mut handle: HANDLE = HANDLE::default();
 
-    let open_result = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut token) };
+    let open_result = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut handle) };
 
     if open_result.is_err() {
         log!("enable_inc_base_priority_privilege: self OpenProcessToken failed");
@@ -557,7 +557,7 @@ pub fn enable_inc_base_priority_privilege() {
     if lookup_result.is_err() {
         log!("enable_inc_base_priority_privilege: LookupPrivilegeValueW failed");
 
-        let _ = unsafe { CloseHandle(token) };
+        let _ = unsafe { CloseHandle(handle) };
         return;
     }
 
@@ -569,7 +569,7 @@ pub fn enable_inc_base_priority_privilege() {
         }],
     };
 
-    let adjust_result = unsafe { AdjustTokenPrivileges(token, false, Some(&tp as *const _), 0, None, None) };
+    let adjust_result = unsafe { AdjustTokenPrivileges(handle, false, Some(&tp as *const _), 0, None, None) };
 
     if adjust_result.is_err() {
         log!("enable_inc_base_priority_privilege: AdjustTokenPrivileges failed");
@@ -577,7 +577,7 @@ pub fn enable_inc_base_priority_privilege() {
         log!("enable_inc_base_priority_privilege: AdjustTokenPrivileges succeeded");
     }
 
-    let _ = unsafe { CloseHandle(token) };
+    let _ = unsafe { CloseHandle(handle) };
 }
 
 /// Checks if a process has default affinity (all system CPUs).

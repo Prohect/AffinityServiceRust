@@ -207,7 +207,7 @@ pub fn log_to_find(msg: &str) {
     if *get_use_console!() {
         let _ = writeln!(stdout(), "[{}]{}", time_prefix, msg);
     } else {
-        let _ = writeln!(get_logger!(), "[{}]{}", time_prefix, msg);
+        let _ = writeln!(get_logger_find!(), "[{}]{}", time_prefix, msg);
     }
 }
 

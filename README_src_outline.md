@@ -272,20 +272,20 @@
 - [L185:L193]fn log_process_find(process_name: &str) 
 
 ## src/main.rs
-- [L49:L107]fn apply_config(
+- [L51:L109]fn apply_config(
     pid: u32,
     config: &ProcessConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
     process: &mut ProcessEntry,
     dry_run: bool,
 ) -> ApplyConfigResult 
-- [L109:L197]fn process_logs(
+- [L111:L199]fn process_logs(
     configs: &HashMap<u32, HashMap<String, ProcessConfig>>,
     blacklist: &[String],
     logs_path: Option<&str>,
     output_file: Option<&str>,
 ) 
-- [L199:L458]fn main() -> windows::core::Result<()> 
+- [L201:L460]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L8:L16]enum ProcessPriority {
@@ -328,11 +328,12 @@
 }
 
 ## src/process.rs
-- [L4:L7]struct ProcessSnapshot {
-    buffer: Vec<u8>,
+- [L5:L5]static PROCESS_SNAPSHOT_BUFFER: Lazy<Mutex<Vec<u8>>> = Lazy::new(|| Mutex::new(vec![0u8; 32]));
+- [L7:L10]struct ProcessSnapshot<'a> {
+    buffer: &'a mut Vec<u8>,
     pub pid_to_process: HashMap<u32, ProcessEntry>,
 }
-- [L71:L76]struct ProcessEntry {
+- [L77:L82]struct ProcessEntry {
     pub process: SYSTEM_PROCESS_INFORMATION,
     threads: HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     threads_base_ptr: usize,

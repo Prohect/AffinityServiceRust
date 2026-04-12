@@ -1,30 +1,31 @@
 use ntapi::ntexapi::{NtQuerySystemInformation, SYSTEM_PROCESS_INFORMATION, SYSTEM_THREAD_INFORMATION, SystemProcessInformation};
-use std::{collections::HashMap, slice};
+use once_cell::sync::Lazy;
+use std::{collections::HashMap, slice, sync::Mutex};
 
-pub struct ProcessSnapshot {
-    buffer: Vec<u8>,
+pub static PROCESS_SNAPSHOT_BUFFER: Lazy<Mutex<Vec<u8>>> = Lazy::new(|| Mutex::new(vec![0u8; 32]));
+
+pub struct ProcessSnapshot<'a> {
+    buffer: &'a mut Vec<u8>,
     pub pid_to_process: HashMap<u32, ProcessEntry>,
 }
 
-impl Drop for ProcessSnapshot {
+impl<'a> Drop for ProcessSnapshot<'a> {
     fn drop(&mut self) {
         self.pid_to_process.clear();
         self.buffer.clear();
     }
 }
 
-impl ProcessSnapshot {
+impl<'a> ProcessSnapshot<'a> {
     /// Captures a snapshot of all processes and threads via NtQuerySystemInformation.
     ///
     /// Dynamically allocates buffer and retries if STATUS_INFO_LENGTH_MISMATCH.
     /// Parses SYSTEM_PROCESS_INFORMATION structures into ProcessEntry objects.
-    pub fn take() -> Result<Self, i32> {
-        let mut buf_len: usize = 1024;
-        let mut buffer: Vec<u8>;
+    pub fn take(buffer: &'a mut Vec<u8>) -> Result<Self, i32> {
+        let mut buf_len: usize = buffer.capacity();
         let mut return_len: u32 = 0;
         unsafe {
             loop {
-                buffer = vec![0u8; buf_len];
                 let status = NtQuerySystemInformation(
                     SystemProcessInformation,
                     buffer.as_mut_ptr() as *mut _,
@@ -34,7 +35,12 @@ impl ProcessSnapshot {
 
                 const STATUS_INFO_LENGTH_MISMATCH: i32 = -1073741820i32;
                 if status == STATUS_INFO_LENGTH_MISMATCH {
-                    buf_len = if return_len > 0 { return_len as usize + 8192 } else { buf_len * 2 };
+                    buf_len = if return_len > 0 {
+                        (((return_len / 8) + 1) * 8) as usize
+                    } else {
+                        buf_len * 2
+                    };
+                    *buffer = vec![0u8; buf_len];
                     continue;
                 }
                 if status < 0 {

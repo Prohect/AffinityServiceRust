@@ -46,6 +46,8 @@ use windows::Win32::{
     },
 };
 
+use crate::process::PROCESS_SNAPSHOT_BUFFER;
+
 /// Applies all configuration settings to a target process.
 ///
 /// This is the core function that orchestrates applying priority, affinity, CPU sets,
@@ -309,7 +311,7 @@ fn main() -> windows::core::Result<()> {
         if cli.log_loop {
             log!("Loop {} started", current_loop + 1);
         }
-        match ProcessSnapshot::take() {
+        match ProcessSnapshot::take(&mut PROCESS_SNAPSHOT_BUFFER.lock().unwrap()) {
             Err(err) => {
                 log!("Failed to take process snapshot: {}", err);
             }

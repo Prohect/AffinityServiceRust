@@ -110,7 +110,7 @@
 - [L1327:L1340]fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler) 
 
 ## src/cli.rs
-- [L5:L26]struct CliArgs {
+- [L5:L27]struct CliArgs {
     pub interval_ms: u64,
     pub help_mode: bool,
     pub help_all_mode: bool,
@@ -131,13 +131,14 @@
     pub skip_log_before_elevation: bool,
     pub no_debug_priv: bool,
     pub no_inc_base_priority: bool,
+    pub no_etw: bool,
 }
-- [L38:L119]fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()> 
-- [L121:L147]fn print_help() 
-- [L149:L197]fn print_cli_help() 
-- [L199:L229]fn get_config_help_lines() -> Vec<&'static str> 
-- [L231:L235]fn print_config_help() 
-- [L237:L242]fn print_help_all() 
+- [L39:L123]fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()> 
+- [L125:L151]fn print_help() 
+- [L153:L202]fn print_cli_help() 
+- [L204:L313]fn get_config_help_lines() -> Vec<&'static str> 
+- [L315:L319]fn print_config_help() 
+- [L321:L326]fn print_help_all() 
 
 ## src/config.rs
 - [L17:L21]struct PrimePrefix {
@@ -312,7 +313,7 @@
     configs: &HashMap<u32, HashMap<String, ProcessConfig>>,
     blacklist: &[String],
 ) -> Result<(), windows::core::Error> 
-- [L243:L507]fn main() -> windows::core::Result<()> 
+- [L243:L511]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L8:L16]enum ProcessPriority {

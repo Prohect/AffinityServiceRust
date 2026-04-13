@@ -337,15 +337,19 @@ fn main() -> windows::core::Result<()> {
     let mut should_continue = true;
 
     // Start ETW process monitor for reactive process level rule application
-    let (event_trace_monitor, event_trace_receiver) = match EtwProcessMonitor::start() {
-        Ok((monitor, rx)) => {
-            log!("ETW process monitor started (reactive process detection enabled)");
-            (Some(monitor), Some(rx))
+    let (event_trace_monitor, event_trace_receiver) = if !(cli.no_etw) {
+        match EtwProcessMonitor::start() {
+            Err(e) => {
+                log!("ETW process monitor failed to start: {} (falling back to polling only)", e);
+                (None, None)
+            }
+            Ok((monitor, rx)) => {
+                log!("ETW process monitor started (reactive process detection enabled)");
+                (Some(monitor), Some(rx))
+            }
         }
-        Err(e) => {
-            log!("ETW process monitor failed to start: {} (falling back to polling only)", e);
-            (None, None)
-        }
+    } else {
+        (None, None)
     };
 
     let mut process_level_applied: HashSet<u32> = HashSet::new();

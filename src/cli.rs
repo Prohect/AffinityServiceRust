@@ -23,6 +23,7 @@ pub struct CliArgs {
     pub skip_log_before_elevation: bool,
     pub no_debug_priv: bool,
     pub no_inc_base_priority: bool,
+    pub no_etw: bool,
 }
 
 impl CliArgs {
@@ -111,6 +112,9 @@ pub fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()> {
             "-noIncBasePriority" | "-noincbasepriority" => {
                 cli.no_inc_base_priority = true;
             }
+            "-no_etw" | "-noetw" => {
+                cli.no_etw = true;
+            }
             _ => {}
         }
         i += 1;
@@ -180,6 +184,7 @@ pub fn print_cli_help() {
           -logloop             log a message at the start of each loop for testing
           -noDebugPriv         not request SeDebugPrivilege
           -noIncBasePriority   not request SeIncreaseBasePriorityPrivilege
+          -no_etw | -noetw     not request ETW tracing
 
         === DEBUGGING ===
 
@@ -201,30 +206,109 @@ pub fn print_cli_help() {
 /// For comprehensive documentation, see docs/cli.md and docs/config.md
 pub fn get_config_help_lines() -> Vec<&'static str> {
     vec![
-        "## ============================================================================",
-        "## AffinityServiceRust Configuration File",
-        "## ============================================================================",
-        "##",
-        "## Full documentation: docs/cli.md and docs/config.md",
-        "##",
-        "## Format: process:priority:affinity:cpuset:prime:io:memory:ideal:grade",
-        "##   process   - Executable name (e.g., game.exe)",
-        "##   priority  - Process priority: none|idle|below normal|normal|above normal|high|real time",
-        "##   affinity  - Hard CPU affinity: 0-7|0;4;8|0xFF|*alias",
-        "##   cpuset    - Soft CPU preference: *p|*e|*alias",
-        "##   prime     - Prime thread CPUs: ?10*pN01|*p@module.dll",
-        "##   io        - I/O priority: none|very low|low|normal|high",
-        "##   memory    - Memory priority: none|very low|low|medium|below normal|normal",
-        "##   ideal     - Ideal processor: *alias[@prefix] or 0",
-        "##   grade     - Application frequency: 1=every loop, 5=every 5th loop",
-        "##",
-        "## CPU Aliases (define in ALIASES section):",
-        "##   *a = 0-19     # All cores",
-        "##   *p = 0-7      # P-cores",
-        "##   *e = 8-19     # E-cores",
-        "##",
-        "## Groups: { proc1: proc2 }:priority:affinity...",
-        "## ============================================================================",
+        r#"
+        ## ============================================================================
+        ## AffinityServiceRust Configuration File
+        ## ============================================================================
+        ##
+        ## This config file defines CPU affinity: priority: and scheduling rules for
+        ## Windows processes. Customize the aliases below to match YOUR CPU topology.
+        ##
+        ## Logs are stored in logs/ directory by default for -processlogs mode.
+        ##
+        ## ----------------------------------------------------------------------------
+        ## TERMINOLOGY
+        ## ----------------------------------------------------------------------------
+        ##   P-core  = Performance core (Intel hybrid CPUs)
+        ##   E-core  = Efficiency core (Intel hybrid CPUs)
+        ##   p       = P-core with HyperThreading OFF (1 thread per core)
+        ##   pp      = P-core with HyperThreading ON (2 threads per core)
+        ##   e       = E-core (always 1 thread per core)
+        ##
+        ## Example: Intel i7-14700KF with HT off = 8p + 12e = 20 logical processors
+        ##
+        ## ----------------------------------------------------------------------------
+        ## CONFIG FORMAT
+        ## ----------------------------------------------------------------------------
+        ##   process_name:priority:affinity:cpuset:prime_cpus[@startModuleName1;startModuleName2]:io_priority:memory_priority:grade
+        ##
+        ##   Field descriptions:
+        ##     process_name     - Executable name (e.g.: game.exe)
+        ##     priority         - Process priority class
+        ##     affinity         - Hard CPU affinity mask (inherited by child processes)
+        ##     cpuset           - Soft CPU preference via Windows CPU Sets
+        ##     prime_cpus       - CPUs for prime thread scheduling (CPU-intensive threads). Optionally @prefix1;prefix2 to match start module names (default empty)
+        ##     io_priority      - I/O priority level
+        ##     memory_priority  - Memory page priority
+        ##     ideal_processor  - Ideal CPU assignment based on thread start module. Format: *cpu_spec[@prefix1;prefix2] (default: 0)
+        ##     grade            - Rule application frequency (default: 1). Rule runs every Nth loop
+        ##
+        ## ----------------------------------------------------------------------------
+        ## CPU SPECIFICATION FORMATS
+        ## ----------------------------------------------------------------------------
+        ##   0           - Don't modify (keep current setting)
+        ##   0-7         - CPU range: cores 0 through 7 (RECOMMENDED)
+        ##   0;4;8       - Individual CPUs: cores 0: 4: and 8
+        ##   0-7;64-71   - Multiple ranges: for >64 core systems
+        ##   7           - Single CPU: core 7 only (NOT a bitmask!)
+        ##   0xFF        - Hex bitmask: legacy format: ≤64 cores only
+        ##   *alias      - Use predefined alias (e.g.: *pcore: *ecore)
+        ##
+        ##   NOTE: "7" means core 7: NOT a bitmask for cores 0-2.
+        ##         Use "0x7" or "0-2" if you want cores 0: 1: and 2.
+        ##
+        ## ----------------------------------------------------------------------------
+        ## PRIORITY LEVELS
+        ## ----------------------------------------------------------------------------
+        ##   priority:        none: idle: below normal: normal: above normal: high: real time
+        ##   io_priority:     none: very low: low: normal: high (high requires admin)
+        ##   memory_priority: none: very low: low: medium: below normal: normal
+        ##
+        ##   Use "none" to skip setting that attribute (keep Windows default).
+        ##
+        ## ----------------------------------------------------------------------------
+        ## IDEAL PROCESSOR SYNTAX
+        ## ----------------------------------------------------------------------------
+        ##   Specifies preferred CPU for threads based on their start module.
+        ##   The scheduler assigns ideal CPUs to top N threads by total CPU time
+        ##   (where N = number of CPUs specified). Falls back to previous ideal CPU
+        ##   when thread drops out of top N.
+        ##
+        ##   Format: *alias[@prefix1;prefix2;...]
+        ##
+        ##   Components:
+        ##     *            - Required prefix marker for each rule
+        ##     alias        - CPU alias name (e.g., pN01, e, 4567 - must be defined in ALIAS section)
+        ##     @prefix      - Optional module prefix filter (e.g., engine.dll;render.dll)
+        ##
+        ##   Multi-segment (different CPUs for different modules):
+        ##     *p@engine.dll*e@helper.dll  - Alias *p for engine, *e for helper
+        ##
+        ##   Examples:
+        ##     *pN01@cs2.exe;nvwgf2umx.dll  - Use alias *pN01 for CS2/nvidia threads
+        ##     *pN01                        - Use alias *pN01 for all threads
+        ##     *p@worker*e@background      - Alias *p for worker, *e for background
+        ##
+        ## ----------------------------------------------------------------------------
+        ## PROCESS GROUPS
+        ## ----------------------------------------------------------------------------
+        ##   Group multiple processes with the same rule using { } syntax.
+        ##   Group name is optional (for documentation/debugging only):
+        ##
+        ##   # Named group (multi-line)
+        ##   group_name {
+        ##       process1.exe: process2.exe
+        ##       # Comments allowed inside
+        ##       process3.exe
+        ##   }:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority:ideal_processor:grade
+        ##
+        ##   # Named group (single-line)
+        ##   browsers { chrome.exe: firefox.exe }:normal:*e:0:0:low:none:0:1
+        ##
+        ##   # Anonymous group (no name)
+        ##   { notepad.exe: calc.exe }:none:*e:0:0:low:none:0:1
+        ##
+        ## ============================================================================"#,
     ]
 }
 

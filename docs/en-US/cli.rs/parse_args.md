@@ -36,6 +36,7 @@ All flags use a single-dash prefix (e.g., `-help`, `-config`). A small number of
 | `-dryrun` | `-dry-run`, `--dry-run` |
 | `-noDebugPriv` | `-nodebugpriv` |
 | `-noIncBasePriority` | `-noincbasepriority` |
+| `-no_etw` | `-noetw` |
 
 ### Value-bearing flags
 

@@ -50,7 +50,7 @@ The function executes the following initialization steps:
 
 12. **Initialize scheduler** — Creates a [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) with the parsed [ConfigConstants](../config.rs/ConfigConstants.md) (hysteresis thresholds and minimum active streak).
 
-13. **Start ETW monitor** — Calls [EtwProcessMonitor::start](../event_trace.rs/EtwProcessMonitor.md) to begin real-time process start/stop event tracing. If ETW fails to start (e.g., insufficient privileges or another trace session is active), the service falls back to polling-only mode.
+13. **Start ETW monitor** — Calls [EtwProcessMonitor::start](../event_trace.rs/EtwProcessMonitor.md) to begin real-time process start/stop event tracing (unless `-no_etw` is set). If ETW fails to start (e.g., insufficient privileges or another trace session is active), the service falls back to polling-only mode.
 
 ### Main polling loop
 

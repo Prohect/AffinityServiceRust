@@ -27,6 +27,7 @@ pub struct CliArgs {
     pub skip_log_before_elevation: bool,
     pub no_debug_priv: bool,
     pub no_inc_base_priority: bool,
+    pub no_etw: bool,
 }
 ```
 

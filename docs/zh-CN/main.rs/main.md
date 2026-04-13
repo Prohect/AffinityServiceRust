@@ -50,7 +50,7 @@ fn main() -> windows::core::Result<()>
 
 12. **初始化调度器** — 使用解析后的 [ConfigConstants](../config.rs/ConfigConstants.md)（迟滞阈值和最小活跃连续次数）创建 [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md)。
 
-13. **启动 ETW 监控** — 调用 [EtwProcessMonitor::start](../event_trace.rs/EtwProcessMonitor.md) 开始实时进程启动/停止事件跟踪。如果 ETW 启动失败（例如权限不足或另一个跟踪会话正在运行），服务将回退到仅轮询模式。
+13. **启动 ETW 监控** — 调用 [EtwProcessMonitor::start](../event_trace.rs/EtwProcessMonitor.md) 开始实时进程启动/停止事件跟踪（除非设置了 `-no_etw`）。如果 ETW 启动失败（例如权限不足或另一个跟踪会话正在运行），服务将回退到仅轮询模式。
 
 ### 主轮询循环
 

@@ -36,6 +36,7 @@ pub fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()>
 | `-dryrun` | `-dry-run`、`--dry-run` |
 | `-noDebugPriv` | `-nodebugpriv` |
 | `-noIncBasePriority` | `-noincbasepriority` |
+| `-no_etw` | `-noetw` |
 
 ### 带值标志
 

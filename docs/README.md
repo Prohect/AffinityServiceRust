@@ -31,7 +31,7 @@ each top level item of a souce file is a markdown in that dir(eg. "\en-US\config
 
 [ProcessConfig](en-US/config.rs/ProcessConfig.md)
 
-[Hysteresis Algorithm](en-US/scheduler.rs/PrimeThreadScheduler.md#hysteresis-algorithm)
+[return value for ProcessSnapshot::take()](en-US/process.rs/ProcessSnapshot.md#return-value)
 
 [log_error_if_new](../docs/en-US/apply.rs/log_error_if_new.md)
 

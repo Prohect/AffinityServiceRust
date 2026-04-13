@@ -1,66 +1,79 @@
 # log_message function (logging.rs)
 
-Writes a timestamped log message to the main log file and optionally to the console. This is the backend for the `log!` macro, which is the primary logging interface used throughout the codebase.
+Writes a timestamped log message to the console or the main log file. Each message is prefixed with the current time in `[HH:MM:SS]` format, read from the cached [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md). Output is routed to `stdout` when [USE_CONSOLE](USE_CONSOLE.md) is `true`, or to the [LOG_FILE](LOG_FILE.md) handle when `false`. If [DUST_BIN_MODE](DUST_BIN_MODE.md) is active, the function returns immediately without producing any output.
 
 ## Syntax
 
-```rust
+```logging.rs
 pub fn log_message(args: &str)
 ```
 
 ## Parameters
 
-`args`
-
-The message string to log. This is typically produced by `format_args!` via the `log!` macro, but can also be passed directly as a string slice.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `args` | `&str` | The message text to log. This string is appended after the `[HH:MM:SS]` timestamp prefix on the same line. A trailing newline is added automatically by `writeln!`. |
 
 ## Return value
 
-This function does not return a value.
+None (`()`).
 
 ## Remarks
 
-`log_message` is the central logging function for the application. It performs the following steps:
+The function performs the following steps in order:
 
-1. **Dust bin check** — if [`DUST_BIN_MODE`](DUST_BIN_MODE.md) is `true`, the function returns immediately without writing anything. This suppresses all logging during the pre-UAC-elevation phase.
-2. **Timestamp formatting** — the function reads the cached timestamp from [`LOCAL_TIME_BUFFER`](LOCAL_TIME_BUFFER.md) and formats it as a human-readable prefix (e.g., `"2024-01-15 14:30:05.123"`). Using the buffered time ensures consistent timestamps across all messages within a single loop iteration.
-3. **File write** — the timestamped message is written to the [`LOG_FILE`](LOG_FILE.md) static handle in append mode.
-4. **Console echo** — if [`USE_CONSOLE`](USE_CONSOLE.md) is `true`, the same timestamped message is also printed to stdout via `println!`.
+1. **Dust-bin check:** Acquires the [DUST_BIN_MODE](DUST_BIN_MODE.md) lock via [get_dust_bin_mod!](get_dust_bin_mod.md). If the flag is `true`, returns immediately — the message is silently discarded. This prevents logging before UAC elevation.
+2. **Timestamp formatting:** Acquires the [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) lock via [get_local_time!](get_local_time.md) and formats the cached `DateTime<Local>` as `%H:%M:%S` (e.g., `14:32:07`). The formatted string is stored in a local `String`.
+3. **Output routing:** Acquires the [USE_CONSOLE](USE_CONSOLE.md) lock via [get_use_console!](get_use_console.md).
+   - If `true`, writes `[{time_prefix}]{args}\n` to `stdout` via `writeln!(stdout(), ...)`.
+   - If `false`, writes the same formatted line to the [LOG_FILE](LOG_FILE.md) handle via `writeln!(get_logger!(), ...)`.
 
-### The `log!` macro
+### Output format
 
-The `log!` macro is the idiomatic way to call this function throughout the codebase. It accepts `format!`-style arguments:
-
-```rust
-log!("Applied priority {} for pid {}", priority, pid);
+```/dev/null/example.log#L1-2
+[14:32:07]Applied 3 rules to PID 1234
+[14:32:07]Set priority class to "high" for notepad.exe
 ```
 
-The macro expands to a `log_message` call with the formatted string, providing a convenient printf-style API without requiring callers to manually format their messages.
+The timestamp is enclosed in square brackets with no space before the message body. Each call produces exactly one line of output (terminated by `\n`).
 
-### Thread safety
+### Error handling
 
-All shared state accessed by this function ([`DUST_BIN_MODE`](DUST_BIN_MODE.md), [`LOCAL_TIME_BUFFER`](LOCAL_TIME_BUFFER.md), [`LOG_FILE`](LOG_FILE.md), [`USE_CONSOLE`](USE_CONSOLE.md)) is guarded by individual `Mutex` locks. Each lock is acquired and released independently, ensuring that log writes are serialized and no interleaving occurs within a single message.
+Write errors from `writeln!` are silently ignored (the `Result` is bound to `let _ = …`). This design choice prevents a failing log destination (e.g., a full disk) from crashing the service. The service continues operating even when logging is unavailable.
 
-### Comparison with log_pure_message
+### Lock ordering
 
-[`log_pure_message`](log_pure_message.md) is similar but omits the timestamp prefix. Use `log_message` (via `log!`) for normal operational messages, and [`log_pure_message`](log_pure_message.md) for continuation lines or structured output where a timestamp would be distracting.
+The function acquires up to three mutex locks in the following order within a single call:
+
+1. `DUST_BIN_MODE` — released immediately after reading the flag.
+2. `LOCAL_TIME_BUFFER` — released after formatting the timestamp string.
+3. `USE_CONSOLE` and either `LOG_FILE` (via `get_logger!`) or `stdout` — released after the write completes.
+
+Because the locks are acquired sequentially (never nested), there is no deadlock risk within this function. Callers should avoid holding any of these locks when calling `log_message`.
+
+### Relationship to the log! macro
+
+This function is not typically called directly. Instead, most call sites use the [log!](log.md) macro, which formats its arguments via `format!()` and passes the resulting `&str` to `log_message`. Direct calls are useful when the caller already has a pre-formatted `&str` and wants to avoid an additional `format!` allocation.
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/logging.rs |
-| **Source lines** | L185–L195 |
-| **Called by** | `log!` macro (used throughout all modules) |
-| **Reads** | [`DUST_BIN_MODE`](DUST_BIN_MODE.md), [`LOCAL_TIME_BUFFER`](LOCAL_TIME_BUFFER.md), [`USE_CONSOLE`](USE_CONSOLE.md) |
-| **Writes to** | [`LOG_FILE`](LOG_FILE.md) |
+|-------------|-------|
+| Module | `logging` |
+| Callers | [log!](log.md) macro (primary), [log_error_if_new](../apply.rs/log_error_if_new.md), and various call sites across the crate |
+| Callees | [get_dust_bin_mod!](get_dust_bin_mod.md), [get_local_time!](get_local_time.md), [get_use_console!](get_use_console.md), [get_logger!](get_logger.md) |
+| Reads | [DUST_BIN_MODE](DUST_BIN_MODE.md), [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md), [USE_CONSOLE](USE_CONSOLE.md), [LOG_FILE](LOG_FILE.md) |
+| Std dependencies | `std::io::Write`, `std::io::stdout` |
 
-## See also
+## See Also
 
-- [log_pure_message](log_pure_message.md)
-- [log_to_find](log_to_find.md)
-- [DUST_BIN_MODE static](DUST_BIN_MODE.md)
-- [LOCAL_TIME_BUFFER static](LOCAL_TIME_BUFFER.md)
-- [LOG_FILE static](LOG_FILE.md)
-- [USE_CONSOLE static](USE_CONSOLE.md)
-- [logging.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| Convenience logging macro | [log!](log.md) |
+| Raw log writing (no timestamp) | [log_pure_message](log_pure_message.md) |
+| Find-mode timestamped logging | [log_to_find](log_to_find.md) |
+| Log suppression flag | [DUST_BIN_MODE](DUST_BIN_MODE.md) |
+| Console routing flag | [USE_CONSOLE](USE_CONSOLE.md) |
+| Main log file handle | [LOG_FILE](LOG_FILE.md) |
+| Cached timestamp | [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) |
+| logging module overview | [logging module](README.md) |

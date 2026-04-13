@@ -1,53 +1,56 @@
 # log_pure_message function (logging.rs)
 
-Writes a log message to the log file without a timestamp prefix. Used for continuation lines, headers, and other output that should not carry a timestamp.
+Writes a message to the console or the main log file **without** a timestamp prefix. Unlike [log_message](log_message.md), which prepends a `[HH:MM:SS]` timestamp to every line, `log_pure_message` outputs the message string exactly as provided. This function is used for continuation lines, banners, and other output where a timestamp would be redundant or visually disruptive.
 
 ## Syntax
 
-```rust
+```logging.rs
 pub fn log_pure_message(args: &str)
 ```
 
 ## Parameters
 
-`args`
-
-The message string to write to the log file. This string is written as-is without any timestamp or prefix formatting.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `args` | `&str` | The message string to write. Written verbatim followed by a newline (`writeln!`). |
 
 ## Return value
 
-This function does not return a value.
+None (`()`).
 
 ## Remarks
 
-Unlike [`log_message`](log_message.md), which prepends a timestamp from [`LOCAL_TIME_BUFFER`](LOCAL_TIME_BUFFER.md) to every line, `log_pure_message` writes the provided text directly to the [`LOG_FILE`](LOG_FILE.md) with no additional formatting. This is useful for multi-line output where only the first line should carry a timestamp, or for section headers and separators in the log file.
+- The output destination is determined by the [USE_CONSOLE](USE_CONSOLE.md) flag:
+  - When `true`, the message is written to `stdout` via `writeln!(stdout(), "{}", args)`.
+  - When `false`, the message is written to the main [LOG_FILE](LOG_FILE.md) via `writeln!(get_logger!(), "{}", args)`.
+- Unlike [log_message](log_message.md), this function does **not** check [DUST_BIN_MODE](DUST_BIN_MODE.md). Messages passed to `log_pure_message` are always emitted, even during the pre-elevation phase when normal logging is suppressed. Callers that need suppression semantics should check `DUST_BIN_MODE` themselves or use [log_message](log_message.md) / the [log!](log.md) macro instead.
+- Write errors from `writeln!` are silently ignored (the `Result` is bound to `let _ = …`). This prevents I/O failures — such as a full disk or a broken pipe — from propagating panics into the service loop.
+- The function acquires two mutex locks in sequence during a single call: first [USE_CONSOLE](USE_CONSOLE.md) (via [get_use_console!](get_use_console.md)), and then either `stdout` or [LOG_FILE](LOG_FILE.md) (via [get_logger!](get_logger.md)). The `USE_CONSOLE` guard is dropped before the file write occurs because the `if *get_use_console!()` temporary is evaluated and released before the branch body executes.
 
-The function respects [`DUST_BIN_MODE`](DUST_BIN_MODE.md) — when dust bin mode is active, the message is silently discarded without being written to the file or console. This ensures consistent suppression of all log output during the pre-UAC-elevation phase.
+### Typical use cases
 
-If [`USE_CONSOLE`](USE_CONSOLE.md) is enabled, the message is also printed to stdout without a timestamp prefix, matching the file output format.
-
-The function acquires the [`LOG_FILE`](LOG_FILE.md) mutex for the duration of the write operation, ensuring that the output is not interleaved with concurrent writes from [`log_message`](log_message.md).
-
-### Typical usage
-
-`log_pure_message` is commonly used for:
-
-- Continuation lines in multi-line log entries (e.g., listing multiple changes for a single process)
-- Banner or separator lines at startup
-- Config dump output where timestamps would be distracting
+- **Startup banners:** Multi-line service identification output where only the first line carries a timestamp.
+- **Continuation output:** Supplementary detail lines that follow a timestamped header line produced by [log_message](log_message.md).
+- **Structured output blocks:** Configuration dumps, rule listings, or other formatted blocks where per-line timestamps would harm readability.
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/logging.rs |
-| **Source lines** | L197–L203 |
-| **Writes to** | [`LOG_FILE`](LOG_FILE.md) |
-| **Respects** | [`DUST_BIN_MODE`](DUST_BIN_MODE.md), [`USE_CONSOLE`](USE_CONSOLE.md) |
+|-------------|-------|
+| Module | `logging` |
+| Callers | [main](../main.rs/README.md), [apply module](../apply.rs/README.md) |
+| Callees | [get_use_console!](get_use_console.md), [get_logger!](get_logger.md) |
+| Reads | [USE_CONSOLE](USE_CONSOLE.md), [LOG_FILE](LOG_FILE.md) |
+| Does **not** read | [DUST_BIN_MODE](DUST_BIN_MODE.md), [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) |
 
-## See also
+## See Also
 
-- [log_message function](log_message.md)
-- [LOG_FILE static](LOG_FILE.md)
-- [DUST_BIN_MODE static](DUST_BIN_MODE.md)
-- [logging.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| Timestamped log output | [log_message](log_message.md) |
+| Convenience logging macro (timestamped) | [log!](log.md) |
+| Find-mode log output | [log_to_find](log_to_find.md) |
+| Console vs. file routing flag | [USE_CONSOLE](USE_CONSOLE.md) |
+| Log suppression flag (not checked here) | [DUST_BIN_MODE](DUST_BIN_MODE.md) |
+| Main log file handle | [LOG_FILE](LOG_FILE.md) |
+| logging module overview | [logging module](README.md) |

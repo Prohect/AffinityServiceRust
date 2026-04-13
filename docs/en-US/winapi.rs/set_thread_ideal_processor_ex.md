@@ -1,6 +1,6 @@
 # set_thread_ideal_processor_ex function (winapi.rs)
 
-Sets the ideal processor for a thread, specifying both the processor group and the processor number within that group.
+Sets a thread's ideal processor to a specific processor number within a specific processor group. This is the group-aware variant of `SetThreadIdealProcessor` and is used by AffinityServiceRust to pin prime threads and assign ideal processors according to configuration rules on systems with one or more processor groups.
 
 ## Syntax
 
@@ -14,57 +14,69 @@ pub fn set_thread_ideal_processor_ex(
 
 ## Parameters
 
-`thread_handle`
-
-A `HANDLE` to the target thread, opened with `THREAD_SET_INFORMATION` access. This is typically the `w_handle` field of a [`ThreadHandle`](ThreadHandle.md).
-
-`group`
-
-The processor group number to assign. On systems with a single processor group (most desktop systems with fewer than 64 logical processors), this is `0`.
-
-`number`
-
-The zero-based processor number within the specified group. This identifies the specific logical processor to set as the thread's ideal processor.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `thread_handle` | `HANDLE` | A valid thread handle with `THREAD_SET_INFORMATION` access. Typically obtained from the `w_handle` field of a [ThreadHandle](ThreadHandle.md). |
+| `group` | `u16` | The zero-based processor group number to assign. On single-group systems (≤ 64 logical processors), this is always `0`. |
+| `number` | `u8` | The zero-based processor number within the group. For example, on a system with 16 cores in group 0, valid values are `0` through `15`. |
 
 ## Return value
 
-On success, returns `Ok(PROCESSOR_NUMBER)` containing the thread's **previous** ideal processor assignment (group and number). This allows the caller to restore the original assignment if needed.
-
-On failure, returns `Err(Error)` with the underlying Windows error. Common failure causes include invalid handles, access denied, or invalid processor numbers.
+| Value | Description |
+|-------|-------------|
+| `Ok(PROCESSOR_NUMBER)` | The thread's **previous** ideal processor, returned by the underlying `SetThreadIdealProcessorEx` call. The caller can use this to restore the original ideal processor later if needed. The returned `PROCESSOR_NUMBER` contains `Group`, `Number`, and `Reserved` fields. |
+| `Err(Error)` | The Win32 call failed. The `Error` value wraps the underlying Windows error code. Common causes include an invalid handle, insufficient access rights (`THREAD_SET_INFORMATION` not granted), or the thread having exited. |
 
 ## Remarks
 
-This function wraps the Windows API `SetThreadIdealProcessorEx`, which sets the preferred processor for thread scheduling. The ideal processor is a scheduling hint — the Windows scheduler will attempt to schedule the thread on the specified processor when it is available, but may schedule it elsewhere under load.
+### Implementation
 
-The function constructs a `PROCESSOR_NUMBER` struct from the provided `group` and `number` parameters, calls `SetThreadIdealProcessorEx`, and returns the previous ideal processor setting that the API provides as an output parameter.
+The function constructs a `PROCESSOR_NUMBER` struct with the specified `Group` and `Number` (and `Reserved` set to `0`), then calls the Win32 `SetThreadIdealProcessorEx` function. A mutable `PROCESSOR_NUMBER` is passed as the `lpPreviousIdealProcessor` out-parameter to capture the thread's prior ideal processor assignment.
 
-This is used by two subsystems in the application:
+### Ideal processor semantics
 
-- **Ideal processor assignment** — [`apply_ideal_processors`](../apply.rs/apply_ideal_processors.md) uses this to assign threads to specific CPUs based on their start module prefix (e.g., assigning render threads to performance cores).
-- **Prime thread scheduling** — [`apply_prime_threads_promote`](../apply.rs/apply_prime_threads_promote.md) uses this to pin the highest-activity threads to designated fast cores.
-- **Ideal processor reset** — [`reset_thread_ideal_processors`](../apply.rs/reset_thread_ideal_processors.md) redistributes ideal processors after affinity or CPU set changes.
+Setting a thread's ideal processor is a **hint** to the Windows scheduler, not a hard constraint. The scheduler prefers to schedule the thread on the ideal processor when it is available but will schedule the thread on other allowed processors when the ideal one is busy. For hard CPU pinning, use CPU sets via `SetThreadSelectedCpuSets` or process affinity via `SetProcessAffinityMask`.
 
-The previous ideal processor returned by the function is stored in [`IdealProcessorState`](../scheduler.rs/IdealProcessorState.md) within [`ThreadStats`](../scheduler.rs/ThreadStats.md), enabling the application to detect changes made by the OS or other tools and to restore the original assignment when demoting threads.
+### Relationship to get_thread_ideal_processor_ex
 
-### Processor groups
+This function is the setter counterpart to [get_thread_ideal_processor_ex](get_thread_ideal_processor_ex.md). Together they allow the service to read, modify, and potentially restore ideal processor assignments:
 
-On systems with more than 64 logical processors, Windows organizes CPUs into processor groups. The `group` parameter selects which group, and `number` selects the processor within that group. Most consumer systems have a single group (group 0), but server and HEDT systems may have multiple groups.
+1. Read the current ideal processor with [get_thread_ideal_processor_ex](get_thread_ideal_processor_ex.md).
+2. Set a new ideal processor with `set_thread_ideal_processor_ex`.
+3. The previous value is returned, which can be stored for later restoration.
 
-The companion function [`get_thread_ideal_processor_ex`](get_thread_ideal_processor_ex.md) queries the current ideal processor assignment.
+### Usage in the apply module
+
+The [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) and [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) functions call `set_thread_ideal_processor_ex` to direct hot threads toward preferred cores (e.g., performance cores on hybrid architectures). The [reset_thread_ideal_processors](../apply.rs/reset_thread_ideal_processors.md) function uses it to reset ideal processors back to a round-robin assignment when CPU set changes require rebalancing.
+
+### IdealProcessorState tracking
+
+The [IdealProcessorState](../scheduler.rs/IdealProcessorState.md) struct in the scheduler module tracks both the current and previous ideal processor assignments for each thread, enabling the service to detect when reassignment is needed and to avoid redundant Win32 calls.
+
+### Handle requirements
+
+The thread handle **must** have `THREAD_SET_INFORMATION` access. This corresponds to the `w_handle` field of [ThreadHandle](ThreadHandle.md). If `w_handle` is invalid (the access right was not granted during [get_thread_handle](get_thread_handle.md)), callers should skip the call rather than passing an invalid handle.
 
 ## Requirements
 
-| Requirement | Value |
-| --- | --- |
-| **Module** | src/winapi.rs |
-| **Source lines** | L658–L669 |
-| **Called by** | [`apply_ideal_processors`](../apply.rs/apply_ideal_processors.md), [`apply_prime_threads_promote`](../apply.rs/apply_prime_threads_promote.md), [`reset_thread_ideal_processors`](../apply.rs/reset_thread_ideal_processors.md) |
-| **Windows API** | [SetThreadIdealProcessorEx](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadidealprocessorex) |
+| | |
+|---|---|
+| **Module** | `winapi` (`src/winapi.rs`) |
+| **Visibility** | `pub` |
+| **Callers** | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md), [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md), [reset_thread_ideal_processors](../apply.rs/reset_thread_ideal_processors.md) |
+| **Callees** | `SetThreadIdealProcessorEx` (Win32 `kernel32.dll`) |
+| **API** | [`SetThreadIdealProcessorEx`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadidealprocessorex) |
+| **Privileges** | `SeDebugPrivilege` may be required to set the ideal processor on threads in processes owned by other users |
 
-## See also
+## See Also
 
-- [get_thread_ideal_processor_ex](get_thread_ideal_processor_ex.md)
-- [ThreadHandle](ThreadHandle.md)
-- [IdealProcessorState](../scheduler.rs/IdealProcessorState.md)
-- [apply_ideal_processors](../apply.rs/apply_ideal_processors.md)
-- [winapi.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| Ideal processor getter | [get_thread_ideal_processor_ex](get_thread_ideal_processor_ex.md) |
+| Thread handle RAII container | [ThreadHandle](ThreadHandle.md) |
+| Thread handle acquisition | [get_thread_handle](get_thread_handle.md) |
+| Ideal processor state tracking | [IdealProcessorState](../scheduler.rs/IdealProcessorState.md) |
+| Ideal processor application logic | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
+| Prime thread promotion | [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) |
+| Ideal processor reset | [reset_thread_ideal_processors](../apply.rs/reset_thread_ideal_processors.md) |
+| SetThreadIdealProcessorEx (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadidealprocessorex) |

@@ -1,10 +1,10 @@
 # ApplyConfigResult struct (apply.rs)
 
-Collects change descriptions and error messages produced during the application of a single process configuration pass.
+Accumulates human-readable change descriptions and error messages produced while applying a single configuration pass to a process. Every `apply_*` function in the [apply](README.md) module receives an `&mut ApplyConfigResult` and pushes entries into it rather than logging directly, giving callers in [main.rs](../main.rs/README.md) a consolidated view of what happened.
 
 ## Syntax
 
-```rust
+```AffinityServiceRust/src/apply.rs#L29-33
 #[derive(Debug, Default)]
 pub struct ApplyConfigResult {
     pub changes: Vec<String>,
@@ -14,43 +14,41 @@ pub struct ApplyConfigResult {
 
 ## Members
 
-`changes`
-
-A vector of human-readable strings describing each configuration change that was successfully applied (or would be applied in dry-run mode). Each entry follows the format `"$operation details"` and is later prefixed with `"{pid:>5}::{config.name}::"` by the caller.
-
-`errors`
-
-A vector of human-readable strings describing errors encountered during the apply pass. Each entry follows the format `"$fn_name: [$operation][$error_message] details"`.
+| Member | Type | Description |
+|--------|------|-------------|
+| `changes` | `Vec<String>` | Successful modifications applied to the process or its threads. Each entry is a short, human-readable description such as `"Priority: Normal -> High"` or `"Thread 1234 -> (promoted, [4,5], cycles=98000, start=ntdll.dll)"`. The caller prefixes the process id and name before writing these to the log. |
+| `errors` | `Vec<String>` | Errors encountered during the apply pass. Entries follow the format `"fn_name: [OPERATION][error_message] details"`. Only *new* errors (those not previously seen for the same pid/operation/error-code triple) are added, because all `apply_*` functions route through [log_error_if_new](log_error_if_new.md) before calling `add_error`. |
 
 ## Methods
 
 | Method | Signature | Description |
-| --- | --- | --- |
-| **new** | `pub fn new() -> Self` | Creates an empty result via `Default`. |
-| **add_change** | `pub fn add_change(&mut self, change: String)` | Appends a change description to `changes`. |
-| **add_error** | `pub fn add_error(&mut self, error: String)` | Appends an error description to `errors`. |
-| **is_empty** | `pub fn is_empty(&self) -> bool` | Returns `true` when both `changes` and `errors` are empty. |
+|--------|-----------|-------------|
+| `new` | `pub fn new() -> Self` | Creates an empty result. Equivalent to `Self::default()`. |
+| `add_change` | `pub fn add_change(&mut self, change: String)` | Pushes a change description onto the `changes` vector. |
+| `add_error` | `pub fn add_error(&mut self, error: String)` | Pushes an error description onto the `errors` vector. |
+| `is_empty` | `pub fn is_empty(&self) -> bool` | Returns `true` when both `changes` and `errors` are empty, allowing callers to skip logging when nothing happened. |
 
 ## Remarks
 
-`ApplyConfigResult` is the primary feedback mechanism for every `apply_*` function in the module. The top-level orchestrator [`apply_config`](../main.rs/apply_config.md) in `main.rs` creates a single instance per process per loop iteration, passes it by mutable reference through the entire apply chain, and then inspects it afterward to decide whether to log changes.
+`ApplyConfigResult` is created once per process per apply cycle in [apply_config_process_level](../main.rs/apply_config_process_level.md) and [apply_config_thread_level](../main.rs/apply_config_thread_level.md). After all `apply_*` calls return, the caller inspects `is_empty()` to decide whether to emit a log line. Changes and errors are printed together, giving operators a single consolidated summary per process per cycle.
 
-An empty result (both vectors empty) indicates that the process was already in the desired state and no action was taken. The caller uses [`is_empty`](#methods) to skip unnecessary log output.
+The struct deliberately uses `String` rather than structured error types. This keeps the apply functions simple—they format context (pid, thread id, operation, Win32 error message) at the call site—and avoids coupling the logging layer to specific error enumerations.
 
-The struct derives `Default`, so the `new()` constructor is simply a convenience alias.
+The `#[derive(Default)]` implementation produces an instance with two empty `Vec`s, so `new()` is a thin wrapper provided for readability.
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/apply.rs |
-| **Lines** | L30–L56 |
-| **Returned by** | [`apply_config`](../main.rs/apply_config.md) in main.rs |
-| **Consumed by** | All `apply_*` functions in this module via `&mut ApplyConfigResult` |
+|-------------|-------|
+| Module | `apply` |
+| Callers | [apply_config_process_level](../main.rs/apply_config_process_level.md), [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
+| Passed to | Every `apply_*` function in [apply](README.md) |
 
-## See also
+## See Also
 
-- [apply.rs module overview](README.md)
-- [apply_priority](apply_priority.md)
-- [apply_affinity](apply_affinity.md)
-- [log_error_if_new](log_error_if_new.md)
+| Topic | Link |
+|-------|------|
+| apply module overview | [apply](README.md) |
+| Error deduplication helper | [log_error_if_new](log_error_if_new.md) |
+| Process-level orchestration | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
+| Thread-level orchestration | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |

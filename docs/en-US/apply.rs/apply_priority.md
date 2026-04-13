@@ -1,10 +1,10 @@
 # apply_priority function (apply.rs)
 
-Sets the process priority class for a target process.
+Sets the process priority class to the value specified in the configuration. The function reads the current priority via `GetPriorityClass`, compares it against the configured target, and—when they differ—calls `SetPriorityClass` to apply the change. In `dry_run` mode the change is recorded but not executed.
 
 ## Syntax
 
-```rust
+```AffinityServiceRust/src/apply.rs#L83-129
 pub fn apply_priority(
     pid: u32,
     config: &ProcessConfig,
@@ -16,61 +16,74 @@ pub fn apply_priority(
 
 ## Parameters
 
-`pid`
-
-The process identifier of the target process.
-
-`config`
-
-Reference to a [ProcessConfig](../config.rs/ProcessConfig.md) containing the desired priority class in `config.priority`.
-
-`dry_run`
-
-When `true`, the function records what changes *would* be made without calling any Windows APIs to apply them.
-
-`process_handle`
-
-Reference to a [ProcessHandle](../winapi.rs/ProcessHandle.md) providing read and write access to the target process. Both a read handle (for querying current priority) and a write handle (for setting new priority) are required.
-
-`apply_config_result`
-
-Mutable reference to an [ApplyConfigResult](ApplyConfigResult.md) that collects change descriptions and error messages produced during the operation.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `pid` | `u32` | Process identifier of the target process. Used for error deduplication in [log_error_if_new](log_error_if_new.md) and for log messages. |
+| `config` | `&ProcessConfig` | The parsed [ProcessConfig](../config.rs/ProcessConfig.md) for this process. The `priority` field (a [ProcessPriority](../priority.rs/ProcessPriority.md) enum) determines the desired priority class. When `priority` is `ProcessPriority::None`, the function returns immediately without querying or modifying anything. |
+| `dry_run` | `bool` | When `true`, the function records the intended change in `apply_config_result` but does not call `SetPriorityClass`. |
+| `process_handle` | `&ProcessHandle` | A [ProcessHandle](../winapi.rs/ProcessHandle.md) opened for the target process. Both a read handle (for `GetPriorityClass`) and a write handle (for `SetPriorityClass`) are extracted via [get_handles](get_handles.md). |
+| `apply_config_result` | `&mut ApplyConfigResult` | Accumulator for changes and errors. See [ApplyConfigResult](ApplyConfigResult.md). |
 
 ## Return value
 
-This function does not return a value. Results are communicated through `apply_config_result`.
+None (`()`). Results are communicated through `apply_config_result`.
 
 ## Remarks
 
-The function first extracts read and write handles via [get_handles](get_handles.md). If either handle is unavailable, the function returns immediately without action.
+### Control flow
 
-If `config.priority` is `ProcessPriority::None`, no action is taken because `as_win_const()` returns `None`.
+1. [get_handles](get_handles.md) extracts the best available read and write `HANDLE`s. If either is `None` (which should not happen for a valid `ProcessHandle`), the function returns immediately.
+2. `config.priority.as_win_const()` converts the [ProcessPriority](../priority.rs/ProcessPriority.md) enum to its Win32 `PROCESS_CREATION_FLAGS` constant. If the config priority is `None`, `as_win_const()` returns `None` and the function exits—no query, no change.
+3. `GetPriorityClass` reads the current priority from the OS.
+4. If the current priority already matches the target, the function exits silently.
+5. If `dry_run` is `true`, the change message is recorded and the function exits.
+6. Otherwise, `SetPriorityClass` is called. On success the change is recorded; on failure the Win32 error code is captured via `GetLastError` and passed to [log_error_if_new](log_error_if_new.md).
 
-The function queries the current priority class with `GetPriorityClass` and compares it to the configured target. If they already match, no change is made.
+### Change message format
 
-**Dry-run mode:** When `dry_run` is `true`, the change message is recorded but `SetPriorityClass` is not called.
+```/dev/null/example.txt#L1
+Priority: Normal -> High
+```
 
-**Change logged:** `"Priority: {old} -> {new}"` where both values are human-readable priority names (e.g. `Normal`, `High`, `AboveNormal`).
+The message shows the human-readable names of both the old and new priority classes, obtained via `ProcessPriority::from_win_const()` and `ProcessPriority::as_str()` respectively.
 
-**Error handling:** If `SetPriorityClass` fails, the Win32 error code is retrieved via `GetLastError` and passed to [log_error_if_new](log_error_if_new.md) for deduplicated error logging. The error is only recorded once per pid/operation combination.
+### Error handling
 
-### Priority values
+Errors from `SetPriorityClass` are routed through [log_error_if_new](log_error_if_new.md) with `Operation::SetPriorityClass`. Common failure causes include:
 
-The supported priority classes are defined in [ProcessPriority](../priority.rs/ProcessPriority.md): `Idle`, `BelowNormal`, `Normal`, `AboveNormal`, `High`, and `Realtime`.
+| Win32 error | Typical cause |
+|-------------|---------------|
+| `ERROR_ACCESS_DENIED` (5) | The service lacks `PROCESS_SET_INFORMATION` access to the target process (e.g. a protected process). |
+| `ERROR_INVALID_PARAMETER` (87) | The requested priority class is not valid for the target process (e.g. `Realtime` without `SeIncreaseBasePriorityPrivilege`). |
+
+Because errors are deduplicated, a process that persistently denies access will only generate one log entry across all polling cycles until the deduplication map is purged (see [purge_fail_map](../logging.rs/purge_fail_map.md)).
+
+### Idempotency
+
+The function is idempotent: if the current priority already matches the target, no Win32 call is made and no change is recorded. This avoids unnecessary kernel transitions on every polling cycle.
+
+### Caller context
+
+`apply_priority` is called from [apply_config_process_level](../main.rs/apply_config_process_level.md) during the process-level apply phase, which runs once per process per configuration cycle. It is intentionally separated from thread-level operations ([apply_prime_threads](apply_prime_threads.md), [apply_ideal_processors](apply_ideal_processors.md)) which run on a different cadence.
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/apply.rs |
-| **Source lines** | L83–L129 |
-| **Called by** | [apply_config](../main.rs/apply_config.md) |
-| **Calls** | [get_handles](get_handles.md), [log_error_if_new](log_error_if_new.md) |
-| **Windows API** | [GetPriorityClass](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getpriorityclass), [SetPriorityClass](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setpriorityclass), [GetLastError](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror) |
+|-------------|-------|
+| Module | `apply` |
+| Visibility | `pub` (crate-public) |
+| Callers | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
+| Callees | [get_handles](get_handles.md), [log_error_if_new](log_error_if_new.md) |
+| Win32 API | [`GetPriorityClass`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getpriorityclass), [`SetPriorityClass`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setpriorityclass), [`GetLastError`](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror) |
+| Privileges | `PROCESS_QUERY_LIMITED_INFORMATION` (read), `PROCESS_SET_INFORMATION` or `PROCESS_SET_LIMITED_INFORMATION` (write). `SeIncreaseBasePriorityPrivilege` is required to set `Realtime` or `High` priority on processes owned by other users. |
 
-## See also
+## See Also
 
-- [apply_affinity](apply_affinity.md)
-- [apply_io_priority](apply_io_priority.md)
-- [apply_memory_priority](apply_memory_priority.md)
-- [ProcessPriority enum](../priority.rs/ProcessPriority.md)
+| Topic | Link |
+|-------|------|
+| Priority enum and Win32 constant mapping | [ProcessPriority](../priority.rs/ProcessPriority.md) |
+| Process-level apply orchestration | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
+| Configuration model | [ProcessConfig](../config.rs/ProcessConfig.md) |
+| Handle extraction helper | [get_handles](get_handles.md) |
+| Error deduplication | [log_error_if_new](log_error_if_new.md) |
+| apply module overview | [apply](README.md) |

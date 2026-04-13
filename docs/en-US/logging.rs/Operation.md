@@ -1,11 +1,12 @@
 # Operation enum (logging.rs)
 
-Enumerates all Windows API operations that can produce errors during configuration application. Each variant represents a specific API call or logical operation, enabling precise error deduplication and human-readable error reporting.
+Identifies each distinct Windows API operation that can fail during rule application to a running process. `Operation` variants serve as keys in the [ApplyFailEntry](ApplyFailEntry.md) composite key, enabling the error deduplication system in [PID_MAP_FAIL_ENTRY_SET](PID_MAP_FAIL_ENTRY_SET.md) to distinguish between failures from different API calls on the same process. Each variant corresponds to a specific Win32 or NT native API call (or a specific access-rights variant of one), allowing the service to log the first occurrence of each unique failure while suppressing subsequent identical errors.
 
 ## Syntax
 
-```rust
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+```logging.rs
+#[derive(PartialEq, Eq, Hash)]
+#[allow(dead_code)]
 pub enum Operation {
     OpenProcess2processQueryLimitedInformation,
     OpenProcess2processSetLimitedInformation,
@@ -32,117 +33,54 @@ pub enum Operation {
 
 ## Members
 
-`OpenProcess2processQueryLimitedInformation`
-
-Failed to open a process with `PROCESS_QUERY_LIMITED_INFORMATION` access.
-
-`OpenProcess2processSetLimitedInformation`
-
-Failed to open a process with `PROCESS_SET_LIMITED_INFORMATION` access.
-
-`OpenProcess2processQueryInformation`
-
-Failed to open a process with `PROCESS_QUERY_INFORMATION` access.
-
-`OpenProcess2processSetInformation`
-
-Failed to open a process with `PROCESS_SET_INFORMATION` access.
-
-`OpenThread`
-
-Failed to open a thread handle via `OpenThread`.
-
-`SetPriorityClass`
-
-Failed to set the process priority class via `SetPriorityClass`.
-
-`GetProcessAffinityMask`
-
-Failed to query the process affinity mask via `GetProcessAffinityMask`.
-
-`SetProcessAffinityMask`
-
-Failed to set the process affinity mask via `SetProcessAffinityMask`.
-
-`GetProcessDefaultCpuSets`
-
-Failed to query the process default CPU sets via `GetProcessDefaultCpuSets`.
-
-`SetProcessDefaultCpuSets`
-
-Failed to set the process default CPU sets via `SetProcessDefaultCpuSets`.
-
-`QueryThreadCycleTime`
-
-Failed to query thread cycle time via `QueryThreadCycleTime`.
-
-`SetThreadSelectedCpuSets`
-
-Failed to set the selected CPU sets for a thread via `SetThreadSelectedCpuSets`.
-
-`SetThreadPriority`
-
-Failed to set the thread priority via `SetThreadPriority`.
-
-`NtQueryInformationProcess2ProcessInformationIOPriority`
-
-Failed to query the I/O priority of a process via `NtQueryInformationProcess` with `ProcessIoPriority` information class.
-
-`NtSetInformationProcess2ProcessInformationIOPriority`
-
-Failed to set the I/O priority of a process via `NtSetInformationProcess` with `ProcessIoPriority` information class.
-
-`GetProcessInformation2ProcessMemoryPriority`
-
-Failed to query the memory priority of a process via `GetProcessInformation` with `ProcessMemoryPriority` information class.
-
-`SetProcessInformation2ProcessMemoryPriority`
-
-Failed to set the memory priority of a process via `SetProcessInformation` with `ProcessMemoryPriority` information class.
-
-`SetThreadIdealProcessorEx`
-
-Failed to set the ideal processor for a thread via `SetThreadIdealProcessorEx`.
-
-`GetThreadIdealProcessorEx`
-
-Failed to query the ideal processor for a thread via `GetThreadIdealProcessorEx`.
-
-`InvalidHandle`
-
-A sentinel variant indicating that the operation involved an invalid or null handle. Used when an error occurs due to a handle that was expected to be valid but was not (e.g., a protected process whose full-access handle is `None`).
+| Variant | Win32 / NT API | Description |
+|---------|---------------|-------------|
+| `OpenProcess2processQueryLimitedInformation` | `OpenProcess` with `PROCESS_QUERY_LIMITED_INFORMATION` | Failed to open a process handle for limited query access. |
+| `OpenProcess2processSetLimitedInformation` | `OpenProcess` with `PROCESS_SET_LIMITED_INFORMATION` | Failed to open a process handle for limited set access. |
+| `OpenProcess2processQueryInformation` | `OpenProcess` with `PROCESS_QUERY_INFORMATION` | Failed to open a process handle for full query access. |
+| `OpenProcess2processSetInformation` | `OpenProcess` with `PROCESS_SET_INFORMATION` | Failed to open a process handle for full set access. |
+| `OpenThread` | `OpenThread` | Failed to open a thread handle. |
+| `SetPriorityClass` | `SetPriorityClass` | Failed to set the process priority class. |
+| `GetProcessAffinityMask` | `GetProcessAffinityMask` | Failed to query the current process affinity mask. |
+| `SetProcessAffinityMask` | `SetProcessAffinityMask` | Failed to set the process affinity mask. |
+| `GetProcessDefaultCpuSets` | `GetProcessDefaultCpuSets` | Failed to query the process's default CPU set assignment. |
+| `SetProcessDefaultCpuSets` | `SetProcessDefaultCpuSets` | Failed to set the process's default CPU set assignment. |
+| `QueryThreadCycleTime` | `QueryThreadCycleTime` | Failed to read a thread's cycle time counter (used by the prime-thread scheduler). |
+| `SetThreadSelectedCpuSets` | `SetThreadSelectedCpuSets` | Failed to assign selected CPU sets to a thread. |
+| `SetThreadPriority` | `SetThreadPriority` | Failed to set a thread's scheduling priority. |
+| `NtQueryInformationProcess2ProcessInformationIOPriority` | `NtQueryInformationProcess` (I/O priority class) | Failed to query the process's I/O priority via the NT native API. |
+| `NtSetInformationProcess2ProcessInformationIOPriority` | `NtSetInformationProcess` (I/O priority class) | Failed to set the process's I/O priority via the NT native API. |
+| `GetProcessInformation2ProcessMemoryPriority` | `GetProcessInformation` (`ProcessMemoryPriority`) | Failed to query the process's memory priority. |
+| `SetProcessInformation2ProcessMemoryPriority` | `SetProcessInformation` (`ProcessMemoryPriority`) | Failed to set the process's memory priority. |
+| `SetThreadIdealProcessorEx` | `SetThreadIdealProcessorEx` | Failed to set a thread's ideal processor. |
+| `GetThreadIdealProcessorEx` | `GetThreadIdealProcessorEx` | Failed to query a thread's ideal processor. |
+| `InvalidHandle` | *(none)* | Sentinel variant indicating that a required handle was invalid or null before the API call was attempted. |
 
 ## Remarks
 
-`Operation` serves as a component of the composite key used by the error deduplication system. Each error is recorded as an [`ApplyFailEntry`](ApplyFailEntry.md) containing the `Operation` variant along with the PID, TID, process name, and error code. The [`PID_MAP_FAIL_ENTRY_SET`](PID_MAP_FAIL_ENTRY_SET.md) stores these entries, and [`is_new_error`](is_new_error.md) checks membership to determine whether a given error has already been logged.
-
-The enum derives `Hash` and `Eq` so it can be used as part of `HashMap` and `HashSet` keys. It also derives `Clone` and `Debug` for convenience in logging and diagnostics.
-
-### Naming convention
-
-The variant names follow a pattern that encodes both the Windows API function and the specific access right or information class involved:
-
-- `OpenProcess2process...` — `OpenProcess` with the specified access right suffix.
-- `NtQueryInformationProcess2ProcessInformation...` — `NtQueryInformationProcess` with the specified information class.
-- `Get/SetProcessInformation2ProcessMemoryPriority` — `GetProcessInformation`/`SetProcessInformation` with `ProcessMemoryPriority`.
-
-This naming convention makes error log entries self-descriptive without needing to look up operation codes.
-
-### Usage in apply functions
-
-Each `apply_*` function in [`apply.rs`](../apply.rs/README.md) uses the appropriate `Operation` variant when calling [`log_error_if_new`](../apply.rs/log_error_if_new.md), which in turn calls [`is_new_error`](is_new_error.md). Similarly, [`get_process_handle`](../winapi.rs/get_process_handle.md) and [`try_open_thread`](../winapi.rs/try_open_thread.md) use the `OpenProcess*` and `OpenThread` variants respectively.
+- The enum derives `PartialEq`, `Eq`, and `Hash` so that it can be used as part of the [ApplyFailEntry](ApplyFailEntry.md) composite key inside `HashMap` and `HashSet` data structures. It does **not** derive `Debug` or `Clone`.
+- The `#[allow(dead_code)]` attribute suppresses unused-variant warnings. Not every variant is actively used in the current codebase — some exist for future use or for completeness of the API surface coverage.
+- The naming convention uses `2` as a separator to encode "with" or "for" relationships. For example, `OpenProcess2processQueryLimitedInformation` reads as "OpenProcess **for** PROCESS_QUERY_LIMITED_INFORMATION access." Similarly, `NtSetInformationProcess2ProcessInformationIOPriority` reads as "NtSetInformationProcess **with** ProcessInformation class I/O Priority." This convention avoids ambiguity when a single Win32 function is called with different access rights or information classes that can fail independently.
+- The `OpenProcess` call is split into four variants because the service opens handles with different access rights for different operations (read-limited, write-limited, read-full, write-full). A failure to open with `PROCESS_SET_INFORMATION` is a distinct error from a failure to open with `PROCESS_QUERY_LIMITED_INFORMATION`, and both can occur for the same PID.
+- The `InvalidHandle` variant represents a pre-call failure — the handle that would have been passed to an API was already known to be invalid (e.g., `NULL` from a prior failed `OpenProcess` call). This allows the deduplication system to suppress repeated log messages about cascading failures that all stem from the same root cause (a failed handle acquisition).
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/logging.rs |
-| **Lines** | L74–L95 |
-| **Used by** | [`ApplyFailEntry`](ApplyFailEntry.md), [`is_new_error`](is_new_error.md), [`log_error_if_new`](../apply.rs/log_error_if_new.md), [`get_process_handle`](../winapi.rs/get_process_handle.md), [`try_open_thread`](../winapi.rs/try_open_thread.md) |
+|-------------|-------|
+| Module | `logging` |
+| Traits | `PartialEq`, `Eq`, `Hash` |
+| Used in | [ApplyFailEntry](ApplyFailEntry.md) (as a field), [is_new_error](is_new_error.md) (as a parameter) |
+| Callers | [log_error_if_new](../apply.rs/log_error_if_new.md), [get_process_handle](../winapi.rs/get_process_handle.md), [get_thread_handle](../winapi.rs/get_thread_handle.md), [apply_priority](../apply.rs/apply_priority.md), [apply_affinity](../apply.rs/apply_affinity.md), [apply_io_priority](../apply.rs/apply_io_priority.md), [apply_memory_priority](../apply.rs/apply_memory_priority.md), [apply_prime_threads](../apply.rs/apply_prime_threads.md), [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
 
-## See also
+## See Also
 
-- [ApplyFailEntry struct](ApplyFailEntry.md)
-- [is_new_error function](is_new_error.md)
-- [PID_MAP_FAIL_ENTRY_SET static](PID_MAP_FAIL_ENTRY_SET.md)
-- [logging.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| Composite failure key using this enum | [ApplyFailEntry](ApplyFailEntry.md) |
+| Error deduplication logic | [is_new_error](is_new_error.md) |
+| Per-PID failure tracking map | [PID_MAP_FAIL_ENTRY_SET](PID_MAP_FAIL_ENTRY_SET.md) |
+| Stale entry cleanup | [purge_fail_map](purge_fail_map.md) |
+| Win32 error code translation | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
+| NTSTATUS error code translation | [error_from_ntstatus](../error_codes.rs/error_from_ntstatus.md) |
+| logging module overview | [logging module](README.md) |

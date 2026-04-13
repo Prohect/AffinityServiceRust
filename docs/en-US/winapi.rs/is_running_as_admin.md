@@ -1,6 +1,6 @@
 # is_running_as_admin function (winapi.rs)
 
-Checks whether the current process is running with administrator (elevated) privileges.
+Checks whether the current process is running with administrator (elevated) privileges by querying the process token for `TOKEN_ELEVATION` information. This is used at startup to determine whether UAC elevation should be requested before the service loop begins.
 
 ## Syntax
 
@@ -10,31 +10,73 @@ pub fn is_running_as_admin() -> bool
 
 ## Parameters
 
-This function takes no parameters.
+None.
 
 ## Return value
 
-Returns `true` if the current process is running with an elevated administrator token. Returns `false` if the process is running with standard user privileges or if the check itself fails.
+| Value | Description |
+|-------|-------------|
+| `true` | The current process token has elevation status (`TokenIsElevated != 0`), meaning the process is running with full administrator privileges. |
+| `false` | The process is not elevated, or any step in the token query chain failed (token open failure, `GetTokenInformation` failure). The function defaults to `false` on error rather than panicking, so callers can safely use the result to decide whether to attempt elevation. |
 
 ## Remarks
 
-This function queries the current process token to determine whether it has administrator privileges. The check is performed by opening the process token with `TOKEN_QUERY` access and examining the token's elevation status.
+### Algorithm
 
-The result is used by [`main`](../main.rs/main.md) to decide whether UAC elevation is required. If the process is not running as admin and the `--no-uac` flag is not set, [`request_uac_elevation`](request_uac_elevation.md) is called to relaunch the process with elevated privileges.
+The function performs three sequential Win32 calls:
 
-If the token query fails for any reason (e.g., insufficient access to the own process token), the function conservatively returns `false`, which will trigger the UAC elevation flow.
+1. **`OpenProcessToken`** — Opens the current process's token with `TOKEN_QUERY` access.
+2. **`GetTokenInformation`** — Queries `TokenElevation` information class, filling a `TOKEN_ELEVATION` structure.
+3. **`CloseHandle`** — Closes the token handle regardless of the `GetTokenInformation` result.
+
+The token handle is always closed before returning, even on failure paths, to prevent handle leaks.
+
+### Failure behavior
+
+Any failure in the chain causes the function to return `false`:
+
+| Failure point | Behavior |
+|---------------|----------|
+| `OpenProcessToken` fails | Returns `false` immediately. |
+| `GetTokenInformation` fails | Closes the token handle, returns `false`. |
+| Success but `TokenIsElevated == 0` | Closes the token handle, returns `false` (not elevated). |
+
+No errors are logged — the function is intentionally silent because it is called very early in the startup sequence, before logging may be fully initialized.
+
+### Usage in startup flow
+
+The main function calls `is_running_as_admin()` to decide whether to invoke [request_uac_elevation](request_uac_elevation.md). The typical flow is:
+
+1. Parse CLI arguments.
+2. Call `is_running_as_admin()`.
+3. If `false` and the `--no_uac` flag is not set, call [request_uac_elevation](request_uac_elevation.md) to re-launch the process with admin rights.
+4. If `true`, proceed with [enable_debug_privilege](enable_debug_privilege.md) and the main service loop.
+
+### UAC and token elevation
+
+On Windows with UAC enabled, a user in the Administrators group runs processes with a filtered (non-elevated) token by default. When elevation is granted (e.g., via "Run as administrator" or a UAC prompt), the process receives the full, unfiltered token with `TokenIsElevated` set to a non-zero value. This function detects that distinction.
+
+### Relationship to privileges
+
+Being elevated is a prerequisite for successfully enabling privileges like `SeDebugPrivilege` ([enable_debug_privilege](enable_debug_privilege.md)) and `SeIncreaseBasePriorityPrivilege` ([enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md)). Without elevation, those privilege-adjustment calls will fail silently, and the service will operate with reduced capability (unable to open protected processes or set Realtime priority).
 
 ## Requirements
 
-| Requirement | Value |
-| --- | --- |
-| **Module** | src/winapi.rs |
-| **Source lines** | L437–L466 |
-| **Called by** | [`main`](../main.rs/main.md) in main.rs |
-| **Windows API** | [OpenProcessToken](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocesstoken), [GetTokenInformation](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-gettokeninformation) |
+| | |
+|---|---|
+| **Module** | `winapi` (`src/winapi.rs`) |
+| **Visibility** | `pub` |
+| **Callers** | [`main`](../main.rs/README.md) (startup sequence) |
+| **Callees** | `GetCurrentProcess`, `OpenProcessToken`, `GetTokenInformation` (`TokenElevation`), `CloseHandle` (Win32) |
+| **API** | [`OpenProcessToken`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocesstoken), [`GetTokenInformation`](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-gettokeninformation) |
+| **Privileges** | None — token self-query does not require elevation |
 
-## See also
+## See Also
 
-- [request_uac_elevation](request_uac_elevation.md)
-- [enable_debug_privilege](enable_debug_privilege.md)
-- [winapi.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| UAC elevation request | [request_uac_elevation](request_uac_elevation.md) |
+| Debug privilege enablement | [enable_debug_privilege](enable_debug_privilege.md) |
+| Base priority privilege enablement | [enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md) |
+| Service main entry point | [main module](../main.rs/README.md) |
+| TOKEN_ELEVATION (MSDN) | [Microsoft Learn — TOKEN_ELEVATION](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/ns-securitybaseapi-token_elevation) |

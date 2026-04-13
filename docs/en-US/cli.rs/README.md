@@ -1,56 +1,31 @@
-# cli.rs Module (cli.rs)
+# cli module (AffinityServiceRust)
 
-The `cli` module handles command-line argument parsing and help text display for the AffinityService application. It defines the [`CliArgs`](CliArgs.md) struct that holds all runtime configuration derived from command-line flags and provides functions for parsing, validation, and help output.
+The `cli` module handles command-line argument parsing and help text output for AffinityServiceRust. It defines the [CliArgs](CliArgs.md) structure that carries all runtime options — polling interval, mode flags, file paths, privilege toggles, and debug knobs — and provides a [parse_args](parse_args.md) function that populates it from the raw argument vector. Several help-printing functions offer progressively more detail, from a basic usage summary to a full reference including configuration file syntax.
 
-## Overview
+All mode flags in `CliArgs` default to `false` and all file paths default to sensible values (`config.ini`, `logs`, `new_processes_results.txt`), so the service can be launched with zero arguments for the common case. The parser is a simple linear scan with no external crate dependency — each flag is matched case-sensitively (with a small number of case-variant aliases such as `-noUAC`/`-nouac`) and value-bearing flags consume the next argument.
 
-This module is the entry point for user-facing configuration. It translates command-line arguments into a structured [`CliArgs`](CliArgs.md) instance consumed by [`main`](../main.rs/main.md). The module also provides layered help output: a brief usage summary, detailed CLI flag documentation, config file syntax reference, and a combined help-all view.
+## Structs
 
-Key behaviors:
+| Struct | Description |
+|--------|-------------|
+| [CliArgs](CliArgs.md) | Container for all command-line arguments with default values. Passed by reference throughout the service lifetime. |
 
-- **Unknown arguments are silently ignored** — this allows forward compatibility and prevents crashes on unrecognized flags.
-- **Interval validation** — the minimum polling interval is enforced at 16 ms to prevent excessive CPU usage.
-- **Config help embedding** — [`get_config_help_lines`](get_config_help_lines.md) returns a template suitable for embedding directly into converted config files as comments.
+## Functions
 
-## Items
+| Function | Description |
+|----------|-------------|
+| [parse_args](parse_args.md) | Parses a raw argument slice into a [CliArgs](CliArgs.md) structure. Unknown flags are silently ignored. |
+| [print_help](print_help.md) | Prints a concise help message covering common options and operating modes. |
+| [print_cli_help](print_cli_help.md) | Prints a detailed CLI reference including debug and testing options. |
+| [get_config_help_lines](get_config_help_lines.md) | Returns a `Vec<&'static str>` of configuration file help template lines suitable for embedding in converted configs. |
+| [print_config_help](print_config_help.md) | Prints the configuration help template lines to the active log output. |
+| [print_help_all](print_help_all.md) | Prints both the detailed CLI help and the configuration help template in one combined output. |
 
-### Structs
+## See Also
 
-| Name | Description |
-| --- | --- |
-| [CliArgs](CliArgs.md) | Holds all parsed command-line arguments and runtime flags. |
-
-### Functions
-
-| Name | Description |
-| --- | --- |
-| [parse_args](parse_args.md) | Parses a string slice of arguments into a [`CliArgs`](CliArgs.md) struct. |
-| [print_help](print_help.md) | Prints a brief usage summary to the console. |
-| [print_cli_help](print_cli_help.md) | Prints detailed documentation for all CLI flags. |
-| [get_config_help_lines](get_config_help_lines.md) | Returns config file syntax help as a vector of static string lines. |
-| [print_config_help](print_config_help.md) | Prints the config file syntax help to the console. |
-| [print_help_all](print_help_all.md) | Prints combined CLI and config help (equivalent to `--help-all`). |
-
-## Parsing Flow
-
-1. [`main`](../main.rs/main.md) collects `std::env::args()` and constructs a default `CliArgs`.
-2. [`parse_args`](parse_args.md) iterates over the argument list, matching known flags and consuming their values.
-3. Validation is applied (e.g., interval minimum of 16 ms).
-4. The populated [`CliArgs`](CliArgs.md) is returned to `main` for dispatch.
-
-## Help Modes
-
-| Flag | Function called | Description |
-| --- | --- | --- |
-| `--help` / `-h` | [print_help](print_help.md) | Brief usage summary |
-| `--help-cli` | [print_cli_help](print_cli_help.md) | Detailed CLI flag docs |
-| `--help-config` | [print_config_help](print_config_help.md) | Config file syntax reference |
-| `--help-all` | [print_help_all](print_help_all.md) | Combined CLI + config help |
-
-## Requirements
-
-| Requirement | Value |
-| --- | --- |
-| **Module** | `src/cli.rs` |
-| **Called by** | [`main`](../main.rs/main.md) in `src/main.rs` |
-| **Key dependencies** | Standard library only |
+| Topic | Link |
+|-------|------|
+| Entry point that consumes CliArgs | [main](../main.rs/main.md) |
+| Configuration file parsing | [config.rs](../config.rs/README.md) |
+| Process priority enumerations | [priority.rs](../priority.rs/README.md) |
+| Logging infrastructure (console vs. file) | [logging.rs](../logging.rs/README.md) |

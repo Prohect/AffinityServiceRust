@@ -1,43 +1,19 @@
-# error_codes.rs Module (error_codes.rs)
+# error_codes module (AffinityServiceRust)
 
-The `error_codes` module provides human-readable translations for Windows error codes and NTSTATUS values encountered during process and thread manipulation.
+The `error_codes` module provides human-readable translations for Windows error codes. It maps numeric Win32 error codes and NTSTATUS values to their symbolic constant names (e.g., `5` → `"ACCESS_DENIED"`, `0xC0000022` → `"STATUS_ACCESS_DENIED"`), enabling meaningful log output when Windows API calls fail. Unrecognized codes are formatted as hexadecimal fallback strings.
 
-## Overview
+## Functions
 
-When Windows API calls fail, they return numeric error codes that are difficult to interpret at a glance. This module maps the most commonly encountered codes to descriptive English strings, enabling meaningful log output for the user.
+| Function | Description |
+|----------|-------------|
+| [error_from_code_win32](error_from_code_win32.md) | Maps a Win32 error code (`u32`) to a human-readable symbolic name string. |
+| [error_from_ntstatus](error_from_ntstatus.md) | Maps an NTSTATUS code (`i32`) to a human-readable symbolic name string. |
 
-Two families of error codes are covered:
+## See Also
 
-- **Win32 error codes** (`u32`) — returned by `GetLastError()` after Win32 API failures. Approximately 45 common codes are mapped.
-- **NTSTATUS codes** (`i32`) — returned by NT-layer APIs such as `NtSetInformationProcess` and `NtQueryInformationProcess`. Approximately 17 common codes are mapped.
-
-Unknown codes are formatted as hexadecimal strings so they can still be looked up manually.
-
-## Items
-
-### Functions
-
-| Name | Description |
-| --- | --- |
-| [error_from_code_win32](error_from_code_win32.md) | Maps a Win32 error code to a human-readable string. |
-| [error_from_ntstatus](error_from_ntstatus.md) | Maps an NTSTATUS code to a human-readable string. |
-
-## Remarks
-
-This module is a pure lookup utility with no state and no side effects. It is called from error-handling paths throughout the project, most notably from [log_error_if_new](../logging.rs/log_error_if_new.md) and the various `apply_*` functions in [apply.rs](../apply.rs/README.md).
-
-The code lists are intentionally hardcoded rather than using `FormatMessage`, because `FormatMessage` output varies by system locale and can produce multi-line strings that are unsuitable for single-line log entries.
-
-## Requirements
-
-| Requirement | Value |
-| --- | --- |
-| **Module** | `src/error_codes.rs` |
-| **Lines** | L1–L70 |
-| **Called by** | [log_error_if_new](../logging.rs/log_error_if_new.md), [apply.rs](../apply.rs/README.md) functions, [winapi.rs](../winapi.rs/README.md) functions |
-| **Dependencies** | None (pure function module) |
-
-## See also
-
-- [logging.rs module overview](../logging.rs/README.md)
-- [apply.rs module overview](../apply.rs/README.md)
+| Topic | Link |
+|-------|------|
+| Logging and error deduplication | [logging module](../logging.rs/README.md) |
+| ETW session management (uses error formatting) | [event_trace module](../event_trace.rs/README.md) |
+| Rule application (primary consumer of error formatting) | [apply module](../apply.rs/README.md) |
+| Windows API wrappers | [winapi module](../winapi.rs/README.md) |

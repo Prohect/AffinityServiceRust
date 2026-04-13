@@ -1,6 +1,6 @@
 # format_cpu_indices function (config.rs)
 
-Formats a slice of CPU indices into a compact, human-readable string representation using range notation where possible.
+Formats a slice of CPU indices into a compact, human-readable range string. Consecutive indices are collapsed into `start-end` ranges and non-consecutive indices are separated by commas. This function is used throughout the service for log messages, config file generation, and diagnostic output.
 
 ## Syntax
 
@@ -10,46 +10,62 @@ pub fn format_cpu_indices(cpus: &[u32]) -> String
 
 ## Parameters
 
-`cpus`
-
-A slice of CPU indices (`&[u32]`) to format. The indices do not need to be pre-sorted; the function sorts them internally before formatting.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `cpus` | `&[u32]` | Slice of CPU indices to format. Does not need to be sorted or deduplicated — the function creates a sorted copy internally. May be empty. |
 
 ## Return value
 
-Returns a `String` containing the formatted CPU specification. Consecutive indices are collapsed into ranges using dash notation (`start-end`), and non-consecutive indices or ranges are separated by commas. Returns `"0"` if the input slice is empty.
+Returns a `String` containing the formatted CPU index representation.
+
+| Input | Output |
+|-------|--------|
+| `&[]` | `"0"` |
+| `&[0, 1, 2, 3]` | `"0-3"` |
+| `&[0, 2, 4]` | `"0,2,4"` |
+| `&[0, 1, 2, 5, 6, 7, 12]` | `"0-2,5-7,12"` |
+| `&[3]` | `"3"` |
+
+An empty slice produces the string `"0"`, which in the configuration file format represents "no CPUs" / "no change".
 
 ## Remarks
 
-This function is the display-side counterpart to [parse_cpu_spec](parse_cpu_spec.md). While `parse_cpu_spec` converts a string specification into a vector of CPU indices, `format_cpu_indices` converts a vector back into a compact string.
+### Algorithm
 
-The formatting algorithm works as follows:
+1. If the input slice is empty, return `"0"` immediately.
+2. Create a sorted copy of the input.
+3. Walk the sorted list, extending the current range while indices are consecutive (`sorted[i+1] == sorted[i] + 1`).
+4. When a gap is found, emit the accumulated range:
+   - Single index → `"N"`
+   - Two or more consecutive indices → `"start-end"`
+5. Separate ranges with commas (no spaces).
 
-1. If the input slice is empty, return the string `"0"`.
-2. Sort a copy of the indices in ascending order.
-3. Walk through the sorted list, detecting runs of consecutive values.
-4. For each run, emit `start-end` if the run spans more than one value, or just the single value otherwise.
-5. Separate each segment with a comma.
+### Inverse relationship with parse_cpu_spec
 
-### Examples
+`format_cpu_indices` is the display counterpart of [parse_cpu_spec](parse_cpu_spec.md). The round-trip `format_cpu_indices(parse_cpu_spec(s))` produces a normalized representation of the original spec string, with duplicates removed and indices sorted. Note that hex-mask inputs (e.g., `"0xFF"`) are normalized to range notation (e.g., `"0-7"`).
 
-| Input | Output |
-| --- | --- |
-| `[]` | `"0"` |
-| `[0, 1, 2, 3]` | `"0-3"` |
-| `[0, 2, 4]` | `"0,2,4"` |
-| `[0, 1, 2, 5, 6, 7]` | `"0-2,5-7"` |
-| `[3, 1, 2, 0]` | `"0-3"` |
-| `[0, 1, 2, 4, 8, 9, 10]` | `"0-2,4,8-10"` |
+### Empty-means-zero convention
 
-Note that the output uses commas as separators, whereas [parse_cpu_spec](parse_cpu_spec.md) accepts semicolons as separators. This is intentional — the comma-separated format is used for display and config output, while the semicolon-separated format is used for config input parsing.
+The config file format uses `"0"` to mean "no CPU specification" (i.e., do not change affinity/cpuset). Returning `"0"` for an empty slice preserves this convention so that generated config files are syntactically valid and semantically correct when re-parsed.
 
-This function is used by the logging and reporting subsystems to display CPU assignments in a readable way, and by [sort_and_group_config](sort_and_group_config.md) when generating grouped config output.
+### Output in generated files
+
+This function is called by [convert](convert.md) and [sort_and_group_config](sort_and_group_config.md) when writing CPU specifications into output config files. The compact range notation keeps generated files concise, especially for systems with many cores (e.g., `"0-63,128-191"` instead of listing 128 individual indices).
 
 ## Requirements
 
-| Requirement | Value |
-| --- | --- |
-| **Module** | src/config.rs |
-| **Line** | L134–L164 |
+| | |
+|---|---|
+| **Module** | `config` (`src/config.rs`) |
 | **Visibility** | `pub` |
-| **Related** | [parse_cpu_spec](parse_cpu_spec.md), [cpu_indices_to_mask](cpu_indices_to_mask.md), [mask_to_cpu_indices](mask_to_cpu_indices.md) |
+| **Callers** | [convert](convert.md), [sort_and_group_config](sort_and_group_config.md), apply module log formatting |
+| **Dependencies** | None (pure function) |
+
+## See Also
+
+| Topic | Link |
+|-------|------|
+| CPU spec string parser (inverse) | [parse_cpu_spec](parse_cpu_spec.md) |
+| CPU indices to bitmask | [cpu_indices_to_mask](cpu_indices_to_mask.md) |
+| Bitmask to CPU indices | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
+| Config module overview | [README](README.md) |

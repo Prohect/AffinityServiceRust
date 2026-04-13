@@ -1,49 +1,62 @@
 # get_log_path function (logging.rs)
 
-Constructs the full file path for a log file by appending the given suffix to the executable's base path and directory.
+Constructs a date-prefixed log file path under the `logs/` directory. The function reads the cached local time from [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) to derive the `YYYYMMDD` date component and appends an optional suffix before the `.log` extension. If the `logs/` directory does not exist, it is created automatically.
 
 ## Syntax
 
-```rust
-pub fn get_log_path(suffix: &str) -> PathBuf
+```logging.rs
+fn get_log_path(suffix: &str) -> PathBuf
 ```
 
 ## Parameters
 
-`suffix`
-
-A string suffix that determines the type of log file. For example, `".log"` produces the main log file path, and `".find.log"` produces the find log file path. The suffix is appended directly to the executable's file stem.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `suffix` | `&str` | A string appended between the date prefix and the `.log` extension. Pass `""` for the main log file or `".find"` for the find-mode log file. The suffix is inserted verbatim — if a dot separator is desired, it must be included in the string (e.g., `".find"` not `"find"`). |
 
 ## Return value
 
-Returns a `PathBuf` representing the absolute path to the log file. The file is placed in the same directory as the running executable, with the executable's name (minus its extension) used as the base name.
-
-For example, if the executable is located at `C:\Tools\AffinityService.exe` and the suffix is `".log"`, the returned path would be `C:\Tools\AffinityService.log`.
+A `PathBuf` representing the fully qualified relative path to the log file, e.g., `logs/20250114.log` or `logs/20250114.find.log`.
 
 ## Remarks
 
-This function determines the log file location relative to the running executable rather than using a fixed or configurable directory. This ensures that log files are always co-located with the executable, making them easy to find regardless of the installation directory.
+- The function acquires the [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) mutex lock via the [get_local_time!](get_local_time.md) macro, extracts the `year`, `month`, and `day` components using `chrono::Datelike`, and then explicitly drops the guard before performing any file-system operations. This is important because `create_dir_all` could block on I/O, and holding the time buffer lock during I/O would unnecessarily delay other threads.
+- The `logs/` directory is created with `std::fs::create_dir_all` if it does not already exist. The result of `create_dir_all` is silently discarded (`let _ = …`), so a failure to create the directory does not produce an error at this point — it will instead surface when the caller attempts to open the file.
+- This function is **not** `pub` — it is module-private (`fn`, not `pub fn`). It is called only during the lazy initialization of [LOG_FILE](LOG_FILE.md) and [FIND_LOG_FILE](FIND_LOG_FILE.md), and is not intended for use outside the `logging` module.
+- The date portion of the filename is determined by the value in [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) at the time the function is called. Because `LOG_FILE` and `FIND_LOG_FILE` are `Lazy` statics, the path is computed exactly once — on first access — and the resulting file handle is reused for the entire process lifetime. Log files are not automatically rotated at midnight; a new process (or service restart) is required to start a new dated log file.
 
-The function uses `std::env::current_exe()` to obtain the path of the running executable, then manipulates the path components to replace the extension with the provided suffix.
+### Path format
 
-This function is called during lazy initialization of the [`LOG_FILE`](LOG_FILE.md) and [`FIND_LOG_FILE`](FIND_LOG_FILE.md) statics. It is not typically called directly by other modules — instead, other modules interact with the log files through [`log_message`](log_message.md), [`log_pure_message`](log_pure_message.md), [`log_to_find`](log_to_find.md), and [`log_process_find`](log_process_find.md).
+The generated path follows this pattern:
 
-### Error handling
+```/dev/null/example.txt#L1-1
+logs/{YYYY}{MM}{DD}{suffix}.log
+```
 
-If `std::env::current_exe()` fails (which is extremely rare on Windows), the function may panic during static initialization. This is acceptable because logging is fundamental to the application's operation and cannot be meaningfully degraded.
+Examples:
+
+| Suffix | Resulting path |
+|--------|---------------|
+| `""` | `logs/20250114.log` |
+| `".find"` | `logs/20250114.find.log` |
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/logging.rs |
-| **Source lines** | L174–L183 |
-| **Called by** | [`LOG_FILE`](LOG_FILE.md) initialization, [`FIND_LOG_FILE`](FIND_LOG_FILE.md) initialization |
-| **Dependencies** | `std::env::current_exe`, `std::path::PathBuf` |
+|-------------|-------|
+| Module | `logging` |
+| Visibility | Module-private (`fn`, not `pub fn`) |
+| Callers | [LOG_FILE](LOG_FILE.md) initializer, [FIND_LOG_FILE](FIND_LOG_FILE.md) initializer |
+| Callees | [get_local_time!](get_local_time.md), `std::fs::create_dir_all` |
+| Crate dependencies | `chrono` (`Datelike`), `std::path::PathBuf`, `std::fs::create_dir_all` |
 
-## See also
+## See Also
 
-- [LOG_FILE static](LOG_FILE.md)
-- [FIND_LOG_FILE static](FIND_LOG_FILE.md)
-- [log_message function](log_message.md)
-- [logging.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| Main log file handle initialized by this function | [LOG_FILE](LOG_FILE.md) |
+| Find-mode log file handle initialized by this function | [FIND_LOG_FILE](FIND_LOG_FILE.md) |
+| Cached local time used for date derivation | [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) |
+| Timestamped log writing | [log_message](log_message.md) |
+| Find-mode log writing | [log_to_find](log_to_find.md) |
+| logging module overview | [logging module](README.md) |

@@ -1,6 +1,6 @@
 # parse_args function (cli.rs)
 
-Parses a slice of command-line argument strings into a [`CliArgs`](CliArgs.md) struct, validating values and applying defaults where appropriate.
+Parses a raw command-line argument slice into a [CliArgs](CliArgs.md) structure. The parser performs a single linear scan over the argument vector, matching each element against known flag strings and consuming an additional element for value-bearing flags. Unknown flags are silently ignored, making the parser forward-compatible with future additions.
 
 ## Syntax
 
@@ -12,68 +12,90 @@ pub fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()>
 
 `args`
 
-A slice of command-line argument strings, typically obtained from `std::env::args().collect()`. The first element is expected to be the executable path and is skipped during parsing.
+A slice of command-line argument strings, typically obtained from `std::env::args().collect()`. The first element (`args[0]`) is the executable path and is skipped — parsing begins at index 1.
 
 `cli`
 
-A mutable reference to a [`CliArgs`](CliArgs.md) struct that will be populated with the parsed values. The struct should be initialized with defaults before being passed to this function.
+A mutable reference to a [CliArgs](CliArgs.md) structure that has already been initialized with defaults via `CliArgs::new()`. The parser overwrites individual fields as it encounters matching flags. Fields for which no flag is present retain their default values.
 
 ## Return value
 
-Returns `Ok(())` on successful parsing. Returns `Err` if a critical validation failure occurs (e.g., a required value is missing for a flag that takes an argument).
+Returns `Ok(())` unconditionally. The `Result<()>` return type (where `Result` is `windows::core::Result`) exists to allow future error reporting for malformed arguments, but the current implementation never returns an error. Unrecognized flags and missing values for value-bearing flags (when the flag is the last argument) are silently ignored.
 
 ## Remarks
 
-The function iterates over the argument slice, matching each argument against known flags and consuming associated values. The parsing follows these conventions:
+### Flag format
 
-- **Boolean flags** (e.g., `--dry-run`, `--no-uac`, `--find`) set their corresponding field to `true` when present.
-- **Value flags** (e.g., `--interval`, `--config`, `--loop-count`) consume the next argument as their value.
-- **Unknown arguments are silently ignored** — this is a deliberate design choice for forward compatibility, allowing newer flags to be passed without crashing older versions of the application.
+All flags use a single-dash prefix (e.g., `-help`, `-config`). A small number of flags also accept a double-dash variant (e.g., `--help`, `--helpall`, `--dry-run`), and the legacy `?` and `/?` forms are accepted for help. Flag matching is case-sensitive, with explicit case-variant aliases provided where needed:
 
-### Validation
+| Canonical flag | Aliases |
+|----------------|---------|
+| `-help` | `--help`, `-?`, `/?`, `?` |
+| `-helpall` | `--helpall` |
+| `-noUAC` | `-nouac` |
+| `-dryrun` | `-dry-run`, `--dry-run` |
+| `-noDebugPriv` | `-nodebugpriv` |
+| `-noIncBasePriority` | `-noincbasepriority` |
 
-After parsing, the function performs validation:
+### Value-bearing flags
 
-- **Interval minimum** — if `interval_ms` is set to a value below 16 ms, it is clamped to 16 ms. This prevents excessively tight polling loops that would consume unnecessary CPU time.
-- **File path defaults** — if `config_file_name` is not specified, a default path is used.
+Flags that require a value consume the next element in the argument vector (`args[i + 1]`). The parser guards against out-of-bounds access with an `if i + 1 < args.len()` condition on each match arm. If the flag appears as the last argument without a following value, the match arm does not fire and the flag is treated as an unknown token (silently ignored).
 
-### Supported flags
+| Flag | Value type | Default | Constraints |
+|------|-----------|---------|-------------|
+| `-interval` | `u64` (milliseconds) | 5000 | Clamped to minimum of 16 via `.max(16)` |
+| `-loop` | `u32` (iteration count) | `None` (infinite) | Clamped to minimum of 1 via `.max(1)` |
+| `-resolution` | `u32` (100-ns units) | 0 | No clamping; 0 means do not set |
+| `-config` | `String` (file path) | `"config.ini"` | No validation |
+| `-blacklist` | `String` (file path) | `None` | Wrapped in `Some` |
+| `-in` | `String` (file path) | `None` | Wrapped in `Some` |
+| `-out` | `String` (file path) | `None` | Wrapped in `Some` |
 
-| Flag | Field | Type | Description |
-| --- | --- | --- | --- |
-| `--interval` / `-i` | `interval_ms` | `u64` | Polling interval in milliseconds |
-| `--help` / `-h` | `help_mode` | `bool` | Show brief help |
-| `--help-all` | `help_all_mode` | `bool` | Show combined CLI + config help |
-| `--convert` | `convert_mode` | `bool` | Convert legacy config format |
-| `--autogroup` | `autogroup_mode` | `bool` | Auto-group config entries |
-| `--find` | `find_mode` | `bool` | Find mode — discover running processes |
-| `--validate` | `validate_mode` | `bool` | Validate config without applying |
-| `--process-logs` | `process_logs_mode` | `bool` | Process .find.log files |
-| `--dry-run` | `dry_run` | `bool` | Simulate changes without applying |
-| `--config` / `-c` | `config_file_name` | `String` | Config file path |
-| `--blacklist` | `blacklist_file_name` | `Option<String>` | Blacklist file path |
-| `--in` | `in_file_name` | `Option<String>` | Input file for convert mode |
-| `--out` | `out_file_name` | `Option<String>` | Output file for convert mode |
-| `--no-uac` | `no_uac` | `bool` | Skip UAC elevation |
-| `--loop-count` | `loop_count` | `Option<u32>` | Limit iterations then exit |
-| `--time-resolution` | `time_resolution` | `u32` | Windows timer resolution |
-| `--log-loop` | `log_loop` | `bool` | Log every loop iteration |
-| `--skip-log-before-elevation` | `skip_log_before_elevation` | `bool` | Suppress logs before UAC |
-| `--no-debug-priv` | `no_debug_priv` | `bool` | Skip SeDebugPrivilege |
-| `--no-inc-base-priority` | `no_inc_base_priority` | `bool` | Skip SeIncreaseBasePriorityPrivilege |
+For numeric flags (`-interval`, `-loop`, `-resolution`), the value is parsed with `str::parse()`. If parsing fails, `.unwrap_or()` supplies the default (5000 for interval, 1 for loop, 0 for resolution).
+
+### Side effects
+
+Two flags modify global state directly rather than (or in addition to) setting a field on `CliArgs`:
+
+- **`-console`** — Sets the global `USE_CONSOLE` static to `true` via the `get_use_console!()` macro. There is no corresponding field in `CliArgs` because console mode is consumed by the logging infrastructure, not the main loop.
+- **`-validate`** — Sets `cli.validate_mode = true` **and** sets `USE_CONSOLE` to `true`, because validation output is always intended for interactive review.
+
+### Unknown flag handling
+
+Any argument that does not match a known flag is silently skipped. This means:
+
+- Typoed flags (e.g., `-consle`) are ignored without warning.
+- Positional arguments or bare values without a preceding flag are ignored.
+- Future flags added to the parser will not break existing scripts that pass unknown flags.
+
+### Parsing order
+
+The parser processes arguments left to right. If a flag appears multiple times, the last occurrence wins for value-bearing flags (because each occurrence overwrites the field). For boolean flags, they can only be set to `true` — there is no mechanism to unset a flag once it has been set.
+
+### Typical usage
+
+```rust
+let args: Vec<String> = env::args().collect();
+let mut cli = CliArgs::new();
+parse_args(&args, &mut cli)?;
+```
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/cli.rs |
-| **Source lines** | L38–L119 |
-| **Called by** | [`main`](../main.rs/main.md) |
-| **Produces** | [`CliArgs`](CliArgs.md) |
+|-------------|-------|
+| Module | `cli` |
+| Callers | [main](../main.rs/main.md) |
+| Callees | `get_use_console!()` macro (global logging state) |
+| API | None (pure argument parsing with one global side effect) |
+| Privileges | N/A |
 
-## See also
+## See Also
 
-- [CliArgs struct](CliArgs.md)
-- [print_help](print_help.md)
-- [print_help_all](print_help_all.md)
-- [cli.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| Argument container structure | [CliArgs](CliArgs.md) |
+| Basic help output | [print_help](print_help.md) |
+| Detailed help output | [print_cli_help](print_cli_help.md) |
+| Combined help output | [print_help_all](print_help_all.md) |
+| Entry point that calls parse_args | [main](../main.rs/main.md) |

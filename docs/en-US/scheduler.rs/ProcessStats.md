@@ -1,6 +1,6 @@
 # ProcessStats struct (scheduler.rs)
 
-Tracks per-process state for the prime thread scheduler, including liveness, thread statistics, and diagnostic metadata.
+Per-process statistics container that tracks thread-level data for prime thread scheduling. Each `ProcessStats` instance is keyed by PID inside [`PrimeThreadScheduler`](PrimeThreadScheduler.md) and holds the collection of [`ThreadStats`](ThreadStats.md) for every thread observed in that process.
 
 ## Syntax
 
@@ -17,63 +17,53 @@ pub struct ProcessStats {
 
 ## Members
 
-`alive`
-
-A boolean flag indicating whether this process was observed in the most recent snapshot. Set to `false` by [`PrimeThreadScheduler::reset_alive`](PrimeThreadScheduler.md) at the start of each loop iteration and back to `true` by [`PrimeThreadScheduler::set_alive`](PrimeThreadScheduler.md) when the process is found in the current [`ProcessSnapshot`](../process.rs/ProcessSnapshot.md). Processes that remain `false` after the scan are cleaned up by [`close_dead_process_handles`](PrimeThreadScheduler.md).
-
-`tid_to_thread_stats`
-
-A `HashMap<u32, ThreadStats>` mapping thread IDs to their corresponding [ThreadStats](ThreadStats.md) structs. Entries are lazily created via [`PrimeThreadScheduler::get_thread_stats`](PrimeThreadScheduler.md) the first time a thread is encountered. Thread handles within are automatically closed via `Drop` when the process is removed from the scheduler.
-
-`track_top_x_threads`
-
-Controls the diagnostic logging behavior on process exit. When nonzero, [`close_dead_process_handles`](PrimeThreadScheduler.md) logs the top N threads (by accumulated CPU cycles) along with detailed timing and scheduling stats. The absolute value of this integer determines N. Set from [`ProcessConfig`](../config.rs/ProcessConfig.md) via [`set_tracking_info`](PrimeThreadScheduler.md). A value of `0` disables exit logging for this process.
-
-`process_name`
-
-The lowercase process image name (e.g. `"game.exe"`), set via [`set_tracking_info`](PrimeThreadScheduler.md). Used in log messages during process exit reporting.
-
-`process_id`
-
-The Windows process identifier (PID). Stored for reference but currently unused at runtime (marked `#[allow(dead_code)]`). Set during construction via `ProcessStats::new(pid)`.
-
-## Methods
-
-| Method | Signature | Description |
-| --- | --- | --- |
-| **new** | `pub fn new(process_id: u32) -> Self` | Creates a new `ProcessStats` with `alive` set to `true`, empty thread map, `track_top_x_threads` of `0`, and empty `process_name`. |
-
-## Trait Implementations
-
-| Trait | Description |
-| --- | --- |
-| `Debug` | Derived — prints all fields. |
-| `Default` | Delegates to `Self::new(0)`. |
+| Member | Type | Description |
+|--------|------|-------------|
+| `alive` | `bool` | Liveness flag used by the scheduler's mark-and-sweep cycle. Set to `false` by [`PrimeThreadScheduler::reset_alive`](PrimeThreadScheduler.md) at the start of each scheduling pass, then set back to `true` by [`PrimeThreadScheduler::set_alive`](PrimeThreadScheduler.md) when the process is still present in the snapshot. Processes that remain `false` after the pass are candidates for cleanup via [`drop_process_by_pid`](PrimeThreadScheduler.md). |
+| `tid_to_thread_stats` | `HashMap<u32, ThreadStats>` | Map from thread ID (TID) to per-thread statistics. Entries are lazily created on first access through [`PrimeThreadScheduler::get_thread_stats`](PrimeThreadScheduler.md). Entries persist until the entire `ProcessStats` is dropped. |
+| `track_top_x_threads` | `i32` | Controls diagnostic logging when the process exits. When nonzero, [`drop_process_by_pid`](PrimeThreadScheduler.md) logs the top *N* threads (by CPU cycles) for post-mortem analysis. The absolute value determines the count; the sign is reserved for future use. Set via [`PrimeThreadScheduler::set_tracking_info`](PrimeThreadScheduler.md). |
+| `process_name` | `String` | Lowercase display name of the process (e.g., `"game.exe"`). Set via [`PrimeThreadScheduler::set_tracking_info`](PrimeThreadScheduler.md) and used in log messages. |
+| `process_id` | `u32` | The Windows process identifier. Stored for reference; not actively used after construction. |
 
 ## Remarks
 
-`ProcessStats` is the per-process record inside [`PrimeThreadScheduler::pid_to_process_stats`](PrimeThreadScheduler.md). It has a two-phase lifecycle each loop iteration:
+### Construction
 
-1. **Reset phase** — `reset_alive()` marks all entries as `alive = false`.
-2. **Scan phase** — For each process matched by a config rule, `set_alive()` marks the entry as alive and `set_tracking_info()` updates the tracking parameters.
+`ProcessStats` is created through `ProcessStats::new(pid)`, which initializes the struct with `alive: true`, an empty thread stats map, zero `track_top_x_threads`, and an empty process name.
 
-At the end of the iteration, `close_dead_process_handles()` removes entries still marked `alive = false`. Before removal, if `track_top_x_threads != 0`, it generates a detailed report of the top threads sorted by `last_cycles`, including kernel/user time, create time, context switches, thread state, wait reason, and the resolved module name of each thread's start address.
+A `Default` implementation is also provided, calling `new(0)`.
 
-The `tid_to_thread_stats` map grows over the process lifetime as new threads are encountered but never shrinks — thread entries persist even after threads exit, allowing their accumulated cycle data to contribute to exit-time diagnostics. Stale thread handles are cleaned up only when the entire process entry is removed.
+### Alive-flag lifecycle
+
+The `alive` field implements a two-phase mark-and-sweep pattern:
+
+1. **Mark phase** — `PrimeThreadScheduler::reset_alive` sets `alive = false` on every tracked process.
+2. **Sweep phase** — As processes are found in the current [`ProcessSnapshot`](../process.rs/ProcessSnapshot.md), `PrimeThreadScheduler::set_alive` sets `alive = true`.
+3. **Cleanup** — Any process still marked `alive == false` has exited and should be cleaned up with `drop_process_by_pid`, which closes thread handles and frees the module cache.
+
+### Thread stats map growth
+
+The `tid_to_thread_stats` map grows monotonically during a process's lifetime. Threads that exit are **not** individually removed; their entries remain until the entire process is dropped. This avoids the overhead of per-thread cleanup and is acceptable because short-lived threads accumulate negligible memory.
+
+### Tracking info
+
+`track_top_x_threads` and `process_name` are set together via `set_tracking_info` because they originate from the same [`ProcessConfig`](../config.rs/ProcessConfig.md) rule. They are only meaningful when the process eventually exits and the scheduler logs diagnostic output.
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/scheduler.rs |
-| **Source lines** | L178–L205 |
-| **Owned by** | [`PrimeThreadScheduler`](PrimeThreadScheduler.md) via `pid_to_process_stats` |
-| **Contains** | [`ThreadStats`](ThreadStats.md) via `tid_to_thread_stats` |
+|-------------|-------|
+| Module | `scheduler.rs` |
+| Constructed by | [`PrimeThreadScheduler::set_alive`](PrimeThreadScheduler.md), `ProcessStats::new` |
+| Consumed by | [`PrimeThreadScheduler`](PrimeThreadScheduler.md) methods |
+| Dependencies | [`ThreadStats`](ThreadStats.md) |
 
-## See also
+## See Also
 
-- [scheduler.rs module overview](README.md)
-- [PrimeThreadScheduler](PrimeThreadScheduler.md)
-- [ThreadStats](ThreadStats.md)
-- [IdealProcessorState](IdealProcessorState.md)
-- [ProcessSnapshot](../process.rs/ProcessSnapshot.md)
+| Topic | Link |
+|-------|------|
+| Parent scheduler | [`PrimeThreadScheduler`](PrimeThreadScheduler.md) |
+| Per-thread data | [`ThreadStats`](ThreadStats.md) |
+| Hysteresis constants | [`ConfigConstants`](../config.rs/ConfigConstants.md) |
+| Process snapshot source | [`ProcessSnapshot`](../process.rs/ProcessSnapshot.md) |
+| Process configuration | [`ProcessConfig`](../config.rs/ProcessConfig.md) |

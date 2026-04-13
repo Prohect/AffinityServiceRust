@@ -1,68 +1,59 @@
 # log_process_find function (logging.rs)
 
-Logs a discovered process name to the `.find.log` file with deduplication, ensuring each process name is recorded at most once per session.
+Logs a discovered process name during `-find` mode, deduplicated per session. On the first call for a given process name, the function writes a `find <process_name>` entry to the find-mode log (via [log_to_find](log_to_find.md)); subsequent calls with the same name are silently ignored. This ensures the find log contains a clean, unique list of all processes observed during the session without repetition from the polling loop.
 
 ## Syntax
 
-```rust
+```logging.rs
+#[inline]
 pub fn log_process_find(process_name: &str)
 ```
 
 ## Parameters
 
-`process_name`
-
-The name of the discovered process (e.g., `"game.exe"`) to log to the find log file. This is the process display name as it appears in the system process list.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `process_name` | `&str` | The name of the discovered process to log. This value is inserted into [FINDS_SET](FINDS_SET.md) for deduplication and formatted into the log line as `"find <process_name>"`. |
 
 ## Return value
 
-This function does not return a value.
+*(none)*
 
 ## Remarks
 
-`log_process_find` is the high-level function for recording process discovery events to the [`FIND_LOG_FILE`](FIND_LOG_FILE.md). It wraps [`log_to_find`](log_to_find.md) with a deduplication check against the [`FINDS_SET`](FINDS_SET.md) static to ensure each process name is written at most once per application session.
+- The function locks [FINDS_SET](FINDS_SET.md) and calls `HashSet::insert`. If `insert` returns `true` (the name was not already present), the function delegates to [log_to_find](log_to_find.md) with a formatted message of the form `"find <process_name>"`. If `insert` returns `false` (the name was already logged), the function returns without producing any output.
+- The deduplication is per-session (per-process lifetime), not per-day. If the service restarts on the same calendar day, the new process begins with an empty [FINDS_SET](FINDS_SET.md) and will re-log all discovered processes. This is by design: each run should produce a self-contained discovery report.
+- The function is annotated `#[inline]`, hinting the compiler to inline it at call sites. Because the function body is small (one lock acquisition, one conditional log call), inlining avoids the overhead of a function call in the hot polling path.
+- The process name is stored as-is in `FINDS_SET` without lowercasing or normalization. The caller (typically [process_find](../main.rs/README.md)) is responsible for providing the name in the expected format.
+- Because [log_to_find](log_to_find.md) internally checks [USE_CONSOLE](USE_CONSOLE.md), the output destination (console or `logs/YYYYMMDD.find.log`) is determined by that flag. The timestamp prefix `[HH:MM:SS]` is added by `log_to_find`.
 
-The function performs the following steps:
+### Example output
 
-1. Acquire a lock on [`FINDS_SET`](FINDS_SET.md).
-2. Check whether `process_name` is already present in the set.
-3. If **already present**, return immediately without writing to the find log — the process has already been recorded.
-4. If **not present**, insert the process name into the set and call [`log_to_find`](log_to_find.md) to write it to the [`FIND_LOG_FILE`](FIND_LOG_FILE.md).
+For a first-time discovery of `notepad.exe`, the find log receives a line such as:
 
-This deduplication is essential because the main loop in [`main`](../main.rs/main.md) discovers running processes every iteration. Without it, the find log would contain repeated entries for the same process on every loop cycle, making the output difficult to review and significantly larger than necessary.
+```/dev/null/example.log#L1-1
+[09:15:42]find notepad.exe
+```
 
-### Difference from log_to_find
-
-| Function | Deduplication | Typical use |
-| --- | --- | --- |
-| [`log_to_find`](log_to_find.md) | None — writes every call | Raw messages, headers, metadata |
-| **log_process_find** | Via [`FINDS_SET`](FINDS_SET.md) — writes once per process name | Process name discovery logging |
-
-Use `log_process_find` when recording a matched process name. Use [`log_to_find`](log_to_find.md) when writing auxiliary information to the find log that does not need deduplication.
-
-### Session scope
-
-The [`FINDS_SET`](FINDS_SET.md) is never cleared during the lifetime of the application. This means that if a process exits and is later relaunched, it will **not** be re-logged in the same session. A new session (restart of AffinityService) resets the set, allowing all processes to be discovered and logged fresh.
-
-### Find log consumption
-
-The `.find.log` file populated by this function is consumed by the [`process_logs`](../main.rs/process_logs.md) function, which reads the discovered process names and uses `es.exe` (Everything search) to locate the full executable paths on disk.
+A subsequent call with `"notepad.exe"` during the same session produces no output.
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/logging.rs |
-| **Source lines** | L214–L223 |
-| **Called by** | [`main`](../main.rs/main.md) loop process matching, find mode |
-| **Calls** | [`log_to_find`](log_to_find.md) |
-| **Uses** | [`FINDS_SET`](FINDS_SET.md) |
+|-------------|-------|
+| Module | `logging` |
+| Callers | [process_find](../main.rs/README.md) |
+| Callees | [log_to_find](log_to_find.md) |
+| Reads | [FINDS_SET](FINDS_SET.md) (locks and inserts) |
+| Respects | [USE_CONSOLE](USE_CONSOLE.md) (indirectly, via `log_to_find`) |
 
-## See also
+## See Also
 
-- [log_to_find function](log_to_find.md)
-- [FINDS_SET static](FINDS_SET.md)
-- [FIND_LOG_FILE static](FIND_LOG_FILE.md)
-- [FINDS_FAIL_SET static](FINDS_FAIL_SET.md)
-- [process_logs function](../main.rs/process_logs.md)
-- [logging.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| Deduplication set for successful finds | [FINDS_SET](FINDS_SET.md) |
+| Timestamped find-mode log writer | [log_to_find](log_to_find.md) |
+| Find-mode log file handle | [FIND_LOG_FILE](FIND_LOG_FILE.md) |
+| Deduplication set for failed finds | [FINDS_FAIL_SET](FINDS_FAIL_SET.md) |
+| Find-mode entry point in main | [process_find](../main.rs/README.md) |
+| logging module overview | [logging module](README.md) |

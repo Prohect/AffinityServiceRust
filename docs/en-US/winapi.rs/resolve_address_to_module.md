@@ -1,6 +1,6 @@
 # resolve_address_to_module function (winapi.rs)
 
-Resolves a memory address within a process to a human-readable string in `"module.dll+0xABC"` format by looking up the address against the process's loaded module list.
+Resolves a memory address to a human-readable string containing the module name and hexadecimal offset (e.g., `"engine.dll+0x1A3F0"`). This is used by the prime-thread scheduler and ideal processor assignment logic to identify which loaded module a thread's start address belongs to, enabling module-based thread filtering via [PrimePrefix](../config.rs/PrimePrefix.md) rules.
 
 ## Syntax
 
@@ -10,50 +10,82 @@ pub fn resolve_address_to_module(pid: u32, address: usize) -> String
 
 ## Parameters
 
-`pid`
-
-The process identifier of the target process whose module list should be searched.
-
-`address`
-
-The memory address to resolve, typically a thread start address obtained from [`get_thread_start_address`](get_thread_start_address.md).
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `pid` | `u32` | The process identifier that owns the address space. Used as the key into the [MODULE_CACHE](MODULE_CACHE.md) to look up or populate the process's module list. |
+| `address` | `usize` | The virtual memory address to resolve. Typically a thread start address obtained from [get_thread_start_address](get_thread_start_address.md). |
 
 ## Return value
 
-Returns a `String` in the format `"module.dll+0xABC"` where `module.dll` is the name of the module containing the address and `0xABC` is the hexadecimal offset from the module's base address. If the address does not fall within any known module, a fallback string representation of the raw address is returned.
+A `String` representing the resolved address. The format depends on resolution success:
+
+| Scenario | Return format | Example |
+|----------|---------------|---------|
+| Address is `0` | `"0x0"` | `"0x0"` |
+| Address falls within a known module's range | `"{module_name}+0x{offset:X}"` | `"engine.dll+0x1A3F0"` |
+| Address does not match any loaded module | `"0x{address:X}"` | `"0x7FF6A1230000"` |
 
 ## Remarks
 
-This function is used to identify which module (DLL or EXE) a thread's start address belongs to. This information is critical for the ideal processor assignment feature, which matches threads to CPU cores based on the module prefix of their start address (see [`apply_ideal_processors`](../apply.rs/apply_ideal_processors.md)).
+### Module cache
 
-The function uses the [`MODULE_CACHE`](MODULE_CACHE.md) static to avoid repeatedly enumerating a process's modules on every call. The resolution flow is:
+The function uses the [MODULE_CACHE](MODULE_CACHE.md) global static — a `Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>>` — to avoid enumerating a process's modules on every call. The cache is keyed by PID, and each entry is a vector of `(base_address, size, module_name)` tuples.
 
-1. Lock [`MODULE_CACHE`](MODULE_CACHE.md) and check whether the given `pid` already has a cached module list.
-2. If not cached, call [`enumerate_process_modules`](enumerate_process_modules.md) to populate the cache entry for this process.
-3. Search the cached module list for an entry whose base–end address range contains the target `address`.
-4. If found, compute the offset (`address - base`) and format the result as `"module_name+0xOFFSET"`.
-5. If no module range contains the address, return a raw address representation.
+On the first call for a given PID:
 
-The module cache is per-process and persists across loop iterations for performance. When a process exits, [`drop_module_cache`](drop_module_cache.md) should be called to free the stale entry.
+1. The cache lock is acquired.
+2. If no entry exists for the PID, [enumerate_process_modules](enumerate_process_modules.md) is called to populate the cache.
+3. The newly enumerated module list is cloned and stored in the cache.
 
-### Output format
+On subsequent calls for the same PID, the cached module list is returned directly without re-enumerating.
 
-The output format `"module.dll+0xABC"` is designed to be both human-readable in log files and useful for pattern matching in configuration rules. The module name is extracted from the full path (e.g., `ntdll.dll` rather than `C:\Windows\System32\ntdll.dll`), and the offset uses lowercase hexadecimal with a `0x` prefix.
+### Address resolution algorithm
+
+After obtaining the module list (from cache or fresh enumeration), the function performs a linear search for the first module whose address range `[base, base + size)` contains the target `address`. If found, it computes the offset as `address - base` and formats the result as `"{module_name}+0x{offset:X}"`.
+
+If no module range contains the address, the raw address is returned in hexadecimal format (`"0x{address:X}"`). This can happen when:
+
+- The thread's start address points to dynamically allocated (non-module) memory.
+- The process's module list has changed since the cache was populated.
+- The enumeration failed (e.g., insufficient access rights).
+
+### Zero-address fast path
+
+If `address` is `0`, the function returns `"0x0"` immediately without accessing the module cache. A zero start address typically indicates that the thread information could not be queried (see [get_thread_start_address](get_thread_start_address.md) failure behavior).
+
+### Cache lifetime
+
+The module cache for a given PID persists until explicitly cleared by [drop_module_cache](drop_module_cache.md), which is called when a process exits or at the start of each main loop iteration. This ensures that module lists remain reasonably current without the cost of re-enumerating on every thread inspection.
+
+### Clone of cached data
+
+The function clones the cached module vector out of the mutex guard before performing the address search. This releases the mutex lock quickly, minimizing contention when multiple threads or successive calls resolve addresses for different processes. The trade-off is a per-call allocation for the cloned vector, which is acceptable given the typical module count (tens to low hundreds).
+
+### Thread safety
+
+The [MODULE_CACHE](MODULE_CACHE.md) mutex is held only for the duration of the cache lookup or insertion. The actual address resolution (linear search through the module list) occurs outside the lock on the cloned data.
 
 ## Requirements
 
-| Requirement | Value |
-| --- | --- |
-| **Module** | src/winapi.rs |
-| **Source lines** | L682–L708 |
-| **Called by** | [`apply_ideal_processors`](../apply.rs/apply_ideal_processors.md), [`prefetch_all_thread_cycles`](../apply.rs/prefetch_all_thread_cycles.md) |
-| **Calls** | [`enumerate_process_modules`](enumerate_process_modules.md) |
-| **Uses** | [`MODULE_CACHE`](MODULE_CACHE.md) |
+| | |
+|---|---|
+| **Module** | `winapi` (`src/winapi.rs`) |
+| **Visibility** | `pub` |
+| **Callers** | [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md), [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
+| **Callees** | [enumerate_process_modules](enumerate_process_modules.md) (on cache miss) |
+| **Dependencies** | [MODULE_CACHE](MODULE_CACHE.md), [get_thread_start_address](get_thread_start_address.md) (provides the address input) |
+| **API** | None directly (module enumeration is delegated to [enumerate_process_modules](enumerate_process_modules.md)) |
+| **Privileges** | `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` on the target process (required by [enumerate_process_modules](enumerate_process_modules.md) on cache miss) |
 
-## See also
+## See Also
 
-- [MODULE_CACHE static](MODULE_CACHE.md)
-- [enumerate_process_modules](enumerate_process_modules.md)
-- [drop_module_cache](drop_module_cache.md)
-- [get_thread_start_address](get_thread_start_address.md)
-- [winapi.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| Per-process module cache | [MODULE_CACHE](MODULE_CACHE.md) |
+| Cache clearing function | [drop_module_cache](drop_module_cache.md) |
+| Module enumeration implementation | [enumerate_process_modules](enumerate_process_modules.md) |
+| Thread start address query | [get_thread_start_address](get_thread_start_address.md) |
+| Module-name prefix filter for prime threads | [PrimePrefix](../config.rs/PrimePrefix.md) |
+| Prime thread promotion (uses module resolution) | [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) |
+| Ideal processor assignment (uses module resolution) | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
+| EnumProcessModulesEx (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-enumprocessmodulesex) |

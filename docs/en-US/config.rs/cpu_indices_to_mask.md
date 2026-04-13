@@ -1,6 +1,6 @@
 # cpu_indices_to_mask function (config.rs)
 
-Converts a slice of CPU indices into a bitmask representation suitable for legacy Windows affinity APIs that operate on systems with 64 or fewer logical processors.
+Converts a slice of CPU indices into a `usize` bitmask where each set bit corresponds to a CPU index present in the input. Indices greater than or equal to 64 are silently ignored because they cannot be represented in a single 64-bit mask.
 
 ## Syntax
 
@@ -10,48 +10,63 @@ pub fn cpu_indices_to_mask(cpus: &[u32]) -> usize
 
 ## Parameters
 
-`cpus`
-
-A slice of CPU indices to encode into a bitmask. Each value represents a zero-based logical processor number. Values of 64 or greater are silently ignored since they cannot be represented in a single `usize` bitmask.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `cpus` | `&[u32]` | Slice of logical CPU indices to encode. Duplicate values are harmless (the bit is set idempotently). The slice does not need to be sorted. |
 
 ## Return value
 
-Returns a `usize` bitmask where bit N is set if CPU index N is present in the input slice. For example, indices `[0, 2, 3]` produce the bitmask `0b1101` (decimal 13).
+Returns a `usize` bitmask. Bit *N* is set if the value *N* appears in `cpus` and *N* < 64. Returns `0` if `cpus` is empty or all indices are ≥ 64.
 
 ## Remarks
 
-This function is the inverse of [mask_to_cpu_indices](mask_to_cpu_indices.md). It is used when interacting with Windows APIs such as `SetProcessAffinityMask` that require a bitmask rather than a list of processor indices.
+### Bit layout
 
-CPU indices >= 64 are skipped because the bitmask is stored in a `usize`, which is 64 bits on 64-bit Windows. For systems with more than 64 logical processors, use CPU set APIs instead (see `cpu_set_cpus` in [ProcessConfig](ProcessConfig.md)).
+The least-significant bit (bit 0) represents CPU 0. For example, the input `[0, 2, 4]` produces the mask `0b10101` (`0x15`).
 
-The function does not require the input to be sorted or deduplicated. Setting the same bit twice is a no-op due to the bitwise OR operation.
+### 64-core limit
 
-### Algorithm
+Because the return type is `usize` (64 bits on x86-64 Windows), indices ≥ 64 are silently dropped. This mirrors the Windows `DWORD_PTR` affinity mask, which also supports at most 64 processors per processor group. For systems with more than 64 logical processors, use CPU set APIs ([cpu_set_cpus](ProcessConfig.md) field) rather than affinity masks.
 
-For each CPU index in the input slice:
-1. If the index is less than 64, set the corresponding bit in the mask via `mask |= 1usize << cpu`.
-2. Otherwise, skip the index.
+### Inverse operation
 
-### Example
+[mask_to_cpu_indices](mask_to_cpu_indices.md) performs the reverse conversion, expanding a bitmask back into a sorted vector of CPU indices.
 
-Given CPUs `[0, 1, 2, 3]`, the result is `0x0F` (binary `00001111`).
+### Usage in the codebase
 
-Given CPUs `[4, 8, 12]`, the result is `0x1110` (binary `0001_0001_0001_0000`).
+This function is called by:
 
-### Related functions
+- [parse_mask](parse_mask.md), which chains [parse_cpu_spec](parse_cpu_spec.md) → `cpu_indices_to_mask` as a convenience wrapper.
+- The apply module when building affinity masks from [ProcessConfig](ProcessConfig.md)`.affinity_cpus` for `SetProcessAffinityMask`.
+- The winapi module for CPU set and mask conversions.
 
-| Function | Purpose |
-| --- | --- |
-| [mask_to_cpu_indices](mask_to_cpu_indices.md) | Inverse operation — converts a bitmask to a list of CPU indices |
-| [parse_cpu_spec](parse_cpu_spec.md) | Parses a CPU specification string into CPU indices |
-| [format_cpu_indices](format_cpu_indices.md) | Formats CPU indices as a human-readable compact string |
-| [parse_mask](parse_mask.md) | Convenience wrapper that parses a spec string directly into a mask |
+### Examples
+
+| Input | Output | Notes |
+|-------|--------|-------|
+| `&[]` | `0` | Empty input yields zero mask. |
+| `&[0]` | `1` | Single CPU 0. |
+| `&[0, 1, 2, 3]` | `0xF` | Contiguous range. |
+| `&[0, 2, 4, 63]` | `0x8000000000000015` | Sparse indices including the last representable bit. |
+| `&[64, 128]` | `0` | All indices out of range, silently ignored. |
+| `&[0, 0, 0]` | `1` | Duplicates are harmless. |
 
 ## Requirements
 
-| Requirement | Value |
-| --- | --- |
-| **Module** | src/config.rs |
-| **Visibility** | `pub` |
-| **Called by** | [parse_mask](parse_mask.md), [apply_affinity](../apply.rs/apply_affinity.md), [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) |
-| **Depends on** | — |
+| | |
+|---|---|
+| **Module** | `config` (`src/config.rs`) |
+| **Callers** | [parse_mask](parse_mask.md), apply module (`apply_affinity`, `apply_prime_threads_promote`), winapi module (`cpusetids_from_mask`) |
+| **Callees** | None |
+| **Inverse** | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
+
+## See Also
+
+| Topic | Link |
+|-------|------|
+| Bitmask to index list | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
+| CPU spec string parser | [parse_cpu_spec](parse_cpu_spec.md) |
+| Convenience spec-to-mask | [parse_mask](parse_mask.md) |
+| Compact range formatter | [format_cpu_indices](format_cpu_indices.md) |
+| Per-process config (affinity_cpus field) | [ProcessConfig](ProcessConfig.md) |
+| Module overview | [config module](README.md) |

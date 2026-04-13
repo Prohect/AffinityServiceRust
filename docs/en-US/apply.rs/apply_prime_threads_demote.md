@@ -1,10 +1,10 @@
 # apply_prime_threads_demote function (apply.rs)
 
-Demotes threads that no longer qualify for prime status by removing their CPU set pinning and restoring their original thread priority.
+Demotes threads that no longer qualify for prime status by removing their per-thread CPU set pinning and restoring their original thread priority. This is the final stage of the prime-thread scheduling pipeline, invoked by [apply_prime_threads](apply_prime_threads.md) after [apply_prime_threads_select](apply_prime_threads_select.md) and [apply_prime_threads_promote](apply_prime_threads_promote.md) have completed.
 
 ## Syntax
 
-```rust
+```AffinityServiceRust/src/apply.rs#L966-977
 pub fn apply_prime_threads_demote(
     pid: u32,
     config: &ProcessConfig,
@@ -17,74 +17,102 @@ pub fn apply_prime_threads_demote(
 
 ## Parameters
 
-`pid`
-
-The process ID of the target process.
-
-`config`
-
-Reference to the [ProcessConfig](../config.rs/ProcessConfig.md) containing the process rule configuration, used for error logging context (`config.name`).
-
-`process`
-
-Mutable reference to the [ProcessEntry](../process.rs/ProcessEntry.md) for the target process. Used to enumerate the current set of live thread IDs.
-
-`tid_with_delta_cycles`
-
-Slice of `(tid, delta_cycles, is_prime)` tuples produced by [apply_prime_threads_select](apply_prime_threads_select.md). The `is_prime` flag indicates which threads were selected for prime status; threads **not** in this set but still carrying pinned CPU set IDs are candidates for demotion.
-
-`prime_core_scheduler`
-
-Mutable reference to the [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md). Thread stats are updated to clear `pinned_cpu_set_ids` and consume the saved `original_priority` for restoration.
-
-`apply_config_result`
-
-Mutable reference to [ApplyConfigResult](ApplyConfigResult.md) where change messages and errors are collected.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `pid` | `u32` | Process identifier of the target process. Used as a key into the [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) state maps and for error logging. |
+| `config` | `&`[ProcessConfig](../config.rs/ProcessConfig.md) | Parsed configuration rule for this process. The `name` field is used in error messages. |
+| `process` | `&mut`[ProcessEntry](../process.rs/ProcessEntry.md) | Snapshot entry for the target process. Provides the live thread list — only threads that still exist in the snapshot are candidates for demotion. |
+| `tid_with_delta_cycles` | `&[(u32, u64, bool)]` | Slice of `(thread_id, delta_cycles, is_prime)` tuples produced by [apply_prime_threads_select](apply_prime_threads_select.md). The `is_prime` flag indicates whether the thread was selected for prime status in this cycle. Threads with `is_prime == true` are skipped; threads with `is_prime == false` that still have a non-empty `pinned_cpu_set_ids` in their [ThreadStats](../scheduler.rs/ThreadStats.md) are demoted. |
+| `prime_core_scheduler` | `&mut`[PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) | Persistent scheduler state. The function reads and mutates per-thread `pinned_cpu_set_ids`, `original_priority`, and `handle` fields in [ThreadStats](../scheduler.rs/ThreadStats.md). |
+| `apply_config_result` | `&mut`[ApplyConfigResult](ApplyConfigResult.md) | Accumulator for change descriptions and error messages produced during demotion. |
 
 ## Return value
 
-This function does not return a value. Results are recorded in `apply_config_result`.
+None (`()`). Results are communicated through `apply_config_result` and side effects on `prime_core_scheduler`.
 
 ## Remarks
 
-This function is the counterpart to [apply_prime_threads_promote](apply_prime_threads_promote.md) and is called as the final step of the [apply_prime_threads](apply_prime_threads.md) orchestration.
+### Algorithm
 
-### Demotion algorithm
+1. **Build prime set** — A `HashSet<u32>` of thread IDs that were selected as prime (`is_prime == true`) is constructed from the `tid_with_delta_cycles` slice for O(1) lookup.
 
-1. Build a `HashSet` of thread IDs that are currently marked as prime from `tid_with_delta_cycles`.
-2. Collect all live thread IDs from `process.get_threads()`.
-3. For each live thread that is **not** in the prime set **and** has non-empty `pinned_cpu_set_ids`:
-   - Clear the thread's CPU set assignment by calling `SetThreadSelectedCpuSets` with an empty slice.
-   - On success, log a change message: `"Thread {tid} -> (demoted, start={module})"`.
-   - On failure, log the error via [log_error_if_new](log_error_if_new.md).
-   - **Always** clear `pinned_cpu_set_ids` regardless of success or failure, to prevent infinite retry loops that would spam the logs.
-4. If the thread had a saved `original_priority` (set during promotion), restore it with `SetThreadPriority`. Log errors if restoration fails.
+2. **Enumerate live threads** — The live thread IDs are collected from `process.get_threads()`. Only threads that exist in the current snapshot are iterated, preventing the function from operating on stale thread IDs.
 
-### Defensive clearing
+3. **Identify demotion candidates** — For each live thread, the function checks two conditions:
+   - The thread is **not** in the prime set (it was not selected this cycle).
+   - The thread's `pinned_cpu_set_ids` in [ThreadStats](../scheduler.rs/ThreadStats.md) is **non-empty** (it was previously promoted and pinned).
 
-The `pinned_cpu_set_ids` vector is cleared unconditionally after attempting demotion — even if the `SetThreadSelectedCpuSets` call fails. This is a deliberate design choice to avoid a situation where a persistent API error causes the same thread to be retried every loop iteration, flooding the error log.
+   If both conditions are met, the thread is a demotion candidate.
 
-### Change messages
+4. **Unpin CPU set** — `SetThreadSelectedCpuSets` is called with an empty slice (`&[]`) to clear the per-thread CPU set assignment, returning the thread to the process-default scheduling behaviour. A valid write handle (`w_handle`, falling back to `w_limited_handle`) is required.
 
-| Event | Format |
-| --- | --- |
-| CPU set cleared | `Thread {tid} -> (demoted, start={module})` |
-| Priority restore failure | Error logged via [log_error_if_new](log_error_if_new.md) with operation `SetThreadPriority` |
-| CPU set clear failure | Error logged via [log_error_if_new](log_error_if_new.md) with operation `SetThreadSelectedCpuSets` |
+5. **Clear pinned state** — `thread_stats.pinned_cpu_set_ids.clear()` is called **regardless of whether the unpin succeeded or failed**. This is a deliberate design choice to prevent infinite retry loops: if the unpin call fails (e.g. because the thread exited between enumeration and the API call), the thread would otherwise be retried on every subsequent cycle, generating repeated error log entries. Clearing the state ensures the function moves on.
+
+6. **Restore original priority** — If the thread's `original_priority` field in [ThreadStats](../scheduler.rs/ThreadStats.md) is `Some`, the original [ThreadPriority](../priority.rs/ThreadPriority.md) is restored via `SetThreadPriority`. The field is consumed by `Option::take()` to prevent double-restore on subsequent cycles. If the priority restoration fails, the error is logged but the thread is still considered demoted.
+
+7. **Log** — On successful unpin, a change message is recorded:
+
+   `"Thread 5678 -> (demoted, start=ntdll.dll)"`
+
+   The start module name is resolved from the thread's `start_address` via [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md).
+
+### Error handling
+
+Both the CPU set clearing and priority restoration calls route failures through [log_error_if_new](log_error_if_new.md):
+
+| Operation | `Operation` variant | Common failure |
+|-----------|---------------------|----------------|
+| `SetThreadSelectedCpuSets` (clear) | `Operation::SetThreadSelectedCpuSets` | Thread exited or handle invalid |
+| `SetThreadPriority` (restore) | `Operation::SetThreadPriority` | Thread exited or access denied |
+
+The error for a failed priority restore is logged under the function name `apply_prime_threads_promote` with the operation tag `[RESTORE_SET_THREAD_PRIORITY]`. Despite the function name in the message, this code path resides in `apply_prime_threads_demote`. This is intentional — the promote function originally owned priority, so the "restore" counterpart retains the naming for traceability in logs.
+
+### Relationship to apply_prime_threads_promote
+
+Promotion and demotion are inverses:
+
+| Action | [apply_prime_threads_promote](apply_prime_threads_promote.md) | apply_prime_threads_demote |
+|--------|---------------------------------------------------------------|----------------------------|
+| CPU set | Pins thread to prime CPU set IDs | Clears thread CPU set (empty slice) |
+| Priority | Boosts thread priority (configured or auto +1 level) | Restores `original_priority` saved during promotion |
+| State tracking | Sets `pinned_cpu_set_ids`, stores `original_priority` | Clears `pinned_cpu_set_ids`, takes `original_priority` |
+
+### Thread handle selection
+
+The function traverses handle tiers in the same order as other apply functions:
+
+1. Prefer `w_handle` (full `THREAD_SET_INFORMATION` access).
+2. Fall back to `w_limited_handle` (`THREAD_SET_LIMITED_INFORMATION`).
+3. If both are invalid, log an error via [log_error_if_new](log_error_if_new.md) and skip the thread.
+4. If no handle exists at all (`thread_stats.handle` is `None`), the thread is silently skipped.
+
+### Edge cases
+
+- **Thread exits between select and demote** — The function only iterates live threads from the snapshot, so a thread that exited mid-cycle is naturally excluded. However, if the snapshot is stale and the thread exited between snapshot time and the `SetThreadSelectedCpuSets` call, the API call may fail; this is handled by the unconditional `pinned_cpu_set_ids.clear()`.
+- **No original priority recorded** — If `original_priority` is `None` (e.g. the thread was promoted before the priority-tracking feature was added, or `GetThreadPriority` failed during promotion), no priority restoration is attempted.
+- **Thread already demoted** — A thread with empty `pinned_cpu_set_ids` is skipped immediately, so calling this function multiple times for the same thread is harmless.
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | `src/apply.rs` |
-| **Lines** | L962–L1053 |
-| **Called by** | [apply_prime_threads](apply_prime_threads.md) |
-| **Calls** | [log_error_if_new](log_error_if_new.md), [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md) |
-| **Windows API** | `SetThreadSelectedCpuSets`, `SetThreadPriority` |
+|-------------|-------|
+| Module | `apply` |
+| Visibility | `pub` (crate-public) |
+| Callers | [apply_prime_threads](apply_prime_threads.md) |
+| Callees | [log_error_if_new](log_error_if_new.md), [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md) |
+| Win32 API | [`SetThreadSelectedCpuSets`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadselectedcpusets), [`SetThreadPriority`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadpriority) |
+| Privileges | `THREAD_SET_LIMITED_INFORMATION` (minimum for `SetThreadSelectedCpuSets`), `THREAD_SET_INFORMATION` (for `SetThreadPriority`). The service typically holds `SeDebugPrivilege` which grants both. |
 
-## See also
+## See Also
 
-- [apply_prime_threads](apply_prime_threads.md) — orchestrator that calls this function
-- [apply_prime_threads_promote](apply_prime_threads_promote.md) — promotes threads to prime status
-- [apply_prime_threads_select](apply_prime_threads_select.md) — selects which threads qualify for prime
-- [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) — manages per-thread tracking state
+| Topic | Link |
+|-------|------|
+| Prime thread orchestrator | [apply_prime_threads](apply_prime_threads.md) |
+| Prime thread selection (hysteresis) | [apply_prime_threads_select](apply_prime_threads_select.md) |
+| Prime thread promotion (inverse operation) | [apply_prime_threads_promote](apply_prime_threads_promote.md) |
+| Cycle-time prefetch | [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) |
+| Scheduler state model | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
+| Per-thread stats | [ThreadStats](../scheduler.rs/ThreadStats.md) |
+| Thread priority enum | [ThreadPriority](../priority.rs/ThreadPriority.md) |
+| Error deduplication | [log_error_if_new](log_error_if_new.md) |
+| apply module overview | [apply](README.md) |

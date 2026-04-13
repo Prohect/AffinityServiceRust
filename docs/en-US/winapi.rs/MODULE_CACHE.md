@@ -1,54 +1,67 @@
 # MODULE_CACHE static (winapi.rs)
 
-Per-process cache of enumerated module base addresses, end addresses, and module names. Used by [`resolve_address_to_module`](resolve_address_to_module.md) to avoid re-enumerating process modules on every address resolution.
+Per-process cache of enumerated module address ranges and names, used by [resolve_address_to_module](resolve_address_to_module.md) to map thread start addresses to human-readable module names with offsets. The cache is populated lazily on the first address resolution for each process and cleared when a process exits or via [drop_module_cache](drop_module_cache.md).
 
 ## Syntax
 
 ```rust
+#[allow(clippy::type_complexity)]
 static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 ```
 
 ## Members
 
-The static holds a `HashMap<u32, Vec<(usize, usize, String)>>` behind a `Mutex`:
-
-- **Key** (`u32`) — the process identifier (PID).
-- **Value** (`Vec<(usize, usize, String)>`) — a vector of tuples, each representing one loaded module:
-  - `.0` (`usize`) — the base address of the module in the process's virtual address space.
-  - `.1` (`usize`) — the end address (base + size) of the module.
-  - `.2` (`String`) — the module file name (e.g., `"ntdll.dll"`, `"kernel32.dll"`).
+| Member | Type | Description |
+|--------|------|-------------|
+| Outer key | `u32` | Process ID (PID) used to index into the cache. Each process has its own independent module list. |
+| Inner value | `Vec<(usize, usize, String)>` | A vector of module entries for the process. Each tuple contains: **(1)** `usize` — base address of the module in the target process's virtual address space, **(2)** `usize` — size of the module image in bytes, **(3)** `String` — the base name of the module (e.g., `"kernel32.dll"`, `"ntdll.dll"`). |
 
 ## Remarks
 
-Module enumeration via [`enumerate_process_modules`](enumerate_process_modules.md) is a relatively expensive operation that involves opening the target process with `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` access and calling `EnumProcessModulesEx` followed by `GetModuleFileNameExW` for each module. The `MODULE_CACHE` avoids repeating this work by storing the results per PID.
+### Population
 
-### Cache lifecycle
+The cache is populated on-demand by [resolve_address_to_module](resolve_address_to_module.md). When that function is called for a PID not yet in the cache, it calls [enumerate_process_modules](enumerate_process_modules.md) to walk the target process's loaded module list via `EnumProcessModulesEx`, `GetModuleInformation`, and `GetModuleBaseNameW`. The resulting vector of `(base, size, name)` tuples is inserted into the cache and also returned for immediate use.
 
-1. **Population** — when [`resolve_address_to_module`](resolve_address_to_module.md) is called for a PID that has no cache entry, it calls [`enumerate_process_modules`](enumerate_process_modules.md) and inserts the result into the cache.
-2. **Lookup** — subsequent calls to [`resolve_address_to_module`](resolve_address_to_module.md) for the same PID perform a simple linear scan of the cached module list, comparing the address against each module's `[base, end)` range.
-3. **Eviction** — [`drop_module_cache`](drop_module_cache.md) removes a PID's entry from the cache. This should be called when a process terminates to prevent stale data from accumulating.
+### Cache invalidation
+
+The cache entry for a specific PID is removed by calling [drop_module_cache](drop_module_cache.md), which simply calls `cache.remove(&pid)`. This is typically done when:
+
+- A process exits and its [ProcessStats](../scheduler.rs/ProcessStats.md) entry is cleaned up by the scheduler.
+- The main loop iterates to a new cycle and stale entries should not persist.
+
+No automatic expiration or LRU eviction is implemented. If a process's module list changes at runtime (e.g., via `LoadLibrary`), the cached data becomes stale. For the prime-thread scheduling use case this is acceptable, as module loads typically happen early in a process's lifetime and the thread start address is fixed at thread creation time.
 
 ### Thread safety
 
-All access to the cache is synchronized through the `Mutex`. The lock is acquired for the duration of each lookup or insertion, then released immediately.
+The `HashMap` is wrapped in a `std::sync::Mutex`. Both [resolve_address_to_module](resolve_address_to_module.md) and [drop_module_cache](drop_module_cache.md) acquire the lock for the duration of their operation. Because the cache is read/written on the main service loop thread, contention is minimal in practice.
 
-### Memory considerations
+### Memory usage
 
-Since each entry contains a full module list for a process (which can include hundreds of DLLs for complex applications), it is important that [`drop_module_cache`](drop_module_cache.md) is called when processes exit. Failure to do so would cause the cache to grow unboundedly over time.
+Each cached process entry contains one tuple per loaded module. A typical Windows process loads 50–200 modules, so each entry is on the order of a few kilobytes. The cache grows linearly with the number of distinct PIDs that have had address resolution performed and shrinks as entries are dropped.
+
+### Clippy suppression
+
+The `#[allow(clippy::type_complexity)]` attribute suppresses the Clippy warning about the deeply nested generic type. The complexity is inherent to the `HashMap<u32, Vec<(usize, usize, String)>>` structure and extracting a type alias would not improve readability in this context.
 
 ## Requirements
 
-| Requirement | Value |
-| --- | --- |
-| **Module** | src/winapi.rs |
-| **Source line** | L680 |
-| **Populated by** | [`resolve_address_to_module`](resolve_address_to_module.md) via [`enumerate_process_modules`](enumerate_process_modules.md) |
-| **Evicted by** | [`drop_module_cache`](drop_module_cache.md) |
+| | |
+|---|---|
+| **Module** | `winapi` (`src/winapi.rs`) |
+| **Crate dependencies** | `once_cell::sync::Lazy`, `std::sync::Mutex`, `std::collections::HashMap` |
+| **Populated by** | [resolve_address_to_module](resolve_address_to_module.md) (via [enumerate_process_modules](enumerate_process_modules.md)) |
+| **Invalidated by** | [drop_module_cache](drop_module_cache.md) |
+| **Privileges** | `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` on the target process (required by [enumerate_process_modules](enumerate_process_modules.md)) |
 
-## See also
+## See Also
 
-- [resolve_address_to_module](resolve_address_to_module.md)
-- [drop_module_cache](drop_module_cache.md)
-- [enumerate_process_modules](enumerate_process_modules.md)
-- [winapi.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| Address-to-module resolution | [resolve_address_to_module](resolve_address_to_module.md) |
+| Cache eviction | [drop_module_cache](drop_module_cache.md) |
+| Module enumeration implementation | [enumerate_process_modules](enumerate_process_modules.md) |
+| Thread start address query | [get_thread_start_address](get_thread_start_address.md) |
+| Prime-thread scheduler (consumer of module names) | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
+| CPU set topology cache (analogous lazy global) | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
+| EnumProcessModulesEx (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-enumprocessmodulesex) |

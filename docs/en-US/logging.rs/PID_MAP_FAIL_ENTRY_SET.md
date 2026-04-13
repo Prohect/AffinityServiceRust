@@ -1,54 +1,70 @@
 # PID_MAP_FAIL_ENTRY_SET static (logging.rs)
 
-Per-PID map of deduplicated error entries used to suppress repeated logging of the same error across loop iterations. This is the core data structure behind the error deduplication system.
+Global per-PID map of [ApplyFailEntry](ApplyFailEntry.md) records used to deduplicate Windows API operation errors. Each entry in the map tracks whether a specific combination of process, thread, operation, and error code has already been logged, preventing repeated identical error messages from flooding the log output during the service's polling loop.
 
 ## Syntax
 
-```rust
-static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>> =
+```logging.rs
+pub static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 ```
 
 ## Members
 
-The static holds a `HashMap<u32, HashMap<ApplyFailEntry, bool>>` behind a `Mutex`:
-
-- **Outer key** (`u32`) — the process identifier (PID).
-- **Inner key** ([`ApplyFailEntry`](ApplyFailEntry.md)) — the composite error key combining pid, tid, process name, operation, and error code.
-- **Inner value** (`bool`) — presence marker; the value itself is not semantically meaningful — only key membership matters.
+| Component | Type | Description |
+|-----------|------|-------------|
+| Outer | `Lazy<…>` | Deferred initialization via `once_cell::sync::Lazy`. The map is created empty on first access. |
+| Middle | `Mutex<…>` | Provides interior mutability and thread-safe access from the service loop thread. |
+| Inner | `HashMap<u32, HashMap<ApplyFailEntry, bool>>` | Two-level map: the outer key is the process ID (`u32`); the inner map keys are [ApplyFailEntry](ApplyFailEntry.md) records with a `bool` value indicating whether the entry is still "alive" (the associated process is still running). |
 
 ## Remarks
 
-Every time a Windows API call fails during configuration application, the error details are checked against this map via [`is_new_error`](is_new_error.md). If the exact combination of `(pid, tid, process_name, operation, error_code)` has already been recorded, the error is considered a duplicate and is not logged again. This prevents the log file from being flooded with the same error message every loop iteration (e.g., `ERROR_ACCESS_DENIED` for a protected system process that will never become accessible).
+This static is the core data structure behind the error deduplication system in AffinityServiceRust. The service loop repeatedly applies configuration rules to running processes, and many operations can fail with the same error on every iteration (e.g., `ACCESS_DENIED` on a protected process). Without deduplication, the log file would be dominated by these repetitive errors.
 
-The two-level map structure (PID → set of fail entries) enables efficient per-process cleanup via [`purge_fail_map`](purge_fail_map.md). When a process terminates and is no longer present in the process snapshot, its entire inner map is removed in one operation. This prevents unbounded memory growth as processes come and go over time.
+### Two-level map structure
+
+- **Outer map (`HashMap<u32, …>`):** Keyed by process ID. Each running process that has experienced at least one error has an entry here.
+- **Inner map (`HashMap<ApplyFailEntry, bool>`):** Keyed by [ApplyFailEntry](ApplyFailEntry.md), which combines `tid`, `process_name`, `operation`, and `error_code`. The `bool` value tracks liveness: `true` means the process was seen running in the most recent snapshot, `false` means it was not.
 
 ### Lifecycle
 
-1. **Insertion** — [`is_new_error`](is_new_error.md) inserts a new [`ApplyFailEntry`](ApplyFailEntry.md) when an error is seen for the first time and returns `true`.
-2. **Lookup** — [`is_new_error`](is_new_error.md) checks for existing entries and returns `false` if the error has already been recorded.
-3. **Eviction** — [`purge_fail_map`](purge_fail_map.md) is called each loop iteration with the list of currently alive PIDs. Entries for PIDs not in the alive list are removed.
+1. **Insert:** [is_new_error](is_new_error.md) inserts a new entry when it encounters an error combination not yet present for a given PID. It returns `true` to signal the caller that this error should be logged.
+2. **Deduplicate:** On subsequent calls, [is_new_error](is_new_error.md) finds the existing entry and returns `false`, suppressing the duplicate log message. The entry's `alive` flag is set to `true` to indicate the process is still active.
+3. **Purge:** [purge_fail_map](purge_fail_map.md) is called periodically to remove entries for processes that are no longer running. It marks all entries as dead, then re-marks entries for still-running processes as alive, and finally removes any entries that remain dead.
 
-### Thread safety
+### PID reuse handling
 
-All access is synchronized through the `Mutex`. The lock is acquired for the minimum duration necessary — typically a single lookup-or-insert in [`is_new_error`](is_new_error.md) or a single purge pass in [`purge_fail_map`](purge_fail_map.md).
+If a PID is reused by a new process with a different name, [is_new_error](is_new_error.md) detects the name mismatch via an invariant check (all entries in a PID's inner map are expected to share the same `process_name`). When a mismatch is found, the inner map is cleared before inserting the new entry, preventing stale deduplication state from suppressing errors for the new process.
 
-### Memory growth
+### Macro access
 
-Without periodic purging, this map would grow without bound as new processes are encountered and new errors accumulate. The [`purge_fail_map`](purge_fail_map.md) function is the primary mechanism for controlling memory usage. It is critical that the main loop calls it each iteration to remove entries for terminated processes.
+The [get_pid_map_fail_entry_set!](get_pid_map_fail_entry_set.md) macro provides a convenience wrapper that locks the mutex and returns the `MutexGuard`:
+
+```logging.rs
+macro_rules! get_pid_map_fail_entry_set {
+    () => {
+        $crate::logging::PID_MAP_FAIL_ENTRY_SET.lock().unwrap()
+    };
+}
+```
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/logging.rs |
-| **Source line** | L70 |
-| **Written by** | [`is_new_error`](is_new_error.md) |
-| **Purged by** | [`purge_fail_map`](purge_fail_map.md) |
+|-------------|-------|
+| Module | `logging` |
+| Crate dependencies | `once_cell` (`Lazy`), `std::sync::Mutex`, `std::collections::HashMap` |
+| Written by | [is_new_error](is_new_error.md) |
+| Purged by | [purge_fail_map](purge_fail_map.md) |
+| Read by | [is_new_error](is_new_error.md), [purge_fail_map](purge_fail_map.md) |
 
-## See also
+## See Also
 
-- [ApplyFailEntry struct](ApplyFailEntry.md)
-- [is_new_error function](is_new_error.md)
-- [purge_fail_map function](purge_fail_map.md)
-- [logging.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| Failure entry key struct | [ApplyFailEntry](ApplyFailEntry.md) |
+| Error deduplication logic | [is_new_error](is_new_error.md) |
+| Stale entry cleanup | [purge_fail_map](purge_fail_map.md) |
+| Windows API operation identifiers | [Operation](Operation.md) |
+| Macro for guarded access | [get_pid_map_fail_entry_set!](get_pid_map_fail_entry_set.md) |
+| logging module overview | [logging module](README.md) |

@@ -1,6 +1,6 @@
 # format_100ns function (scheduler.rs)
 
-Formats a 100-nanosecond time value into a human-readable `"seconds.milliseconds s"` string.
+Formats a 100-nanosecond interval value as a human-readable seconds string with millisecond precision.
 
 ## Syntax
 
@@ -10,50 +10,50 @@ fn format_100ns(time: i64) -> String
 
 ## Parameters
 
-`time`
-
-A time value expressed in 100-nanosecond units, as used by Windows kernel time fields such as `KernelTime` and `UserTime` in `SYSTEM_THREAD_INFORMATION`. One second equals 10,000,000 of these units.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `time` | `i64` | A time duration expressed in 100-nanosecond intervals (the native unit used by Windows kernel time fields such as `KernelTime` and `UserTime` in `SYSTEM_THREAD_INFORMATION`). |
 
 ## Return value
 
-A `String` formatted as `"{seconds}.{milliseconds:03} s"`, where milliseconds is zero-padded to three digits.
+Returns a `String` in the format `"{seconds}.{milliseconds} s"`, where milliseconds is zero-padded to three digits.
 
-**Examples:**
+**Examples of output:**
 
-| Input (100ns units) | Output |
-| --- | --- |
-| `10_000_000` | `"1.000 s"` |
-| `15_678_900` | `"1.567 s"` |
+| Input (100 ns ticks) | Output |
+|----------------------|--------|
 | `0` | `"0.000 s"` |
-| `123_456_789_0` | `"123.456 s"` |
+| `10_000_000` | `"1.000 s"` |
+| `156_250_000` | `"15.625 s"` |
+| `45_678` | `"0.004 s"` |
 
 ## Remarks
 
-This function is used internally by [`PrimeThreadScheduler::close_dead_process_handles`](PrimeThreadScheduler.md) to format kernel time and user time values when logging detailed thread statistics on process exit.
+This is a module-private helper function used when logging thread diagnostics in [`PrimeThreadScheduler::drop_process_by_pid`](PrimeThreadScheduler.md#drop_process_by_pid). It converts raw kernel/user time values from `SYSTEM_THREAD_INFORMATION` into a readable format for the process-exit thread report.
 
-The conversion works as follows:
+Windows represents kernel and user times as 100-nanosecond intervals (10 million ticks = 1 second). The function performs integer division to extract seconds and truncated milliseconds:
 
-1. **Seconds** are computed via integer division: `time / 10_000_000`.
-2. **Milliseconds** are computed from the remainder: `(time % 10_000_000) / 10_000`, discarding sub-millisecond precision.
+- **Seconds:** `time / 10_000_000`
+- **Milliseconds:** `(time % 10_000_000) / 10_000`
 
-The function is module-private (`fn`, not `pub fn`) and is not exposed outside `scheduler.rs`.
+The millisecond value is truncated, not rounded. Sub-millisecond precision (the remaining microseconds and 100-nanosecond ticks) is discarded.
 
-### Relationship to format_filetime
-
-While `format_100ns` formats *duration* values (elapsed time), the sibling function [`format_filetime`](format_filetime.md) formats *absolute* timestamps (Windows FILETIME epoch). Both accept `i64` values in 100-nanosecond units but interpret them differently.
+Negative values for `time` are technically valid at the arithmetic level but are not expected in normal use, as kernel and user times are always non-negative.
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | `src/scheduler.rs` |
-| **Source lines** | L303–L307 |
-| **Visibility** | Module-private |
-| **Called by** | [`PrimeThreadScheduler::close_dead_process_handles`](PrimeThreadScheduler.md) |
+|-------------|-------|
+| **Module** | `scheduler.rs` |
+| **Visibility** | Module-private (`fn`, no `pub`) |
+| **Callers** | [`PrimeThreadScheduler::drop_process_by_pid`](PrimeThreadScheduler.md#drop_process_by_pid) |
+| **Dependencies** | None (pure computation) |
 
-## See also
+## See Also
 
-- [format_filetime](format_filetime.md)
-- [PrimeThreadScheduler](PrimeThreadScheduler.md)
-- [ThreadStats](ThreadStats.md)
-- [scheduler.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| format_filetime | [format_filetime](format_filetime.md) |
+| PrimeThreadScheduler::drop_process_by_pid | [PrimeThreadScheduler](PrimeThreadScheduler.md#drop_process_by_pid) |
+| ThreadStats | [ThreadStats](ThreadStats.md) |
+| SYSTEM_THREAD_INFORMATION | [Microsoft Learn — SYSTEM_THREAD_INFORMATION](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntquerysysteminformation#system_thread_information) |

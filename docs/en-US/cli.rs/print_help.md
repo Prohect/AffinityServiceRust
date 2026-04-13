@@ -1,6 +1,6 @@
 # print_help function (cli.rs)
 
-Prints a brief usage summary to the console, showing the application name, basic invocation syntax, and pointers to more detailed help commands.
+Prints a concise help message to the active log output covering the most common command-line options and operating modes. This is the default help shown when the user passes `-help`, `--help`, `-?`, `/?`, or `?`. For a comprehensive reference including debug options, see [print_cli_help](print_cli_help.md) or [print_help_all](print_help_all.md).
 
 ## Syntax
 
@@ -18,35 +18,70 @@ This function does not return a value.
 
 ## Remarks
 
-`print_help` is the handler for the `--help` / `-h` CLI flag. It outputs a concise overview of the application's purpose and the most common invocation patterns, along with references to the more detailed help commands (`--help-cli`, `--help-config`, `--help-all`).
+### Console forcing
 
-The output is written directly to stdout via `println!` and is intended for interactive console use. The function does not interact with the logging system ([`log_message`](../logging.rs/log_message.md)) since help output is user-facing and should not be written to log files.
+The function sets the global `USE_CONSOLE` static to `true` (via `*get_use_console!() = true`) before emitting any output. This ensures the help text is written to the console (stdout) rather than to the log file, regardless of whether `-console` was explicitly passed. This is the expected behavior because help output is always intended for interactive review.
 
-This is the shortest of the help functions — it provides just enough information for a user to understand what the application does and how to get more detailed help. For comprehensive documentation, the user should use [`print_help_all`](print_help_all.md) (triggered by `--help-all`).
+### Content
 
-### Help hierarchy
+The help message is a single `log!()` macro invocation containing a raw string literal. It covers:
 
-| Flag | Function | Scope |
-| --- | --- | --- |
-| `--help` / `-h` | **print_help** | Brief usage summary |
-| `--help-cli` | [`print_cli_help`](print_cli_help.md) | Detailed CLI flag documentation |
-| `--help-config` | [`print_config_help`](print_config_help.md) | Config file syntax reference |
-| `--help-all` | [`print_help_all`](print_help_all.md) | Combined CLI + config help |
+- **Header** — One-line description of the service and a usage synopsis.
+- **Common Options** — The most frequently used flags:
+  - `-help` / `--help` — Show the basic help message.
+  - `-helpall` — Show the detailed reference (delegates to [print_help_all](print_help_all.md)).
+  - `-console` — Route output to console instead of the log file.
+  - `-config <file>` — Specify a configuration file (default: `config.ini`).
+  - `-find` — Discover processes with default affinity, optionally paired with `-blacklist <file>`.
+  - `-interval <ms>` — Set the polling interval (default: 5000 ms).
+  - `-noUAC` — Suppress the automatic UAC elevation request.
+  - `-resolution <t>` — Set the system timer resolution (e.g., `5210` → 0.5210 ms).
+- **Modes** — One-line descriptions of each utility mode:
+  - `-validate` — Check configuration syntax without running.
+  - `-processlogs` — Analyze find-mode logs to discover new processes.
+  - `-dryrun` — Simulate changes without applying.
+  - `-convert` — Convert a Process Lasso configuration.
+  - `-autogroup` — Auto-group rules with identical settings.
 
-After printing, the application exits without entering the main loop. The exit is handled by the caller in [`main`](../main.rs/main.md) based on the `help_mode` flag in [`CliArgs`](CliArgs.md).
+### Relationship to other help functions
+
+| Function | Scope | Invoked by |
+|----------|-------|------------|
+| **print_help** (this) | Common options and modes only | `-help`, `--help`, `-?`, `/?`, `?` |
+| [print_cli_help](print_cli_help.md) | Full CLI reference including debug options | Called by [print_help_all](print_help_all.md) |
+| [print_config_help](print_config_help.md) | Configuration file format template | Called by [print_help_all](print_help_all.md) |
+| [print_help_all](print_help_all.md) | CLI reference + config template combined | `-helpall`, `--helpall` |
+
+### Invocation flow
+
+In [main](../main.rs/main.md), the help mode check occurs before any configuration is loaded:
+
+```rust
+if cli.help_mode {
+    print_help();
+    return Ok(());
+}
+```
+
+This means the function executes and the program exits without touching the config file, blacklist, privileges, or any other subsystem. It is safe to call even in environments where the configuration file does not exist or is malformed.
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/cli.rs |
-| **Source lines** | L121–L147 |
-| **Called by** | [`main`](../main.rs/main.md) when `CliArgs.help_mode` is `true` |
+|-------------|-------|
+| Module | `cli` |
+| Callers | [main](../main.rs/main.md) (when `cli.help_mode` is `true`) |
+| Callees | `get_use_console!()` macro, `log!()` macro |
+| API | None |
+| Privileges | N/A |
 
-## See also
+## See Also
 
-- [print_cli_help](print_cli_help.md)
-- [print_config_help](print_config_help.md)
-- [print_help_all](print_help_all.md)
-- [CliArgs struct](CliArgs.md)
-- [cli.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| Detailed CLI help | [print_cli_help](print_cli_help.md) |
+| Configuration file help | [print_config_help](print_config_help.md) |
+| Combined help output | [print_help_all](print_help_all.md) |
+| CLI arguments structure | [CliArgs](CliArgs.md) |
+| Argument parser | [parse_args](parse_args.md) |
+| Entry point | [main](../main.rs/main.md) |

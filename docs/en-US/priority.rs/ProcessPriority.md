@@ -1,10 +1,10 @@
 # ProcessPriority enum (priority.rs)
 
-Represents the Windows process priority class. Used to configure the scheduling priority of an entire process via `SetPriorityClass`.
+Represents the Windows process priority class levels. Each variant maps to a `PROCESS_CREATION_FLAGS` constant used by the `SetPriorityClass` Win32 API. The `None` variant serves as a sentinel indicating that no priority change is requested for a given process configuration rule.
 
 ## Syntax
 
-```rust
+```priority.rs
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessPriority {
     None,
@@ -19,76 +19,85 @@ pub enum ProcessPriority {
 
 ## Members
 
-`None`
-
-No priority change. When a [ProcessConfig](../config.rs/ProcessConfig.md) specifies `None`, the [apply_priority](../apply.rs/apply_priority.md) function skips the process without modifying its priority class.
-
-`Idle`
-
-Maps to `IDLE_PRIORITY_CLASS` (Windows constant `0x40`). Threads in this process run only when the system is idle. Suitable for background maintenance tasks.
-
-`BelowNormal`
-
-Maps to `BELOW_NORMAL_PRIORITY_CLASS` (Windows constant `0x4000`). Lower than `Normal` but higher than `Idle`.
-
-`Normal`
-
-Maps to `NORMAL_PRIORITY_CLASS` (Windows constant `0x20`). The default priority class for most processes.
-
-`AboveNormal`
-
-Maps to `ABOVE_NORMAL_PRIORITY_CLASS` (Windows constant `0x8000`). Higher than `Normal` but lower than `High`.
-
-`High`
-
-Maps to `HIGH_PRIORITY_CLASS` (Windows constant `0x80`). Should be used sparingly — processes at this level can starve lower-priority processes of CPU time.
-
-`Realtime`
-
-Maps to `REALTIME_PRIORITY_CLASS` (Windows constant `0x100`). The highest possible priority class. Threads in this process preempt all other threads including OS threads. Requires administrator privileges and should be used with extreme caution.
+| Variant | Win32 Constant | Value | Description |
+|---------|---------------|-------|-------------|
+| `None` | — | — | No priority change requested. Acts as a sentinel/default. |
+| `Idle` | `IDLE_PRIORITY_CLASS` | `0x00000040` | Lowest priority class. Threads run only when the system is idle. |
+| `BelowNormal` | `BELOW_NORMAL_PRIORITY_CLASS` | `0x00004000` | Priority above Idle but below Normal. |
+| `Normal` | `NORMAL_PRIORITY_CLASS` | `0x00000020` | Default priority class for most processes. |
+| `AboveNormal` | `ABOVE_NORMAL_PRIORITY_CLASS` | `0x00008000` | Priority above Normal but below High. |
+| `High` | `HIGH_PRIORITY_CLASS` | `0x00000080` | High priority. Should be used sparingly as it can starve lower-priority processes. |
+| `Realtime` | `REALTIME_PRIORITY_CLASS` | `0x00000100` | Highest possible priority class. Requires `SeIncreaseBasePriorityPrivilege`. Can preempt OS threads. |
 
 ## Methods
 
-| Method | Signature | Description |
-| --- | --- | --- |
-| **as_str** | `pub fn as_str(&self) -> &'static str` | Returns the human-readable name of the variant (e.g. `"above normal"`, `"real time"`). Returns `"unknown"` if the variant is not found in the lookup table. |
-| **as_win_const** | `pub fn as_win_const(&self) -> Option<PROCESS_CREATION_FLAGS>` | Returns the corresponding Windows `PROCESS_CREATION_FLAGS` constant, or `None` for the `None` variant. |
-| **from_str** | `pub fn from_str(s: &str) -> Self` | Parses a case-insensitive string into a `ProcessPriority`. Unrecognised strings return `None`. |
-| **from_win_const** | `pub fn from_win_const(val: u32) -> &'static str` | Converts a raw Windows priority class `u32` value back to a human-readable name. Returns `"unknown"` for unrecognised values. |
+### as_str
+
+```priority.rs
+pub fn as_str(&self) -> &'static str
+```
+
+Returns the human-readable string name for this variant (e.g., `"idle"`, `"below normal"`, `"real time"`). Returns `"unknown"` if the variant is not found in the internal lookup table, which should not occur for well-formed values. The `None` variant returns `"none"`.
+
+### as_win_const
+
+```priority.rs
+pub fn as_win_const(&self) -> Option<PROCESS_CREATION_FLAGS>
+```
+
+Returns the corresponding `PROCESS_CREATION_FLAGS` value for this variant, or `None` if the variant is `ProcessPriority::None` (no change requested).
+
+### from_str
+
+```priority.rs
+pub fn from_str(s: &str) -> Self
+```
+
+Parses a case-insensitive string into a `ProcessPriority` variant. The input is lowercased before matching against the lookup table. Unrecognized strings return `ProcessPriority::None`.
+
+**Parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `s` | `&str` | The priority name to parse. Matched case-insensitively against `"idle"`, `"below normal"`, `"normal"`, `"above normal"`, `"high"`, `"real time"`. |
+
+### from_win_const
+
+```priority.rs
+pub fn from_win_const(val: u32) -> &'static str
+```
+
+Looks up a raw `u32` value (the inner value of a `PROCESS_CREATION_FLAGS`) and returns the corresponding human-readable string name. Returns `"unknown"` if the value does not match any known priority class.
+
+**Parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `val` | `u32` | The raw Win32 priority class constant value to look up. |
 
 ## Remarks
 
-`ProcessPriority` follows the same bidirectional conversion pattern used by all priority enums in this module ([IOPriority](IOPriority.md), [MemoryPriority](MemoryPriority.md), [ThreadPriority](ThreadPriority.md)). Internally it uses a static lookup table (`TABLE`) that maps each variant to its string representation and optional Windows constant. All conversion methods iterate this table.
-
-The `None` variant acts as a sentinel meaning "don't change the current value." It is the default when a configuration rule does not specify a priority, and it maps to `None` in the Windows constant column so that downstream code can detect and skip it.
-
-String representations use lowercase with spaces (e.g. `"below normal"`, `"real time"`) and are matched case-insensitively during parsing.
-
-### Lookup table
-
-| Variant | String | Windows Constant |
-| --- | --- | --- |
-| None | `"none"` | *(none)* |
-| Idle | `"idle"` | `IDLE_PRIORITY_CLASS` |
-| BelowNormal | `"below normal"` | `BELOW_NORMAL_PRIORITY_CLASS` |
-| Normal | `"normal"` | `NORMAL_PRIORITY_CLASS` |
-| AboveNormal | `"above normal"` | `ABOVE_NORMAL_PRIORITY_CLASS` |
-| High | `"high"` | `HIGH_PRIORITY_CLASS` |
-| Realtime | `"real time"` | `REALTIME_PRIORITY_CLASS` |
+- The enum uses an internal `TABLE` constant of `(Self, &str, Option<PROCESS_CREATION_FLAGS>)` tuples that drives all conversion methods. This ensures the string names, enum variants, and Win32 constants stay in sync.
+- `from_str` is not the standard library `FromStr` trait — it is an inherent method that returns `ProcessPriority::None` on failure rather than an error.
+- `from_win_const` returns `&'static str` rather than `Self`, differing from the other enums' `from_win_const` which also returns `&'static str`. This is used primarily for log output when reading the current priority of a running process.
+- Setting `Realtime` priority requires `SeIncreaseBasePriorityPrivilege` and administrative elevation. Without it, the `SetPriorityClass` call will fail with `ERROR_PRIVILEGE_NOT_HELD` (1314).
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/priority.rs |
-| **Source lines** | L8–L58 |
-| **Used by** | [ProcessConfig](../config.rs/ProcessConfig.md), [apply_priority](../apply.rs/apply_priority.md) |
-| **Windows API** | [SetPriorityClass](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setpriorityclass), [GetPriorityClass](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getpriorityclass) |
+|-------------|-------|
+| Module | `priority` |
+| Callers | [parse_and_insert_rules](../config.rs/parse_and_insert_rules.md), [apply_priority](../apply.rs/apply_priority.md) |
+| Callees | — |
+| Win32 API | `SetPriorityClass`, `GetPriorityClass` (consumers of the constants) |
+| Privileges | `SeIncreaseBasePriorityPrivilege` (for `Realtime` variant) |
 
-## See also
+## See Also
 
-- [priority.rs module overview](README.md)
-- [IOPriority](IOPriority.md)
-- [MemoryPriority](MemoryPriority.md)
-- [ThreadPriority](ThreadPriority.md)
-- [apply_priority](../apply.rs/apply_priority.md)
+| Topic | Link |
+|-------|------|
+| I/O priority levels | [IOPriority](IOPriority.md) |
+| Memory priority levels | [MemoryPriority](MemoryPriority.md) |
+| Thread priority levels | [ThreadPriority](ThreadPriority.md) |
+| Per-process configuration record | [ProcessConfig](../config.rs/ProcessConfig.md) |
+| Priority application logic | [apply_priority](../apply.rs/apply_priority.md) |

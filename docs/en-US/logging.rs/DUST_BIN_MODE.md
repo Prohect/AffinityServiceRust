@@ -1,52 +1,50 @@
 # DUST_BIN_MODE static (logging.rs)
 
-Controls whether log output is suppressed. When enabled, all messages written via [`log_message`](log_message.md) and [`log_pure_message`](log_pure_message.md) are silently discarded instead of being written to the log file or console.
+Global flag that suppresses all logging output when set to `true`. This mode is activated before UAC elevation to prevent the unprivileged (pre-elevation) process from writing to log files that it may not own or have permission to create. Once the elevated process takes over, `DUST_BIN_MODE` is set back to `false` and normal logging resumes.
 
 ## Syntax
 
-```rust
-static DUST_BIN_MODE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
+```logging.rs
+pub static DUST_BIN_MODE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
 ```
 
 ## Members
 
-The static holds a `bool` behind a `Mutex`:
-
-- `false` (default) — logging operates normally; messages are written to the log file and optionally to the console.
-- `true` — logging is suppressed; all output is discarded.
+| Component | Type | Description |
+|-----------|------|-------------|
+| Outer | `Lazy<…>` | Deferred initialization via `once_cell::sync::Lazy`. Created on first access. |
+| Inner | `Mutex<bool>` | Thread-safe interior mutability. `false` = logging enabled (default), `true` = all log output suppressed. |
 
 ## Remarks
 
-The name "dust bin mode" reflects the idea that log messages are being thrown away — sent to the trash bin. This mode exists to handle a specific timing issue during UAC elevation.
+- When `DUST_BIN_MODE` is `true`, the [log_message](log_message.md) function returns immediately without writing anything to the console or log file. This is a hard suppression — no buffering or deferred output occurs; messages are silently discarded.
+- The flag is accessed through the [get_dust_bin_mod!](get_dust_bin_mod.md) macro, which acquires the mutex lock and returns a `MutexGuard<bool>`. Callers can dereference the guard to read the current value, or dereference mutably to change it.
+- The name "dust bin" is metaphorical — log messages are effectively thrown away, as if into a waste bin.
+- [log_pure_message](log_pure_message.md) and [log_to_find](log_to_find.md) do **not** check `DUST_BIN_MODE`. Only [log_message](log_message.md) (and by extension the [log!](log.md) macro) respects this flag.
 
-### Purpose
+### Typical lifecycle
 
-When the application starts without administrator privileges and determines that UAC elevation is required, it will relaunch itself as an elevated process via [`request_uac_elevation`](../winapi.rs/request_uac_elevation.md). Any log output produced by the non-elevated instance before the relaunch is written to a log file that will be immediately abandoned once the elevated instance starts writing to its own log file. To avoid confusing partial log files, `DUST_BIN_MODE` is set to `true` before the elevation attempt, suppressing all output from the short-lived non-elevated instance.
-
-### Lifecycle
-
-1. The application starts with `DUST_BIN_MODE` set to `false` (normal logging).
-2. If [`main`](../main.rs/main.md) determines that UAC elevation is needed and the `skip_log_before_elevation` flag in [`CliArgs`](../cli.rs/CliArgs.md) is set, `DUST_BIN_MODE` is set to `true`.
-3. All subsequent log calls in the non-elevated instance produce no output.
-4. The elevated instance starts fresh with `DUST_BIN_MODE` at its default `false` value.
-
-### Thread safety
-
-Access is synchronized through a `Mutex`. The lock is acquired briefly by each logging function to check the current mode, then released immediately.
+1. **Service startup (unprivileged):** If the process detects it needs UAC elevation, it sets `DUST_BIN_MODE` to `true` via `*get_dust_bin_mod!() = true` before performing any logging. This is controlled by the `--skip-log-before-elevation` CLI flag.
+2. **UAC re-launch:** The process calls `request_uac_elevation` and exits. The elevated child process starts fresh with `DUST_BIN_MODE` defaulting to `false`.
+3. **Normal operation:** `DUST_BIN_MODE` remains `false` for the entire service lifetime, and all log output proceeds normally.
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/logging.rs |
-| **Source line** | L63 |
-| **Read by** | [`log_message`](log_message.md), [`log_pure_message`](log_pure_message.md) |
-| **Set by** | [`main`](../main.rs/main.md) |
+|-------------|-------|
+| Module | `logging` |
+| Crate dependencies | `once_cell` (`Lazy`), `std::sync::Mutex` |
+| Writers | [main](../main.rs/README.md) (sets to `true` before elevation) |
+| Readers | [log_message](log_message.md) |
+| Accessor macro | [get_dust_bin_mod!](get_dust_bin_mod.md) |
 
-## See also
+## See Also
 
-- [USE_CONSOLE static](USE_CONSOLE.md)
-- [log_message function](log_message.md)
-- [CliArgs](../cli.rs/CliArgs.md) (`skip_log_before_elevation` flag)
-- [request_uac_elevation](../winapi.rs/request_uac_elevation.md)
-- [logging.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| Console vs. file output flag | [USE_CONSOLE](USE_CONSOLE.md) |
+| Timestamped log output function | [log_message](log_message.md) |
+| Convenience logging macro | [log!](log.md) |
+| UAC elevation request | [request_uac_elevation](../winapi.rs/request_uac_elevation.md) |
+| CLI arguments controlling logging behavior | [cli module](../cli.rs/README.md) |
+| logging module overview | [logging module](README.md) |

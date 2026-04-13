@@ -1,40 +1,44 @@
 # FINDS_SET static (logging.rs)
 
-Tracks process names that have already been logged to the `.find.log` file, preventing duplicate entries when the same process is discovered across multiple loop iterations.
+A lazily-initialized, mutex-guarded `HashSet<String>` that tracks which process names have already been logged during a `-find` mode session. This set provides per-session deduplication so that each discovered process is written to the find log only once, regardless of how many polling intervals encounter it.
 
 ## Syntax
 
-```rust
-static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+```logging.rs
+pub static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 ```
 
 ## Members
 
-The static holds a `HashSet<String>` behind a `Mutex`. Each entry is a process name (e.g., `"game.exe"`) that has already been written to the find log.
+| Component | Type | Description |
+|-----------|------|-------------|
+| Outer | `Lazy<…>` | Deferred initialization via `once_cell::sync::Lazy`. The set is created empty on first access. |
+| Middle | `Mutex<…>` | Provides interior mutability and thread-safe access from the main service loop. |
+| Inner | `HashSet<String>` | Contains the lowercased process names that have already been logged during the current session. |
 
 ## Remarks
 
-When [`log_process_find`](log_process_find.md) is called with a process name, it first checks whether `FINDS_SET` already contains that name. If it does, the function returns immediately without writing to the find log. If it does not, the name is inserted into the set and a new entry is written to the [`FIND_LOG_FILE`](FIND_LOG_FILE.md).
-
-This deduplication is important because the main loop in [`main`](../main.rs/main.md) discovers running processes every iteration. Without `FINDS_SET`, the find log would contain repeated entries for every process found on every loop cycle, making it difficult to review which unique processes were detected during a session.
-
-The set is never cleared during the lifetime of the application — once a process name has been logged, it remains in the set permanently. This means a process that exits and restarts will not be re-logged in the same session.
-
-### Thread safety
-
-All access to the `HashSet` is synchronized through the `Mutex`. The lock is acquired, the check-and-insert is performed, and the lock is released before any I/O operations on the find log file.
+- The set starts empty and grows monotonically for the lifetime of the process. There is no purge mechanism — entries persist until the service is restarted. This is by design: `-find` mode is a diagnostic tool meant to produce a deduplicated list of all processes observed during a single run.
+- [log_process_find](log_process_find.md) is the sole writer. It calls `FINDS_SET.lock().unwrap().insert(process_name)` and only proceeds to write the log line if `insert` returns `true` (i.e., the name was not already present).
+- The convenience macro [get_fail_find_set!](get_fail_find_set.md) does **not** lock `FINDS_SET`; it locks the separate [FINDS_FAIL_SET](FINDS_FAIL_SET.md) static. Direct access to `FINDS_SET` is done inline in [log_process_find](log_process_find.md).
+- Because `-find` mode typically enumerates on the order of hundreds of distinct process names, the memory footprint of this set is negligible.
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/logging.rs |
-| **Source line** | L11 |
-| **Used by** | [`log_process_find`](log_process_find.md) |
+|-------------|-------|
+| Module | `logging` |
+| Crate dependencies | `once_cell` (`Lazy`), `std::sync::Mutex`, `std::collections::HashSet` |
+| Written by | [log_process_find](log_process_find.md) |
+| Read by | [log_process_find](log_process_find.md) |
+| Cleared by | *(never cleared — lifetime matches the process)* |
 
-## See also
+## See Also
 
-- [log_process_find](log_process_find.md)
-- [FIND_LOG_FILE static](FIND_LOG_FILE.md)
-- [FINDS_FAIL_SET static](FINDS_FAIL_SET.md)
-- [logging.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| Function that writes to this set | [log_process_find](log_process_find.md) |
+| Find-mode log file handle | [FIND_LOG_FILE](FIND_LOG_FILE.md) |
+| Dedup set for failed find operations | [FINDS_FAIL_SET](FINDS_FAIL_SET.md) |
+| Find-mode entry point | [process_find](../main.rs/README.md) |
+| logging module overview | [logging module](README.md) |

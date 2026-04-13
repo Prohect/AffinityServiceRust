@@ -1,6 +1,6 @@
 # MemoryPriority enum (priority.rs)
 
-Represents the memory page priority level for a process. Used with `SetProcessInformation` / `GetProcessInformation` to control how aggressively the memory manager trims a process's working set pages.
+Represents the memory priority level that can be assigned to a process via the Windows `SetProcessInformation` API with `ProcessMemoryPriority` information class. Memory priority influences how quickly the memory manager trims a process's working set pages and how it prioritizes them in the standby list. Lower memory priority causes pages to be repurposed sooner under memory pressure. The `None` variant acts as a sentinel indicating that no memory priority change was requested in the configuration.
 
 ## Syntax
 
@@ -18,71 +18,74 @@ pub enum MemoryPriority {
 
 ## Members
 
-`None`
-
-Sentinel value indicating "don't change". When the configured memory priority is `None`, no `SetProcessInformation` call is made. This is the default when no `memory_priority` directive is specified in the configuration.
-
-`VeryLow`
-
-Maps to `MEMORY_PRIORITY_VERY_LOW` (value `1`). Pages are the first candidates for trimming and repurposing. Suitable for background or idle processes whose memory residency is not important.
-
-`Low`
-
-Maps to `MEMORY_PRIORITY_LOW` (value `2`). Pages are trimmed before medium-priority pages but after very-low ones.
-
-`Medium`
-
-Maps to `MEMORY_PRIORITY_MEDIUM` (value `3`). A balanced middle tier. Pages are trimmed before below-normal and normal pages.
-
-`BelowNormal`
-
-Maps to `MEMORY_PRIORITY_BELOW_NORMAL` (value `4`). Pages have moderate protection from trimming. Suitable for processes that benefit from cached pages but are not performance-critical.
-
-`Normal`
-
-Maps to `MEMORY_PRIORITY_NORMAL` (value `5`). The default memory priority for all processes. Pages receive the highest retention priority and are trimmed last.
+| Variant | Win32 constant | Value | Description |
+|---------|---------------|-------|-------------|
+| `None` | *(none)* | — | Sentinel: no memory priority change requested. `as_win_const` returns `None`. |
+| `VeryLow` | `MEMORY_PRIORITY_VERY_LOW` | 1 | Lowest memory priority. Pages are trimmed and repurposed first under memory pressure. |
+| `Low` | `MEMORY_PRIORITY_LOW` | 2 | Low memory priority. Pages are trimmed before medium and higher levels. |
+| `Medium` | `MEMORY_PRIORITY_MEDIUM` | 3 | Medium memory priority. Balanced trimming behavior. |
+| `BelowNormal` | `MEMORY_PRIORITY_BELOW_NORMAL` | 4 | Below-normal memory priority. Pages are trimmed after medium but before normal. |
+| `Normal` | `MEMORY_PRIORITY_NORMAL` | 5 | Default memory priority. Pages are retained longest in the standby list. |
 
 ## Methods
 
-| Method | Signature | Description |
-| --- | --- | --- |
-| **as_str** | `pub fn as_str(&self) -> &'static str` | Returns the human-readable name (e.g. `"very low"`, `"below normal"`). Returns `"unknown"` for unrecognised variants. |
-| **as_win_const** | `pub fn as_win_const(&self) -> Option<MEMORY_PRIORITY>` | Returns the corresponding `MEMORY_PRIORITY` Windows constant, or `None` for the `None` variant. |
-| **from_str** | `pub fn from_str(s: &str) -> Self` | Parses a case-insensitive string into a variant. Unrecognised strings map to `None`. |
-| **from_win_const** | `pub fn from_win_const(val: u32) -> &'static str` | Converts a raw `u32` Windows constant back to its human-readable name string. Returns `"unknown"` if the value does not match any known constant. |
+### as_str
+
+```rust
+pub fn as_str(&self) -> &'static str
+```
+
+Returns the human-readable string name for this variant (e.g., `"very low"`, `"normal"`). Returns `"unknown"` if the variant is not found in the lookup table (which cannot occur for well-constructed values).
+
+### as_win_const
+
+```rust
+pub fn as_win_const(&self) -> Option<MEMORY_PRIORITY>
+```
+
+Returns the corresponding `MEMORY_PRIORITY` constant for use with `SetProcessInformation`, or `None` for the `MemoryPriority::None` sentinel variant.
+
+### from_str
+
+```rust
+pub fn from_str(s: &str) -> Self
+```
+
+Parses a case-insensitive string into a `MemoryPriority` variant. Recognized values are `"none"`, `"very low"`, `"low"`, `"medium"`, `"below normal"`, and `"normal"`. Unrecognized strings default to `MemoryPriority::None`.
+
+**Note:** This is an inherent method, not a `std::str::FromStr` trait implementation. It does not return a `Result`; unrecognized input silently maps to `None`.
+
+### from_win_const
+
+```rust
+pub fn from_win_const(val: u32) -> &'static str
+```
+
+Looks up a raw `u32` memory priority constant value and returns the corresponding human-readable name string. Returns `"unknown"` if the value does not match any known `MEMORY_PRIORITY` constant. This method is used for diagnostic logging when reading the current memory priority of a process.
 
 ## Remarks
 
-`MemoryPriority` follows the same bidirectional conversion pattern as all other enums in this module. A static lookup table (`TABLE`) maps each variant to its string representation and optional Windows constant, and all conversion methods scan this table.
+The `MemoryPriority` enum works in conjunction with [MemoryPriorityInformation](MemoryPriorityInformation.md), which serves as the `#[repr(C)]` buffer passed to `SetProcessInformation` and `GetProcessInformation`. When applying memory priority, the service calls `as_win_const()` to obtain the `MEMORY_PRIORITY` value, wraps it in a `MemoryPriorityInformation` struct, and passes it to the Windows API.
 
-The Windows memory priority system has five levels (1–5). Lower-priority pages are reclaimed first when the system is under memory pressure. This enum is used by [`apply_memory_priority`](../apply.rs/apply_memory_priority.md) to set the page priority for a target process via `SetProcessInformation` with `ProcessMemoryPriority` information class.
+All conversion methods use a single `const TABLE` array that pairs each variant with its string name and optional Win32 constant. This ensures that string ↔ constant ↔ variant mappings are always consistent.
 
-The actual API call requires a [`MemoryPriorityInformation`](MemoryPriorityInformation.md) struct wrapping the raw `u32` value, which is obtained from `as_win_const()` and then wrapped: `MemoryPriorityInformation(val.0)`.
-
-### Variant-to-constant mapping
-
-| Variant | String | Windows Constant | Raw Value |
-| --- | --- | --- | --- |
-| `None` | `"none"` | *(none)* | — |
-| `VeryLow` | `"very low"` | `MEMORY_PRIORITY_VERY_LOW` | `1` |
-| `Low` | `"low"` | `MEMORY_PRIORITY_LOW` | `2` |
-| `Medium` | `"medium"` | `MEMORY_PRIORITY_MEDIUM` | `3` |
-| `BelowNormal` | `"below normal"` | `MEMORY_PRIORITY_BELOW_NORMAL` | `4` |
-| `Normal` | `"normal"` | `MEMORY_PRIORITY_NORMAL` | `5` |
+Memory priority is orthogonal to process priority class and I/O priority; all three can be set independently on the same process.
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | `src/priority.rs` |
-| **Source lines** | L112–L160 |
-| **Used by** | [`ProcessConfig`](../config.rs/ProcessConfig.md), [`apply_memory_priority`](../apply.rs/apply_memory_priority.md) |
-| **Windows API** | [SetProcessInformation](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessinformation), [GetProcessInformation](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocessinformation) |
+|-------------|-------|
+| Module | `priority` |
+| Callers | [apply_memory_priority](../apply.rs/apply_memory_priority.md), [read_config](../config.rs/read_config.md), [parse_and_insert_rules](../config.rs/parse_and_insert_rules.md) |
+| Win32 API | `SetProcessInformation`, `GetProcessInformation` (`ProcessMemoryPriority`) |
+| Privileges | Standard process handle with `PROCESS_SET_INFORMATION` access |
 
-## See also
+## See Also
 
-- [priority.rs module overview](README.md)
-- [MemoryPriorityInformation](MemoryPriorityInformation.md)
-- [ProcessPriority](ProcessPriority.md)
-- [IOPriority](IOPriority.md)
-- [apply_memory_priority](../apply.rs/apply_memory_priority.md)
+| Topic | Link |
+|-------|------|
+| C-compatible buffer for memory priority API calls | [MemoryPriorityInformation](MemoryPriorityInformation.md) |
+| Process priority class enum | [ProcessPriority](ProcessPriority.md) |
+| I/O priority enum | [IOPriority](IOPriority.md) |
+| Thread priority enum | [ThreadPriority](ThreadPriority.md) |
+| Module overview | [priority module](README.md) |

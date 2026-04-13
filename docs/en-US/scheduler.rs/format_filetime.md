@@ -1,6 +1,6 @@
 # format_filetime function (scheduler.rs)
 
-Converts a Windows FILETIME value (100-nanosecond intervals since January 1, 1601) into a human-readable local date-time string.
+Formats a Windows `FILETIME` value (represented as an `i64` of 100-nanosecond intervals since January 1, 1601) as a local date-time string with millisecond precision.
 
 ## Syntax
 
@@ -10,53 +10,61 @@ fn format_filetime(time: i64) -> String
 
 ## Parameters
 
-`time`
-
-A 64-bit signed integer representing a Windows FILETIME value. This is measured in 100-nanosecond intervals since January 1, 1601 (UTC), matching the format used by `SYSTEM_THREAD_INFORMATION.CreateTime`.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `time` | `i64` | A 64-bit signed integer representing a Windows `FILETIME` value — the number of 100-nanosecond intervals since January 1, 1601 (UTC). |
 
 ## Return value
 
-A `String` containing the formatted local date-time. On success, the format is `"YYYY-MM-DD HH:MM:SS.mmm"` (e.g. `"2024-07-15 14:32:01.456"`). If the timestamp cannot be converted to a valid `DateTime`, the raw `i64` value is returned as a string.
+Returns a `String` containing the formatted local date-time. The format is `YYYY-MM-DD HH:MM:SS.mmm`, where `mmm` is milliseconds.
+
+If the timestamp cannot be converted to a valid `DateTime` (for example, if it represents a date outside the representable range), the raw `i64` value is returned as a string instead.
 
 ## Remarks
 
-This function performs the standard Windows FILETIME-to-Unix epoch conversion by dividing the 100-nanosecond count by 10,000,000 to get seconds, then subtracting the Windows-Unix epoch offset of 11,644,473,600 seconds (the number of seconds between January 1, 1601 and January 1, 1970).
+This function converts from the Windows `FILETIME` epoch (January 1, 1601 UTC) to the Unix epoch (January 1, 1970 UTC) by subtracting the well-known constant **11,644,473,600 seconds**. The conversion proceeds as follows:
 
-The sub-second component is preserved by extracting the fractional 100-nanosecond ticks (`time % 10_000_000`) and converting them to nanoseconds by multiplying by 100.
+1. Divide `time` by 10,000,000 to get whole seconds since the Windows epoch.
+2. Subtract 11,644,473,600 to rebase to the Unix epoch.
+3. Extract the sub-second remainder as nanoseconds: `(time % 10_000_000) * 100`.
+4. Construct a UTC `DateTime` via `DateTime::from_timestamp`, then convert to the local time zone.
 
-The resulting Unix timestamp is converted to a `chrono::DateTime` via `DateTime::from_timestamp`, then shifted to the local timezone using `with_timezone(&Local)` for display.
+The output is formatted with `chrono`'s `%Y-%m-%d %H:%M:%S%.3f` format specifier, which always produces exactly three fractional digits (milliseconds).
 
-This function is primarily used within [`close_dead_process_handles`](PrimeThreadScheduler.md#methods) to format the `CreateTime` field of `SYSTEM_THREAD_INFORMATION` when logging thread statistics on process exit.
+### Visibility
 
-### Conversion formula
+This function is module-private (`fn`, not `pub fn`). It is called internally by [`PrimeThreadScheduler::drop_process_by_pid`](PrimeThreadScheduler.md) to format the `CreateTime` field from `SYSTEM_THREAD_INFORMATION` in thread diagnostic reports.
 
+### Edge cases
+
+| Scenario | Behavior |
+|----------|----------|
+| `time` is `0` | Converts to `1601-01-01` minus epoch offset, which is a negative Unix timestamp. Falls back to printing `"0"` if out of range. |
+| `time` is negative | Represents a date before the Windows epoch. The Unix conversion will underflow further; falls back to printing the raw value. |
+| Local time zone unavailable | `chrono` uses UTC as fallback on platforms where local time zone detection fails. |
+
+### Example output
+
+For a `FILETIME` value representing July 4, 2025 at 14:30:00.123 local time:
+
+```text
+2025-07-04 14:30:00.123
 ```
-unix_seconds = (filetime / 10_000_000) - 11_644_473_600
-nanoseconds  = (filetime % 10_000_000) * 100
-```
-
-### Relationship to format_100ns
-
-While [`format_100ns`](format_100ns.md) formats a duration (elapsed time), `format_filetime` formats an absolute point in time (a timestamp). Both accept the same raw unit (100-nanosecond ticks) but interpret it differently:
-
-| Function | Input meaning | Output format |
-| --- | --- | --- |
-| [`format_100ns`](format_100ns.md) | Duration in 100ns ticks | `"seconds.milliseconds s"` |
-| `format_filetime` | FILETIME absolute timestamp | `"YYYY-MM-DD HH:MM:SS.mmm"` |
 
 ## Requirements
 
-| Requirement | Value |
-| --- | --- |
-| **Module** | src/scheduler.rs |
-| **Source lines** | L309–L316 |
-| **Visibility** | Crate-private (`fn`, not `pub fn`) |
-| **Called by** | [`PrimeThreadScheduler::close_dead_process_handles`](PrimeThreadScheduler.md) |
-| **Dependencies** | `chrono::DateTime`, `chrono::Local` |
+| &nbsp; | &nbsp; |
+|--------|--------|
+| **Module** | `scheduler.rs` |
+| **Crate dependency** | `chrono` (for `DateTime`, `Local`) |
+| **Callers** | [`PrimeThreadScheduler::drop_process_by_pid`](PrimeThreadScheduler.md) |
+| **Callees** | `chrono::DateTime::from_timestamp`, `DateTime::with_timezone`, `DateTime::format` |
+| **Platform** | Windows (values originate from Windows `FILETIME` structures) |
 
-## See also
+## See Also
 
-- [format_100ns](format_100ns.md)
-- [PrimeThreadScheduler](PrimeThreadScheduler.md)
-- [ThreadStats](ThreadStats.md)
-- [scheduler.rs module overview](README.md)
+| Link | Description |
+|------|-------------|
+| [`format_100ns`](format_100ns.md) | Formats 100-nanosecond intervals as a seconds.milliseconds duration string. |
+| [`PrimeThreadScheduler::drop_process_by_pid`](PrimeThreadScheduler.md) | The method that calls `format_filetime` when logging thread diagnostics on process exit. |
+| [`ThreadStats`](ThreadStats.md) | Per-thread statistics struct whose `last_system_thread_info` contains the `FILETIME` values formatted by this function. |

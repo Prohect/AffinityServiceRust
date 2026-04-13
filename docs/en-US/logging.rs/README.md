@@ -1,73 +1,63 @@
-# logging.rs Module (logging.rs)
+# logging module (AffinityServiceRust)
 
-The `logging` module provides centralized logging infrastructure, error deduplication, and process-find tracking for the application. It manages log files, console output, and maintains state to suppress duplicate error messages across loop iterations.
+The `logging` module provides all logging infrastructure for AffinityServiceRust, including timestamped file and console output, find-mode process discovery logging, and a deduplication system for error reporting. It manages log file creation with date-based naming, maintains global state for log routing (console vs. file, dust-bin suppression), and tracks per-PID operation failures so that repeated errors are logged only once per session. The module exposes both direct logging functions and convenience macros for lock-guarded access to its global statics.
 
-## Overview
+## Statics
 
-This module handles all logging output for the application through several mechanisms:
+| Static | Description |
+|--------|-------------|
+| [FINDS_SET](FINDS_SET.md) | Deduplication set of process names already logged in `-find` mode during the current session. |
+| [USE_CONSOLE](USE_CONSOLE.md) | Flag controlling whether log output goes to the console (`true`) or to a log file (`false`). |
+| [DUST_BIN_MODE](DUST_BIN_MODE.md) | Flag that suppresses all logging when `true`; used before UAC elevation to avoid writing to files the unprivileged process cannot own. |
+| [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) | Cached `DateTime<Local>` used for log timestamps and date-based log file naming. |
+| [LOG_FILE](LOG_FILE.md) | Main log file handle, opened in append mode at `logs/YYYYMMDD.log`. |
+| [FIND_LOG_FILE](FIND_LOG_FILE.md) | Find-mode log file handle, opened in append mode at `logs/YYYYMMDD.find.log`. |
+| [FINDS_FAIL_SET](FINDS_FAIL_SET.md) | Deduplication set for failed find operations, preventing repeated logging of the same failure. |
+| [PID_MAP_FAIL_ENTRY_SET](PID_MAP_FAIL_ENTRY_SET.md) | Per-PID map of [ApplyFailEntry](ApplyFailEntry.md) records used to deduplicate Windows API operation errors. |
 
-- **General logging** — [`log_message`](log_message.md) writes timestamped messages to the log file and optionally to the console.
-- **Pure logging** — [`log_pure_message`](log_pure_message.md) writes messages without timestamp prefix.
-- **Find logging** — [`log_to_find`](log_to_find.md) and [`log_process_find`](log_process_find.md) write to a separate `.find.log` file for process discovery tracking.
-- **Error deduplication** — [`is_new_error`](is_new_error.md) prevents the same error from being logged repeatedly across loop iterations.
+## Macros
 
-The `log!` macro is the primary logging interface used throughout the codebase, which delegates to [`log_message`](log_message.md).
+| Macro | Description |
+|-------|-------------|
+| [log!](log.md) | Formats arguments and delegates to [log_message](log_message.md) with a timestamp prefix. |
+| [get_use_console!](get_use_console.md) | Returns a `MutexGuard<bool>` for the [USE_CONSOLE](USE_CONSOLE.md) flag. |
+| [get_dust_bin_mod!](get_dust_bin_mod.md) | Returns a `MutexGuard<bool>` for the [DUST_BIN_MODE](DUST_BIN_MODE.md) flag. |
+| [get_local_time!](get_local_time.md) | Returns a `MutexGuard<DateTime<Local>>` for the [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md). |
+| [get_logger!](get_logger.md) | Returns a `MutexGuard<File>` for the [LOG_FILE](LOG_FILE.md) handle. |
+| [get_logger_find!](get_logger_find.md) | Returns a `MutexGuard<File>` for the [FIND_LOG_FILE](FIND_LOG_FILE.md) handle. |
+| [get_fail_find_set!](get_fail_find_set.md) | Returns a `MutexGuard<HashSet<String>>` for the [FINDS_FAIL_SET](FINDS_FAIL_SET.md). |
+| [get_pid_map_fail_entry_set!](get_pid_map_fail_entry_set.md) | Returns a `MutexGuard<HashMap<u32, HashMap<ApplyFailEntry, bool>>>` for the [PID_MAP_FAIL_ENTRY_SET](PID_MAP_FAIL_ENTRY_SET.md). |
 
-## Items
+## Enums
 
-### Statics
+| Enum | Description |
+|------|-------------|
+| [Operation](Operation.md) | Identifies each Windows API operation that can fail during rule application, used as a key in failure deduplication. |
 
-| Name | Description |
-| --- | --- |
-| [FINDS_SET](FINDS_SET.md) | Tracks process names already logged to the find log to avoid duplicates. |
-| [USE_CONSOLE](USE_CONSOLE.md) | Controls whether log output is also written to the console. |
-| [DUST_BIN_MODE](DUST_BIN_MODE.md) | Suppresses logging before UAC elevation to avoid writing to a log file that will be abandoned. |
-| [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) | Caches the current local time to ensure consistent timestamps within a single loop iteration. |
-| [LOG_FILE](LOG_FILE.md) | The main log file handle. |
-| [FIND_LOG_FILE](FIND_LOG_FILE.md) | The find log file handle for process discovery output. |
-| [FINDS_FAIL_SET](FINDS_FAIL_SET.md) | Tracks process names that failed to be found, for deduplication. |
-| [PID_MAP_FAIL_ENTRY_SET](PID_MAP_FAIL_ENTRY_SET.md) | Per-PID map of deduplicated error entries, keyed by (tid, name, operation, error_code), outer map keyed by PID. |
+## Structs
 
-### Enums
+| Struct | Description |
+|--------|-------------|
+| [ApplyFailEntry](ApplyFailEntry.md) | Composite key for failure deduplication: thread ID, process name, operation, and error code. |
 
-| Name | Description |
-| --- | --- |
-| [Operation](Operation.md) | Enumerates all Windows API operations that can produce errors during configuration application. |
+## Functions
 
-### Structs
+| Function | Description |
+|----------|-------------|
+| [is_new_error](is_new_error.md) | Returns `true` if this PID/operation/error combination has not been seen before, registering it for future deduplication. |
+| [purge_fail_map](purge_fail_map.md) | Removes stale entries from the failure tracking map for processes that are no longer running. |
+| [get_log_path](get_log_path.md) | Builds a date-prefixed log file path (`logs/YYYYMMDD<suffix>.log`). |
+| [log_message](log_message.md) | Writes a `[HH:MM:SS]` timestamped message to the console or log file, respecting dust-bin mode. |
+| [log_pure_message](log_pure_message.md) | Writes a message without a timestamp prefix to the console or log file. |
+| [log_to_find](log_to_find.md) | Writes a timestamped message to the find-mode log file (or console). |
+| [log_process_find](log_process_find.md) | Logs a discovered process in `-find` mode, deduplicated per session via [FINDS_SET](FINDS_SET.md). |
 
-| Name | Description |
-| --- | --- |
-| [ApplyFailEntry](ApplyFailEntry.md) | Composite key for error deduplication, combining tid, process name, operation, and error code. |
+## See Also
 
-### Functions
-
-| Name | Description |
-| --- | --- |
-| [is_new_error](is_new_error.md) | Checks whether an error has already been logged for the given pid/tid/operation/error combination. |
-| [get_log_path](get_log_path.md) | Constructs the log file path with the given suffix next to the executable. |
-| [log_message](log_message.md) | Writes a timestamped log message to the log file and optionally to the console. |
-| [log_pure_message](log_pure_message.md) | Writes a log message without timestamp prefix. |
-| [log_to_find](log_to_find.md) | Writes a message to the `.find.log` file. |
-| [log_process_find](log_process_find.md) | Logs a discovered process name to the find log, with deduplication. |
-
-## Error Deduplication
-
-The deduplication system prevents log spam when the same error occurs every loop iteration for the same process/thread/operation combination:
-
-1. Each error is represented as an [`ApplyFailEntry`](ApplyFailEntry.md) keyed by `(tid, process_name, operation, error_code)`.
-2. The [`PID_MAP_FAIL_ENTRY_SET`](PID_MAP_FAIL_ENTRY_SET.md) stores these entries in a two-level map: PID → set of fail entries.
-3. [`is_new_error`](is_new_error.md) returns `true` only the first time a particular error combination is seen.
-4. Process exit cleanup is handled reactively via ETW events — when a process stops, its entries are removed directly from the map by the main loop.
-
-## Dust Bin Mode
-
-When [`DUST_BIN_MODE`](DUST_BIN_MODE.md) is enabled, log output is suppressed. This is used during the pre-UAC-elevation phase: since the process will be relaunched with elevated privileges, any log output written before elevation would go to a log file that is immediately abandoned. The `skip_log_before_elevation` CLI flag controls this behavior.
-
-## Requirements
-
-| Requirement | Value |
-| --- | --- |
-| **Module** | `src/logging.rs` |
-| **Called by** | All modules via `log!` macro; [`apply_config_process_level`](../apply.rs/apply_config_process_level.md)/[`apply_config_thread_level`](../apply.rs/apply_config_thread_level.md) indirectly via apply functions |
-| **Key dependencies** | [`Operation`](Operation.md), [`ApplyFailEntry`](ApplyFailEntry.md), `chrono::Local`, `once_cell::sync::Lazy` |
+| Topic | Link |
+|-------|------|
+| Error code translation used in log messages | [error_codes module](../error_codes.rs/README.md) |
+| Rule application that generates operation errors | [apply module](../apply.rs/README.md) |
+| Process priority / IO priority / memory priority enums | [priority module](../priority.rs/README.md) |
+| Service main loop and find mode entry point | [main module](../main.rs/README.md) |
+| CLI flags that control logging behavior | [cli module](../cli.rs/README.md) |

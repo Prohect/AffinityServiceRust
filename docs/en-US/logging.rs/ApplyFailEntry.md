@@ -1,11 +1,11 @@
 # ApplyFailEntry struct (logging.rs)
 
-Composite key structure used for error deduplication, combining all the identifying fields of a failed Windows API operation so that the same error is only logged once per session.
+Composite key used for deduplicating Windows API operation failures in the logging subsystem. Each instance uniquely identifies a specific failure scenario by combining the thread ID, process name, operation type, and error code. Instances are stored as keys in the per-PID inner map of [PID_MAP_FAIL_ENTRY_SET](PID_MAP_FAIL_ENTRY_SET.md) and are compared for equality when [is_new_error](is_new_error.md) checks whether a given failure has already been logged.
 
 ## Syntax
 
-```rust
-#[derive(Hash, Eq, PartialEq)]
+```logging.rs
+#[derive(PartialEq, Eq, Hash)]
 pub struct ApplyFailEntry {
     tid: u32,
     process_name: String,
@@ -16,55 +16,48 @@ pub struct ApplyFailEntry {
 
 ## Members
 
-`tid`
-
-The thread identifier of the target thread, or `0` if the failed operation was process-level rather than thread-level.
-
-`process_name`
-
-The display name of the process (e.g., `"game.exe"`). Stored as an owned `String` because the entry persists in the [`PID_MAP_FAIL_ENTRY_SET`](PID_MAP_FAIL_ENTRY_SET.md) across loop iterations, outliving any borrowed references.
-
-`operation`
-
-The [`Operation`](Operation.md) enum variant identifying which Windows API call failed (e.g., `SetPriorityClass`, `SetProcessAffinityMask`).
-
-`error_code`
-
-The Win32 error code (`u32`) returned by `GetLastError` at the time of failure. This distinguishes between different failure modes for the same operation on the same process — for example, `ERROR_ACCESS_DENIED` (5) versus `ERROR_INVALID_PARAMETER` (87).
+| Field | Type | Description |
+|-------|------|-------------|
+| `tid` | `u32` | The Windows thread identifier associated with the failed operation. For process-level operations (e.g., `SetPriorityClass`), this is typically `0` or the primary thread ID. For thread-level operations (e.g., `SetThreadPriority`), this is the specific thread that caused the failure. |
+| `process_name` | `String` | The lowercase executable name of the target process (e.g., `"chrome.exe"`). Used both for display in log messages and as part of the deduplication key. Also serves as an invariant check — all entries in a PID's inner map are expected to share the same `process_name`. |
+| `operation` | [Operation](Operation.md) | The [Operation](Operation.md) enum variant identifying which Windows API call failed (e.g., `SetPriorityClass`, `OpenProcess2processSetInformation`). |
+| `error_code` | `u32` | The Win32 error code or NTSTATUS value returned by the failed operation. A value of `0` is used when no specific error code is available from the API call context, or as a custom sentinel to differentiate distinct failure modes within the same operation. |
 
 ## Remarks
 
-`ApplyFailEntry` derives `Hash` and `Eq`, enabling it to be used as a key in the `HashMap` inside [`PID_MAP_FAIL_ENTRY_SET`](PID_MAP_FAIL_ENTRY_SET.md). Two entries are considered equal if and only if all four fields match exactly. This means that:
+- The struct derives `PartialEq`, `Eq`, and `Hash`, which are required for use as a key in `HashMap<ApplyFailEntry, bool>`. Two entries are considered equal if and only if all four fields match exactly. This means the same operation failing with a different error code on the same thread is treated as a distinct failure and will be logged separately.
+- The struct fields are **not** `pub` — they are module-private. Construction is done inline within [is_new_error](is_new_error.md), which is the only function that creates `ApplyFailEntry` instances.
+- The `process_name` field serves a dual purpose: it is part of the deduplication key and also acts as a PID-reuse detection mechanism. When [is_new_error](is_new_error.md) encounters an existing inner map for a PID whose entries have a different `process_name` than the new entry, it clears the entire inner map before inserting. This prevents stale deduplication state from a terminated process from suppressing errors for a new process that inherited the same PID.
+- The `tid` field allows thread-level operations to be deduplicated independently per thread. For example, if `SetThreadPriority` fails with `ACCESS_DENIED` on thread 1234 of process `foo.exe`, that failure is tracked separately from the same error on thread 5678 of the same process. This ensures that the first failure on each thread is logged, providing complete diagnostic coverage.
+- `ApplyFailEntry` does not implement `Debug` or `Clone`. It is created, inserted into the map, and compared — no other operations are needed.
 
-- The same error code for the same operation on a different thread is tracked separately.
-- A different error code for the same operation on the same thread is tracked separately.
-- The same error on the same TID but with a different process name (e.g., after PID reuse) is tracked separately.
+### Deduplication flow
 
-The primary consumer of this struct is [`is_new_error`](is_new_error.md), which constructs an `ApplyFailEntry` from its parameters and checks for its presence in the global deduplication map. If the entry is not yet present, it is inserted and the function returns `true`, signaling the caller to log the error. If already present, the function returns `false`, suppressing the duplicate.
-
-### Why all four fields?
-
-Using all four fields as the composite key ensures maximum precision in deduplication:
-
-- **`tid`** — allows thread-level errors (e.g., `SetThreadIdealProcessorEx` failures) to be tracked independently per thread.
-- **`process_name`** — guards against PID reuse: if a new process takes over a terminated process's PID, errors for the new process are treated as novel.
-- **`operation`** — distinguishes between different API calls that may fail independently for the same process.
-- **`error_code`** — captures the specific failure reason, so a new type of failure on the same operation is still logged.
-
-Note that PID-level separation is handled by the outer map in [`PID_MAP_FAIL_ENTRY_SET`](PID_MAP_FAIL_ENTRY_SET.md), which is keyed by PID. This means errors for different processes are inherently isolated without needing a `pid` field inside the entry itself.
+1. The [apply module](../apply.rs/README.md) encounters a Win32 API failure.
+2. It calls [is_new_error](is_new_error.md) with `pid`, `tid`, `process_name`, `operation`, and `error_code`.
+3. `is_new_error` constructs an `ApplyFailEntry` from the last four parameters and looks it up in the inner map for the given `pid`.
+4. If the entry is not found, it is inserted with `alive = true` and the function returns `true` — the caller logs the error.
+5. If the entry already exists, the function marks it alive and returns `false` — the caller suppresses the duplicate log message.
+6. Periodically, [purge_fail_map](purge_fail_map.md) removes entries for processes that are no longer running.
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/logging.rs |
-| **Lines** | L97–L102 |
-| **Stored in** | [`PID_MAP_FAIL_ENTRY_SET`](PID_MAP_FAIL_ENTRY_SET.md) |
-| **Created by** | [`is_new_error`](is_new_error.md) |
+|-------------|-------|
+| Module | `logging` |
+| Trait implementations | `PartialEq`, `Eq`, `Hash` (derived) |
+| Constructed by | [is_new_error](is_new_error.md) |
+| Stored in | [PID_MAP_FAIL_ENTRY_SET](PID_MAP_FAIL_ENTRY_SET.md) |
+| Compared by | [is_new_error](is_new_error.md), [purge_fail_map](purge_fail_map.md) |
 
-## See also
+## See Also
 
-- [Operation enum](Operation.md)
-- [is_new_error function](is_new_error.md)
-- [PID_MAP_FAIL_ENTRY_SET static](PID_MAP_FAIL_ENTRY_SET.md)
-- [logging.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| Windows API operation identifiers | [Operation](Operation.md) |
+| Error deduplication logic | [is_new_error](is_new_error.md) |
+| Stale entry cleanup | [purge_fail_map](purge_fail_map.md) |
+| Global failure tracking map | [PID_MAP_FAIL_ENTRY_SET](PID_MAP_FAIL_ENTRY_SET.md) |
+| Win32 error code translation | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
+| NTSTATUS code translation | [error_from_ntstatus](../error_codes.rs/error_from_ntstatus.md) |
+| logging module overview | [logging module](README.md) |

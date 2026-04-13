@@ -1,6 +1,6 @@
 # cpusetids_from_indices function (winapi.rs)
 
-Converts a slice of logical processor indices to their corresponding Windows CPU set IDs.
+Converts a slice of logical CPU indices (0, 1, 2, …) into the corresponding Windows CPU Set IDs by looking up each index in the [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) global cache. This is the primary translation function used when applying CPU set rules from configuration, where users specify human-readable CPU indices.
 
 ## Syntax
 
@@ -10,43 +10,65 @@ pub fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32>
 
 ## Parameters
 
-`cpu_indices`
-
-A slice of zero-based logical processor indices to convert. These correspond to bit positions in an affinity mask and to the processor numbers used in the configuration file.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `cpu_indices` | `&[u32]` | A slice of zero-based logical processor indices to translate. These correspond to the CPU numbers visible in Task Manager or specified in configuration files (e.g., `0;1;4-7`). Duplicate values are permitted but will produce duplicate IDs in the output. |
 
 ## Return value
 
-Returns a `Vec<u32>` containing the Windows CPU set IDs corresponding to the given processor indices. Indices that do not match any known CPU set entry are silently skipped.
+A `Vec<u32>` containing the Windows CPU Set IDs that correspond to the provided logical processor indices. The output order follows the iteration order of the [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) cache, **not** the order of the input indices. If an input index does not match any entry in the cache (e.g., the index exceeds the number of logical processors), it is silently omitted from the result.
+
+Returns an empty `Vec` immediately if `cpu_indices` is empty.
 
 ## Remarks
 
-This function performs a lookup against the global [`CPU_SET_INFORMATION`](CPU_SET_INFORMATION.md) static (accessed via [`get_cpu_set_information`](get_cpu_set_information.md)). For each index in `cpu_indices`, it searches the [`CpuSetData`](CpuSetData.md) vector for an entry whose `logical_processor_index` matches, and collects the corresponding `id` value.
+### Translation mechanism
 
-This conversion is necessary because Windows CPU Set APIs (`SetProcessDefaultCpuSets`, `SetThreadSelectedCpuSets`) require CPU set IDs rather than processor indices. The configuration file specifies processors as zero-based indices for user convenience, so this function bridges the gap.
+The function acquires the mutex lock on [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md), then iterates over every [CpuSetData](CpuSetData.md) entry in the cache. For each entry whose `logical_processor_index` appears in the input slice, the entry's `id` field is pushed to the result vector.
 
-The inverse operation is provided by [`indices_from_cpusetids`](indices_from_cpusetids.md).
+This is effectively a lookup join: for each cached `(id, logical_processor_index)` pair, if `logical_processor_index ∈ cpu_indices`, emit `id`.
 
-### Related conversions
+### Performance considerations
 
-| Function | From | To |
-| --- | --- | --- |
-| **cpusetids_from_indices** | processor indices | CPU set IDs |
-| [cpusetids_from_mask](cpusetids_from_mask.md) | affinity mask | CPU set IDs |
-| [indices_from_cpusetids](indices_from_cpusetids.md) | CPU set IDs | processor indices |
-| [mask_from_cpusetids](mask_from_cpusetids.md) | CPU set IDs | affinity mask |
+The current implementation performs an O(n × m) scan where n is the cache size (number of logical processors) and m is the input slice length, because it calls `cpu_indices.contains()` for each cache entry. For typical desktop and server processor counts (≤ 256 logical processors) and typical rule sizes (≤ 64 CPUs), this is negligible.
+
+### Ordering
+
+The output CPU Set IDs appear in the order they are stored in the cache (which matches the order returned by `GetSystemCpuSetInformation`). This is typically ascending by logical processor index, but callers should not rely on any specific ordering. APIs that consume CPU Set IDs (e.g., `SetProcessDefaultCpuSets`) treat them as unordered sets.
+
+### Empty-input fast path
+
+If the input slice is empty, the function returns an empty `Vec` immediately without acquiring the mutex lock, avoiding unnecessary synchronization.
+
+### Usage example
+
+Given a system where CPU 0 has Set ID 256, CPU 1 has Set ID 257, and CPU 2 has Set ID 258:
+
+| Input | Output |
+|-------|--------|
+| `&[0, 2]` | `vec![256, 258]` |
+| `&[1]` | `vec![257]` |
+| `&[99]` | `vec![]` (no such CPU) |
+| `&[]` | `vec![]` |
 
 ## Requirements
 
-| Requirement | Value |
-| --- | --- |
-| **Module** | src/winapi.rs |
-| **Source lines** | L357–L374 |
-| **Called by** | [`apply_process_default_cpuset`](../apply.rs/apply_process_default_cpuset.md), [`apply_prime_threads_promote`](../apply.rs/apply_prime_threads_promote.md) |
-| **Calls** | [`get_cpu_set_information`](get_cpu_set_information.md) |
+| | |
+|---|---|
+| **Module** | `winapi` (`src/winapi.rs`) |
+| **Visibility** | `pub` |
+| **Callers** | [apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md), [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) |
+| **Callees** | [get_cpu_set_information](get_cpu_set_information.md) (acquires `Mutex<Vec<CpuSetData>>` lock) |
+| **Dependencies** | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md), [CpuSetData](CpuSetData.md) |
 
-## See also
+## See Also
 
-- [cpusetids_from_mask](cpusetids_from_mask.md)
-- [indices_from_cpusetids](indices_from_cpusetids.md)
-- [CpuSetData struct](CpuSetData.md)
-- [winapi.rs module overview](README.md)
+| Topic | Link |
+|-------|------|
+| Reverse operation: CPU Set IDs → indices | [indices_from_cpusetids](indices_from_cpusetids.md) |
+| Affinity mask → CPU Set IDs | [cpusetids_from_mask](cpusetids_from_mask.md) |
+| CPU Set IDs → affinity mask | [mask_from_cpusetids](mask_from_cpusetids.md) |
+| CPU set topology cache | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
+| CPU set cache accessor | [get_cpu_set_information](get_cpu_set_information.md) |
+| CPU set application to processes | [apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md) |
+| GetSystemCpuSetInformation (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/systeminformationapi/nf-systeminformationapi-getsystemcpusetinformation) |

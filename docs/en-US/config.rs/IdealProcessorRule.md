@@ -1,6 +1,6 @@
 # IdealProcessorRule struct (config.rs)
 
-Rule for assigning ideal processors to threads based on module prefix matching. Each rule maps a set of CPU indices to an optional list of module prefixes that filter which threads receive the assignment.
+Defines a mapping from a set of CPU indices to optional module-name prefix filters for ideal processor assignment. When the service applies ideal processor rules to a process's threads, each thread's start-address module name is checked against the `prefixes` list. If the list is empty (no filter), all threads are eligible; otherwise, only threads whose start module matches one of the prefixes are assigned ideal processors from the `cpus` set.
 
 ## Syntax
 
@@ -14,47 +14,64 @@ pub struct IdealProcessorRule {
 
 ## Members
 
-`cpus`
-
-Type: `Vec<u32>`
-
-A sorted list of CPU indices that threads matching this rule should be assigned to as their ideal processors. The scheduler distributes threads across these CPUs in a round-robin fashion.
-
-`prefixes`
-
-Type: `Vec<String>`
-
-A list of module name prefixes used to filter which threads this rule applies to. Thread start addresses are resolved to their owning module, and only threads whose module name starts with one of these prefixes are assigned the ideal processors in `cpus`. When this vector is empty, the rule applies to **all** threads of the process.
+| Member | Type | Description |
+|--------|------|-------------|
+| `cpus` | `Vec<u32>` | Sorted list of logical CPU indices that threads matching this rule should be distributed across as ideal processors. These indices are resolved from a CPU alias at parse time via [parse_ideal_processor_spec](parse_ideal_processor_spec.md). The apply module round-robins thread ideal processor assignments across this set. |
+| `prefixes` | `Vec<String>` | Module-name prefix filters. Each entry is a lowercased string matched against the resolved module name of a thread's start address (e.g., `"engine.dll"`, `"ntdll"`). An empty vector means the rule applies to all threads unconditionally. When non-empty, only threads whose start-address module begins with one of these prefixes are assigned ideal processors from `cpus`. |
 
 ## Remarks
 
-`IdealProcessorRule` is the final, resolved form of ideal processor specifications after config parsing. It is consumed by [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) to set each thread's ideal processor via the Windows `SetThreadIdealProcessorEx` API.
-
-### Rule application order
-
-Rules are evaluated in the order they appear in the config. A thread is matched by the **first** rule whose prefix list contains a matching entry (or the first rule with an empty prefix list). This means more specific rules (with prefixes) should be listed before catch-all rules (without prefixes).
-
 ### Config syntax
 
-Ideal processor rules are specified in the 7th field of a process rule line using the format:
+Ideal processor rules appear in field 7 (the `ideal_processor` position) of a rule line. The specification format is:
 
-`*alias[@prefix1;prefix2]*alias2[@prefix3]`
+```
+*alias[@prefix1;prefix2]*alias2[@prefix3]
+```
 
-For example, `*p@engine.dll*e@helper.dll` creates two rules:
-- Threads starting in `engine.dll` get CPUs from alias `*p`
-- Threads starting in `helper.dll` get CPUs from alias `*e`
+Where:
 
-A rule without `@` prefixes (e.g., `*p`) applies to all threads as a catch-all.
+- Each segment begins with `*` followed by a CPU alias name (must be previously defined with `*alias = cpu_spec`).
+- The optional `@` suffix provides semicolon-separated module-name prefixes that filter which threads receive ideal processor assignment from this segment's CPU set.
+- Multiple segments can be chained to create multiple `IdealProcessorRule` entries for a single process.
 
-### Relationship to other types
+**Examples:**
 
-- Rules are parsed by [parse_ideal_processor_spec](parse_ideal_processor_spec.md) and stored in `ProcessConfig::ideal_processor_rules`.
-- CPU alias references (e.g., `*p`) are resolved against aliases defined via [parse_alias](parse_alias.md).
+| Spec string | Result |
+|-------------|--------|
+| `*perf` | One rule: all threads get ideal processors from alias `perf`'s CPUs. |
+| `*perf@engine.dll` | One rule: only threads starting in `engine.dll` get ideal processors from `perf`. |
+| `*p@engine.dll;render.dll*e@audio.dll` | Two rules: `engine.dll`/`render.dll` threads → alias `p` CPUs; `audio.dll` threads → alias `e` CPUs. |
+| `0` | No rules (ideal processor assignment disabled). |
+
+### Distribution behavior
+
+At runtime, the apply module iterates over a process's threads and, for each `IdealProcessorRule`, assigns ideal processors by cycling through `cpus` in order. This distributes thread scheduling hints across the specified cores. The assignment uses `SetThreadIdealProcessorEx` and only applies to threads that match the prefix filter.
+
+### Empty cpus
+
+If the referenced alias resolves to an empty CPU set, the rule is silently skipped during parsing and no `IdealProcessorRule` entry is produced for that segment.
+
+### Interaction with CPU sets
+
+When a process also has a `cpu_set_cpus` configured with the `@` prefix (i.e., `cpu_set_reset_ideal` is true), `reset_thread_ideal_processors` is called first, distributing ideal processors across the CPU set. Ideal processor rules from this struct are applied separately and may override those assignments for specific threads.
 
 ## Requirements
 
-| Requirement | Value |
-| --- | --- |
-| **Module** | src/config.rs |
-| **Derives** | `Debug`, `Clone` |
-| **Used by** | [ProcessConfig](ProcessConfig.md), [parse_ideal_processor_spec](parse_ideal_processor_spec.md), [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
+| | |
+|---|---|
+| **Module** | `config` (`src/config.rs`) |
+| **Constructed by** | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
+| **Consumed by** | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
+| **Parent struct** | [ProcessConfig](ProcessConfig.md) (field `ideal_processor_rules`) |
+
+## See Also
+
+| Topic | Link |
+|-------|------|
+| Per-process configuration record | [ProcessConfig](ProcessConfig.md) |
+| Ideal processor spec parser | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
+| Ideal processor application logic | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
+| CPU alias parsing | [parse_alias](parse_alias.md) |
+| CPU alias resolution | [resolve_cpu_spec](resolve_cpu_spec.md) |
+| Module overview | [config module](README.md) |

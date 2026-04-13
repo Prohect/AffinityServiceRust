@@ -1,10 +1,11 @@
 # log_error_if_new function (apply.rs)
 
-Logs an error message only if it has not been previously logged for the same process/thread/operation combination. This deduplication prevents repetitive error spam in the log output when the same operation fails repeatedly across polling iterations.
+Logs an error message to the [ApplyConfigResult](ApplyConfigResult.md) accumulator only if the same pid / tid / operation / error-code combination has not been logged before. This prevents repeated failures—common when a process denies access on every polling cycle—from flooding the log with identical entries.
 
 ## Syntax
 
-```rust
+```AffinityServiceRust/src/apply.rs#L69-81
+#[inline(always)]
 fn log_error_if_new(
     pid: u32,
     tid: u32,
@@ -18,66 +19,55 @@ fn log_error_if_new(
 
 ## Parameters
 
-`pid`
-
-The process ID associated with the error.
-
-`tid`
-
-The thread ID associated with the error. Use `0` for process-level operations that are not thread-specific.
-
-`process_name`
-
-The name of the process, used as part of the deduplication key and included in error messages.
-
-`operation`
-
-The [Operation](../logging.rs/Operation.md) enum variant identifying which Windows API call or logical operation failed.
-
-`error_code`
-
-The Win32 error code or NTSTATUS value returned by the failed operation. Combined with `pid`, `tid`, `process_name`, and `operation` to form the deduplication key.
-
-`apply_config_result`
-
-Mutable reference to the [ApplyConfigResult](ApplyConfigResult.md) that collects errors for the current application cycle. If the error is new, the formatted message is added via `add_error()`.
-
-`format_msg`
-
-A closure (`FnOnce() -> String`) that produces the error message string. This is lazily evaluated — only called if the error is determined to be new, avoiding the cost of formatting when the error has already been logged.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `pid` | `u32` | Process identifier that the error pertains to. Used together with `tid`, `operation`, and `error_code` to form the deduplication key. |
+| `tid` | `u32` | Thread identifier. Pass `0` for process-level operations that are not thread-specific (e.g., `SetPriorityClass`, `SetProcessAffinityMask`). |
+| `process_name` | `&str` | Display name of the process, forwarded to [is_new_error](../logging.rs/is_new_error.md) for the deduplication map and included in the formatted message. |
+| `operation` | [Operation](../logging.rs/Operation.md) | Enum variant identifying the Windows API call that failed (e.g., `Operation::SetPriorityClass`, `Operation::NtSetInformationProcess2ProcessInformationIOPriority`). |
+| `error_code` | `u32` | The raw Win32 error code (`GetLastError().0`) or the unsigned cast of an NTSTATUS value. |
+| `apply_config_result` | `&mut` [ApplyConfigResult](ApplyConfigResult.md) | Accumulator that receives the formatted error string via `add_error` when the error is new. |
+| `format_msg` | `impl FnOnce() -> String` | Lazy formatting closure. Only evaluated when the error *is* new, avoiding the cost of `format!()` for suppressed duplicates. |
 
 ## Return value
 
-This function does not return a value.
+None (`()`).
 
 ## Remarks
 
-This is a helper function used extensively throughout the `apply.rs` module by every function that interacts with the Windows API. It wraps [is_new_error](../logging.rs/is_new_error.md) from the logging module.
+The function delegates deduplication to [is_new_error](../logging.rs/is_new_error.md), which maintains a global `HashMap<u32, HashMap<ApplyFailEntry, bool>>` keyed by pid. If `is_new_error` returns `true`, the `format_msg` closure is invoked and the resulting `String` is pushed into `apply_config_result.errors`. If it returns `false`, neither the closure nor `add_error` is called.
 
-The deduplication logic works as follows:
+Because `format_msg` is `FnOnce`, the formatting work (which typically involves calls to [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) or [error_from_ntstatus](../error_codes.rs/error_from_ntstatus.md)) is deferred until it is known that the message will actually be recorded. In a steady-state loop where a process continuously denies access, this avoids thousands of wasted allocations per cycle.
 
-1. The function calls `is_new_error(pid, tid, process_name, operation, error_code)` to check whether this exact combination has been seen before.
-2. If the error is **new**, `format_msg()` is invoked and the resulting string is added to `apply_config_result.errors` via `add_error()`.
-3. If the error has **already been logged**, the function returns immediately without evaluating `format_msg`, saving the cost of string formatting.
+The function is marked `#[inline(always)]` because it sits on the hot path of every `apply_*` function's error branch and consists of a single conditional call.
 
-The lazy evaluation pattern using `impl FnOnce() -> String` is important for performance because error formatting involves `format!()` calls with Win32 error code lookups, which would be wasteful if the error is a known duplicate.
+All `apply_*` functions in the [apply](README.md) module route their error handling through `log_error_if_new` rather than calling `add_error` directly. This makes the deduplication policy uniform and centralised.
 
-**Error message convention:** Callers typically format messages as:
+### Error message convention
 
-`"fn_name: [OPERATION_NAME][error_description] pid-tid-process_name"`
+Callers format messages following the pattern:
+
+`"fn_name: [OPERATION][error_description] pid-tid-process_name"`
 
 For example:
 
-`"apply_priority: [SET_PRIORITY_CLASS][Access is denied (5)] 1234-game.exe"`
-
-The function is marked `#[inline(always)]` to eliminate call overhead since it is invoked on every error path in the module.
+`"apply_priority: [SET_PRIORITY_CLASS][Access is denied. (0x5)] 1234-chrome"`
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/apply.rs |
-| **Line** | L67–L81 |
-| **Visibility** | Private (`fn`) |
-| **Called by** | [apply_priority](apply_priority.md), [apply_affinity](apply_affinity.md), [reset_thread_ideal_processors](reset_thread_ideal_processors.md), [apply_process_default_cpuset](apply_process_default_cpuset.md), [apply_io_priority](apply_io_priority.md), [apply_memory_priority](apply_memory_priority.md), [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md), [apply_prime_threads_promote](apply_prime_threads_promote.md), [apply_prime_threads_demote](apply_prime_threads_demote.md), [apply_ideal_processors](apply_ideal_processors.md) |
-| **Dependencies** | [is_new_error](../logging.rs/is_new_error.md), [ApplyConfigResult](ApplyConfigResult.md) |
+|-------------|-------|
+| Module | `apply` |
+| Visibility | crate-private (`fn`) |
+| Callers | [apply_priority](apply_priority.md), [apply_affinity](apply_affinity.md), [reset_thread_ideal_processors](reset_thread_ideal_processors.md), [apply_process_default_cpuset](apply_process_default_cpuset.md), [apply_io_priority](apply_io_priority.md), [apply_memory_priority](apply_memory_priority.md), [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md), [apply_prime_threads_promote](apply_prime_threads_promote.md), [apply_prime_threads_demote](apply_prime_threads_demote.md), [apply_ideal_processors](apply_ideal_processors.md) |
+| Callees | [is_new_error](../logging.rs/is_new_error.md), [ApplyConfigResult::add_error](ApplyConfigResult.md) |
+
+## See Also
+
+| Topic | Link |
+|-------|------|
+| Deduplication map and purging | [is_new_error](../logging.rs/is_new_error.md), [purge_fail_map](../logging.rs/purge_fail_map.md) |
+| Operation enum | [Operation](../logging.rs/Operation.md) |
+| Error result accumulator | [ApplyConfigResult](ApplyConfigResult.md) |
+| Win32 error formatting | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
+| NTSTATUS error formatting | [error_from_ntstatus](../error_codes.rs/error_from_ntstatus.md) |

@@ -1,6 +1,6 @@
 # ThreadStats struct (scheduler.rs)
 
-Per-thread statistics and state used by [PrimeThreadScheduler](PrimeThreadScheduler.md) to track CPU cycle consumption, handle caching, priority boosting, and ideal processor assignment across loop iterations.
+Per-thread statistics and state used by [PrimeThreadScheduler](PrimeThreadScheduler.md) to track CPU cycle deltas, active streaks, thread handles, CPU set pins, ideal processor assignments, and original priority for prime thread scheduling with hysteresis.
 
 ## Syntax
 
@@ -23,112 +23,64 @@ pub struct ThreadStats {
 
 ## Members
 
-`last_total_time`
-
-The thread's total execution time (kernel + user, in 100ns units) as of the most recent completed iteration. Used together with `cached_total_time` to compute the per-iteration time delta.
-
-`cached_total_time`
-
-The thread's total execution time sampled during the *current* iteration, before it is committed to `last_total_time` at the end of the cycle by [`update_thread_stats`](../apply.rs/update_thread_stats.md).
-
-`last_cycles`
-
-The thread's cumulative CPU cycle count as of the most recent completed iteration. Compared against `cached_cycles` to derive the per-iteration cycle delta that drives prime thread selection.
-
-`cached_cycles`
-
-The thread's cumulative CPU cycle count sampled during the *current* iteration via `QueryThreadCycleTime`. Committed to `last_cycles` at the end of the cycle.
-
-`handle`
-
-An optional cached [ThreadHandle](../winapi.rs/ThreadHandle.md) containing read and write HANDLEs to the thread. `None` means the handle has not been opened yet. When present, `r_limited_handle` is always valid; other handles should be checked with `is_valid_handle()` before use. The `ThreadHandle` implements `Drop` to automatically close all contained HANDLEs when the `ThreadStats` entry is removed (e.g., when a process exits).
-
-`pinned_cpu_set_ids`
-
-The list of CPU Set IDs currently assigned to this thread via `SetThreadSelectedCpuSets`. Used by the promote/demote logic to track which threads are currently pinned to prime cores and to restore threads to their original CPU sets upon demotion.
-
-`active_streak`
-
-A hysteresis counter tracking how many consecutive iterations this thread has exceeded the entry threshold. Incremented by [`update_active_streaks`](PrimeThreadScheduler.md) each cycle and capped at 254. Reset to 0 when the thread's cycle delta falls below the keep threshold. A thread must reach at least `min_active_streak` (default: 2) before it can be promoted to prime status, preventing briefly-active threads from thrashing the scheduler.
-
-`start_address`
-
-The thread's start address obtained via `NtQueryInformationThread(ThreadQuerySetWin32StartAddress)`. Used to resolve the thread's originating module via [`resolve_address_to_module`](../winapi.rs/resolve_address_to_module.md) for logging and for ideal processor prefix matching in [`apply_ideal_processors`](../apply.rs/apply_ideal_processors.md).
-
-`original_priority`
-
-The thread's [ThreadPriority](../priority.rs/ThreadPriority.md) before any prime-thread priority boost was applied. Stored on first promotion so that the thread's priority can be restored when it is demoted. `None` indicates no priority override has been applied.
-
-`last_system_thread_info`
-
-A cached copy of the `SYSTEM_THREAD_INFORMATION` structure from the most recent [ProcessSnapshot](../process.rs/ProcessSnapshot.md). Contains kernel time, user time, create time, wait time, context switch count, priority, base priority, thread state, and wait reason. Used for detailed logging when a process exits (see [`close_dead_process_handles`](PrimeThreadScheduler.md)).
-
-`ideal_processor`
-
-An [IdealProcessorState](IdealProcessorState.md) tracking the thread's current and previous ideal processor assignment. Used by [`apply_ideal_processors`](../apply.rs/apply_ideal_processors.md) to detect changes and avoid redundant `SetThreadIdealProcessorEx` calls.
-
-`process_id`
-
-The PID of the owning process. Stored per-thread so that the `Debug` implementation can resolve `start_address` to a module name via [`resolve_address_to_module`](../winapi.rs/resolve_address_to_module.md) without requiring external context.
-
-## Methods
-
-| Method | Signature | Description |
-| --- | --- | --- |
-| **new** | `pub fn new(process_id: u32) -> Self` | Creates a new `ThreadStats` with all counters zeroed, no handle, empty CPU set list, and the given `process_id`. |
-
-## Traits
-
-| Trait | Description |
-| --- | --- |
-| `Debug` | Custom implementation that formats `start_address` as a resolved module name (via `resolve_address_to_module`) instead of a raw hex value. |
-| `Default` | Delegates to `Self::new(0)`. |
+| Member | Type | Description |
+|--------|------|-------------|
+| `last_total_time` | `i64` | The most recently observed total time (kernel + user) for this thread, in 100-nanosecond intervals. Updated each scheduling pass from `SYSTEM_THREAD_INFORMATION`. Used with `cached_total_time` to compute deltas. |
+| `cached_total_time` | `i64` | The total time value from the previous scheduling pass. The delta (`last_total_time - cached_total_time`) represents CPU time consumed during the last interval. |
+| `last_cycles` | `u64` | The most recently observed CPU cycle count for this thread, obtained via `QueryThreadCycleTime`. Used with `cached_cycles` to compute per-interval cycle deltas for ranking threads. |
+| `cached_cycles` | `u64` | The CPU cycle count from the previous scheduling pass. The delta (`last_cycles - cached_cycles`) is the primary metric used by [select_top_threads_with_hysteresis](PrimeThreadScheduler.md) to rank threads for prime core promotion. |
+| `handle` | `Option<`[ThreadHandle](../winapi.rs/ThreadHandle.md)`)>` | Thread handle container. `None` means the handle has not been opened yet. When `Some`, the `r_limited_handle` is always valid. Other handles (`r_handle`, `w_limited_handle`, `w_handle`) should be checked with `is_valid_handle()` before use. Handles are closed automatically when `ThreadStats` is dropped (via `ThreadHandle`'s `Drop` implementation). |
+| `pinned_cpu_set_ids` | `Vec<u32>` | The CPU set IDs currently assigned to this thread via `SetThreadSelectedCpuSets`. An empty vector means the thread inherits its process-level default CPU set. When a thread is promoted to prime status, it is pinned to performance-core CPU set IDs; when demoted, this vector is cleared to restore default behavior. |
+| `active_streak` | `u8` | The number of consecutive scheduling intervals in which this thread exceeded the entry threshold. Must reach [ConfigConstants](../config.rs/ConfigConstants.md)`.min_active_streak` before the thread is eligible for prime promotion. Reset to `0` when cycles drop below the keep threshold. Capped at `254`. |
+| `start_address` | `usize` | The start address of the thread's entry point, obtained via `NtQueryInformationThread(ThreadQuerySetWin32StartAddress)`. Used for diagnostic logging and module name resolution via [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md). |
+| `original_priority` | `Option<`[ThreadPriority](../priority.rs/ThreadPriority.md)`)>` | The thread's priority before promotion. Captured when a thread is first promoted to a prime core so it can be restored upon demotion. `None` means the thread has never been promoted or has been fully demoted. |
+| `last_system_thread_info` | `Option<SYSTEM_THREAD_INFORMATION>` | Cached copy of the last `SYSTEM_THREAD_INFORMATION` from [ProcessSnapshot](../process.rs/ProcessSnapshot.md). Used by [drop_process_by_pid](PrimeThreadScheduler.md) to produce detailed exit reports including kernel time, user time, create time, context switches, priority, thread state, and wait reason. |
+| `ideal_processor` | [IdealProcessorState](IdealProcessorState.md) | Tracks the current and previous ideal processor assignment for this thread. Used by `apply_ideal_processors` to detect changes and avoid redundant `SetThreadIdealProcessorEx` calls. |
+| `process_id` | `u32` | The PID of the process that owns this thread. Stored for use in debug formatting (module name resolution) and passed through to `resolve_address_to_module`. |
 
 ## Remarks
 
-`ThreadStats` is the lowest-level tracking unit in the scheduler hierarchy. Each thread that has been observed at least once (via [`prefetch_all_thread_cycles`](../apply.rs/prefetch_all_thread_cycles.md)) gets an entry in its parent [ProcessStats](ProcessStats.md)'s `tid_to_thread_stats` map.
+### Thread lifecycle
 
-### Cycle delta calculation
+A `ThreadStats` instance is created on first access via [PrimeThreadScheduler::get_thread_stats](PrimeThreadScheduler.md) with all numeric fields initialized to zero, empty vectors, and `None` optionals. The owning `PrimeThreadScheduler` populates fields incrementally:
 
-The two-phase commit pattern (`cached_*` / `last_*`) ensures that all thread measurements within a single iteration use a consistent baseline. The flow is:
+1. **Cycle prefetch** — `prefetch_all_thread_cycles` in `apply.rs` opens the thread handle (populating `handle`), queries `QueryThreadCycleTime` (updating `last_cycles` / `cached_cycles`), and records `start_address` and `last_system_thread_info`.
+2. **Streak update** — [update_active_streaks](PrimeThreadScheduler.md) increments or resets `active_streak` based on cycle deltas relative to thresholds.
+3. **Selection** — [select_top_threads_with_hysteresis](PrimeThreadScheduler.md) reads `active_streak` and checks current assignment status to decide prime promotion.
+4. **Promotion** — `apply_prime_threads_promote` pins the thread to performance cores (populating `pinned_cpu_set_ids`), saves `original_priority`, and optionally boosts thread priority.
+5. **Demotion** — `apply_prime_threads_demote` clears `pinned_cpu_set_ids`, restores `original_priority`, and resets CPU set assignments.
+6. **Cleanup** — When the owning process exits, [drop_process_by_pid](PrimeThreadScheduler.md) logs final statistics, drops all `ThreadHandle`s (closing OS handles), and removes the process entry.
 
-1. **Prefetch phase** — `cached_cycles` and `cached_total_time` are updated with fresh values from the OS.
-2. **Selection phase** — Delta is computed as `cached_cycles - last_cycles`.
-3. **Commit phase** — [`update_thread_stats`](../apply.rs/update_thread_stats.md) copies `cached_*` → `last_*`.
+### Cycle delta computation
 
-This design avoids self-referential timing issues where a thread's own measurement overhead could skew its delta.
+The two-field pattern (`last_*` / `cached_*`) implements a simple double-buffering scheme. At the start of each scheduling pass, `cached_cycles` is set to the previous `last_cycles`, then `last_cycles` is updated with the current value from `QueryThreadCycleTime`. The delta (`last_cycles - cached_cycles`) represents cycles consumed during one scheduling interval and is the primary sort key for thread ranking.
 
-### Handle lifetime
+### Debug formatting
 
-The `handle` field owns the `ThreadHandle`, and its `Drop` implementation closes all contained Windows HANDLEs. When [`close_dead_process_handles`](PrimeThreadScheduler.md) removes dead process entries from the scheduler, all associated `ThreadStats` are dropped, which automatically closes every cached thread handle. This ensures no handle leaks even when processes exit unexpectedly.
+`ThreadStats` implements a custom `fmt::Debug` that resolves `start_address` to a module name via `resolve_address_to_module(process_id, start_address)` for human-readable output. The `handle` field is excluded from debug output.
 
-### Active streak hysteresis
+### Thread safety
 
-The `active_streak` counter implements the "minimum activity duration" component of the scheduler's hysteresis system:
-
-| Streak value | Meaning |
-| --- | --- |
-| 0 | Thread is inactive or fell below keep threshold |
-| 1 | Thread just exceeded entry threshold this iteration |
-| ≥ `min_active_streak` | Thread is eligible for promotion to prime status |
-| 254 | Counter cap (prevents overflow) |
-
-This works in conjunction with the entry/keep threshold split in [`select_top_threads_with_hysteresis`](PrimeThreadScheduler.md) to provide stable prime thread assignment.
+`ThreadStats` is not `Send` or `Sync` by default because it contains `Option<ThreadHandle>` (which wraps raw `HANDLE` values). All access is mediated through the `PrimeThreadScheduler`, which is only accessed on the main service loop thread.
 
 ## Requirements
 
 | Requirement | Value |
-| --- | --- |
-| **Module** | src/scheduler.rs |
-| **Source lines** | L236–L261 |
-| **Parent container** | [ProcessStats](ProcessStats.md)`.tid_to_thread_stats` |
-| **Key dependencies** | [ThreadHandle](../winapi.rs/ThreadHandle.md), [ThreadPriority](../priority.rs/ThreadPriority.md), [IdealProcessorState](IdealProcessorState.md) |
+|-------------|-------|
+| Module | `scheduler.rs` |
+| Callers | [prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md), [apply_prime_threads](../apply.rs/apply_prime_threads.md), [apply_ideal_processors](../apply.rs/apply_ideal_processors.md), [update_thread_stats](../apply.rs/update_thread_stats.md) |
+| Dependencies | [ThreadHandle](../winapi.rs/ThreadHandle.md), [ThreadPriority](../priority.rs/ThreadPriority.md), [IdealProcessorState](IdealProcessorState.md), `SYSTEM_THREAD_INFORMATION` (ntapi) |
+| API | `QueryThreadCycleTime`, `SetThreadSelectedCpuSets`, `SetThreadIdealProcessorEx` |
+| Privileges | `SeDebugPrivilege` (for opening thread handles across security boundaries) |
 
-## See also
+## See Also
 
-- [PrimeThreadScheduler](PrimeThreadScheduler.md)
-- [ProcessStats](ProcessStats.md)
-- [IdealProcessorState](IdealProcessorState.md)
-- [prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md)
-- [apply_prime_threads](../apply.rs/apply_prime_threads.md)
-- [apply_ideal_processors](../apply.rs/apply_ideal_processors.md)
+| Topic | Link |
+|-------|------|
+| Scheduler overview | [scheduler.rs overview](README.md) |
+| Ideal processor state | [IdealProcessorState](IdealProcessorState.md) |
+| Process-level statistics | [ProcessStats](ProcessStats.md) |
+| Prime thread scheduler | [PrimeThreadScheduler](PrimeThreadScheduler.md) |
+| Thread handle wrapper | [ThreadHandle](../winapi.rs/ThreadHandle.md) |
+| Thread priority enum | [ThreadPriority](../priority.rs/ThreadPriority.md) |
+| Hysteresis constants | [ConfigConstants](../config.rs/ConfigConstants.md) |

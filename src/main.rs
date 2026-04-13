@@ -99,7 +99,6 @@ fn apply_config(
         apply_ideal_processors(pid, config, dry_run, process, prime_core_scheduler, &mut apply_config_result);
         update_thread_stats(pid, prime_core_scheduler);
     }
-    drop(process_handle);
     apply_config_result
 }
 

@@ -20,8 +20,7 @@ each top level item of a souce file is a markdown in that dir(eg. "\en-US\config
 
 Cross-references between items use relative markdown links:
 
-```
-[ProcessConfig](config.rs/ProcessConfig.md)
-[PrimeThreadScheduler](scheduler.rs/PrimeThreadScheduler.md)
-[log_error_if_new](../apply.rs/log_error_if_new.md)
-```
+[ProcessConfig](en-US/config.rs/ProcessConfig.md)
+[update_active_streaks](en-US/scheduler.rs/PrimeThreadScheduler.md#Methods)
+
+[log_error_if_new](en-US/apply.rs/log_error_if_new.md)

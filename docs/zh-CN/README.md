@@ -16,6 +16,7 @@
 | [process.rs/](process.rs/) | `src/process.rs` | 进程和线程枚举 |
 | [priority.rs/](priority.rs/) | `src/priority.rs` | 优先级级别定义 |
 | [winapi.rs/](winapi.rs/) | `src/winapi.rs` | Windows API 包装器 |
+| [event_trace.rs/](event_trace.rs/) | `src/event_trace.rs` | ETW 进程监控 |
 | [logging.rs/](logging.rs/) | `src/logging.rs` | 日志和错误跟踪 |
 | [error_codes.rs/](error_codes.rs/) | `src/error_codes.rs` | 错误代码转换 |
 
@@ -53,7 +54,7 @@
 
 ### 开发者指南
 
-- **主循环：**参见 [main](main.rs/main.md) 和 [apply_config](main.rs/apply_config.md)
+- **主循环：**参见 [main](main.rs/main.md)、[apply_config_process_level](main.rs/apply_config_process_level.md) 和 [apply_config_thread_level](main.rs/apply_config_thread_level.md)
 - **添加新设置：**参见 [apply.rs/](apply.rs/) 了解 apply 函数模式
 - **错误处理：**参见 [is_new_error](logging.rs/is_new_error.md) 和 [Operation](logging.rs/Operation.md)
 - **Windows API 集成：**参见 [winapi.rs/](winapi.rs/) 了解句柄管理和 CPU 集操作

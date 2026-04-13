@@ -1,13 +1,14 @@
 use crate::{
-    cli::get_config_help_lines,
+    cli::{CliArgs, get_config_help_lines},
     log,
     logging::{log_message, log_to_find},
     priority::{IOPriority, MemoryPriority, ProcessPriority, ThreadPriority},
+    scheduler::PrimeThreadScheduler,
 };
 
 use std::{
     collections::{HashMap, HashSet},
-    fs::{File, read, read_to_string},
+    fs::{File, metadata, read, read_to_string},
     io::{BufRead, BufReader, Result, Write},
     path::Path,
 };
@@ -1232,4 +1233,61 @@ pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
         group_count
     );
     log!("Written to {}", out_path);
+}
+
+pub fn hotreload_blacklist(cli: &CliArgs, blacklist: &mut Vec<String>, last_blacklist_mod_time: &mut Option<std::time::SystemTime>) {
+    if let Some(ref blacklist_file) = cli.blacklist_file_name {
+        match metadata(blacklist_file) {
+            Err(_) => {
+                if last_blacklist_mod_time.is_some() {
+                    *last_blacklist_mod_time = None;
+                    log!("Blacklist file '{}' no longer accessible, clearing blacklist.", blacklist_file);
+                    blacklist.clear();
+                }
+            }
+            Ok(metadata) => {
+                if let Ok(mod_time) = metadata.modified()
+                    && Some(mod_time) != *last_blacklist_mod_time
+                {
+                    *last_blacklist_mod_time = Some(mod_time);
+                    log!("Blacklist file '{}' changed, reloading...", blacklist_file);
+                    *blacklist = read_list(blacklist_file).unwrap_or_default();
+                    log!("Blacklist reload complete: {} items loaded.", blacklist.len());
+                }
+            }
+        }
+    }
+}
+
+pub fn hotreload_config(
+    cli: &CliArgs,
+    configs: &mut HashMap<u32, HashMap<String, ProcessConfig>>,
+    last_config_mod_time: &mut Option<std::time::SystemTime>,
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    process_level_applied: &mut HashSet<u32>,
+) {
+    if let Ok(metadata) = metadata(&cli.config_file_name)
+        && let Ok(mod_time) = metadata.modified()
+        && Some(mod_time) != *last_config_mod_time
+    {
+        *last_config_mod_time = Some(mod_time);
+        log!("Configuration file '{}' changed, reloading...", cli.config_file_name);
+        let new_config_result = read_config(&cli.config_file_name);
+        if new_config_result.errors.is_empty() {
+            new_config_result.print_report();
+            let total_rules = new_config_result.total_rules();
+            *configs = new_config_result.configs;
+            prime_core_scheduler.constants = new_config_result.constants;
+            log!("Configuration reload complete: {} rules loaded.", total_rules);
+            process_level_applied.clear(); //reset process_level_applied on config reload
+        } else {
+            log!(
+                "Configuration file '{}' has errors, keeping previous configuration.",
+                cli.config_file_name
+            );
+            for error in &new_config_result.errors {
+                log!("  - {}", error);
+            }
+        }
+    }
 }

@@ -6,6 +6,7 @@
 
 本模块封装了应用程序使用的所有直接 Windows API 调用，按以下功能区域组织：
 
+- **计时器分辨率** — [`set_timer_resolution`](set_timer_resolution.md)
 - **进程句柄** — [`ProcessHandle`](ProcessHandle.md)、[`get_process_handle`](get_process_handle.md)
 - **线程句柄** — [`ThreadHandle`](ThreadHandle.md)、[`get_thread_handle`](get_thread_handle.md)、[`try_open_thread`](try_open_thread.md)
 - **CPU 集信息** — [`CPU_SET_INFORMATION`](CPU_SET_INFORMATION.md)、[`get_cpu_set_information`](get_cpu_set_information.md)、[`CpuSetData`](CpuSetData.md)
@@ -58,11 +59,12 @@
 | [drop_module_cache](drop_module_cache.md) | 从 [`MODULE_CACHE`](MODULE_CACHE.md) 中移除进程条目。 |
 | [terminate_child_processes](terminate_child_processes.md) | 终止 UAC 提升过程中产生的孤立控制台宿主进程。 |
 | [enumerate_process_modules](enumerate_process_modules.md) | 枚举进程的所有已加载模块，返回基地址/结束地址和名称。 |
+| [set_timer_resolution](set_timer_resolution.md) | 通过 `NtSetTimerResolution` 设置系统计时器分辨率。 |
 
 ## 要求
 
 | 要求 | 值 |
 | --- | --- |
 | **模块** | `src/winapi.rs` |
-| **调用方** | [`apply_config`](../main.rs/apply_config.md)、[`apply.rs`](../apply.rs/README.md) 中的函数、[`main`](../main.rs/main.md) |
+| **调用方** | [`apply_config_process_level`](../main.rs/apply_config_process_level.md)、[`apply_config_thread_level`](../main.rs/apply_config_thread_level.md)、[`apply.rs`](../apply.rs/README.md) 中的函数、[`main`](../main.rs/main.md) |
 | **关键依赖** | `windows` crate、[`ProcessConfig`](../config.rs/ProcessConfig.md)、[`Operation`](../logging.rs/Operation.md)、[`is_new_error`](../logging.rs/is_new_error.md) |

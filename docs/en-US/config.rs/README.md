@@ -51,6 +51,13 @@ This module is responsible for reading and interpreting the configuration file f
 | [convert](convert.md) | Converts a Process Lasso INI config to native format |
 | [sort_and_group_config](sort_and_group_config.md) | Auto-groups processes with identical rules to reduce duplication |
 
+## Hot Reload Functions
+
+| Function | Description |
+| --- | --- |
+| [hotreload_blacklist](hotreload_blacklist.md) | Checks blacklist file for changes and reloads if modified |
+| [hotreload_config](hotreload_config.md) | Checks config file for changes and reloads if modified |
+
 ## See Also
 
 - [priority.rs](../priority.rs/) — `ProcessPriority`, `IOPriority`, `MemoryPriority`, `ThreadPriority` enums

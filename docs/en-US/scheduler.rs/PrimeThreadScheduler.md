@@ -33,7 +33,7 @@ A [ConfigConstants](../config.rs/ConfigConstants.md) struct holding the tunable 
 | **get_thread_stats** | `pub fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats` | Returns a mutable reference to the [ThreadStats](ThreadStats.md) for a specific thread, creating process and thread entries as needed. |
 | **update_active_streaks** | `pub fn update_active_streaks(&mut self, pid: u32, tid_with_delta_cycles: &[(u32, u64)])` | Updates active streak counters for all threads of a process based on their delta cycle counts relative to the hysteresis thresholds. |
 | **select_top_threads_with_hysteresis** | `pub fn select_top_threads_with_hysteresis(&mut self, pid: u32, tid_with_delta_cycles: &mut [(u32, u64, bool)], slot_count: usize, is_currently_assigned: fn(&ThreadStats) -> bool)` | Selects the top N threads for prime status using a two-pass hysteresis algorithm. |
-| **close_dead_process_handles** | `pub fn close_dead_process_handles(&mut self)` | Removes dead processes, closes thread handles via `Drop`, clears module caches, and optionally logs top-N thread reports. |
+| **drop_process_by_pid** | `pub fn drop_process_by_pid(&mut self, pid: &u32)` | Removes a specific process by PID, closes its thread handles via Drop, clears module cache, and optionally logs top-N thread report. |
 
 ## Remarks
 
@@ -46,7 +46,7 @@ The scheduler is created once in `main()` and persists across all loop iteration
 3. **`set_tracking_info()`** — updates tracking metadata from the current configuration.
 4. **`get_thread_stats()` / `update_active_streaks()`** — called by [prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md) to update cycle deltas and streak counters.
 5. **`select_top_threads_with_hysteresis()`** — called by [apply_prime_threads_select](../apply.rs/apply_prime_threads_select.md) to determine which threads get prime status.
-6. **`close_dead_process_handles()`** — at end of iteration, removes processes that were not marked alive and cleans up their resources.
+6. **`drop_process_by_pid(pid)`** — called from the main loop when ETW reports a process exit, removing the specific process and cleaning up its resources.
 
 ### Hysteresis Algorithm
 
@@ -72,7 +72,7 @@ The two-pass selection algorithm in `select_top_threads_with_hysteresis` prevent
 
 ### Resource Cleanup
 
-`close_dead_process_handles` uses `HashMap::retain` to remove dead processes. The [ThreadStats](ThreadStats.md) entries contain `Option<ThreadHandle>` fields whose `Drop` implementation automatically closes the underlying Windows handles. Before removal, if `track_top_x_threads` is nonzero, a detailed report of the top N threads by CPU cycles is logged, including kernel/user time, context switches, thread state, and resolved module names.
+`drop_process_by_pid` removes a specific process entry from `pid_to_process_stats` by PID, rather than batch-removing all dead processes via `HashMap::retain`. This targeted approach is driven by ETW process-stop events, which provide the exact PID that exited. The [ThreadStats](ThreadStats.md) entries contain `Option<ThreadHandle>` fields whose `Drop` implementation automatically closes the underlying Windows handles. Before removal, if `track_top_x_threads` is nonzero, a detailed report of the top N threads by CPU cycles is logged, including kernel/user time, context switches, thread state, and resolved module names.
 
 ## Requirements
 

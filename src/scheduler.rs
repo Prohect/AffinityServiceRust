@@ -121,56 +121,55 @@ impl PrimeThreadScheduler {
 
     /// Closes thread handles, clears module cache, and optionally logs
     /// top N threads by cycles for debugging/analysis purposes.
-    pub fn close_dead_process_handles(&mut self) {
-        self.pid_to_process_stats.retain(|pid, process_stats| {
-            if !process_stats.alive {
-                if process_stats.track_top_x_threads != 0 {
-                    let x = process_stats.track_top_x_threads.unsigned_abs() as usize;
-                    let mut threads: Vec<(&u32, &ThreadStats)> = process_stats.tid_to_thread_stats.iter().collect();
-                    threads.sort_by(|a, b| b.1.last_cycles.cmp(&a.1.last_cycles));
+    pub fn drop_process_by_pid(&mut self, pid: &u32) {
+        let Some(process_stats) = self.pid_to_process_stats.get_mut(pid) else {
+            return;
+        };
+        if process_stats.track_top_x_threads != 0 {
+            let x = process_stats.track_top_x_threads.unsigned_abs() as usize;
+            let mut threads: Vec<(&u32, &ThreadStats)> = process_stats.tid_to_thread_stats.iter().collect();
+            threads.sort_by(|a, b| b.1.last_cycles.cmp(&a.1.last_cycles));
 
-                    let top_x = threads.into_iter().take(x);
-                    let mut report = format!(
-                        "Process {} ({}) exited. Top {} threads by CPU cycles:\n",
-                        process_stats.process_name, pid, x
-                    );
-                    for (i, (tid, stats)) in top_x.enumerate() {
-                        let module_name = resolve_address_to_module(*pid, stats.start_address);
-                        report.push_str(&format!(
-                            "  [{}] TID: {} | Cycles: {} | StartAddress: 0x{:X} ({})\n",
-                            i + 1,
-                            tid,
-                            stats.last_cycles,
-                            stats.start_address,
-                            module_name
-                        ));
-                        if let Some(info) = &stats.last_system_thread_info {
-                            let kernel_time = unsafe { *info.KernelTime.QuadPart() };
-                            let user_time = unsafe { *info.UserTime.QuadPart() };
-                            let create_time = unsafe { *info.CreateTime.QuadPart() };
-                            report.push_str(&format!("    KernelTime: {}\n", format_100ns(kernel_time)));
-                            report.push_str(&format!("    UserTime: {}\n", format_100ns(user_time)));
-                            report.push_str(&format!("    CreateTime: {}\n", format_filetime(create_time)));
-                            report.push_str(&format!("    WaitTime: {}\n", info.WaitTime));
-                            report.push_str(&format!(
-                                "    ClientId: PID {:?}, TID {:?}\n",
-                                info.ClientId.UniqueProcess, info.ClientId.UniqueThread
-                            ));
-                            report.push_str(&format!("    Priority: {}\n", info.Priority));
-                            report.push_str(&format!("    BasePriority: {}\n", info.BasePriority));
-                            report.push_str(&format!("    ContextSwitches: {}\n", info.ContextSwitches));
-                            report.push_str(&format!("    ThreadState: {}\n", info.ThreadState));
-                            report.push_str(&format!("    WaitReason: {}\n", info.WaitReason));
-                        }
-                    }
-                    log_message(&report);
+            let top_x = threads.into_iter().take(x);
+            let mut report = format!(
+                "Process {} ({}) exited. Top {} threads by CPU cycles:\n",
+                process_stats.process_name, pid, x
+            );
+            for (i, (tid, stats)) in top_x.enumerate() {
+                let module_name = resolve_address_to_module(*pid, stats.start_address);
+                report.push_str(&format!(
+                    "  [{}] TID: {} | Cycles: {} | StartAddress: 0x{:X} ({})\n",
+                    i + 1,
+                    tid,
+                    stats.last_cycles,
+                    stats.start_address,
+                    module_name
+                ));
+                if let Some(info) = &stats.last_system_thread_info {
+                    let kernel_time = unsafe { *info.KernelTime.QuadPart() };
+                    let user_time = unsafe { *info.UserTime.QuadPart() };
+                    let create_time = unsafe { *info.CreateTime.QuadPart() };
+                    report.push_str(&format!("    KernelTime: {}\n", format_100ns(kernel_time)));
+                    report.push_str(&format!("    UserTime: {}\n", format_100ns(user_time)));
+                    report.push_str(&format!("    CreateTime: {}\n", format_filetime(create_time)));
+                    report.push_str(&format!("    WaitTime: {}\n", info.WaitTime));
+                    report.push_str(&format!(
+                        "    ClientId: PID {:?}, TID {:?}\n",
+                        info.ClientId.UniqueProcess, info.ClientId.UniqueThread
+                    ));
+                    report.push_str(&format!("    Priority: {}\n", info.Priority));
+                    report.push_str(&format!("    BasePriority: {}\n", info.BasePriority));
+                    report.push_str(&format!("    ContextSwitches: {}\n", info.ContextSwitches));
+                    report.push_str(&format!("    ThreadState: {}\n", info.ThreadState));
+                    report.push_str(&format!("    WaitReason: {}\n", info.WaitReason));
                 }
-
-                drop_module_cache(*pid);
-                // SAFETY: ThreadHandle's Drop impl will close handles automatically
             }
-            process_stats.alive
-        });
+            log_message(&report);
+        }
+
+        drop_module_cache(*pid);
+        // SAFETY: ThreadHandle's Drop impl will close handles automatically
+        self.pid_to_process_stats.remove(pid);
     }
 }
 

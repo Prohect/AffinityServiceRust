@@ -32,6 +32,7 @@ AffinityServiceRust continuously monitors running processes and applies customiz
 | **Priority Levels** | [docs/priority.md](docs/en-US/priority.rs/README.md) - Priority enum definitions |
 | **Windows API** | [docs/winapi.md](docs/en-US/winapi.rs/README.md) - Windows API wrappers |
 | **Logging** | [docs/logging.md](docs/en-US/logging.rs/README.md) - Error tracking and logging |
+| **ETW Monitoring** | [docs/event_trace.md](docs/en-US/event_trace.rs/README.md) - ETW-based reactive process monitoring |
 
 ## Quick Start
 
@@ -64,6 +65,7 @@ AffinityServiceRust.exe -helpall
 | **Memory Priority** | VeryLow, Low, Medium, BelowNormal, Normal |
 | **Timer Resolution** | Configure system timer resolution for tighter loops |
 | **Hot Reload** | Auto-reload config when files change |
+| **ETW Process Monitoring** | Real-time process start/stop detection via Event Tracing for Windows |
 | **Rule Grades** | Control how often each rule is applied |
 
 ### Prime Thread Scheduling
@@ -462,6 +464,7 @@ target/release/AffinityServiceRust.exe
 | `src/scheduler.rs` | Prime thread scheduler implementation | [scheduler.md](docs/en-US/scheduler.rs/README.md) |
 | `src/apply.rs` | Config application to processes | [apply.md](docs/en-US/apply.rs/README.md) |
 | `src/winapi.rs` | Windows API wrappers, module resolution, privilege handling | [winapi.md](docs/en-US/winapi.rs/README.md) |
+| `src/event_trace.rs` | ETW-based real-time process start/stop monitoring | [event_trace.md](docs/en-US/event_trace.rs/README.md) |
 | `config.ini` | Default configuration file | - |
 | `blacklist.ini` | Default blacklist for process discovery | - |
 | `DEBUG.md` | Debug guide and troubleshooting | - |
@@ -469,21 +472,23 @@ target/release/AffinityServiceRust.exe
 ## How It Works
 
 1. **Startup**: Parse config file via [`read_config()`](docs/en-US/config.rs/read_config.md), request necessary privileges ([`enable_debug_privilege()`](docs/en-US/winapi.rs/enable_debug_privilege.md), [`enable_inc_base_priority_privilege()`](docs/en-US/winapi.rs/enable_inc_base_priority_privilege.md)), optionally elevate to admin; then terminate any child processes inherited from the launcher (e.g. `conhost.exe` attached by a scheduled task runner) before entering the main loop
-2. **Main Loop**: 
+2. **ETW Process Monitor**: Start [`EtwProcessMonitor`](docs/en-US/event_trace.rs/EtwProcessMonitor.md) for reactive process detection — new processes trigger immediate rule application without waiting for the next polling interval
+3. **Main Loop**: 
    - Enumerate all running processes via [`ProcessSnapshot`](docs/en-US/process.rs/ProcessSnapshot.md)
    - Match each process against configured rules
-   - Apply settings via [`apply_config()`](docs/en-US/main.rs/apply_config.md): priority, affinity, CPU sets, prime scheduling, and more
+   - Apply process-level settings via [`apply_config_process_level()`](docs/en-US/main.rs/apply_config_process_level.md) (one-shot: priority, affinity, CPU sets, I/O, memory) and thread-level settings via [`apply_config_thread_level()`](docs/en-US/main.rs/apply_config_thread_level.md) (per-iteration: prime scheduling, ideal processors)
    - Sleep for configured interval
-3. **Hot Reload**: Monitor config files for changes, automatically reload and reapply
-4. **Prime Thread Scheduler**:
+4. **ETW Reactive Detection**: Process start events from [`EtwProcessMonitor`](docs/en-US/event_trace.rs/EtwProcessMonitor.md) trigger immediate process-level rule application; process stop events clean up scheduler state and error tracking
+5. **Hot Reload**: Monitor config files for changes, automatically reload and reapply
+6. **Prime Thread Scheduler**:
    - Track thread cycle time at each interval
    - Apply hysteresis-based promotion/demotion logic via [`PrimeThreadScheduler`](docs/en-US/scheduler.rs/PrimeThreadScheduler.md)
    - Use Windows CPU Sets for fine-grained thread placement
-5. **Shared Cycle Prefetch** (per process, before prime and ideal scheduling):
+7. **Shared Cycle Prefetch** (per process, before prime and ideal scheduling):
    - Rank all threads by CPU-time delta from `NtQuerySystemInformation` data (no extra syscall)
    - Keep only the top-N threads (N = logical CPU count) — threads below cannot win any assignment slot
    - Open handles and call `QueryThreadCycleTime` for the top-N only; results cached in [`ThreadStats::cached_cycles`](docs/en-US/scheduler.rs/ThreadStats.md)
-6. **Ideal Processor Assignment** (per process, per interval):
+8. **Ideal Processor Assignment** (per process, per interval):
    - Apply the same hysteresis filter (streak + keep/entry thresholds) as prime thread scheduling
    - Pass 1: already-assigned threads above `keep_threshold` keep their slot — no write syscall
    - Pass 2: promote threads above `entry_threshold` with satisfied streak; skip `SetThreadIdealProcessorEx` if thread is already on a free-pool CPU (lazy set)
@@ -499,7 +504,7 @@ target/release/AffinityServiceRust.exe
 
    to `.find.log`. This is **intentional** — the service applies rules to every matching process name it sees in the snapshot, including its own short-lived children. The child is terminated before the main loop starts (see startup cleanup), so this entry will appear at most once per run and can be safely ignored.
 
-8. **`[OPEN][ACCESS_DENIED]` per-PID deduplication**: When [`apply_config()`](docs/en-US/main.rs/apply_config.md) fails to open a process due to `ACCESS_DENIED`, the error is written to `.find.log` exactly once per unique `(pid, process_name)` pair. After each snapshot, the deduplication map is reconciled: entries whose PID has exited or been reused for a different executable are evicted, so if the same process name later re-appears under a new PID the error fires once more. Multiple concurrent instances of the same executable (e.g. several `svchost.exe` processes with different PIDs) are tracked independently — one denied instance never silences errors for any other PID sharing the same name.
+8. **`[OPEN][ACCESS_DENIED]` per-PID deduplication**: When [`apply_config_process_level()`](docs/en-US/main.rs/apply_config_process_level.md)/[`apply_config_thread_level()`](docs/en-US/main.rs/apply_config_thread_level.md) fails to open a process due to `ACCESS_DENIED`, the error is written to `.find.log` exactly once per unique `(pid, process_name)` pair. After each snapshot, the deduplication map is reconciled: entries whose PID has exited or been reused for a different executable are evicted, so if the same process name later re-appears under a new PID the error fires once more. Multiple concurrent instances of the same executable (e.g. several `svchost.exe` processes with different PIDs) are tracked independently — one denied instance never silences errors for any other PID sharing the same name.
 
 See [`is_new_error()`](docs/en-US/logging.rs/is_new_error.md) for error deduplication implementation.
 

@@ -2,6 +2,7 @@ mod apply;
 mod cli;
 mod config;
 mod error_codes;
+mod event_trace;
 mod logging;
 mod priority;
 mod process;
@@ -13,13 +14,14 @@ use apply::{
     apply_process_default_cpuset, prefetch_all_thread_cycles, update_thread_stats,
 };
 use cli::{CliArgs, parse_args, print_help, print_help_all};
-use config::{ProcessConfig, convert, read_config, read_list, sort_and_group_config};
-use logging::{log_message, log_process_find, log_pure_message, log_to_find, purge_fail_map};
-use process::{ProcessEntry, ProcessSnapshot};
+use config::{ProcessConfig, convert, hotreload_blacklist, hotreload_config, read_config, read_list, sort_and_group_config};
+use event_trace::EtwProcessMonitor;
+use logging::{log_message, log_process_find, log_pure_message, log_to_find};
+use process::{PID_TO_PROCESS_MAP, ProcessEntry, ProcessSnapshot, SNAPSHOT_BUFFER};
 use scheduler::PrimeThreadScheduler;
 use winapi::{
-    NtSetTimerResolution, drop_module_cache, enable_debug_privilege, enable_inc_base_priority_privilege, get_process_handle,
-    is_affinity_unset, is_running_as_admin, request_uac_elevation, terminate_child_processes,
+    drop_module_cache, enable_debug_privilege, enable_inc_base_priority_privilege, get_process_handle, is_affinity_unset, is_running_as_admin,
+    request_uac_elevation, set_timer_resolution, terminate_child_processes,
 };
 
 use chrono::Local;
@@ -27,7 +29,6 @@ use encoding_rs::Encoding;
 use std::{
     collections::{HashMap, HashSet},
     env,
-    ffi::c_void,
     fs::{metadata, read_dir, read_to_string, write},
     io::Write,
     mem::size_of,
@@ -40,33 +41,24 @@ use windows::Win32::{
     System::{
         Console::GetConsoleOutputCP,
         Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS},
+        Threading::GetProcessAffinityMask,
     },
 };
 
-/// Applies all configuration settings to a target process.
-///
-/// This is the core function that orchestrates applying priority, affinity, CPU sets,
-/// IO priority, memory priority, and prime thread scheduling to a process.
-///
-/// # Arguments
-/// * `pid` - Target process ID
-/// * `config` - Process configuration containing all settings to apply
-/// * `prime_core_scheduler` - Scheduler for managing prime threads
-/// * `processes` - Current process snapshot for thread enumeration
-/// * `dry_run` - If true, only reports what would change without applying
-fn apply_config(
+/// Applies process-level settings (one-shot per process).
+/// Includes: priority, affinity (with thread ideal processor reset), CPU set, IO priority, memory priority.
+fn apply_config_process_level(
     pid: u32,
     config: &ProcessConfig,
-    prime_core_scheduler: &mut PrimeThreadScheduler,
     process: &mut ProcessEntry,
     dry_run: bool,
-) -> ApplyConfigResult {
-    let mut apply_config_result = ApplyConfigResult::new();
+    apply_config_result: &mut ApplyConfigResult,
+) {
     let Some(process_handle) = get_process_handle(pid, &config.name) else {
-        return apply_config_result;
+        return;
     };
     let mut current_mask: usize = 0;
-    apply_priority(pid, config, dry_run, &process_handle, &mut apply_config_result);
+    apply_priority(pid, config, dry_run, &process_handle, apply_config_result);
     apply_affinity(
         pid,
         config,
@@ -74,19 +66,40 @@ fn apply_config(
         &mut current_mask,
         &process_handle,
         process,
-        &mut apply_config_result,
+        apply_config_result,
     );
-    apply_process_default_cpuset(pid, config, dry_run, &process_handle, process, &mut apply_config_result);
-    apply_io_priority(pid, config, dry_run, &process_handle, &mut apply_config_result);
-    apply_memory_priority(pid, config, dry_run, &process_handle, &mut apply_config_result);
+    apply_process_default_cpuset(pid, config, dry_run, &process_handle, process, apply_config_result);
+    apply_io_priority(pid, config, dry_run, &process_handle, apply_config_result);
+    apply_memory_priority(pid, config, dry_run, &process_handle, apply_config_result);
+}
+
+/// Applies thread-level settings (every polling iteration).
+/// Includes: prime thread scheduling, ideal processor assignment, cycle time tracking.
+fn apply_config_thread_level(
+    pid: u32,
+    config: &ProcessConfig,
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    process: &mut ProcessEntry,
+    dry_run: bool,
+    apply_config_result: &mut ApplyConfigResult,
+) {
     if !config.prime_threads_cpus.is_empty()
         || !config.prime_threads_prefixes.is_empty()
         || !config.ideal_processor_rules.is_empty()
         || config.track_top_x_threads != 0
     {
+        // Query current affinity mask for prime thread CPU filtering
+        let mut current_mask: usize = 0;
+        if (!config.prime_threads_cpus.is_empty() || !config.affinity_cpus.is_empty())
+            && let Some(process_handle) = get_process_handle(pid, &config.name)
+        {
+            let mut system_mask: usize = 0;
+            let r_handle = process_handle.r_handle.unwrap_or(process_handle.r_limited_handle);
+            let _ = unsafe { GetProcessAffinityMask(r_handle, &mut current_mask, &mut system_mask) };
+        }
         drop_module_cache(pid);
         prime_core_scheduler.set_alive(pid);
-        prefetch_all_thread_cycles(pid, config, process, prime_core_scheduler, &mut apply_config_result);
+        prefetch_all_thread_cycles(pid, config, process, prime_core_scheduler, apply_config_result);
         apply_prime_threads(
             pid,
             config,
@@ -94,12 +107,11 @@ fn apply_config(
             &mut current_mask,
             process,
             prime_core_scheduler,
-            &mut apply_config_result,
+            apply_config_result,
         );
-        apply_ideal_processors(pid, config, dry_run, process, prime_core_scheduler, &mut apply_config_result);
+        apply_ideal_processors(pid, config, dry_run, process, prime_core_scheduler, apply_config_result);
         update_thread_stats(pid, prime_core_scheduler);
     }
-    apply_config_result
 }
 
 /// Processes log files from -find mode to discover new processes.
@@ -192,6 +204,42 @@ fn process_logs(
     }
 }
 
+fn process_find(
+    cli: &CliArgs,
+    configs: &HashMap<u32, HashMap<String, ProcessConfig>>,
+    blacklist: &[String],
+) -> Result<(), windows::core::Error> {
+    let _: () = if cli.find_mode {
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
+            let mut pe32 = PROCESSENTRY32W {
+                dwSize: size_of::<PROCESSENTRY32W>() as u32,
+                ..Default::default()
+            };
+            if Process32FirstW(snapshot, &mut pe32).is_ok() {
+                loop {
+                    let process_name =
+                        String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]).to_lowercase();
+
+                    let in_configs = configs.values().any(|grade_configs| grade_configs.contains_key(&process_name));
+                    if !get_fail_find_set!().contains(&process_name)
+                        && !in_configs
+                        && !blacklist.contains(&process_name)
+                        && is_affinity_unset(pe32.th32ProcessID, process_name.as_str())
+                    {
+                        log_process_find(&process_name);
+                    }
+                    if Process32NextW(snapshot, &mut pe32).is_err() {
+                        break;
+                    }
+                }
+            }
+            let _ = CloseHandle(snapshot);
+        }
+    };
+    Ok(())
+}
+
 fn main() -> windows::core::Result<()> {
     let args: Vec<String> = env::args().collect();
     let mut cli = CliArgs::new();
@@ -229,6 +277,10 @@ fn main() -> windows::core::Result<()> {
     } else {
         Vec::new()
     };
+    if cli.process_logs_mode {
+        process_logs(&configs, &blacklist, cli.in_file_name.as_deref(), cli.out_file_name.as_deref());
+        return Ok(());
+    }
 
     let mut last_config_mod_time = metadata(&cli.config_file_name).and_then(|m| m.modified()).ok();
     let mut last_blacklist_mod_time = cli
@@ -237,10 +289,6 @@ fn main() -> windows::core::Result<()> {
         .and_then(|bf| metadata(bf).and_then(|m| m.modified()).ok());
     let is_config_empty = configs.is_empty();
     let is_blacklist_empty = blacklist.is_empty();
-    if cli.process_logs_mode {
-        process_logs(&configs, &blacklist, cli.in_file_name.as_deref(), cli.out_file_name.as_deref());
-        return Ok(());
-    }
     if is_config_empty && is_blacklist_empty {
         if !cli.find_mode {
             log!("not even a single config, existing");
@@ -262,19 +310,7 @@ fn main() -> windows::core::Result<()> {
     }
 
     if cli.time_resolution != 0 {
-        unsafe {
-            let mut current_resolution = 0u32;
-            match NtSetTimerResolution(cli.time_resolution, true, &mut current_resolution as *mut _ as *mut c_void).0 {
-                ntstatus if ntstatus < 0 => {
-                    log!("Failed to set timer resolution: 0x{:08X}", ntstatus);
-                }
-                ntstatus if ntstatus >= 0 => {
-                    log!("Succeed to set timer resolution: {:.4}ms", cli.time_resolution as f64 / 10000f64);
-                    log!("elder timer resolution: {:.4}ms", current_resolution);
-                }
-                _ => {}
-            };
-        }
+        set_timer_resolution(&cli);
     }
     log!("Affinity Service started with time interval: {}", cli.interval_ms);
 
@@ -294,35 +330,81 @@ fn main() -> windows::core::Result<()> {
             }
         }
     }
+    terminate_child_processes();
     *get_dust_bin_mod!() = false;
     let mut prime_core_scheduler = PrimeThreadScheduler::new(config_result.constants);
     let mut current_loop = 0u32;
     let mut should_continue = true;
 
-    terminate_child_processes();
+    // Start ETW process monitor for reactive process level rule application
+    let etw_rx = match EtwProcessMonitor::start() {
+        Ok((monitor, rx)) => {
+            log!("ETW process monitor started (reactive process detection enabled)");
+            Some((monitor, rx))
+        }
+        Err(e) => {
+            log!("ETW process monitor failed to start: {} (falling back to polling only)", e);
+            None
+        }
+    };
 
-    let mut buffer: Vec<u8> = vec![0u8; 32];
+    let mut process_level_applied: HashSet<u32> = HashSet::new();
+    let mut process_level_pending: HashSet<u32> = HashSet::new();
+
     while should_continue {
         if cli.log_loop {
             log!("Loop {} started", current_loop + 1);
         }
-        match ProcessSnapshot::take(&mut buffer) {
+        match ProcessSnapshot::take(&mut SNAPSHOT_BUFFER.lock().unwrap(), &mut PID_TO_PROCESS_MAP.lock().unwrap()) {
             Err(err) => {
                 log!("Failed to take process snapshot: {}", err);
             }
-            Ok(mut processes) => {
+            Ok(processes) => {
                 let mut total_changes = 0;
                 let pids_and_names: Vec<(u32, String)> = processes
                     .pid_to_process
                     .values()
                     .map(|p| (p.pid(), p.get_name().to_string()))
                     .collect();
-                purge_fail_map(&pids_and_names);
                 prime_core_scheduler.reset_alive();
 
                 // Grade-based scheduling: rules with higher grade values run less frequently
-                // e.g., grade=1 runs every loop, grade=5 runs every 5th loop
+                // e.g., grade=1 runs every loop, grade=5 runs every 5th loop;
                 for (grade, grade_configs) in &configs {
+                    // process_level_pending dont respect grade being applied just in time
+                    process_level_pending.retain(|pid_pending| {
+                        pids_and_names.iter().any(|(pid, name)| -> bool {
+                            if pid == pid_pending {
+                                if let Some(config) = grade_configs.get(name)
+                                    && let Some(process) = processes.pid_to_process.get_mut(pid)
+                                {
+                                    let mut result = ApplyConfigResult::new();
+                                    apply_config_process_level(*pid, config, process, cli.dry_run, &mut result);
+                                    if !result.is_empty() {
+                                        for error in &result.errors {
+                                            log_to_find(error);
+                                        }
+                                        if !result.changes.is_empty() {
+                                            let first = format!("{:>5}::{}::{}", pid, config.name, result.changes[0]);
+                                            log_message(&first);
+                                            let padding = " ".repeat(first.len() - result.changes[0].len() + 10); //10 for time prefix, eg."[04:55:16]"
+                                            for change in &result.changes[1..] {
+                                                log_pure_message(&format!("{}{}", padding, change));
+                                            }
+                                        }
+                                        total_changes += result.changes.len();
+                                    }
+                                    process_level_applied.insert(*pid);
+                                    false
+                                } else {
+                                    true
+                                }
+                            } else {
+                                true
+                            }
+                        })
+                    });
+
                     if !current_loop.is_multiple_of(*grade) {
                         continue; // Skip this grade this loop
                     }
@@ -332,12 +414,17 @@ fn main() -> windows::core::Result<()> {
                             let Some(process) = processes.pid_to_process.get_mut(pid) else {
                                 continue;
                             };
-                            let result = apply_config(*pid, config, &mut prime_core_scheduler, process, cli.dry_run);
+
+                            let mut result = ApplyConfigResult::new();
+                            if !process_level_applied.contains(pid) {
+                                apply_config_process_level(*pid, config, process, cli.dry_run, &mut result);
+                                process_level_applied.insert(*pid);
+                            }
+                            apply_config_thread_level(*pid, config, &mut prime_core_scheduler, process, cli.dry_run, &mut result);
                             if !result.is_empty() {
                                 for error in &result.errors {
                                     log_to_find(error);
                                 }
-
                                 if !result.changes.is_empty() {
                                     let first = format!("{:>5}::{}::{}", pid, config.name, result.changes[0]);
                                     log_message(&first);
@@ -346,50 +433,22 @@ fn main() -> windows::core::Result<()> {
                                         log_pure_message(&format!("{}{}", padding, change));
                                     }
                                 }
-
                                 total_changes += result.changes.len();
                             }
                         }
                     }
                 }
-                prime_core_scheduler.close_dead_process_handles();
+
+                process_level_pending.clear();
                 if cli.dry_run {
                     log!("[DRY RUN] {} change(s) would be made. Run without -dryrun to apply.", total_changes);
                     should_continue = false;
                 }
-
                 drop(processes);
             }
         };
-        if cli.find_mode {
-            unsafe {
-                let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
-                let mut pe32 = PROCESSENTRY32W {
-                    dwSize: size_of::<PROCESSENTRY32W>() as u32,
-                    ..Default::default()
-                };
-                if Process32FirstW(snapshot, &mut pe32).is_ok() {
-                    loop {
-                        let process_name =
-                            String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)])
-                                .to_lowercase();
+        process_find(&cli, &configs, &blacklist)?;
 
-                        let in_configs = configs.values().any(|grade_configs| grade_configs.contains_key(&process_name));
-                        if !get_fail_find_set!().contains(&process_name)
-                            && !in_configs
-                            && !blacklist.contains(&process_name)
-                            && is_affinity_unset(pe32.th32ProcessID, process_name.as_str())
-                        {
-                            log_process_find(&process_name);
-                        }
-                        if Process32NextW(snapshot, &mut pe32).is_err() {
-                            break;
-                        }
-                    }
-                }
-                let _ = CloseHandle(snapshot);
-            }
-        }
         let _ = get_logger_find!().flush();
         let _ = get_logger!().flush();
         current_loop += 1;
@@ -405,51 +464,33 @@ fn main() -> windows::core::Result<()> {
             thread::sleep(Duration::from_millis(cli.interval_ms));
 
             *get_local_time!() = Local::now();
-            if let Ok(metadata) = metadata(&cli.config_file_name)
-                && let Ok(mod_time) = metadata.modified()
-                && Some(mod_time) != last_config_mod_time
-            {
-                last_config_mod_time = Some(mod_time);
-                log!("Configuration file '{}' changed, reloading...", cli.config_file_name);
-                let new_config_result = read_config(&cli.config_file_name);
-                if new_config_result.errors.is_empty() {
-                    new_config_result.print_report();
-                    let total_rules = new_config_result.total_rules();
-                    configs = new_config_result.configs;
-                    prime_core_scheduler.constants = new_config_result.constants;
-                    log!("Configuration reload complete: {} rules loaded.", total_rules);
-                } else {
-                    log!(
-                        "Configuration file '{}' has errors, keeping previous configuration.",
-                        cli.config_file_name
-                    );
-                    for error in &new_config_result.errors {
-                        log!("  - {}", error);
+            if let Some((_, ref rx)) = etw_rx {
+                let mut pid_map_fail_entry_set = get_pid_map_fail_entry_set!();
+                while let Ok(event) = rx.try_recv() {
+                    if event.is_start {
+                        process_level_pending.insert(event.pid);
+                    } else {
+                        process_level_pending.remove(&event.pid);
+                        process_level_applied.remove(&event.pid);
+                        pid_map_fail_entry_set.remove(&event.pid);
+                        prime_core_scheduler.drop_process_by_pid(&event.pid);
                     }
                 }
             }
-            if let Some(ref blacklist_file) = cli.blacklist_file_name {
-                match metadata(blacklist_file) {
-                    Err(_) => {
-                        if last_blacklist_mod_time.is_some() {
-                            last_blacklist_mod_time = None;
-                            log!("Blacklist file '{}' no longer accessible, clearing blacklist.", blacklist_file);
-                            blacklist.clear();
-                        }
-                    }
-                    Ok(metadata) => {
-                        if let Ok(mod_time) = metadata.modified()
-                            && Some(mod_time) != last_blacklist_mod_time
-                        {
-                            last_blacklist_mod_time = Some(mod_time);
-                            log!("Blacklist file '{}' changed, reloading...", blacklist_file);
-                            blacklist = read_list(blacklist_file).unwrap_or_default();
-                            log!("Blacklist reload complete: {} items loaded.", blacklist.len());
-                        }
-                    }
-                }
-            }
+            hotreload_config(
+                &cli,
+                &mut configs,
+                &mut last_config_mod_time,
+                &mut prime_core_scheduler,
+                &mut process_level_applied,
+            );
+            hotreload_blacklist(&cli, &mut blacklist, &mut last_blacklist_mod_time);
         }
+    }
+    // Stop ETW process monitor
+    if let Some((mut monitor, _)) = etw_rx {
+        monitor.stop();
+        log!("ETW process monitor stopped");
     }
     Ok(())
 }

@@ -7,7 +7,7 @@
 ```rust
 pub struct ProcessSnapshot<'a> {
     buffer: &'a mut Vec<u8>,
-    pub pid_to_process: HashMap<u32, ProcessEntry>,
+    pub pid_to_process: &'a mut HashMap<u32, ProcessEntry>,
 }
 ```
 
@@ -19,20 +19,20 @@ pub struct ProcessSnapshot<'a> {
 
 `pid_to_process`
 
-`HashMap<u32, ProcessEntry>` — 以进程 ID 为键的进程条目映射表。公开字段，调用者可直接按 PID 查找或遍历所有进程。
+`&'a mut HashMap<u32, ProcessEntry>` — 对全局 [`PID_TO_PROCESS_MAP`](PID_TO_PROCESS_MAP.md) 的可变引用，以进程 ID 为键的进程条目映射表。公开字段，调用者可直接按 PID 查找或遍历所有进程。之前由 `ProcessSnapshot` 直接拥有，现改为引用共享静态变量，以允许快照数据在循环迭代生命周期内安全共享。
 
 ## 方法
 
 | 方法 | 签名 | 描述 |
 | --- | --- | --- |
-| **take** | `pub fn take(buffer: &'a mut Vec<u8>) -> Result<Self, i32>` | 执行系统调用并构建快照。 |
+| **take** | `pub fn take(buffer: &'a mut Vec<u8>, pid_to_process: &'a mut HashMap<u32, ProcessEntry>) -> Result<Self, i32>` | 执行系统调用并构建快照。 |
 | **get_by_name** | `pub fn get_by_name(&self, name: String) -> Vec<&ProcessEntry>` | 按进程名（小写）过滤并返回所有匹配的条目引用。 |
 
 ## 备注
 
 ### take — 缓冲区动态增长
 
-`take` 方法调用 `NtQuerySystemInformation(SystemProcessInformation, ...)` 获取系统中所有进程和线程的信息。如果缓冲区不足（返回 `STATUS_INFO_LENGTH_MISMATCH`，即 `0xC0000004`），方法会自动按以下策略增长缓冲区并重试：
+`take` 方法接受外部传入的 `buffer` 和 `pid_to_process`（通常来自全局 [`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md) 和 [`PID_TO_PROCESS_MAP`](PID_TO_PROCESS_MAP.md)），调用 `NtQuerySystemInformation(SystemProcessInformation, ...)` 获取系统中所有进程和线程的信息。如果缓冲区不足（返回 `STATUS_INFO_LENGTH_MISMATCH`，即 `0xC0000004`），方法会自动按以下策略增长缓冲区并重试：
 
 - 若系统返回了 `return_length`，则使用 `((return_length / 8) + 1) * 8` 进行 8 字节对齐分配。
 - 否则将缓冲区大小翻倍。
@@ -72,7 +72,7 @@ pub struct ProcessSnapshot<'a> {
 | 要求 | 值 |
 | --- | --- |
 | **模块** | src/process.rs |
-| **行号** | L4–L72 |
+| **行号** | L6–L14 |
 | **crate 依赖** | `ntapi::ntexapi::{NtQuerySystemInformation, SYSTEM_PROCESS_INFORMATION, SystemProcessInformation}` |
 | **调用者** | `src/main.rs` 主循环 |
 | **Windows API** | [NtQuerySystemInformation](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntquerysysteminformation) |
@@ -81,4 +81,6 @@ pub struct ProcessSnapshot<'a> {
 
 - [process.rs 模块概述](README.md)
 - [ProcessEntry](ProcessEntry.md)
+- [SNAPSHOT_BUFFER](SNAPSHOT_BUFFER.md) — 快照数据的全局缓冲区
+- [PID_TO_PROCESS_MAP](PID_TO_PROCESS_MAP.md) — 全局进程映射表
 - [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) — 使用快照数据进行线程调度

@@ -37,7 +37,7 @@ pub struct PrimeThreadScheduler {
 | **get_thread_stats** | `pub fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats` | 获取指定线程的可变引用。若进程或线程条目不存在则自动创建。 |
 | **update_active_streaks** | `pub fn update_active_streaks(&mut self, pid: u32, tid_with_delta_cycles: &[(u32, u64)])` | 更新活跃连续计数器，用于滞后线程选择。 |
 | **select_top_threads_with_hysteresis** | `pub fn select_top_threads_with_hysteresis(&mut self, pid: u32, tid_with_delta_cycles: &mut [(u32, u64, bool)], slot_count: usize, is_currently_assigned: fn(&ThreadStats) -> bool)` | 使用滞后算法选择顶部线程。 |
-| **close_dead_process_handles** | `pub fn close_dead_process_handles(&mut self)` | 清理已退出进程的句柄和缓存数据。 |
+| **drop_process_by_pid** | `pub fn drop_process_by_pid(&mut self, pid: &u32)` | 按 PID 移除指定进程，关闭其线程句柄，清除模块缓存，并可选记录顶部线程报告。 |
 
 ## 备注
 
@@ -63,13 +63,13 @@ Prime 线程调度的核心机制是**两阈值滞后（hysteresis）算法**，
 
 ### 生命周期管理
 
-调度器通过 `reset_alive` / `set_alive` / `close_dead_process_handles` 三步机制管理进程生命周期：
+调度器通过 `reset_alive` / `set_alive` / `drop_process_by_pid` 机制管理进程生命周期：
 
 1. 每次循环开始时调用 `reset_alive()`，将所有进程标记为未存活。
 2. 遍历快照中的进程时调用 `set_alive(pid)`，标记仍在运行的进程。
-3. 循环结束时调用 `close_dead_process_handles()`，清理未被标记为存活的进程。
+3. 当 ETW 进程退出事件到达或检测到进程已退出时，调用 `drop_process_by_pid(pid)` 按 PID 移除指定进程。
 
-`close_dead_process_handles` 在清理前会可选地记录已退出进程的顶部线程统计信息（当 `track_top_x_threads != 0` 时），包括 CPU 周期、内核/用户时间、创建时间、上下文切换次数等详细数据。线程句柄通过 [ThreadHandle](../winapi.rs/ThreadHandle.md) 的 `Drop` 实现自动关闭。
+`drop_process_by_pid` 在清理前会可选地记录已退出进程的顶部线程统计信息（当 `track_top_x_threads != 0` 时），包括 CPU 周期、内核/用户时间、创建时间、上下文切换次数等详细数据。线程句柄通过 [ThreadHandle](../winapi.rs/ThreadHandle.md) 的 `Drop` 实现自动关闭。
 
 ## 要求
 

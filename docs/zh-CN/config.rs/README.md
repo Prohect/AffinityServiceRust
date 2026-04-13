@@ -51,6 +51,13 @@
 | [convert](convert.md) | 将 Process Lasso INI 配置转换为本项目格式 |
 | [sort_and_group_config](sort_and_group_config.md) | 自动分组具有相同规则的进程以减少重复 |
 
+## 热重载函数
+
+| 函数 | 说明 |
+| --- | --- |
+| [hotreload_blacklist](hotreload_blacklist.md) | 检查黑名单文件是否变更并按需重载 |
+| [hotreload_config](hotreload_config.md) | 检查配置文件是否变更并按需重载 |
+
 ## 另请参阅
 
 - [priority.rs](../priority.rs/) — `ProcessPriority`、`IOPriority`、`MemoryPriority`、`ThreadPriority` 枚举

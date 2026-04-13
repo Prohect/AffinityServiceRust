@@ -14,6 +14,7 @@ Each source module (`src/*.rs`) is documented as a directory, with every top-lev
 | [apply.rs/](apply.rs/) | `src/apply.rs` | Config application logic |
 | [scheduler.rs/](scheduler.rs/) | `src/scheduler.rs` | Prime thread scheduler with hysteresis |
 | [process.rs/](process.rs/) | `src/process.rs` | Process and thread enumeration |
+| [event_trace.rs/](event_trace.rs/) | `src/event_trace.rs` | ETW process monitoring |
 | [priority.rs/](priority.rs/) | `src/priority.rs` | Priority level definitions |
 | [winapi.rs/](winapi.rs/) | `src/winapi.rs` | Windows API wrappers |
 | [logging.rs/](logging.rs/) | `src/logging.rs` | Logging and error tracking |
@@ -53,8 +54,9 @@ Cross-references between items use relative markdown links:
 
 ### For Developers
 
-- **Main Loop:** See [main](main.rs/main.md) and [apply_config](main.rs/apply_config.md)
+- **Main Loop:** See [main](main.rs/main.md), [apply_config_process_level](main.rs/apply_config_process_level.md), and [apply_config_thread_level](main.rs/apply_config_thread_level.md)
 - **Adding New Settings:** See [apply.rs/](apply.rs/) for the apply function pattern
 - **Error Handling:** See [is_new_error](logging.rs/is_new_error.md) and [Operation](logging.rs/Operation.md)
 - **Windows API Integration:** See [winapi.rs/](winapi.rs/) for handle management and CPU set operations
 - **Process Enumeration:** See [ProcessSnapshot](process.rs/ProcessSnapshot.md)
+- **ETW Process Monitoring:** See [event_trace.rs/](event_trace.rs/) for reactive process detection

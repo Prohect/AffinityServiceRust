@@ -7,7 +7,6 @@ Composite key structure used for error deduplication, combining all the identify
 ```rust
 #[derive(Hash, Eq, PartialEq)]
 pub struct ApplyFailEntry {
-    pid: u32,
     tid: u32,
     process_name: String,
     operation: Operation,
@@ -16,10 +15,6 @@ pub struct ApplyFailEntry {
 ```
 
 ## Members
-
-`pid`
-
-The process identifier of the target process for which the operation failed.
 
 `tid`
 
@@ -39,30 +34,31 @@ The Win32 error code (`u32`) returned by `GetLastError` at the time of failure. 
 
 ## Remarks
 
-`ApplyFailEntry` derives `Hash` and `Eq`, enabling it to be used as a key in the `HashMap` inside [`PID_MAP_FAIL_ENTRY_SET`](PID_MAP_FAIL_ENTRY_SET.md). Two entries are considered equal if and only if all five fields match exactly. This means that:
+`ApplyFailEntry` derives `Hash` and `Eq`, enabling it to be used as a key in the `HashMap` inside [`PID_MAP_FAIL_ENTRY_SET`](PID_MAP_FAIL_ENTRY_SET.md). Two entries are considered equal if and only if all four fields match exactly. This means that:
 
 - The same error code for the same operation on a different thread is tracked separately.
 - A different error code for the same operation on the same thread is tracked separately.
-- The same error on the same PID/TID but with a different process name (e.g., after PID reuse) is tracked separately.
+- The same error on the same TID but with a different process name (e.g., after PID reuse) is tracked separately.
 
 The primary consumer of this struct is [`is_new_error`](is_new_error.md), which constructs an `ApplyFailEntry` from its parameters and checks for its presence in the global deduplication map. If the entry is not yet present, it is inserted and the function returns `true`, signaling the caller to log the error. If already present, the function returns `false`, suppressing the duplicate.
 
-### Why all five fields?
+### Why all four fields?
 
-Using all five fields as the composite key ensures maximum precision in deduplication:
+Using all four fields as the composite key ensures maximum precision in deduplication:
 
-- **`pid`** — prevents errors for different processes from interfering with each other.
 - **`tid`** — allows thread-level errors (e.g., `SetThreadIdealProcessorEx` failures) to be tracked independently per thread.
 - **`process_name`** — guards against PID reuse: if a new process takes over a terminated process's PID, errors for the new process are treated as novel.
 - **`operation`** — distinguishes between different API calls that may fail independently for the same process.
 - **`error_code`** — captures the specific failure reason, so a new type of failure on the same operation is still logged.
+
+Note that PID-level separation is handled by the outer map in [`PID_MAP_FAIL_ENTRY_SET`](PID_MAP_FAIL_ENTRY_SET.md), which is keyed by PID. This means errors for different processes are inherently isolated without needing a `pid` field inside the entry itself.
 
 ## Requirements
 
 | Requirement | Value |
 | --- | --- |
 | **Module** | src/logging.rs |
-| **Lines** | L97–L103 |
+| **Lines** | L97–L102 |
 | **Stored in** | [`PID_MAP_FAIL_ENTRY_SET`](PID_MAP_FAIL_ENTRY_SET.md) |
 | **Created by** | [`is_new_error`](is_new_error.md) |
 
@@ -71,5 +67,4 @@ Using all five fields as the composite key ensures maximum precision in deduplic
 - [Operation enum](Operation.md)
 - [is_new_error function](is_new_error.md)
 - [PID_MAP_FAIL_ENTRY_SET static](PID_MAP_FAIL_ENTRY_SET.md)
-- [purge_fail_map function](purge_fail_map.md)
 - [logging.rs module overview](README.md)

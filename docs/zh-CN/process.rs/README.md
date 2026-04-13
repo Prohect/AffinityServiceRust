@@ -4,7 +4,7 @@
 
 ## 概述
 
-本模块是整个应用程序获取运行进程信息的基础设施层。主循环在每次迭代开始时调用 [`ProcessSnapshot::take`](ProcessSnapshot.md) 获取系统快照，随后通过 PID 查找匹配配置规则的进程，再通过 [`ProcessEntry`](ProcessEntry.md) 访问进程的线程列表和元数据。
+本模块是整个应用程序获取运行进程信息的基础设施层。主循环在每次迭代开始时调用 [`ProcessSnapshot::take`](ProcessSnapshot.md) 获取系统快照，随后通过 PID 查找匹配配置规则的进程，再通过 [`ProcessEntry`](ProcessEntry.md) 访问进程的线程列表和元数据。快照缓冲区和进程映射表作为全局静态变量（[`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md)、[`PID_TO_PROCESS_MAP`](PID_TO_PROCESS_MAP.md)）跨迭代复用。
 
 **设计要点：**
 
@@ -21,6 +21,13 @@
 | --- | --- |
 | [ProcessSnapshot](ProcessSnapshot.md) | 系统进程快照，通过单次 `NtQuerySystemInformation` 调用捕获所有进程和线程。 |
 | [ProcessEntry](ProcessEntry.md) | 单个进程条目，包含进程信息和延迟解析的线程集合。 |
+
+### 静态变量
+
+| 名称 | 描述 |
+| --- | --- |
+| [SNAPSHOT_BUFFER](SNAPSHOT_BUFFER.md) | 快照数据的全局缓冲区，跨迭代复用。 |
+| [PID_TO_PROCESS_MAP](PID_TO_PROCESS_MAP.md) | 每次快照填充的全局进程映射表。 |
 
 ## 数据流
 
@@ -59,7 +66,7 @@ NtQuerySystemInformation
 | **模块** | `src/process.rs` |
 | **外部 crate** | `ntapi`（`NtQuerySystemInformation`、`SYSTEM_PROCESS_INFORMATION`、`SYSTEM_THREAD_INFORMATION`） |
 | **调用者** | `src/main.rs` 中的主循环 |
-| **消费者** | [`apply.rs`](../apply.rs/README.md)、[`scheduler.rs`](../scheduler.rs/README.md) |
+| **消费者** | [`apply.rs`](../apply.rs/README.md)、[`scheduler.rs`](../scheduler.rs/README.md)、[`apply_config_process_level`](../main.rs/apply_config_process_level.md)、[`apply_config_thread_level`](../main.rs/apply_config_thread_level.md) |
 
 ## 另请参阅
 

@@ -14,6 +14,7 @@ This module encapsulates all direct Windows API calls used by the application, o
 - **Affinity queries** — [`is_affinity_unset`](is_affinity_unset.md)
 - **Thread ideal processor** — [`set_thread_ideal_processor_ex`](set_thread_ideal_processor_ex.md), [`get_thread_ideal_processor_ex`](get_thread_ideal_processor_ex.md), [`get_thread_start_address`](get_thread_start_address.md)
 - **Module resolution** — [`MODULE_CACHE`](MODULE_CACHE.md), [`resolve_address_to_module`](resolve_address_to_module.md), [`drop_module_cache`](drop_module_cache.md), [`enumerate_process_modules`](enumerate_process_modules.md)
+- **Timer resolution** — [`set_timer_resolution`](set_timer_resolution.md)
 - **Process cleanup** — [`terminate_child_processes`](terminate_child_processes.md)
 
 ## Items
@@ -58,11 +59,12 @@ This module encapsulates all direct Windows API calls used by the application, o
 | [drop_module_cache](drop_module_cache.md) | Removes a process entry from the [`MODULE_CACHE`](MODULE_CACHE.md). |
 | [terminate_child_processes](terminate_child_processes.md) | Kills orphaned console host processes spawned during UAC elevation. |
 | [enumerate_process_modules](enumerate_process_modules.md) | Enumerates all loaded modules for a process, returning base/end addresses and names. |
+| [set_timer_resolution](set_timer_resolution.md) | Sets the system timer resolution via `NtSetTimerResolution`. |
 
 ## Requirements
 
 | Requirement | Value |
 | --- | --- |
 | **Module** | `src/winapi.rs` |
-| **Called by** | [`apply_config`](../main.rs/apply_config.md), [`apply.rs`](../apply.rs/README.md) functions, [`main`](../main.rs/main.md) |
+| **Called by** | [`apply_config_process_level`](../main.rs/apply_config_process_level.md)/[`apply_config_thread_level`](../main.rs/apply_config_thread_level.md), [`apply.rs`](../apply.rs/README.md) functions, [`main`](../main.rs/main.md) |
 | **Key dependencies** | `windows` crate, [`ProcessConfig`](../config.rs/ProcessConfig.md), [`Operation`](../logging.rs/Operation.md), [`is_new_error`](../logging.rs/is_new_error.md) |

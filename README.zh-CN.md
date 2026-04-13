@@ -32,6 +32,7 @@ AffinityServiceRust 持续监控运行中的进程，并根据配置文件中定
 | **优先级级别** | [docs/zh-CN/priority.rs/README.md](docs/zh-CN/priority.rs/README.md) - 优先级枚举定义 |
 | **Windows API** | [docs/zh-CN/winapi.rs/README.md](docs/zh-CN/winapi.rs/README.md) - Windows API 包装器 |
 | **日志** | [docs/zh-CN/logging.rs/README.md](docs/zh-CN/logging.rs/README.md) - 错误跟踪和日志 |
+| **ETW 监控** | [docs/zh-CN/event_trace.rs/README.md](docs/zh-CN/event_trace.rs/README.md) - 基于 ETW 的响应式进程监控 |
 
 ## 快速开始
 
@@ -64,6 +65,7 @@ AffinityServiceRust.exe -helpall
 | **内存优先级** | 极低、低、中、低于标准、标准 |
 | **计时器分辨率** | 调整 Windows 系统计时器分辨率 |
 | **热重载** | 配置文件变更时自动重新加载 |
+| **ETW 进程监控** | 通过 Windows 事件跟踪实时检测进程启动/停止 |
 | **规则等级** | 控制规则应用频率（每 N 次循环） |
 
 > **关于 >64 核系统的说明：** CPU 亲和性（[`SetProcessAffinityMask`](docs/zh-CN/apply.rs/apply_affinity.md)）只能在单个处理器组内工作（≤64 核）。对于 >64 核系统，请使用 CPU 集，它可以跨所有处理器组工作，但为软性偏好。
@@ -569,21 +571,20 @@ cargo build --release
    - 启用 [`SeDebugPrivilege`](docs/zh-CN/winapi.rs/enable_debug_privilege.md) 和 [`SeIncreaseBasePriorityPrivilege`](docs/zh-CN/winapi.rs/enable_inc_base_priority_privilege.md)
    - 设置计时器分辨率（如果指定）
    - 终止从启动器继承的任何子进程（如计划任务运行器附加的 `conhost.exe`），在进入主循环前执行清理
+   - 启动 [`EtwProcessMonitor`](docs/zh-CN/event_trace.rs/EtwProcessMonitor.md) 用于响应式进程检测——新进程无需等待下一个轮询间隔即可触发规则应用
 
 2. **主循环**（每个间隔，默认 5000ms）
    - 通过 [`NtQuerySystemInformation`](docs/zh-CN/process.rs/ProcessSnapshot.md) 获取所有运行进程的快照
    - 对于每个匹配配置规则的进程：
-     - 应用进程优先级
-     - 应用 CPU 亲和性（通过 [`SetProcessAffinityMask`](docs/zh-CN/apply.rs/apply_affinity.md) 硬性限制）
-     - 应用 CPU 集（通过 [`SetProcessDefaultCpuSets`](docs/zh-CN/apply.rs/apply_process_default_cpuset.md) 软性偏好）
-     - 应用 prime 线程调度（动态线程到核心分配）
-     - 应用 I/O 优先级（通过 [`NtSetInformationProcess`](docs/zh-CN/apply.rs/apply_io_priority.md)）
-     - 应用内存优先级（通过 [`SetProcessInformation`](docs/zh-CN/apply.rs/apply_memory_priority.md)）
+     - 通过 [`apply_config_process_level()`](docs/zh-CN/main.rs/apply_config_process_level.md) 应用进程级设置（一次性：优先级、亲和性、CPU 集、I/O、内存）
+     - 通过 [`apply_config_thread_level()`](docs/zh-CN/main.rs/apply_config_thread_level.md) 应用线程级设置（每次迭代：prime 线程调度、理想处理器分配）
    - 记录所有更改
    - 清理已死进程/线程句柄
    - 休眠直到下一个间隔
 
-3. **Prime 线程调度**（每个进程，每个间隔）
+3. **ETW 响应式检测**：来自 [`EtwProcessMonitor`](docs/zh-CN/event_trace.rs/EtwProcessMonitor.md) 的进程启动事件会立即触发进程级规则应用；进程停止事件清理调度器状态和错误跟踪
+
+4. **Prime 线程调度**（每个进程，每个间隔）
    - 选择候选线程（按 CPU 时间排序，过滤已死线程）
    - 查询候选线程的 CPU 周期（通过 `QueryThreadCycleTime`）
    - 计算自上次检查以来的增量周期
@@ -593,24 +594,24 @@ cargo build --release
    - 通过 [`SetThreadSelectedCpuSets`](docs/zh-CN/scheduler.rs/PrimeThreadScheduler.md) 应用 CPU 集
    - 可选提升线程优先级（自动或显式）
 
-4. **共享周期预取**（每进程，prime 与 ideal 调度前）
+5. **共享周期预取**（每进程，prime 与 ideal 调度前）
    - 利用 `NtQuerySystemInformation` 缓冲区中的 CPU 时间增量对所有线程排序（无额外系统调用）
    - 仅保留前 N 个线程（N = 逻辑 CPU 数）——排名以外的线程不可能赢得任何分配槽位
    - 仅对前 N 个线程打开句柄并调用 `QueryThreadCycleTime`；结果缓存于 [`ThreadStats::cached_cycles`](docs/zh-CN/scheduler.rs/ThreadStats.md)
 
-5. **理想处理器分配**（每进程，每间隔）
+6. **理想处理器分配**（每进程，每间隔）
    - 应用与 Prime 线程调度相同的滞后过滤器（连击 + 保留/入场阈值）
    - 第 1 轮：已分配且高于 `keep_threshold` 的线程保留槽位，无写系统调用
    - 第 2 轮：晋升满足连击条件的新线程；若线程已在空闲 CPU 池中则跳过 `SetThreadIdealProcessorEx`（延迟设置）
    - 降级不再被选中的线程，恢复原始理想处理器
 
-6. **热重载**
+7. **热重载**
    - 监控配置文件修改时间
    - 变更时，重新加载并验证
    - 如果有效，立即应用新配置
    - 如果无效，保持先前配置并记录错误
 
-7. **进程退出跟踪**
+8. **进程退出跟踪**
    - 当跟踪的进程退出时，记录 CPU 周期消耗最高的前 N 个线程
    - 通过 `psapi GetMappedFileName` 解析线程起始地址为 `module.dll+offset` 格式
    - 清理模块缓存
@@ -628,6 +629,7 @@ cargo build --release
 | `src/scheduler.rs` | Prime 线程调度器实现 | [scheduler.md](docs/zh-CN/scheduler.rs/README.md) |
 | `src/apply.rs` | 将配置应用到进程 | [apply.md](docs/zh-CN/apply.rs/README.md) |
 | `src/winapi.rs` | Windows API 包装器、模块解析、权限处理 | [winapi.md](docs/zh-CN/winapi.rs/README.md) |
+| `src/event_trace.rs` | 基于 ETW 的实时进程启停监控 | [event_trace.md](docs/zh-CN/event_trace.rs/README.md) |
 | `config.ini` | 默认配置文件 | - |
 | `blacklist.ini` | 进程发现的默认黑名单 | - |
 | `DEBUG.md` | 调试指南和故障排除 | - |
@@ -642,7 +644,7 @@ cargo build --release
 
    这是**预期行为** —— 服务会对快照中所有名称匹配的进程应用规则，包括自身短暂存活的子进程。该子进程会在主循环启动前被终止（见启动清理逻辑），因此此条目每次运行最多出现一次，可安全忽略。
 
-8. **`[OPEN][ACCESS_DENIED]` 按 PID 去重**：当 [`apply_config()`](docs/zh-CN/main.rs/apply_config.md) 因 `ACCESS_DENIED` 无法打开某进程时，该错误仅对每个唯一的 `(pid, 进程名)` 组合写入一次 `.find.log`。每次获取快照后，去重映射表会与当前快照对账：PID 已退出或被其他可执行文件复用的条目将被清除，因此若同一进程名在新 PID 下再次出现，错误将重新触发一次。同名可执行文件的多个并发实例（如具有不同 PID 的多个 `svchost.exe`）被独立跟踪——某个实例被拒绝访问，不会压制其他同名但不同 PID 实例的错误输出。
+8. **`[OPEN][ACCESS_DENIED]` 按 PID 去重**：当 [`apply_config_process_level()`](docs/zh-CN/main.rs/apply_config_process_level.md)/[`apply_config_thread_level()`](docs/zh-CN/main.rs/apply_config_thread_level.md) 因 `ACCESS_DENIED` 无法打开某进程时，该错误仅对每个唯一的 `(pid, 进程名)` 组合写入一次 `.find.log`。每次获取快照后，去重映射表会与当前快照对账：PID 已退出或被其他可执行文件复用的条目将被清除，因此若同一进程名在新 PID 下再次出现，错误将重新触发一次。同名可执行文件的多个并发实例（如具有不同 PID 的多个 `svchost.exe`）被独立跟踪——某个实例被拒绝访问，不会压制其他同名但不同 PID 实例的错误输出。
 
 错误去重实现请参见 [`is_new_error()`](docs/zh-CN/logging.rs/is_new_error.md)。
 

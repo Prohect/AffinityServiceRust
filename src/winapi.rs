@@ -1,4 +1,5 @@
 use crate::{
+    cli::CliArgs,
     error_codes::error_from_code_win32,
     get_fail_find_set, log,
     logging::{Operation, is_new_error, log_to_find},
@@ -817,4 +818,20 @@ fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> {
     let _ = unsafe { CloseHandle(h_proc) };
 
     result
+}
+
+pub fn set_timer_resolution(cli: &CliArgs) {
+    unsafe {
+        let mut current_resolution = 0u32;
+        match NtSetTimerResolution(cli.time_resolution, true, &mut current_resolution as *mut _ as *mut c_void).0 {
+            ntstatus if ntstatus < 0 => {
+                log!("Failed to set timer resolution: 0x{:08X}", ntstatus);
+            }
+            ntstatus if ntstatus >= 0 => {
+                log!("Succeed to set timer resolution: {:.4}ms", cli.time_resolution as f64 / 10000f64);
+                log!("elder timer resolution: {:.4}ms", current_resolution);
+            }
+            _ => {}
+        };
+    }
 }

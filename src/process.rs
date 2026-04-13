@@ -1,9 +1,16 @@
 use ntapi::ntexapi::{NtQuerySystemInformation, SYSTEM_PROCESS_INFORMATION, SYSTEM_THREAD_INFORMATION, SystemProcessInformation};
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
 use std::{collections::HashMap, slice};
+
+/// DO NOT DIRECTLY ACCESS: Use struct `ProcessSnapshot` instead.
+pub static SNAPSHOT_BUFFER: Lazy<Mutex<Vec<u8>>> = Lazy::new(|| Mutex::new(vec![0u8; 32]));
+/// DO NOT DIRECTLY ACCESS: Use struct `ProcessSnapshot` instead.
+pub static PID_TO_PROCESS_MAP: Lazy<Mutex<HashMap<u32, ProcessEntry>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
 pub struct ProcessSnapshot<'a> {
     buffer: &'a mut Vec<u8>,
-    pub pid_to_process: HashMap<u32, ProcessEntry>,
+    pub pid_to_process: &'a mut HashMap<u32, ProcessEntry>,
 }
 
 impl<'a> Drop for ProcessSnapshot<'a> {
@@ -18,7 +25,7 @@ impl<'a> ProcessSnapshot<'a> {
     ///
     /// Dynamically allocates buffer and retries if STATUS_INFO_LENGTH_MISMATCH.
     /// Parses SYSTEM_PROCESS_INFORMATION structures into ProcessEntry objects.
-    pub fn take(buffer: &'a mut Vec<u8>) -> Result<Self, i32> {
+    pub fn take(buffer: &'a mut Vec<u8>, pid_to_process: &'a mut HashMap<u32, ProcessEntry>) -> Result<Self, i32> {
         let mut buf_len: usize = buffer.capacity();
         let mut return_len: u32 = 0;
         unsafe {
@@ -46,7 +53,7 @@ impl<'a> ProcessSnapshot<'a> {
                 buffer.truncate(return_len as usize);
                 break;
             }
-            let mut pid_to_process: HashMap<u32, ProcessEntry> = HashMap::new();
+            pid_to_process.clear();
             let mut offset: usize = 0;
             let buf_ptr = buffer.as_ptr();
             loop {
@@ -77,6 +84,11 @@ pub struct ProcessEntry {
     threads_base_ptr: usize,
     name: String,
 }
+
+// SAFETY: ProcessEntry is only accessed through Mutex, ensuring single-threaded access.
+// The raw pointers inside SYSTEM_PROCESS_INFORMATION are only valid for the lifetime
+// of the snapshot buffer and are never sent across threads independently.
+unsafe impl Send for ProcessEntry {}
 
 impl ProcessEntry {
     pub fn new(process: SYSTEM_PROCESS_INFORMATION, threads_base_ptr: *const SYSTEM_THREAD_INFORMATION) -> Self {

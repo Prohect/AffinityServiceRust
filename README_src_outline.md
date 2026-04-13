@@ -313,7 +313,7 @@
     configs: &HashMap<u32, HashMap<String, ProcessConfig>>,
     blacklist: &[String],
 ) -> Result<(), windows::core::Error> 
-- [L243:L511]fn main() -> windows::core::Result<()> 
+- [L243:L512]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L8:L16]enum ProcessPriority {

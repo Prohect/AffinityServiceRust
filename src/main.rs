@@ -453,6 +453,7 @@ fn main() -> windows::core::Result<()> {
                         prime_core_scheduler.drop_process_by_pid(&pid);
                     });
                     purge_fail_map(&pids_and_names);
+                    process_level_applied.retain(|pid| pids_and_names.iter().any(|(p, _)| p == pid));
                 }
                 process_level_pending.clear();
                 if cli.dry_run {

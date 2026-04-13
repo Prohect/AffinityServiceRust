@@ -3,7 +3,7 @@
 the docs of this project follows a MSDN style doc schema.
 that is: 
 each source file is a dir(/<$locale>/<$source_file_name>/, eg. "/en-US/config.rs/") with a README.md which contains a summary and overview and relative links when refering any other top level item.
-each top level item of a souce file is a markdown in that dir(eg. "\en-US\config.rs\read_config.md") that follows [`schema`](#Schema for Top Level Item for a Souce File) :
+each top level item of a souce file is a markdown in that dir(eg. "\en-US\config.rs\read_config.md") that follows [`schema`](schema-for-top-level-item-for-a-souce-file):
 
 ## Schema for Top Level Item for a Souce File
 

@@ -278,11 +278,12 @@
     error_code: u32,
 }
 - [L104:L147]fn is_new_error(pid: u32, tid: u32, process_name: &str, operation: Operation, error_code: u32) -> bool 
-- [L149:L158]fn get_log_path(suffix: &str) -> PathBuf 
-- [L160:L170]fn log_message(args: &str) 
-- [L172:L178]fn log_pure_message(args: &str) 
-- [L180:L187]fn log_to_find(msg: &str) 
-- [L189:L198]fn log_process_find(process_name: &str) 
+- [L149:L170]fn purge_fail_map(pids_and_names: &[(u32, String)]) 
+- [L172:L181]fn get_log_path(suffix: &str) -> PathBuf 
+- [L183:L193]fn log_message(args: &str) 
+- [L195:L201]fn log_pure_message(args: &str) 
+- [L203:L210]fn log_to_find(msg: &str) 
+- [L212:L221]fn log_process_find(process_name: &str) 
 
 ## src/main.rs
 - [L48:L74]fn apply_config_process_level(
@@ -311,7 +312,7 @@
     configs: &HashMap<u32, HashMap<String, ProcessConfig>>,
     blacklist: &[String],
 ) -> Result<(), windows::core::Error> 
-- [L243:L496]fn main() -> windows::core::Result<()> 
+- [L243:L507]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L8:L16]enum ProcessPriority {

@@ -146,6 +146,29 @@ pub fn is_new_error(pid: u32, tid: u32, process_name: &str, operation: Operation
     }
 }
 
+/// Removes stale entries from the apply failure tracking map.
+///
+/// Marks all entries as dead, then re-marks currently running processes as alive.
+/// Dead entries are removed to prevent unbounded growth.
+#[inline]
+pub fn purge_fail_map(pids_and_names: &[(u32, String)]) {
+    let mut map = get_pid_map_fail_entry_set!();
+    for fail_entry_set in map.values_mut() {
+        fail_entry_set.values_mut().for_each(|alive| *alive = false);
+    }
+    for (pid, name) in pids_and_names {
+        if let Some(fail_entry_set) = map.get_mut(pid)
+            && fail_entry_set.iter().any(|fail_entry| fail_entry.0.process_name == *name)
+        {
+            let _ = fail_entry_set.values_mut().next().is_some_and(|alive| {
+                *alive = true;
+                false
+            });
+        }
+    }
+    map.retain(|_, fail_entry_set| fail_entry_set.iter().any(|(_, alive)| *alive));
+}
+
 fn get_log_path(suffix: &str) -> PathBuf {
     let time = get_local_time!();
     let (year, month, day) = (time.year(), time.month(), time.day());

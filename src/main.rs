@@ -16,7 +16,7 @@ use apply::{
 use cli::{CliArgs, parse_args, print_help, print_help_all};
 use config::{ProcessConfig, convert, hotreload_blacklist, hotreload_config, read_config, read_list, sort_and_group_config};
 use event_trace::EtwProcessMonitor;
-use logging::{log_message, log_process_find, log_pure_message, log_to_find};
+use logging::{log_message, log_process_find, log_pure_message, log_to_find, purge_fail_map};
 use process::{PID_TO_PROCESS_MAP, ProcessEntry, ProcessSnapshot, SNAPSHOT_BUFFER};
 use scheduler::PrimeThreadScheduler;
 use winapi::{
@@ -337,14 +337,14 @@ fn main() -> windows::core::Result<()> {
     let mut should_continue = true;
 
     // Start ETW process monitor for reactive process level rule application
-    let etw_rx = match EtwProcessMonitor::start() {
+    let (event_trace_monitor, event_trace_receiver) = match EtwProcessMonitor::start() {
         Ok((monitor, rx)) => {
             log!("ETW process monitor started (reactive process detection enabled)");
-            Some((monitor, rx))
+            (Some(monitor), Some(rx))
         }
         Err(e) => {
             log!("ETW process monitor failed to start: {} (falling back to polling only)", e);
-            None
+            (None, None)
         }
     };
 
@@ -439,6 +439,17 @@ fn main() -> windows::core::Result<()> {
                     }
                 }
 
+                if event_trace_receiver.is_none() {
+                    let dead_pids: Vec<u32> = prime_core_scheduler
+                        .pid_to_process_stats
+                        .iter()
+                        .filter_map(|(pid, process_stats)| if !process_stats.alive { Some(*pid) } else { None })
+                        .collect();
+                    dead_pids.into_iter().for_each(|pid| {
+                        prime_core_scheduler.drop_process_by_pid(&pid);
+                    });
+                    purge_fail_map(&pids_and_names);
+                }
                 process_level_pending.clear();
                 if cli.dry_run {
                     log!("[DRY RUN] {} change(s) would be made. Run without -dryrun to apply.", total_changes);
@@ -464,9 +475,9 @@ fn main() -> windows::core::Result<()> {
             thread::sleep(Duration::from_millis(cli.interval_ms));
 
             *get_local_time!() = Local::now();
-            if let Some((_, ref rx)) = etw_rx {
+            if let Some(ref event_trace_receiver) = event_trace_receiver {
                 let mut pid_map_fail_entry_set = get_pid_map_fail_entry_set!();
-                while let Ok(event) = rx.try_recv() {
+                while let Ok(event) = event_trace_receiver.try_recv() {
                     if event.is_start {
                         process_level_pending.insert(event.pid);
                     } else {
@@ -488,8 +499,8 @@ fn main() -> windows::core::Result<()> {
         }
     }
     // Stop ETW process monitor
-    if let Some((mut monitor, _)) = etw_rx {
-        monitor.stop();
+    if let Some(mut event_trace_monitor) = event_trace_monitor {
+        event_trace_monitor.stop();
         log!("ETW process monitor stopped");
     }
     Ok(())

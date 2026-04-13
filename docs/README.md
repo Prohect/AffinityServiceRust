@@ -15,7 +15,7 @@ each top level item of a souce file is a markdown in that dir(eg. "\en-US\config
 | **Parameters** | Per-parameter description (functions) |
 | **Members** | Per-field description (structs/enums) |
 | **Return value** | What the function returns |
-| **Remarks** | Algorithms, examples, edge cases, platform notes |
+| **Remarks** | Algorithms, improtant side effect, examples, edge cases, platform notes |
 | **Requirements** | Table of module, callers, callees, Windows API, privileges |
 
 Cross-references between items use relative markdown links:

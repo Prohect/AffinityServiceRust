@@ -335,7 +335,7 @@ AffinityServiceRust.exe -logloop -loop 3 -interval 2000
 
 > **注意：** 使用 UAC 提权运行时，避免使用 `-console`，因为 UAC 会生成新进程且窗口立即关闭。请检查日志文件。
 
-详见 [cli.md](docs/en-US/cli.rs/README.md)。
+详见 [cli.md](docs/zh-CN/cli.rs/README.md)。
 
 AI 代理贡献者（Zed、Cursor 等）请参阅 project_specific_agent.md 了解 CLI 工具和工作流技巧。
 

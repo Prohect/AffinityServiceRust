@@ -68,6 +68,8 @@ AffinityServiceRust.exe -helpall
 | **ETW Process Monitoring** | Real-time process start/stop detection via Event Tracing for Windows |
 | **Rule Grades** | Control how often each rule is applied |
 
+see also: [Timer Resolution Bench](https://github.com/valleyofdoom/TimerResolution)
+
 ### Prime Thread Scheduling
 
 The prime thread scheduler dynamically identifies the most CPU-intensive threads and assigns them to designated "prime" cores using Windows CPU Sets:

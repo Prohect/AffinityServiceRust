@@ -68,6 +68,8 @@ AffinityServiceRust.exe -helpall
 | **ETW 进程监控** | 通过 Windows 事件跟踪实时检测进程启动/停止 |
 | **规则等级** | 控制规则应用频率（每 N 次循环） |
 
+另请参阅：[Timer Resolution Bench](https://github.com/valleyofdoom/TimerResolution)
+
 > **关于 >64 核系统的说明：** CPU 亲和性（[`SetProcessAffinityMask`](docs/zh-CN/apply.rs/apply_affinity.md)）只能在单个处理器组内工作（≤64 核）。对于 >64 核系统，请使用 CPU 集，它可以跨所有处理器组工作，但为软性偏好。
 
 ### Prime 线程调度

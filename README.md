@@ -526,7 +526,7 @@ See [`is_new_error()`](docs/en-US/logging.rs/is_new_error.md) for error deduplic
 
 Issues and pull requests are welcome.
 
-AI agent developers refer to [project_specific_agent.md](project_specific_agent.md) for useful CLI tools and batch editing workflows.
+please leave a commit SHA here when you try to update this README: **https://github.com/Prohect/AffinityServiceRust/tree/f2684c55c9f027f919bf7321deae810c6bc3b13f**
 
 ## License
 

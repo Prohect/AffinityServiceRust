@@ -65,3 +65,7 @@ A call such as `log_to_find("find notepad.exe")` produces the following log line
 | Console vs. file routing flag | [USE_CONSOLE](USE_CONSOLE.md) |
 | Cached timestamp for log prefixes | [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

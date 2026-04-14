@@ -61,3 +61,7 @@ fn get_handles(process_handle: &ProcessHandle) -> (Option<HANDLE>, Option<HANDLE
 | 句柄包装结构体 | [ProcessHandle](../winapi.rs/ProcessHandle.md) |
 | 句柄获取 | [get_process_handle](../winapi.rs/get_process_handle.md) |
 | apply 模块概述 | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

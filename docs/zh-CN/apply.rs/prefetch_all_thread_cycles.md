@@ -86,3 +86,7 @@ pub fn prefetch_all_thread_cycles(
 | 每线程统计模型 | [ThreadStats](../scheduler.rs/ThreadStats.md) |
 | 线程句柄包装器 | [ThreadHandle](../winapi.rs/ThreadHandle.md) |
 | apply 模块概览 | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

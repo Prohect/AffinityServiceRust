@@ -169,3 +169,8 @@ pub struct CliArgs {
 | 配置加载 | [read_config](../config.rs/read_config.md) |
 | 配置热重载 | [hotreload_config](../config.rs/hotreload_config.md) |
 | 黑名单热重载 | [hotreload_blacklist](../config.rs/hotreload_blacklist.md) |
+
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

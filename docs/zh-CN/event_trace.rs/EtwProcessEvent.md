@@ -44,3 +44,7 @@ pub struct EtwProcessEvent {
 | 回调使用的全局通道发送端 | [ETW_SENDER](ETW_SENDER.md) |
 | 活跃会话标志 | [ETW_ACTIVE](ETW_ACTIVE.md) |
 | event_trace 模块概述 | [event_trace 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

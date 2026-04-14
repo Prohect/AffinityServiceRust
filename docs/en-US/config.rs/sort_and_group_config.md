@@ -145,3 +145,7 @@ Written to config_grouped.txt
 | Per-process configuration record | [ProcessConfig](ProcessConfig.md) |
 | CLI argument parsing | [cli module](../cli.rs/README.md) |
 | Config module overview | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

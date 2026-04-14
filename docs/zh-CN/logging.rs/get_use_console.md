@@ -50,3 +50,7 @@ if *get_use_console!() {
 | 日志文件访问宏 | [get_logger!](get_logger.md) |
 | 查找日志文件访问宏 | [get_logger_find!](get_logger_find.md) |
 | logging 模块概述 | [logging 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

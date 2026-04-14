@@ -80,3 +80,7 @@ The function is marked `#[inline(always)]` because it is a thin wrapper around a
 | Process handle acquisition (analogous pattern) | [get_process_handle](get_process_handle.md) |
 | Error deduplication | [is_new_error](../logging.rs/README.md) |
 | OpenThread (Microsoft Learn) | [OpenThread function](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openthread) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

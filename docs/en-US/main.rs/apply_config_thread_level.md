@@ -100,3 +100,7 @@ When the ETW process monitor is active, dead processes are cleaned up reactively
 | Prime thread scheduler and hysteresis | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
 | Process configuration structure | [ProcessConfig](../config.rs/ProcessConfig.md) |
 | Main entry point and polling loop | [main](main.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

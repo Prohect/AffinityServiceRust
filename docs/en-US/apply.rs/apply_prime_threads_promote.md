@@ -121,3 +121,7 @@ The function is idempotent within a single cycle: threads that are already pinne
 | Module name resolution | [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md) |
 | Scheduler state model | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md), [ThreadStats](../scheduler.rs/ThreadStats.md) |
 | apply module overview | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

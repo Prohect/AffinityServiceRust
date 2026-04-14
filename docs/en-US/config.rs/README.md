@@ -46,3 +46,7 @@ The `config` module is the configuration engine for AffinityServiceRust. It pars
 | CLI argument parsing and help text | [cli module](../cli.rs/README.md) |
 | Windows API wrappers (CPU sets, handles) | [winapi module](../winapi.rs/README.md) |
 | Service main loop | [main module](../main.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

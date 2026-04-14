@@ -77,3 +77,7 @@ pub fn is_new_error(pid: u32, tid: u32, process_name: &str, operation: Operation
 | 日志消息的错误格式化 | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
 | apply 模块错误日志辅助函数 | [log_error_if_new](../apply.rs/log_error_if_new.md) |
 | logging 模块概述 | [logging 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

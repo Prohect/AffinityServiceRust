@@ -129,3 +129,8 @@ ETW 进程监控提供两个关键优势：
 | 进程快照 | [ProcessSnapshot](../process.rs/ProcessSnapshot.md) |
 | 发现模式（运行时发现） | [process_find](process_find.md) |
 | 日志处理 | [process_logs](process_logs.md) |
+
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

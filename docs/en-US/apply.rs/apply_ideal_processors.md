@@ -125,3 +125,7 @@ Handle resolution and Win32 API call failures are routed through [log_error_if_n
 | Thread start-module resolution | [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md) |
 | Win32 ideal processor wrappers | [set_thread_ideal_processor_ex](../winapi.rs/set_thread_ideal_processor_ex.md), [get_thread_ideal_processor_ex](../winapi.rs/get_thread_ideal_processor_ex.md) |
 | Thread-level apply orchestration | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

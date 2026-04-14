@@ -104,3 +104,7 @@ This function is not designed for concurrent access. It is called from the singl
 | Prime-thread scheduler | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
 | CLI arguments struct | [CliArgs](../cli.rs/CliArgs.md) |
 | Config module overview | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

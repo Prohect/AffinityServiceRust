@@ -67,3 +67,7 @@ The `tid_to_thread_stats` map grows monotonically during a process's lifetime. T
 | Hysteresis constants | [`ConfigConstants`](../config.rs/ConfigConstants.md) |
 | Process snapshot source | [`ProcessSnapshot`](../process.rs/ProcessSnapshot.md) |
 | Process configuration | [`ProcessConfig`](../config.rs/ProcessConfig.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -138,3 +138,7 @@ All lines are read into memory before parsing begins. This is acceptable because
 | Hot-reload of config | [hotreload_config](hotreload_config.md) |
 | Blacklist file reader | [read_list](read_list.md) |
 | Config module overview | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

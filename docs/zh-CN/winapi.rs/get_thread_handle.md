@@ -76,3 +76,7 @@ pub fn get_thread_handle(tid: u32, pid: u32, process_name: &str) -> Option<Threa
 | 进程句柄获取 | [get_process_handle](get_process_handle.md) |
 | 进程句柄容器 | [ProcessHandle](ProcessHandle.md) |
 | 错误去重系统 | [logging 模块](../logging.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

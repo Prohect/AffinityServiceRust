@@ -71,3 +71,7 @@ The [apply module](../apply.rs/README.md) receives a `&ProcessHandle` reference 
 | Rule application entry point (process level) | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
 | Logging operations for handle failures | [Operation enum](../logging.rs/README.md) |
 | Error code formatting | [error_codes module](../error_codes.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -56,3 +56,7 @@ Processor group and number values correspond to the Windows `PROCESSOR_NUMBER` s
 | [PrimeThreadScheduler](PrimeThreadScheduler.md) | Central scheduler that manages thread-to-processor assignments. |
 | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) | Function that reads and writes `IdealProcessorState` when applying ideal processor rules. |
 | [set_thread_ideal_processor_ex](../winapi.rs/set_thread_ideal_processor_ex.md) | Low-level wrapper around the Windows `SetThreadIdealProcessorEx` API. |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

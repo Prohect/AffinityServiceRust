@@ -46,3 +46,7 @@
 | CLI 参数解析与帮助文本 | [cli 模块](../cli.rs/README.md) |
 | Windows API 封装（CPU 集合、句柄） | [winapi 模块](../winapi.rs/README.md) |
 | 服务主循环 | [main 模块](../main.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

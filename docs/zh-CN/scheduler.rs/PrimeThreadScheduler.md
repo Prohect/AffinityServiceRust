@@ -256,3 +256,7 @@ pub fn drop_process_by_pid(&mut self, pid: &u32)
 | [ConfigConstants](../config.rs/ConfigConstants.md) | 滞后算法调优参数。 |
 | [apply_prime_threads](../apply.rs/apply_prime_threads.md) | 驱动主力线程提升/降级管道的入口点。 |
 | [ProcessSnapshot](../process.rs/ProcessSnapshot.md) | 提供调度器调用方使用的进程/线程枚举。 |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

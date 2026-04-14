@@ -78,3 +78,7 @@ parse_cpu_spec("")          → []
 | Alias-aware CPU spec resolution | [resolve_cpu_spec](resolve_cpu_spec.md) |
 | Convenience parse-to-mask wrapper | [parse_mask](parse_mask.md) |
 | Module overview | [config module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

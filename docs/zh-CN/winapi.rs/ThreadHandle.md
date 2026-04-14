@@ -87,3 +87,7 @@ if !thread_handle.w_handle.is_invalid() {
 | 线程起始地址查询 | [get_thread_start_address](get_thread_start_address.md) |
 | 理想处理器设置器 | [set_thread_ideal_processor_ex](set_thread_ideal_processor_ex.md) |
 | OpenThread (MSDN) | [Microsoft Learn — OpenThread](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openthread) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

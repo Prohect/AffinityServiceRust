@@ -84,3 +84,7 @@ The two-field pattern (`last_*` / `cached_*`) implements a simple double-bufferi
 | Thread handle wrapper | [ThreadHandle](../winapi.rs/ThreadHandle.md) |
 | Thread priority enum | [ThreadPriority](../priority.rs/ThreadPriority.md) |
 | Hysteresis constants | [ConfigConstants](../config.rs/ConfigConstants.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

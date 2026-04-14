@@ -144,3 +144,7 @@ impl<'a> Drop for ProcessSnapshot<'a> {
 | [`PID_TO_PROCESS_MAP`](PID_TO_PROCESS_MAP.md) | 全局 PID 到 ProcessEntry 的映射 |
 | [`PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) | 从快照中消费线程数据以进行主力线程调度决策 |
 | [NtQuerySystemInformation (MSDN)](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntquerysysteminformation) | 底层 Windows API |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

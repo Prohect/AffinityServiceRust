@@ -96,3 +96,7 @@ fn parse_alias(
 | 理想处理器规格（别名消费者） | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
 | 解析输出聚合 | [ConfigResult](ConfigResult.md) |
 | 模块概述 | [config 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

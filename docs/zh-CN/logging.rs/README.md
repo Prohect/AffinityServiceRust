@@ -61,3 +61,7 @@
 | 进程优先级 / I/O 优先级 / 内存优先级枚举 | [priority 模块](../priority.rs/README.md) |
 | 服务主循环和 find 模式入口点 | [main 模块](../main.rs/README.md) |
 | 控制日志行为的 CLI 标志 | [cli 模块](../cli.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -41,3 +41,7 @@ pub static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::ne
 | 查找模式日志输出函数 | [log_to_find](log_to_find.md) |
 | 查找模式进程日志记录 | [log_process_find](log_process_find.md) |
 | logging 模块概述 | [logging 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

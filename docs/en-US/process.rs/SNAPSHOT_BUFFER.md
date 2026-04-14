@@ -50,3 +50,7 @@ The call is then retried in a loop until it succeeds or returns a different NTST
 | PID_TO_PROCESS_MAP static | [PID_TO_PROCESS_MAP](PID_TO_PROCESS_MAP.md) |
 | ProcessEntry struct | [ProcessEntry](ProcessEntry.md) |
 | NtQuerySystemInformation | [Microsoft Learn — NtQuerySystemInformation](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntquerysysteminformation) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

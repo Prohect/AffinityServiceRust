@@ -50,3 +50,7 @@ This static is **not** marked `pub` — it is internal to the `event_trace` modu
 | ETW session manager struct | [EtwProcessMonitor](EtwProcessMonitor.md) |
 | Process event payload | [EtwProcessEvent](EtwProcessEvent.md) |
 | Module overview | [event_trace module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

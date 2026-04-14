@@ -144,3 +144,7 @@ Note that `Vec::clear` sets the length to zero but retains allocated capacity, s
 | [`PID_TO_PROCESS_MAP`](PID_TO_PROCESS_MAP.md) | Global PID-to-ProcessEntry map |
 | [`PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) | Consumes thread data from snapshots for prime-thread scheduling decisions |
 | [NtQuerySystemInformation (MSDN)](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntquerysysteminformation) | Underlying Windows API |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

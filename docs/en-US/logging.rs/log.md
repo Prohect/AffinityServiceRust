@@ -65,3 +65,7 @@ Which produces a log line such as:
 | Log suppression flag | [DUST_BIN_MODE](DUST_BIN_MODE.md) |
 | Console output flag | [USE_CONSOLE](USE_CONSOLE.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

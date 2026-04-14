@@ -52,3 +52,7 @@ The `#[derive(Default)]` implementation produces an instance with two empty `Vec
 | Error deduplication helper | [log_error_if_new](log_error_if_new.md) |
 | Process-level orchestration | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
 | Thread-level orchestration | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

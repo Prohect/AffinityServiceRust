@@ -64,3 +64,7 @@ drop(time); // 在文件 I/O 之前释放锁
 | 日志文件路径构建 | [get_log_path](get_log_path.md) |
 | 其他访问器宏 | [get_use_console!](get_use_console.md)、[get_dust_bin_mod!](get_dust_bin_mod.md)、[get_logger!](get_logger.md) |
 | logging 模块概述 | [logging 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

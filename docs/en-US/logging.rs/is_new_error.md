@@ -77,3 +77,7 @@ The function acquires the [PID_MAP_FAIL_ENTRY_SET](PID_MAP_FAIL_ENTRY_SET.md) mu
 | Error formatting for log messages | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
 | Apply-module error logging helper | [log_error_if_new](../apply.rs/log_error_if_new.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

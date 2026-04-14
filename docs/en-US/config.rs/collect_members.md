@@ -94,3 +94,7 @@ This function has **crate-private** visibility (`fn`, not `pub fn`). It is calle
 | Rule field parsing (consumes member list) | [parse_and_insert_rules](parse_and_insert_rules.md) |
 | Auto-grouping utility | [sort_and_group_config](sort_and_group_config.md) |
 | Config module overview | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

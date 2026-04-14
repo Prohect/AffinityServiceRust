@@ -71,3 +71,7 @@ The function acquires the [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) mutex fo
 | Filter indices by mask | [filter_indices_by_mask](filter_indices_by_mask.md) |
 | CPU set topology cache | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
 | CPU set data element | [CpuSetData](CpuSetData.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

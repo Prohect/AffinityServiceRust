@@ -101,3 +101,7 @@ Looks up a raw `u32` value (the inner value of a `PROCESS_CREATION_FLAGS`) and r
 | Thread priority levels | [ThreadPriority](ThreadPriority.md) |
 | Per-process configuration record | [ProcessConfig](../config.rs/ProcessConfig.md) |
 | Priority application logic | [apply_priority](../apply.rs/apply_priority.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

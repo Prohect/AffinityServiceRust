@@ -86,3 +86,7 @@ The active streak counter in [ThreadStats](../scheduler.rs/ThreadStats.md) track
 | Per-thread stats model | [ThreadStats](../scheduler.rs/ThreadStats.md) |
 | Thread handle wrapper | [ThreadHandle](../winapi.rs/ThreadHandle.md) |
 | apply module overview | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

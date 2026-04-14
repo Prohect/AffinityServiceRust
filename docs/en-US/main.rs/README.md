@@ -26,3 +26,7 @@ The main polling loop takes a periodic process snapshot via `NtQuerySystemInform
 | Process snapshot | [process.rs](../process.rs/README.md) |
 | Win32/NT API wrappers | [winapi.rs](../winapi.rs/README.md) |
 | Logging infrastructure | [logging.rs](../logging.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

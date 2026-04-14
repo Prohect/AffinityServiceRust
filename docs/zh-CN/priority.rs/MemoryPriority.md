@@ -89,3 +89,7 @@ pub fn from_win_const(val: u32) -> &'static str
 | I/O 优先级枚举 | [IOPriority](IOPriority.md) |
 | 线程优先级枚举 | [ThreadPriority](ThreadPriority.md) |
 | 模块概览 | [priority 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

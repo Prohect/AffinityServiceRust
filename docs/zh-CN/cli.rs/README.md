@@ -29,3 +29,7 @@
 | 配置文件解析 | [config.rs](../config.rs/README.md) |
 | 进程优先级枚举 | [priority.rs](../priority.rs/README.md) |
 | 日志基础设施（控制台 vs. 文件） | [logging.rs](../logging.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

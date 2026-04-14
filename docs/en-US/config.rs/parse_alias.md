@@ -96,3 +96,7 @@ Aliases must be defined before the rule lines that reference them. [read_config]
 | Ideal processor spec (alias consumer) | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
 | Parse output aggregate | [ConfigResult](ConfigResult.md) |
 | Module overview | [config module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

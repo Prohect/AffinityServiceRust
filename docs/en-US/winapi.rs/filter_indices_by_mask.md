@@ -68,3 +68,7 @@ The [apply_affinity](../apply.rs/apply_affinity.md) and [reset_thread_ideal_proc
 | CPU Set IDs → affinity mask | [mask_from_cpusetids](mask_from_cpusetids.md) |
 | CPU indices to bitmask utility | [cpu_indices_to_mask](../config.rs/cpu_indices_to_mask.md) |
 | Affinity application logic | [apply_affinity](../apply.rs/apply_affinity.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -80,3 +80,7 @@ Being elevated is a prerequisite for successfully enabling privileges like `SeDe
 | Base priority privilege enablement | [enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md) |
 | Service main entry point | [main module](../main.rs/README.md) |
 | TOKEN_ELEVATION (MSDN) | [Microsoft Learn — TOKEN_ELEVATION](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/ns-securitybaseapi-token_elevation) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

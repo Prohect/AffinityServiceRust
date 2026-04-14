@@ -68,3 +68,7 @@ macro_rules! get_pid_map_fail_entry_set {
 | Windows API operation identifiers | [Operation](Operation.md) |
 | Macro for guarded access | [get_pid_map_fail_entry_set!](get_pid_map_fail_entry_set.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

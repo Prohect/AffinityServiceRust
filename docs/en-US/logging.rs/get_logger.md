@@ -45,3 +45,7 @@ The returned guard dereferences to `&File` (or `&mut File`), so it can be used d
 | Raw log writing function | [log_pure_message](log_pure_message.md) |
 | Console vs. file routing flag | [USE_CONSOLE](USE_CONSOLE.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -78,3 +78,7 @@ pub fn print_config_help() {
 | 配置文件解析器 | [read_config](../config.rs/read_config.md) |
 | CLI 参数结构体 | [CliArgs](CliArgs.md) |
 | 入口点 | [main](../main.rs/main.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -76,3 +76,7 @@ This function is the `SeDebugPrivilege` counterpart to [enable_inc_base_priority
 | CLI arguments (--no_debug_priv flag) | [cli module](../cli.rs/README.md) |
 | AdjustTokenPrivileges (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-adjusttokenprivileges) |
 | SeDebugPrivilege overview | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/secauthz/privilege-constants) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

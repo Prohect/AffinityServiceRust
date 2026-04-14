@@ -102,3 +102,7 @@ IO Priority: Normal -> VeryLow
 | 配置模型 | [ProcessConfig](../config.rs/ProcessConfig.md) |
 | 句柄提取辅助函数 | [get_handles](get_handles.md) |
 | apply 模块概览 | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -70,3 +70,7 @@ This function is called by:
 | Compact range formatter | [format_cpu_indices](format_cpu_indices.md) |
 | Per-process config (affinity_cpus field) | [ProcessConfig](ProcessConfig.md) |
 | Module overview | [config module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

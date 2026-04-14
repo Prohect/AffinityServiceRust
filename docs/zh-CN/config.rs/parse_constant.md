@@ -95,3 +95,7 @@ fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut Conf
 | CPU 别名行解析器 | [parse_alias](parse_alias.md) |
 | 主线程调度器 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
 | 模块概述 | [config 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

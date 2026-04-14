@@ -44,3 +44,7 @@ pub struct EtwProcessEvent {
 | Global channel sender used by the callback | [ETW_SENDER](ETW_SENDER.md) |
 | Active session flag | [ETW_ACTIVE](ETW_ACTIVE.md) |
 | event_trace module overview | [event_trace module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

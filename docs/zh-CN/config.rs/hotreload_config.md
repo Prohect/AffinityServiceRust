@@ -104,3 +104,7 @@ pub fn hotreload_config(
 | 主线程调度器 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
 | CLI 参数结构体 | [CliArgs](../cli.rs/CliArgs.md) |
 | 模块概述 | [config 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

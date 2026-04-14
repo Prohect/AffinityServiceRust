@@ -42,3 +42,7 @@ pub static USE_CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
 | 查找模式日志文件句柄 | [FIND_LOG_FILE](FIND_LOG_FILE.md) |
 | 带时间戳的日志输出函数 | [log_message](log_message.md) |
 | logging 模块概述 | [logging 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

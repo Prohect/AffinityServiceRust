@@ -24,3 +24,7 @@ Provides an RAII-based process snapshot mechanism built on the Windows Native AP
 | [ProcessConfig](../config.rs/ProcessConfig.md) | Per-process configuration (priority, affinity, CPU set, prime threads) applied to entries from the snapshot. |
 | [apply_prime_threads](../apply.rs/apply_prime_threads.md) | Reads thread data from `ProcessEntry` and feeds it into the scheduler for promotion/demotion. |
 | [prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md) | Iterates `ProcessEntry` threads to query and cache cycle times before scheduling. |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

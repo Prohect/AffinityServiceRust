@@ -87,3 +87,7 @@ A higher-frequency timer tick reduces the minimum sleep granularity and scheduli
 | Service main entry point | [main module](../main.rs/README.md) |
 | timeBeginPeriod (documented alternative) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod) |
 | Timer resolution deep dive | [Microsoft Learn — Timer Resolution](https://learn.microsoft.com/en-us/windows/win32/sysinfo/acquiring-high-resolution-time-stamps) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

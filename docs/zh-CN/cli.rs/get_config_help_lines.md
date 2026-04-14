@@ -97,3 +97,7 @@ for line in get_config_help_lines() {
 | 自动分组工具 | [sort_and_group_config](../config.rs/sort_and_group_config.md) |
 | 进程规则结构体 | [ProcessConfig](../config.rs/ProcessConfig.md) |
 | CLI 参数结构体 | [CliArgs](CliArgs.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

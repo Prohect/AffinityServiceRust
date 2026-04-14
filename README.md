@@ -343,6 +343,7 @@ browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal:
 | `-logloop` | Log message at start of each loop |
 | `-noDebugPriv` | Don't request SeDebugPrivilege |
 | `-noIncBasePriority` | Don't request SeIncreaseBasePriorityPrivilege |
+| `-noETW` | Don't start ETW process monitoring |
 
 See [cli.md](docs/en-US/cli.rs/README.md) for complete CLI documentation.
 
@@ -504,7 +505,7 @@ target/release/AffinityServiceRust.exe
 
    to `.find.log`. This is **intentional** — the service applies rules to every matching process name it sees in the snapshot, including its own short-lived children. The child is terminated before the main loop starts (see startup cleanup), so this entry will appear at most once per run and can be safely ignored.
 
-8. **`[OPEN][ACCESS_DENIED]` per-PID deduplication**: When [`apply_config_process_level()`](docs/en-US/main.rs/apply_config_process_level.md)/[`apply_config_thread_level()`](docs/en-US/main.rs/apply_config_thread_level.md) fails to open a process due to `ACCESS_DENIED`, the error is written to `.find.log` exactly once per unique `(pid, process_name)` pair. After each snapshot, the deduplication map is reconciled: entries whose PID has exited or been reused for a different executable are evicted, so if the same process name later re-appears under a new PID the error fires once more. Multiple concurrent instances of the same executable (e.g. several `svchost.exe` processes with different PIDs) are tracked independently — one denied instance never silences errors for any other PID sharing the same name.
+8. **`[OPEN][ACCESS_DENIED]` per-thread deduplication**: When [`apply_config_process_level()`](docs/en-US/main.rs/apply_config_process_level.md)/[`apply_config_thread_level()`](docs/en-US/main.rs/apply_config_thread_level.md) fails to open a process or thread due to `ACCESS_DENIED` (or any other error), the error is written to `.find.log` exactly once per unique `(pid, tid, process_name, operation)` combination. After each snapshot, the deduplication map is reconciled: entries whose PID has exited or been reused for a different executable are evicted, so if the same process name later re-appears under a new PID the error fires once more. Multiple concurrent instances of the same executable (e.g. several `svchost.exe` processes with different PIDs) are tracked independently — one denied instance never silences errors for any other PID sharing the same name.
 
 See [`is_new_error()`](docs/en-US/logging.rs/is_new_error.md) for error deduplication implementation.
 
@@ -526,7 +527,7 @@ See [`is_new_error()`](docs/en-US/logging.rs/is_new_error.md) for error deduplic
 
 Issues and pull requests are welcome.
 
-please leave a commit SHA here when you try to update this README: **https://github.com/Prohect/AffinityServiceRust/tree/f2684c55c9f027f919bf7321deae810c6bc3b13f**
+Please update the commit SHA here when you try to update this README: **678734d5df2c1188fb1bd6e448aae0884fb174fd**. This give the developer a way to compare source code from the newest to understand changes.
 
 ## License
 

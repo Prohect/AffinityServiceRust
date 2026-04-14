@@ -66,3 +66,7 @@ for entry in guard.iter() {
 | CPU Set IDs → CPU indices | [indices_from_cpusetids](indices_from_cpusetids.md) |
 | CPU Set IDs → affinity mask | [mask_from_cpusetids](mask_from_cpusetids.md) |
 | GetSystemCpuSetInformation (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/systeminformationapi/nf-systeminformationapi-getsystemcpusetinformation) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -90,3 +90,7 @@ In dry-run mode the function unconditionally records the target CPU set as a cha
 | CPU set ID translation | [cpusetids_from_indices](../winapi.rs/cpusetids_from_indices.md), [indices_from_cpusetids](../winapi.rs/indices_from_cpusetids.md) |
 | Configuration model | [ProcessConfig](../config.rs/ProcessConfig.md) |
 | apply module overview | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

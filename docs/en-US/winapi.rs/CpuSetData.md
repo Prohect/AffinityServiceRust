@@ -61,3 +61,7 @@ Both fields are module-private (no `pub` modifier). External code accesses the d
 | CPU Set IDs → affinity mask | [mask_from_cpusetids](mask_from_cpusetids.md) |
 | CPU set application to processes | [apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md) |
 | GetSystemCpuSetInformation (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/systeminformationapi/nf-systeminformationapi-getsystemcpusetinformation) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

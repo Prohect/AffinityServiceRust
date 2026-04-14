@@ -77,3 +77,7 @@ pub fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_
 | 理想处理器分配逻辑 | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
 | 线程统计信息 | [ThreadStats](../scheduler.rs/ThreadStats.md) |
 | GetThreadIdealProcessorEx (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getthreadidealprocessorex) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

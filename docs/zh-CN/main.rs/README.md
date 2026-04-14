@@ -26,3 +26,7 @@
 | 进程快照 | [process.rs](../process.rs/README.md) |
 | Win32/NT API 封装 | [winapi.rs](../winapi.rs/README.md) |
 | 日志基础设施 | [logging.rs](../logging.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

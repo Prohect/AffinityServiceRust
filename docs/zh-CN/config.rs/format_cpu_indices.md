@@ -69,3 +69,7 @@ pub fn format_cpu_indices(cpus: &[u32]) -> String
 | CPU 索引转位掩码 | [cpu_indices_to_mask](cpu_indices_to_mask.md) |
 | 位掩码转 CPU 索引 | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
 | config 模块概览 | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

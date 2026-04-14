@@ -65,3 +65,7 @@ pub fn log_to_find(msg: &str)
 | 控制台与文件路由标志 | [USE_CONSOLE](USE_CONSOLE.md) |
 | 用于日志前缀的缓存时间戳 | [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) |
 | logging 模块概述 | [logging 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

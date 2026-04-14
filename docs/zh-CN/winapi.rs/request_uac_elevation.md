@@ -95,3 +95,7 @@ powershell.exe -Command "Start-Process -FilePath '<exe_path>' -Verb RunAs -Argum
 | 基础优先级特权启用（提权后） | [enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md) |
 | CLI 参数解析和标志 | [cli 模块](../cli.rs/README.md) |
 | 服务主入口点 | [main 模块](../main.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

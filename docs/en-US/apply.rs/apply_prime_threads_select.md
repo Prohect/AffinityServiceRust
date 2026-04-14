@@ -82,3 +82,7 @@ The same `select_top_threads_with_hysteresis` method is also used by [apply_idea
 | Ideal processor rule selection (reuses same algorithm) | [apply_ideal_processors](apply_ideal_processors.md) |
 | Cycle-time prefetch (populates cached_cycles) | [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) |
 | apply module overview | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

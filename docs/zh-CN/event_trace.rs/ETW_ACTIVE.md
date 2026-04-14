@@ -50,3 +50,7 @@ static ETW_ACTIVE: AtomicBool = AtomicBool::new(false);
 | ETW (Windows 事件跟踪) 会话管理器结构体 | [EtwProcessMonitor](EtwProcessMonitor.md) |
 | 进程事件载荷 | [EtwProcessEvent](EtwProcessEvent.md) |
 | 模块概述 | [event_trace 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

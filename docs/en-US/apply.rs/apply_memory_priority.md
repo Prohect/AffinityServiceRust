@@ -107,3 +107,7 @@ Memory priority and I/O priority ([apply_io_priority](apply_io_priority.md)) are
 | Configuration model | [ProcessConfig](../config.rs/ProcessConfig.md) |
 | Handle extraction helper | [get_handles](get_handles.md) |
 | Error deduplication | [log_error_if_new](log_error_if_new.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

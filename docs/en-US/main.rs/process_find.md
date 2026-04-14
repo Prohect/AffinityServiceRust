@@ -83,3 +83,7 @@ The `.find.log` files produced by this function's logging are the input for the 
 | Find logging function | [log_process_find](../logging.rs/log_process_find.md) |
 | CLI arguments and find mode flag | [CliArgs](../cli.rs/CliArgs.md) |
 | Main entry point and polling loop | [main](main.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

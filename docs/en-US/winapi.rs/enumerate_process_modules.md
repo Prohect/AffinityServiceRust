@@ -89,3 +89,7 @@ This function is module-private (`fn`, no `pub`). It is called exclusively by [r
 | Debug privilege enablement | [enable_debug_privilege](enable_debug_privilege.md) |
 | EnumProcessModulesEx (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-enumprocessmodulesex) |
 | GetModuleInformation (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-getmoduleinformation) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -43,3 +43,7 @@ Returns a `MutexGuard<HashMap<u32, HashMap<ApplyFailEntry, bool>>>`. The guard h
 | Stale entry cleanup | [purge_fail_map](purge_fail_map.md) |
 | Windows API operation identifiers | [Operation](Operation.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

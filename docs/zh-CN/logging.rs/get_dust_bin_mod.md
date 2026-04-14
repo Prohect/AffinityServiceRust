@@ -47,3 +47,7 @@ macro_rules! get_dust_bin_mod {
 | 本地时间访问宏 | [get_local_time!](get_local_time.md) |
 | 检查此标志的带时间戳日志函数 | [log_message](log_message.md) |
 | logging 模块概述 | [logging 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

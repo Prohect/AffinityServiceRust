@@ -80,3 +80,7 @@ fn try_open_thread(
 | 进程句柄获取（类似模式） | [get_process_handle](get_process_handle.md) |
 | 错误去重 | [is_new_error](../logging.rs/README.md) |
 | OpenThread (Microsoft Learn) | [OpenThread 函数](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openthread) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

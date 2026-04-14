@@ -89,3 +89,7 @@ The [MODULE_CACHE](MODULE_CACHE.md) mutex is held only for the duration of the c
 | Prime thread promotion (uses module resolution) | [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) |
 | Ideal processor assignment (uses module resolution) | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
 | EnumProcessModulesEx (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-enumprocessmodulesex) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

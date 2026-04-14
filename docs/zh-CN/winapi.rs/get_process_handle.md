@@ -81,3 +81,7 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
 | 调试特权启用 | [enable_debug_privilege](enable_debug_privilege.md) |
 | 错误去重 | [`is_new_error`](../logging.rs/is_new_error.md) |
 | 错误日志记录的 Operation 枚举 | [`Operation`](../logging.rs/Operation.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

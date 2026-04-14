@@ -70,3 +70,7 @@ If a CPU Set ID in the input does not exist in the system cache (e.g., because i
 | Cache element type | [CpuSetData](CpuSetData.md) |
 | CPU set application logic | [apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md) |
 | GetProcessDefaultCpuSets (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocessdefaultcpusets) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

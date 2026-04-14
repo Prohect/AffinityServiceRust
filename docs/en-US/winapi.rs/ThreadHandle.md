@@ -87,3 +87,7 @@ Protected processes may deny the full-access variants while still granting limit
 | Thread start address query | [get_thread_start_address](get_thread_start_address.md) |
 | Ideal processor setter | [set_thread_ideal_processor_ex](set_thread_ideal_processor_ex.md) |
 | OpenThread (MSDN) | [Microsoft Learn — OpenThread](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openthread) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -52,3 +52,7 @@ let snapshot = ProcessSnapshot::take(&mut buf, &mut map)?;
 | [`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md) | 支撑 `NtQuerySystemInformation` 数据的全局缓冲区 |
 | [`ProcessSnapshot`](ProcessSnapshot.md) | 安全管理两个静态变量的 RAII 包装器 |
 | [`ProcessEntry`](ProcessEntry.md) | 作为映射值存储的单个进程条目记录 |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

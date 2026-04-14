@@ -67,3 +67,7 @@ pub struct ProcessStats {
 | 滞后算法常量 | [`ConfigConstants`](../config.rs/ConfigConstants.md) |
 | 进程快照来源 | [`ProcessSnapshot`](../process.rs/ProcessSnapshot.md) |
 | 进程配置 | [`ProcessConfig`](../config.rs/ProcessConfig.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

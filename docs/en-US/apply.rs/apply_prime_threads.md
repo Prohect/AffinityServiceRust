@@ -111,3 +111,7 @@ It does not call any of the delegate functions, query thread cycle times, or mod
 | Cycle/time commit after apply | [update_thread_stats](update_thread_stats.md) |
 | Configuration model | [ProcessConfig](../config.rs/ProcessConfig.md) |
 | apply module overview | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

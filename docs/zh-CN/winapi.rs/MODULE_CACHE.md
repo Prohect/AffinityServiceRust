@@ -65,3 +65,7 @@ static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> =
 | 主线程调度器（模块名称的消费者） | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
 | CPU 集合拓扑缓存（类似的惰性全局变量） | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
 | EnumProcessModulesEx (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-enumprocessmodulesex) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

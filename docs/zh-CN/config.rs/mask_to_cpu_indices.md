@@ -70,3 +70,7 @@ fn mask_to_cpu_indices(mask: u64) -> Vec<u32> {
 | CPU 索引 → 显示字符串 | [format_cpu_indices](format_cpu_indices.md) |
 | 便捷的解析到掩码函数 | [parse_mask](parse_mask.md) |
 | 模块概述 | [config 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

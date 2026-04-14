@@ -100,3 +100,7 @@ apply 模块按以下顺序处理每个进程的 `ProcessConfig` 字段：
 | 内存优先级枚举 | [MemoryPriority](../priority.rs/MemoryPriority.md) |
 | CPU 规范解析 | [parse_cpu_spec](parse_cpu_spec.md) |
 | CPU 别名解析 | [resolve_cpu_spec](resolve_cpu_spec.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

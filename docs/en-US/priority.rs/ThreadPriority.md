@@ -118,3 +118,7 @@ Converts the variant into a `windows::Win32::System::Threading::THREAD_PRIORITY`
 | Prime-thread scheduling logic | [scheduler module](../scheduler.rs/README.md) |
 | Thread handle acquisition | [get_thread_handle](../winapi.rs/get_thread_handle.md) |
 | Configuration parsing | [config module](../config.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

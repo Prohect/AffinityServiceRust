@@ -41,3 +41,7 @@ static ETW_SENDER: Lazy<Mutex<Option<Sender<EtwProcessEvent>>>> = Lazy::new(|| M
 | Event payload type sent through the channel | [EtwProcessEvent](EtwProcessEvent.md) |
 | Monitor that manages the ETW session lifecycle | [EtwProcessMonitor](EtwProcessMonitor.md) |
 | Module overview | [event_trace module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

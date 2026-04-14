@@ -169,3 +169,8 @@ Two flags cause console output to be forced (`*get_use_console!() = true`): `-co
 | Configuration loading | [read_config](../config.rs/read_config.md) |
 | Hot-reload of config | [hotreload_config](../config.rs/hotreload_config.md) |
 | Hot-reload of blacklist | [hotreload_blacklist](../config.rs/hotreload_blacklist.md) |
+
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -71,3 +71,7 @@ The function is called from the scheduler module when a process exits (during `P
 | Module enumeration | [enumerate_process_modules](enumerate_process_modules.md) |
 | Prime-thread scheduler (process exit cleanup) | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
 | Thread start address query | [get_thread_start_address](get_thread_start_address.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

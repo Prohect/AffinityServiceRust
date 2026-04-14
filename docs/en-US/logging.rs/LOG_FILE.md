@@ -49,3 +49,7 @@ pub static LOG_FILE: Lazy<Mutex<File>> =
 | Log suppression flag | [DUST_BIN_MODE](DUST_BIN_MODE.md) |
 | Cached timestamp for file naming | [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

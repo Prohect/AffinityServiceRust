@@ -89,3 +89,7 @@ pub fn resolve_address_to_module(pid: u32, address: usize) -> String
 | 主线程提升（使用模块解析） | [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) |
 | 理想处理器分配（使用模块解析） | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
 | EnumProcessModulesEx (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-enumprocessmodulesex) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

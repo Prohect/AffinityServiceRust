@@ -75,3 +75,7 @@ pub struct IdealProcessorRule {
 | CPU 别名解析 | [parse_alias](parse_alias.md) |
 | CPU 别名解析 | [resolve_cpu_spec](resolve_cpu_spec.md) |
 | 模块概述 | [config 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

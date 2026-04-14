@@ -68,3 +68,7 @@ pub fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<
 | CPU 集合 ID → 亲和性掩码 | [mask_from_cpusetids](mask_from_cpusetids.md) |
 | CPU 索引转位掩码工具 | [cpu_indices_to_mask](../config.rs/cpu_indices_to_mask.md) |
 | 亲和性应用逻辑 | [apply_affinity](../apply.rs/apply_affinity.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -71,3 +71,7 @@ fn log_error_if_new(
 | 错误结果累加器 | [ApplyConfigResult](ApplyConfigResult.md) |
 | Win32 错误格式化 | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
 | NTSTATUS 错误格式化 | [error_from_ntstatus](../error_codes.rs/error_from_ntstatus.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

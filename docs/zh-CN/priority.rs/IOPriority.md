@@ -88,3 +88,7 @@ Win32 常量值（`0` 到 `3`）对应于 `ntddk.h` 中定义的 `IO_PRIORITY_HI
 | 线程优先级级别枚举 | [ThreadPriority](ThreadPriority.md) |
 | I/O 优先级应用逻辑 | [apply_io_priority](../apply.rs/apply_io_priority.md) |
 | priority 模块概述 | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

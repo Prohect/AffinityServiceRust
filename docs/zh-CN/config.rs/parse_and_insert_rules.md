@@ -163,3 +163,7 @@ game.exe:high:*perf:@*perf:?8x*p@engine.dll;render.dll!above normal*e@audio.dll:
 | 内存优先级枚举 | [MemoryPriority](../priority.rs/MemoryPriority.md) |
 | 线程优先级枚举 | [ThreadPriority](../priority.rs/ThreadPriority.md) |
 | 配置模块概述 | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -91,3 +91,7 @@ NtQueryInformationThread(
 | 理想处理器规则匹配 | [IdealProcessorRule](../config.rs/IdealProcessorRule.md) |
 | 线程统计信息（存储起始地址） | [ThreadStats](../scheduler.rs/ThreadStats.md) |
 | NtQueryInformationThread（非官方文档） | [ntdll 未公开函数](https://learn.microsoft.com/en-us/windows/win32/api/winternl/) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

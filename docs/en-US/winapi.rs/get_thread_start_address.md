@@ -91,3 +91,7 @@ The start address is **not** the thread's current instruction pointer (`RIP`/`EI
 | Ideal processor rule matching | [IdealProcessorRule](../config.rs/IdealProcessorRule.md) |
 | Thread statistics (stores start address) | [ThreadStats](../scheduler.rs/ThreadStats.md) |
 | NtQueryInformationThread (unofficial docs) | [ntdll undocumented functions](https://learn.microsoft.com/en-us/windows/win32/api/winternl/) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

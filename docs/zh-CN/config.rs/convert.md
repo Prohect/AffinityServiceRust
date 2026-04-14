@@ -133,3 +133,7 @@ Converted {in_path} to {out_path}
 | CPU 规格解析器 | [parse_cpu_spec](parse_cpu_spec.md) |
 | CLI 参数解析 | [cli 模块](../cli.rs/README.md) |
 | 模块概述 | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

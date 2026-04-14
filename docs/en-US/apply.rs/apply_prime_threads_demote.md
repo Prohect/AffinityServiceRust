@@ -116,3 +116,7 @@ The function traverses handle tiers in the same order as other apply functions:
 | Thread priority enum | [ThreadPriority](../priority.rs/ThreadPriority.md) |
 | Error deduplication | [log_error_if_new](log_error_if_new.md) |
 | apply module overview | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

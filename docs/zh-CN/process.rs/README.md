@@ -24,3 +24,7 @@
 | [ProcessConfig](../config.rs/ProcessConfig.md) | 应用于快照中条目的每进程配置（优先级、亲和性、CPU 集、主力线程）。 |
 | [apply_prime_threads](../apply.rs/apply_prime_threads.md) | 从 `ProcessEntry` 读取线程数据并将其馈送到调度器进行提升/降级。 |
 | [prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md) | 遍历 `ProcessEntry` 线程以在调度前查询和缓存周期时间。 |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

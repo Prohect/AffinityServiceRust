@@ -88,3 +88,7 @@ Affinity: 0xFF -> 0xF0
 | 主力线程 CPU 固定（使用 `current_mask`） | [apply_prime_threads_promote](apply_prime_threads_promote.md) |
 | CPU 索引 ↔ 掩码转换 | [cpu_indices_to_mask](../config.rs/cpu_indices_to_mask.md)、[format_cpu_indices](../config.rs/format_cpu_indices.md) |
 | 进程句柄获取 | [get_process_handle](../winapi.rs/get_process_handle.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

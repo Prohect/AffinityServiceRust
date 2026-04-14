@@ -123,3 +123,7 @@ An [IdealProcessorRule](IdealProcessorRule.md) with an empty `prefixes` vector m
 | Per-process configuration | [ProcessConfig](ProcessConfig.md) |
 | Ideal processor application at runtime | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
 | Config module overview | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

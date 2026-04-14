@@ -41,3 +41,7 @@ Returns `std::sync::MutexGuard<'static, HashSet<String>>` — a RAII guard that 
 | Find-mode process logging | [log_process_find](log_process_find.md) |
 | Other accessor macros | [get_use_console!](get_use_console.md), [get_dust_bin_mod!](get_dust_bin_mod.md), [get_local_time!](get_local_time.md), [get_logger!](get_logger.md), [get_logger_find!](get_logger_find.md), [get_pid_map_fail_entry_set!](get_pid_map_fail_entry_set.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

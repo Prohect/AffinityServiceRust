@@ -71,3 +71,7 @@ For example:
 | Error result accumulator | [ApplyConfigResult](ApplyConfigResult.md) |
 | Win32 error formatting | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
 | NTSTATUS error formatting | [error_from_ntstatus](../error_codes.rs/error_from_ntstatus.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

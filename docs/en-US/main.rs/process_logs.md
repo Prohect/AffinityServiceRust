@@ -115,3 +115,7 @@ AffinityServiceRust.exe -processlogs -config config.ini -blacklist blacklist.txt
 | Configuration loading | [read_config](../config.rs/read_config.md) |
 | Blacklist loading | [read_list](../config.rs/read_list.md) |
 | Main entry point | [main](main.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

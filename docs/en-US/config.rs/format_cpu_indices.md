@@ -69,3 +69,7 @@ This function is called by [convert](convert.md) and [sort_and_group_config](sor
 | CPU indices to bitmask | [cpu_indices_to_mask](cpu_indices_to_mask.md) |
 | Bitmask to CPU indices | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
 | Config module overview | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

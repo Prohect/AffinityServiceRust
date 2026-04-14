@@ -95,3 +95,7 @@ If the same constant is defined multiple times in a config file, each occurrence
 | CPU alias line parser | [parse_alias](parse_alias.md) |
 | Prime-thread scheduler | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
 | Config module overview | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

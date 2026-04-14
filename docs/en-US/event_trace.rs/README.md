@@ -24,3 +24,7 @@ The `event_trace` module provides a minimal ETW (Event Tracing for Windows) cons
 | Service main loop that consumes ETW events | [main module](../main.rs/README.md) |
 | Logging infrastructure for diagnostics | [logging module](../logging.rs/README.md) |
 | Windows API wrappers (handles, privileges) | [winapi module](../winapi.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

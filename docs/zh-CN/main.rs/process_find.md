@@ -83,3 +83,7 @@ fn process_find(
 | 查找日志记录函数 | [log_process_find](../logging.rs/log_process_find.md) |
 | CLI 参数和查找模式标志 | [CliArgs](../../zh-CN/cli.rs/CliArgs.md) |
 | 主入口点和轮询循环 | [main](main.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

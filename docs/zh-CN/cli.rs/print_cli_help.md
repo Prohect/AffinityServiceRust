@@ -93,3 +93,7 @@ pub fn print_cli_help()
 | CLI 参数结构体 | [CliArgs](CliArgs.md) |
 | 参数解析器 | [parse_args](parse_args.md) |
 | 入口点 | [main](../main.rs/main.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -50,3 +50,7 @@ if *get_use_console!() {
 | Log file accessor macro | [get_logger!](get_logger.md) |
 | Find log file accessor macro | [get_logger_find!](get_logger_find.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

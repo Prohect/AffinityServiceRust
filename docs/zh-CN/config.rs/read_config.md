@@ -138,3 +138,7 @@ background_apps {
 | 配置热重载 | [hotreload_config](hotreload_config.md) |
 | 黑名单文件读取器 | [read_list](read_list.md) |
 | 配置模块概述 | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

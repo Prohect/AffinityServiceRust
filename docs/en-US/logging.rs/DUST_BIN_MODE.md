@@ -48,3 +48,7 @@ pub static DUST_BIN_MODE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
 | UAC elevation request | [request_uac_elevation](../winapi.rs/request_uac_elevation.md) |
 | CLI arguments controlling logging behavior | [cli module](../cli.rs/README.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

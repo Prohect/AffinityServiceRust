@@ -57,3 +57,7 @@ Negative values for `time` are technically valid at the arithmetic level but are
 | PrimeThreadScheduler::drop_process_by_pid | [PrimeThreadScheduler](PrimeThreadScheduler.md#drop_process_by_pid) |
 | ThreadStats | [ThreadStats](ThreadStats.md) |
 | SYSTEM_THREAD_INFORMATION | [Microsoft Learn — SYSTEM_THREAD_INFORMATION](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntquerysysteminformation#system_thread_information) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

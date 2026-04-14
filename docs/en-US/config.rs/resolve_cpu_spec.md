@@ -91,3 +91,7 @@ Given the alias map `{ "perf": [0, 1, 2, 3], "eff": [4, 5, 6, 7] }`:
 | CPU indices to bitmask | [cpu_indices_to_mask](cpu_indices_to_mask.md) |
 | Per-process config (fields that use aliases) | [ProcessConfig](ProcessConfig.md) |
 | Config module overview | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

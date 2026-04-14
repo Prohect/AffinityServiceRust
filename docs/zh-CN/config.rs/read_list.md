@@ -88,3 +88,7 @@ code.exe
 | 黑名单热重载 | [hotreload_blacklist](hotreload_blacklist.md) |
 | UTF-16 LE 文件读取器 | [read_utf16le_file](read_utf16le_file.md) |
 | 模块概述 | [config 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

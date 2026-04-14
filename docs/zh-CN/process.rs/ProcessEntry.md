@@ -161,3 +161,7 @@ pub fn thread_count(&self) -> u32
 | [SNAPSHOT_BUFFER](SNAPSHOT_BUFFER.md) | 支撑快照数据的全局缓冲区。 |
 | [PID_TO_PROCESS_MAP](PID_TO_PROCESS_MAP.md) | 按 PID 存储 `ProcessEntry` 实例的全局映射。 |
 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) | 从 `ProcessEntry` 消费线程周期数据以进行主力线程选择。 |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

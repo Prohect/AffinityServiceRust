@@ -95,3 +95,7 @@ In the main loop ([`main.rs`](../main.rs/README.md)):
 | Base priority privilege enablement (post-elevation) | [enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md) |
 | CLI argument parsing and flags | [cli module](../cli.rs/README.md) |
 | Service main entry point | [main module](../main.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

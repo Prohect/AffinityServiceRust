@@ -83,3 +83,7 @@ pub fn parse_mask(s: &str) -> usize {
 | 紧凑范围显示格式化器 | [format_cpu_indices](format_cpu_indices.md) |
 | 进程级配置（CPU 亲和性掩码用途） | [ProcessConfig](ProcessConfig.md) |
 | 模块概述 | [config 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

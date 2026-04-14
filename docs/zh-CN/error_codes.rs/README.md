@@ -17,3 +17,7 @@
 | ETW (Windows 事件跟踪) 会话管理（使用错误格式化） | [event_trace 模块](../event_trace.rs/README.md) |
 | 规则应用（错误格式化的主要使用者） | [apply 模块](../apply.rs/README.md) |
 | Windows API 封装 | [winapi 模块](../winapi.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

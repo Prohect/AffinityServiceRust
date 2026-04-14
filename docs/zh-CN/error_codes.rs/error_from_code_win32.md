@@ -86,3 +86,7 @@ pub fn error_from_code_win32(code: u32) -> String
 | NTSTATUS 代码翻译 | [error_from_ntstatus](error_from_ntstatus.md) |
 | 日志中的错误去重 | [is_new_error](../logging.rs/is_new_error.md) |
 | error_codes 模块概述 | [error_codes 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

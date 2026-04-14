@@ -54,3 +54,7 @@ pub fn log_pure_message(args: &str)
 | 日志抑制标志（此处不检查） | [DUST_BIN_MODE](DUST_BIN_MODE.md) |
 | 主日志文件句柄 | [LOG_FILE](LOG_FILE.md) |
 | logging 模块概述 | [logging 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

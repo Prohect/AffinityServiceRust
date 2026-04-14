@@ -85,3 +85,7 @@ This means the function executes and the program exits without touching the conf
 | CLI arguments structure | [CliArgs](CliArgs.md) |
 | Argument parser | [parse_args](parse_args.md) |
 | Entry point | [main](../main.rs/main.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

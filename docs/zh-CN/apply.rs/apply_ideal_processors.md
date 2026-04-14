@@ -125,3 +125,7 @@ pub fn apply_ideal_processors(
 | 线程启动模块解析 | [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md) |
 | Win32 理想处理器封装 | [set_thread_ideal_processor_ex](../winapi.rs/set_thread_ideal_processor_ex.md)、[get_thread_ideal_processor_ex](../winapi.rs/get_thread_ideal_processor_ex.md) |
 | 线程级应用编排 | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

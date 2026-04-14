@@ -61,3 +61,7 @@ The `logging` module provides all logging infrastructure for AffinityServiceRust
 | Process priority / IO priority / memory priority enums | [priority module](../priority.rs/README.md) |
 | Service main loop and find mode entry point | [main module](../main.rs/README.md) |
 | CLI flags that control logging behavior | [cli module](../cli.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

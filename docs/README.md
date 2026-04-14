@@ -39,3 +39,8 @@ each top level item of a souce file is a markdown in that dir(eg. "\en-US\config
 
 Update en-US first, do not considering update for all locales at same time.
 Translate for other locales after changes to en-US finishing.
+
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

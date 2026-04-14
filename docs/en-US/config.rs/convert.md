@@ -133,3 +133,7 @@ This function is invoked when the user passes the `-convert` flag on the command
 | CPU spec parser | [parse_cpu_spec](parse_cpu_spec.md) |
 | CLI argument parsing | [cli module](../cli.rs/README.md) |
 | Config module overview | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -87,3 +87,7 @@ The function is idempotent: if the current priority already matches the target, 
 | Handle extraction helper | [get_handles](get_handles.md) |
 | Error deduplication | [log_error_if_new](log_error_if_new.md) |
 | apply module overview | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

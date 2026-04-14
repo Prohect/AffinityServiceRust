@@ -70,3 +70,7 @@ pub fn cpu_indices_to_mask(cpus: &[u32]) -> usize
 | 紧凑范围格式化器 | [format_cpu_indices](format_cpu_indices.md) |
 | 进程级配置（affinity_cpus 字段） | [ProcessConfig](ProcessConfig.md) |
 | 模块概述 | [config 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

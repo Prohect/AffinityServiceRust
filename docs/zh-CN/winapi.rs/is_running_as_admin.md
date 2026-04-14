@@ -80,3 +80,7 @@ pub fn is_running_as_admin() -> bool
 | 基本优先级特权启用 | [enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md) |
 | 服务主入口点 | [main 模块](../main.rs/README.md) |
 | TOKEN_ELEVATION (MSDN) | [Microsoft Learn — TOKEN_ELEVATION](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/ns-securitybaseapi-token_elevation) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

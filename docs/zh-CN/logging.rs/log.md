@@ -65,3 +65,7 @@ crate::logging::log_message(format!("Applied {} rules to PID {}", count, pid).as
 | 日志抑制标志 | [DUST_BIN_MODE](DUST_BIN_MODE.md) |
 | 控制台输出标志 | [USE_CONSOLE](USE_CONSOLE.md) |
 | logging 模块概述 | [logging 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

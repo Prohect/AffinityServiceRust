@@ -121,3 +121,7 @@ Thread 1234 -> (priority set: Normal -> Highest)
 | 模块名解析 | [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md) |
 | 调度器状态模型 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md), [ThreadStats](../scheduler.rs/ThreadStats.md) |
 | apply 模块概述 | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

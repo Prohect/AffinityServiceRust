@@ -50,3 +50,7 @@ The struct derives `PartialEq`, `Eq`, `Clone`, and `Copy` for value semantics an
 | I/O priority enum | [IOPriority](IOPriority.md) |
 | Memory priority application logic | [apply_memory_priority](../apply.rs/apply_memory_priority.md) |
 | priority module overview | [priority module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

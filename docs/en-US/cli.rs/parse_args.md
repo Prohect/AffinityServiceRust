@@ -100,3 +100,8 @@ parse_args(&args, &mut cli)?;
 | Detailed help output | [print_cli_help](print_cli_help.md) |
 | Combined help output | [print_help_all](print_help_all.md) |
 | Entry point that calls parse_args | [main](../main.rs/main.md) |
+
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

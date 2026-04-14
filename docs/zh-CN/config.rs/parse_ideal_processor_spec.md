@@ -123,3 +123,7 @@ fn parse_ideal_processor_spec(
 | 进程级配置 | [ProcessConfig](ProcessConfig.md) |
 | 运行时理想处理器应用 | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
 | 模块概览 | [config 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

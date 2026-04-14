@@ -88,3 +88,7 @@ The lookup is driven by a `const TABLE` array of `(Self, &str, Option<u32>)` tup
 | Thread priority level enum | [ThreadPriority](ThreadPriority.md) |
 | I/O priority application logic | [apply_io_priority](../apply.rs/apply_io_priority.md) |
 | priority module overview | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

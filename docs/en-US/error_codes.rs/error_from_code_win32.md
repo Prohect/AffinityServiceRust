@@ -86,3 +86,7 @@ Each returned string intentionally omits the `ERROR_` prefix that the official W
 | NTSTATUS code translation | [error_from_ntstatus](error_from_ntstatus.md) |
 | Error deduplication in logging | [is_new_error](../logging.rs/is_new_error.md) |
 | error_codes module overview | [error_codes module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

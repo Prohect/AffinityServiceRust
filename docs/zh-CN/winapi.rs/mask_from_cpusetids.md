@@ -75,3 +75,7 @@ mask → cpusetids_from_mask → cpusetids → mask_from_cpusetids → mask  (�
 | 按掩码过滤索引 | [filter_indices_by_mask](filter_indices_by_mask.md) |
 | CPU 集合拓扑数据 | [CpuSetData](CpuSetData.md) |
 | 全局 CPU 集合缓存 | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -81,3 +81,7 @@ pub fn reset_thread_ideal_processors(
 | 理想处理器 Win32 封装 | [set_thread_ideal_processor_ex](../winapi.rs/set_thread_ideal_processor_ex.md) |
 | 基于规则的理想处理器分配 | [apply_ideal_processors](apply_ideal_processors.md) |
 | 进程线程枚举 | [ProcessEntry](../process.rs/ProcessEntry.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -54,3 +54,7 @@ None (`()`).
 | Log suppression flag (not checked here) | [DUST_BIN_MODE](DUST_BIN_MODE.md) |
 | Main log file handle | [LOG_FILE](LOG_FILE.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -90,3 +90,7 @@ Windows CPU 集合由不透明的 32 位 ID 标识（与逻辑处理器索引不
 | CPU 集合 ID 转换 | [cpusetids_from_indices](../winapi.rs/cpusetids_from_indices.md)、[indices_from_cpusetids](../winapi.rs/indices_from_cpusetids.md) |
 | 配置模型 | [ProcessConfig](../config.rs/ProcessConfig.md) |
 | apply 模块概述 | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

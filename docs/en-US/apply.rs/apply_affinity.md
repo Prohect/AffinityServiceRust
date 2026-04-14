@@ -88,3 +88,7 @@ The message shows the previous mask and the new mask in hexadecimal.
 | Prime thread CPU pinning (uses `current_mask`) | [apply_prime_threads_promote](apply_prime_threads_promote.md) |
 | CPU index ↔ mask conversion | [cpu_indices_to_mask](../config.rs/cpu_indices_to_mask.md), [format_cpu_indices](../config.rs/format_cpu_indices.md) |
 | Process handle acquisition | [get_process_handle](../winapi.rs/get_process_handle.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

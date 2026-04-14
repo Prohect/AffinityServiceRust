@@ -100,3 +100,7 @@ fn apply_config_thread_level(
 | 主线程调度器与滞后机制 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
 | 进程配置结构体 | [ProcessConfig](../config.rs/ProcessConfig.md) |
 | 主入口点和轮询循环 | [main](main.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -75,3 +75,7 @@ When a process also has a `cpu_set_cpus` configured with the `@` prefix (i.e., `
 | CPU alias parsing | [parse_alias](parse_alias.md) |
 | CPU alias resolution | [resolve_cpu_spec](resolve_cpu_spec.md) |
 | Module overview | [config module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

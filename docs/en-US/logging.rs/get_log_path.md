@@ -60,3 +60,7 @@ Examples:
 | Timestamped log writing | [log_message](log_message.md) |
 | Find-mode log writing | [log_to_find](log_to_find.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

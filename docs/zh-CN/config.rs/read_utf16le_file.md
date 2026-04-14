@@ -72,3 +72,7 @@ pub fn read_utf16le_file(path: &str) -> Result<String>
 | UTF-8 配置文件读取器 | [read_config](read_config.md) |
 | UTF-8 列表文件读取器 | [read_list](read_list.md) |
 | 模块概述 | [config 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

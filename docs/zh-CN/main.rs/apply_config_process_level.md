@@ -76,3 +76,7 @@ fn apply_config_process_level(
 | 进程配置结构体 | [ProcessConfig](../config.rs/ProcessConfig.md) |
 | 应用结果累加器 | [ApplyConfigResult](../apply.rs/ApplyConfigResult.md) |
 | 主入口点和轮询循环 | [main](main.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

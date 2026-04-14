@@ -68,3 +68,7 @@ macro_rules! get_pid_map_fail_entry_set {
 | Windows API 操作标识符 | [Operation](Operation.md) |
 | 受保护访问的宏 | [get_pid_map_fail_entry_set!](get_pid_map_fail_entry_set.md) |
 | logging 模块概述 | [logging 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

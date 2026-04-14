@@ -86,3 +86,7 @@ If `pid` does not exist in `prime_scheduler.pid_to_process_stats`, the `if let S
 | Scheduler state | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
 | Thread-level apply orchestration | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
 | apply module overview | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

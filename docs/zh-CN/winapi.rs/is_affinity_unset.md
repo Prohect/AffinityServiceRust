@@ -80,3 +80,7 @@ pub fn is_affinity_unset(pid: u32, process_name: &str) -> bool
 | CPU 索引转位掩码工具 | [cpu_indices_to_mask](../config.rs/cpu_indices_to_mask.md) |
 | 错误码格式化 | [error_codes 模块](../error_codes.rs/README.md) |
 | GetProcessAffinityMask (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

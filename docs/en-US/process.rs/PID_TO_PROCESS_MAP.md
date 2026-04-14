@@ -52,3 +52,7 @@ The `Mutex` ensures exclusive access. Because [`ProcessSnapshot::take`](ProcessS
 | [`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md) | Global buffer backing `NtQuerySystemInformation` data |
 | [`ProcessSnapshot`](ProcessSnapshot.md) | RAII wrapper that manages both statics safely |
 | [`ProcessEntry`](ProcessEntry.md) | Per-process record stored as the map value |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

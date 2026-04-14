@@ -71,3 +71,7 @@ pub struct ProcessHandle {
 | 规则应用入口点（进程级别） | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
 | 句柄失败的日志操作 | [Operation 枚举](../logging.rs/README.md) |
 | 错误码格式化 | [error_codes 模块](../error_codes.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -25,3 +25,7 @@
 | 规则应用（调用 `as_win_const`） | [apply 模块](../apply.rs/README.md) |
 | 错误码转换 | [error_codes 模块](../error_codes.rs/README.md) |
 | 日志记录和失败跟踪 | [logging 模块](../logging.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

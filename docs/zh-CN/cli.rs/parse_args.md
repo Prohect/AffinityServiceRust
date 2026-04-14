@@ -100,3 +100,8 @@ parse_args(&args, &mut cli)?;
 | 详细帮助输出 | [print_cli_help](print_cli_help.md) |
 | 组合帮助输出 | [print_help_all](print_help_all.md) |
 | 调用 parse_args 的入口点 | [main](../main.rs/main.md) |
+
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

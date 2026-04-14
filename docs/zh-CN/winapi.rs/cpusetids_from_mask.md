@@ -71,3 +71,7 @@ pub fn cpusetids_from_mask(mask: usize) -> Vec<u32>
 | 按掩码过滤索引 | [filter_indices_by_mask](filter_indices_by_mask.md) |
 | CPU 集合拓扑缓存 | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
 | CPU 集合数据元素 | [CpuSetData](CpuSetData.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

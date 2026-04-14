@@ -56,3 +56,7 @@ The `winapi` module provides safe Rust wrappers around Windows API functions use
 | Error code formatting helpers | [error_codes module](../error_codes.rs/README.md) |
 | CLI argument parsing | [cli module](../cli.rs/README.md) |
 | Service main loop | [main module](../main.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

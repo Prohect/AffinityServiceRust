@@ -77,3 +77,7 @@ The function propagates the `windows::core::Error` from the underlying Win32 cal
 | Ideal processor assignment logic | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
 | Thread statistics | [ThreadStats](../scheduler.rs/ThreadStats.md) |
 | GetThreadIdealProcessorEx (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getthreadidealprocessorex) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

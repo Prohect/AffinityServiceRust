@@ -161,3 +161,7 @@ The primary design goal of `ProcessEntry` is to avoid parsing thread arrays for 
 | [SNAPSHOT_BUFFER](SNAPSHOT_BUFFER.md) | Global buffer backing the snapshot data. |
 | [PID_TO_PROCESS_MAP](PID_TO_PROCESS_MAP.md) | Global map that stores `ProcessEntry` instances by PID. |
 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) | Consumes thread cycle data from `ProcessEntry` for prime thread selection. |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -50,3 +50,7 @@ pub struct MemoryPriorityInformation(pub u32);
 | I/O 优先级枚举 | [IOPriority](IOPriority.md) |
 | 内存优先级应用逻辑 | [apply_memory_priority](../apply.rs/apply_memory_priority.md) |
 | 优先级模块概述 | [priority 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

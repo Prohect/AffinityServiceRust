@@ -89,3 +89,7 @@ fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)>
 | 调试特权启用 | [enable_debug_privilege](enable_debug_privilege.md) |
 | EnumProcessModulesEx (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-enumprocessmodulesex) |
 | GetModuleInformation (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-getmoduleinformation) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

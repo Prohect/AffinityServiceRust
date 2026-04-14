@@ -96,3 +96,7 @@ pub fn print_report(&self)
 | 配置文件热重载 | [hotreload_config](hotreload_config.md) |
 | 规则字段解析 | [parse_and_insert_rules](parse_and_insert_rules.md) |
 | 配置模块概述 | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

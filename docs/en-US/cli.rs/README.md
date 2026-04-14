@@ -29,3 +29,7 @@ All mode flags in `CliArgs` default to `false` and all file paths default to sen
 | Configuration file parsing | [config.rs](../config.rs/README.md) |
 | Process priority enumerations | [priority.rs](../priority.rs/README.md) |
 | Logging infrastructure (console vs. file) | [logging.rs](../logging.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

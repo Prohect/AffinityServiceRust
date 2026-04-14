@@ -61,3 +61,7 @@ pub struct ApplyFailEntry {
 | Win32 error code translation | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
 | NTSTATUS code translation | [error_from_ntstatus](../error_codes.rs/error_from_ntstatus.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -56,3 +56,7 @@ pub struct IdealProcessorState {
 | [PrimeThreadScheduler](PrimeThreadScheduler.md) | 管理线程到处理器分配的核心调度器。 |
 | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) | 在应用理想处理器规则时读写 `IdealProcessorState` 的函数。 |
 | [set_thread_ideal_processor_ex](../winapi.rs/set_thread_ideal_processor_ex.md) | 对 Windows `SetThreadIdealProcessorEx` API 的底层封装。 |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

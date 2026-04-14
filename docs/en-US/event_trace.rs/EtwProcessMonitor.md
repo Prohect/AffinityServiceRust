@@ -122,3 +122,7 @@ impl Drop for EtwProcessMonitor {
 | Active flag for ETW session | [ETW_ACTIVE](ETW_ACTIVE.md) |
 | Win32 error code translation | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
 | event_trace module overview | [event_trace module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

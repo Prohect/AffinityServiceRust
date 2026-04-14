@@ -45,3 +45,7 @@ pub static FIND_LOG_FILE: Lazy<Mutex<File>> =
 | Cached local time for date prefix | [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) |
 | Console vs. file routing flag | [USE_CONSOLE](USE_CONSOLE.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

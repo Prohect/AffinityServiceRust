@@ -111,3 +111,7 @@ pub fn apply_prime_threads(
 | 应用后的周期/时间提交 | [update_thread_stats](update_thread_stats.md) |
 | 配置模型 | [ProcessConfig](../config.rs/ProcessConfig.md) |
 | apply 模块概览 | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

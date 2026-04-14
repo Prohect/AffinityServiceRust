@@ -69,3 +69,7 @@ pub fn purge_fail_map(pids_and_names: &[(u32, String)])
 | 失败条目键结构体 | [ApplyFailEntry](ApplyFailEntry.md) |
 | Windows API 操作标识符 | [Operation](Operation.md) |
 | logging 模块概述 | [logging 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -86,3 +86,7 @@ pub fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler)
 | 调度器状态 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
 | 线程级应用编排 | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
 | apply 模块概述 | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

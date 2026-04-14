@@ -49,3 +49,7 @@ pub static LOG_FILE: Lazy<Mutex<File>> =
 | 日志抑制标志 | [DUST_BIN_MODE](DUST_BIN_MODE.md) |
 | 用于文件命名的缓存时间戳 | [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) |
 | logging 模块概述 | [logging 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

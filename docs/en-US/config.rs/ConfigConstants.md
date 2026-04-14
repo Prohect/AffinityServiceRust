@@ -85,3 +85,7 @@ When [hotreload_config](hotreload_config.md) detects a modified configuration fi
 | Prime-thread scheduler | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
 | Hot-reload of configuration | [hotreload_config](hotreload_config.md) |
 | Module overview | [config module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

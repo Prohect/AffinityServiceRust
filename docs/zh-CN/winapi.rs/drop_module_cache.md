@@ -71,3 +71,7 @@ pub fn drop_module_cache(pid: u32)
 | 模块枚举 | [enumerate_process_modules](enumerate_process_modules.md) |
 | 主线程调度器（进程退出清理） | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
 | 线程起始地址查询 | [get_thread_start_address](get_thread_start_address.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

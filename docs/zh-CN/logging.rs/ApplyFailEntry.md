@@ -61,3 +61,7 @@ pub struct ApplyFailEntry {
 | Win32 错误代码翻译 | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
 | NTSTATUS 代码翻译 | [error_from_ntstatus](../error_codes.rs/error_from_ntstatus.md) |
 | logging 模块概述 | [logging 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -45,3 +45,7 @@ pub static FIND_LOG_FILE: Lazy<Mutex<File>> =
 | 用于日期前缀的缓存本地时间 | [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) |
 | 控制台与文件路由标志 | [USE_CONSOLE](USE_CONSOLE.md) |
 | logging 模块概述 | [logging 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

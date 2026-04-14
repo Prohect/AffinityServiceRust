@@ -76,3 +76,7 @@ Callers that need to set thread properties (ideal processor, CPU sets, thread pr
 | Process handle acquisition | [get_process_handle](get_process_handle.md) |
 | Process handle container | [ProcessHandle](ProcessHandle.md) |
 | Error deduplication system | [logging module](../logging.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

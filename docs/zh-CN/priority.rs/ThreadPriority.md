@@ -118,3 +118,7 @@ pub fn to_thread_priority_struct(self) -> THREAD_PRIORITY
 | 主线程调度逻辑 | [scheduler 模块](../scheduler.rs/README.md) |
 | 线程句柄获取 | [get_thread_handle](../winapi.rs/get_thread_handle.md) |
 | 配置解析 | [config 模块](../config.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

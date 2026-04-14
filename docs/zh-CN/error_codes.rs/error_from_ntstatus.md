@@ -73,3 +73,7 @@ NTSTATUS 代码使用与 Win32 错误代码不同的编号方案。虽然两者�
 | 内存优先级枚举 | [MemoryPriority](../priority.rs/MemoryPriority.md) |
 | 日志记录和错误去重 | [logging 模块](../logging.rs/README.md) |
 | 模块概述 | [error_codes 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

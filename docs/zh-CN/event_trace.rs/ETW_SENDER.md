@@ -41,3 +41,7 @@ static ETW_SENDER: Lazy<Mutex<Option<Sender<EtwProcessEvent>>>> = Lazy::new(|| M
 | 通过通道发送的事件负载类型 | [EtwProcessEvent](EtwProcessEvent.md) |
 | 管理 ETW (Windows 事件跟踪) 会话生命周期的监视器 | [EtwProcessMonitor](EtwProcessMonitor.md) |
 | 模块概述 | [event_trace 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -88,3 +88,7 @@ The `?` operator on `File::open` means that file-not-found or permission errors 
 | Blacklist hot-reload | [hotreload_blacklist](hotreload_blacklist.md) |
 | UTF-16 LE file reader | [read_utf16le_file](read_utf16le_file.md) |
 | Config module overview | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

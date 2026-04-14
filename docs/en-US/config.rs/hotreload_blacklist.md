@@ -92,3 +92,7 @@ This function is not thread-safe. It mutates `blacklist` and `last_blacklist_mod
 | CLI arguments (blacklist_file_name) | [CliArgs](../cli.rs/CliArgs.md) |
 | Service main loop | [main](../main.rs/main.md) |
 | Config module overview | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

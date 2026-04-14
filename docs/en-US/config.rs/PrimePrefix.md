@@ -69,3 +69,7 @@ At runtime, the apply module resolves each thread's start address to a module na
 | Prime-thread application logic | [apply_prime_threads](../apply.rs/apply_prime_threads.md) |
 | Thread priority enum | [ThreadPriority](../priority.rs/ThreadPriority.md) |
 | CPU alias parsing | [parse_alias](parse_alias.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

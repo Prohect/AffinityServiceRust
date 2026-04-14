@@ -65,3 +65,7 @@ The `#[allow(clippy::type_complexity)]` attribute suppresses the Clippy warning 
 | Prime-thread scheduler (consumer of module names) | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
 | CPU set topology cache (analogous lazy global) | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
 | EnumProcessModulesEx (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-enumprocessmodulesex) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

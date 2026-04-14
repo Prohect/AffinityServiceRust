@@ -76,3 +76,7 @@ In dry-run mode (`-dryrun` CLI flag), all sub-functions record their intended ch
 | Process configuration structure | [ProcessConfig](../config.rs/ProcessConfig.md) |
 | Apply result accumulator | [ApplyConfigResult](../apply.rs/ApplyConfigResult.md) |
 | Main entry point and polling loop | [main](main.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

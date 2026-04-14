@@ -86,3 +86,7 @@ Windows 不维护严格的父子进程树。`PROCESSENTRY32W` 中的 `th32Parent
 | 服务主入口点 | [main 模块](../main.rs/README.md) |
 | CreateToolhelp32Snapshot (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-createtoolhelp32snapshot) |
 | TerminateProcess (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

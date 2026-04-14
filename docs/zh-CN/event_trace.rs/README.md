@@ -24,3 +24,7 @@
 | 消费 ETW (Windows 事件跟踪) 事件的服务主循环 | [main 模块](../main.rs/README.md) |
 | 诊断日志基础设施 | [logging 模块](../logging.rs/README.md) |
 | Windows API 封装（句柄、权限） | [winapi 模块](../winapi.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

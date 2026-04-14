@@ -64,3 +64,7 @@ drop(time); // release lock before file I/O
 | Log file path construction | [get_log_path](get_log_path.md) |
 | Other accessor macros | [get_use_console!](get_use_console.md), [get_dust_bin_mod!](get_dust_bin_mod.md), [get_logger!](get_logger.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

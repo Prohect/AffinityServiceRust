@@ -100,3 +100,7 @@ A `ProcessConfig` with all fields set to `None`/empty/`0` applies no changes to 
 | Memory priority enum | [MemoryPriority](../priority.rs/MemoryPriority.md) |
 | CPU spec parsing | [parse_cpu_spec](parse_cpu_spec.md) |
 | CPU alias resolution | [resolve_cpu_spec](resolve_cpu_spec.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -84,3 +84,7 @@ pub struct ThreadStats {
 | 线程句柄包装器 | [ThreadHandle](../winapi.rs/ThreadHandle.md) |
 | 线程优先级枚举 | [ThreadPriority](../priority.rs/ThreadPriority.md) |
 | 滞后算法常量 | [ConfigConstants](../config.rs/ConfigConstants.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

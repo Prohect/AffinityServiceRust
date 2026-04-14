@@ -83,3 +83,7 @@ While [format_cpu_indices](format_cpu_indices.md) converts a CPU index slice to 
 | Compact range display formatter | [format_cpu_indices](format_cpu_indices.md) |
 | Per-process config (affinity mask usage) | [ProcessConfig](ProcessConfig.md) |
 | Config module overview | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

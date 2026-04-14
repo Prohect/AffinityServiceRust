@@ -94,3 +94,7 @@ my_group {
 | 规则字段解析（消费成员列表） | [parse_and_insert_rules](parse_and_insert_rules.md) |
 | 自动分组工具 | [sort_and_group_config](sort_and_group_config.md) |
 | 模块概述 | [config 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

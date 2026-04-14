@@ -91,3 +91,7 @@ Line {line_number}: Undefined alias '*{alias}' in {field_name} field
 | CPU 索引转位掩码 | [cpu_indices_to_mask](cpu_indices_to_mask.md) |
 | 每进程配置（使用别名的字段） | [ProcessConfig](ProcessConfig.md) |
 | 模块概述 | [config 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

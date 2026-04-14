@@ -87,3 +87,7 @@ pub fn set_timer_resolution(cli: &CliArgs)
 | 服务主入口点 | [main 模块](../main.rs/README.md) |
 | timeBeginPeriod（已公开替代） | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod) |
 | 定时器分辨率深入探讨 | [Microsoft Learn — Timer Resolution](https://learn.microsoft.com/en-us/windows/win32/sysinfo/acquiring-high-resolution-time-stamps) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

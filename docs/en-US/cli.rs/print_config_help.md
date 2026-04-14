@@ -78,3 +78,7 @@ This function is never called directly from [main](../main.rs/main.md). The call
 | Configuration file parser | [read_config](../config.rs/read_config.md) |
 | CLI arguments structure | [CliArgs](CliArgs.md) |
 | Entry point | [main](../main.rs/main.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

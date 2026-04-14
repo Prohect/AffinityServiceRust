@@ -41,3 +41,7 @@
 | 操作系统句柄封装 | [ProcessHandle](../winapi.rs/ProcessHandle.md)、[ThreadHandle](../winapi.rs/ThreadHandle.md) |
 | 优先级枚举 | [ProcessPriority](../priority.rs/ProcessPriority.md)、[IOPriority](../priority.rs/IOPriority.md)、[MemoryPriority](../priority.rs/MemoryPriority.md)、[ThreadPriority](../priority.rs/ThreadPriority.md) |
 | 错误格式化辅助函数 | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md)、[error_from_ntstatus](../error_codes.rs/error_from_ntstatus.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -25,3 +25,7 @@ The `priority` module defines the strongly-typed enumerations and helper types t
 | Rule application (calls `as_win_const`) | [apply module](../apply.rs/README.md) |
 | Error code translation | [error_codes module](../error_codes.rs/README.md) |
 | Logging and failure tracking | [logging module](../logging.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

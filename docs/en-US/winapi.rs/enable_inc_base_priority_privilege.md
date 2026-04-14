@@ -77,3 +77,7 @@ All errors are logged but not propagated. The service continues operating with w
 | Process priority enum | [ProcessPriority](../priority.rs/README.md) |
 | CLI arguments | [cli module](../cli.rs/README.md) |
 | AdjustTokenPrivileges (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-adjusttokenprivileges) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

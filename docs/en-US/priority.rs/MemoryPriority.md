@@ -89,3 +89,7 @@ Memory priority is orthogonal to process priority class and I/O priority; all th
 | I/O priority enum | [IOPriority](IOPriority.md) |
 | Thread priority enum | [ThreadPriority](ThreadPriority.md) |
 | Module overview | [priority module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

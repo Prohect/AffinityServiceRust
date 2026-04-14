@@ -166,6 +166,7 @@ game.exe:normal:*a:@0-3:*p:normal:normal:1
 | `-logloop` | 每次循环开始时记录消息 |
 | `-noDebugPriv` | 不请求 SeDebugPrivilege |
 | `-noIncBasePriority` | 不请求 SeIncreaseBasePriorityPrivilege |
+| `-noETW` | 不启动 ETW 进程监控 |
 
 完整 CLI 文档请参见 [cli.md](docs/zh-CN/cli.rs/README.md)。
 
@@ -644,7 +645,7 @@ cargo build --release
 
    这是**预期行为** —— 服务会对快照中所有名称匹配的进程应用规则，包括自身短暂存活的子进程。该子进程会在主循环启动前被终止（见启动清理逻辑），因此此条目每次运行最多出现一次，可安全忽略。
 
-8. **`[OPEN][ACCESS_DENIED]` 按 PID 去重**：当 [`apply_config_process_level()`](docs/zh-CN/main.rs/apply_config_process_level.md)/[`apply_config_thread_level()`](docs/zh-CN/main.rs/apply_config_thread_level.md) 因 `ACCESS_DENIED` 无法打开某进程时，该错误仅对每个唯一的 `(pid, 进程名)` 组合写入一次 `.find.log`。每次获取快照后，去重映射表会与当前快照对账：PID 已退出或被其他可执行文件复用的条目将被清除，因此若同一进程名在新 PID 下再次出现，错误将重新触发一次。同名可执行文件的多个并发实例（如具有不同 PID 的多个 `svchost.exe`）被独立跟踪——某个实例被拒绝访问，不会压制其他同名但不同 PID 实例的错误输出。
+8. **`[OPEN][ACCESS_DENIED]` 按线程去重**：当 [`apply_config_process_level()`](docs/zh-CN/main.rs/apply_config_process_level.md)/[`apply_config_thread_level()`](docs/zh-CN/main.rs/apply_config_thread_level.md) 因 `ACCESS_DENIED`（或其他错误）无法打开某进程或线程时，该错误仅对每个唯一的 `(pid, tid, 进程名, 操作)` 组合写入一次 `.find.log`。每次获取快照后，去重映射表会与当前快照对账：PID 已退出或被其他可执行文件复用的条目将被清除，因此若同一进程名在新 PID 下再次出现，错误将重新触发一次。同名可执行文件的多个并发实例（如具有不同 PID 的多个 `svchost.exe`）被独立跟踪——某个实例被拒绝访问，不会压制其他同名但不同 PID 实例的错误输出。
 
 错误去重实现请参见 [`is_new_error()`](docs/zh-CN/logging.rs/is_new_error.md)。
 
@@ -666,7 +667,7 @@ cargo build --release
 
 欢迎提交问题和拉取请求。
 
-AI 代理开发者请参阅 [project_specific_agent.md](project_specific_agent.md) 了解有用的 CLI 工具和批量编辑工作流。
+请尝试更新此 README 时更新提交 SHA：**678734d5df2c1188fb1bd6e448aae0884fb174fd**。这让开发者能够对比最新源码以理解变更。
 
 ## 许可证
 

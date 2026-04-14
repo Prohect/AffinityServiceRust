@@ -81,3 +81,7 @@ If `r_limited_handle` opens successfully but `w_limited_handle` fails, the funct
 | Debug privilege enablement | [enable_debug_privilege](enable_debug_privilege.md) |
 | Error deduplication | [`is_new_error`](../logging.rs/is_new_error.md) |
 | Operation enum for error logging | [`Operation`](../logging.rs/Operation.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

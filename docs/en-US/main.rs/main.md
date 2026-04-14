@@ -129,3 +129,8 @@ After the polling loop exits (due to `-loop` count, `-dryrun`, or signal), the f
 | Process snapshot | [ProcessSnapshot](../process.rs/ProcessSnapshot.md) |
 | Find mode (runtime discovery) | [process_find](process_find.md) |
 | Log processing | [process_logs](process_logs.md) |
+
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

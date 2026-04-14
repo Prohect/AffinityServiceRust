@@ -82,3 +82,7 @@ pub fn apply_prime_threads_select(
 | 理想处理器规则选择（复用相同算法） | [apply_ideal_processors](apply_ideal_processors.md) |
 | 周期时间预取（填充 cached_cycles） | [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) |
 | apply 模块概述 | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

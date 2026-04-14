@@ -72,3 +72,7 @@ Unlike [read_list](read_list.md) and [read_config](read_config.md), which use `B
 | UTF-8 config file reader | [read_config](read_config.md) |
 | UTF-8 list file reader | [read_list](read_list.md) |
 | Config module overview | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

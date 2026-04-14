@@ -61,3 +61,7 @@ The function is marked `#[inline(always)]` because it performs no allocation and
 | Handle wrapper struct | [ProcessHandle](../winapi.rs/ProcessHandle.md) |
 | Handle acquisition | [get_process_handle](../winapi.rs/get_process_handle.md) |
 | apply module overview | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

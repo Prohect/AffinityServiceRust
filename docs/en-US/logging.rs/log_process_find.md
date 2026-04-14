@@ -57,3 +57,7 @@ A subsequent call with `"notepad.exe"` during the same session produces no outpu
 | Deduplication set for failed finds | [FINDS_FAIL_SET](FINDS_FAIL_SET.md) |
 | Find-mode entry point in main | [process_find](../main.rs/README.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -17,3 +17,7 @@ The `error_codes` module provides human-readable translations for Windows error 
 | ETW session management (uses error formatting) | [event_trace module](../event_trace.rs/README.md) |
 | Rule application (primary consumer of error formatting) | [apply module](../apply.rs/README.md) |
 | Windows API wrappers | [winapi module](../winapi.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

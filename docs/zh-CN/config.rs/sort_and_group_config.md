@@ -145,3 +145,7 @@ Written to config_grouped.txt
 | 每进程配置记录 | [ProcessConfig](ProcessConfig.md) |
 | CLI 参数解析 | [cli 模块](../cli.rs/README.md) |
 | 模块概述 | [config 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

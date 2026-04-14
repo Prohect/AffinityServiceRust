@@ -41,3 +41,7 @@ macro_rules! get_fail_find_set {
 | 查找模式进程日志记录 | [log_process_find](log_process_find.md) |
 | 其他访问器宏 | [get_use_console!](get_use_console.md)、[get_dust_bin_mod!](get_dust_bin_mod.md)、[get_local_time!](get_local_time.md)、[get_logger!](get_logger.md)、[get_logger_find!](get_logger_find.md)、[get_pid_map_fail_entry_set!](get_pid_map_fail_entry_set.md) |
 | logging 模块概述 | [logging 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

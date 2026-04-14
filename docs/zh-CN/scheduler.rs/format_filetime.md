@@ -68,3 +68,7 @@ fn format_filetime(time: i64) -> String
 | [`format_100ns`](format_100ns.md) | 将 100 纳秒间隔格式化为 秒.毫秒 的持续时间字符串。 |
 | [`PrimeThreadScheduler::drop_process_by_pid`](PrimeThreadScheduler.md) | 在进程退出时记录线程诊断信息时调用 `format_filetime` 的方法。 |
 | [`ThreadStats`](ThreadStats.md) | 线程统计结构体，其 `last_system_thread_info` 包含由此函数格式化的 `FILETIME` 值。 |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

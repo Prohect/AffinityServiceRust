@@ -47,3 +47,7 @@ Returns `MutexGuard<'static, bool>`. Dereference the guard to read the current v
 | Local time accessor macro | [get_local_time!](get_local_time.md) |
 | Timestamped log function that checks this flag | [log_message](log_message.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

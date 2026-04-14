@@ -42,3 +42,7 @@ Returns `std::sync::MutexGuard<'static, std::fs::File>` — a RAII guard that de
 | Find-mode log writing function | [log_to_find](log_to_find.md) |
 | Console vs. file routing flag | [USE_CONSOLE](USE_CONSOLE.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

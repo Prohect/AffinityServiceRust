@@ -73,3 +73,7 @@ NTSTATUS codes use a different numbering scheme than Win32 error codes. While bo
 | Memory priority enum | [MemoryPriority](../priority.rs/MemoryPriority.md) |
 | Logging and error deduplication | [logging module](../logging.rs/README.md) |
 | Module overview | [error_codes module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

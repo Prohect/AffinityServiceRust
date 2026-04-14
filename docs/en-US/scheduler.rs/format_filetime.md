@@ -68,3 +68,7 @@ For a `FILETIME` value representing July 4, 2025 at 14:30:00.123 local time:
 | [`format_100ns`](format_100ns.md) | Formats 100-nanosecond intervals as a seconds.milliseconds duration string. |
 | [`PrimeThreadScheduler::drop_process_by_pid`](PrimeThreadScheduler.md) | The method that calls `format_filetime` when logging thread diagnostics on process exit. |
 | [`ThreadStats`](ThreadStats.md) | Per-thread statistics struct whose `last_system_thread_info` contains the `FILETIME` values formatted by this function. |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

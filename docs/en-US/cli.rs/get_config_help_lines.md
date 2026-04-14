@@ -97,3 +97,7 @@ for line in get_config_help_lines() {
 | Auto-grouping utility | [sort_and_group_config](../config.rs/sort_and_group_config.md) |
 | Process rule structure | [ProcessConfig](../config.rs/ProcessConfig.md) |
 | CLI arguments structure | [CliArgs](CliArgs.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -70,3 +70,7 @@ pub fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32>
 | 缓存元素类型 | [CpuSetData](CpuSetData.md) |
 | CPU 集合应用逻辑 | [apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md) |
 | GetProcessDefaultCpuSets (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocessdefaultcpusets) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -116,3 +116,7 @@ CPU 集合清除和优先级恢复调用的失败都通过 [log_error_if_new](lo
 | 线程优先级枚举 | [ThreadPriority](../priority.rs/ThreadPriority.md) |
 | 错误去重 | [log_error_if_new](log_error_if_new.md) |
 | apply 模块概览 | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

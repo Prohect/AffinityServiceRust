@@ -80,3 +80,7 @@ pub fn set_thread_ideal_processor_ex(
 | 主线程提升 | [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) |
 | 理想处理器重置 | [reset_thread_ideal_processors](../apply.rs/reset_thread_ideal_processors.md) |
 | SetThreadIdealProcessorEx (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadidealprocessorex) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -163,3 +163,7 @@ game.exe:high:*perf:@*perf:?8x*p@engine.dll;render.dll!above normal*e@audio.dll:
 | Memory priority enum | [MemoryPriority](../priority.rs/MemoryPriority.md) |
 | Thread priority enum | [ThreadPriority](../priority.rs/ThreadPriority.md) |
 | Config module overview | [README](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

@@ -101,3 +101,7 @@ pub fn from_win_const(val: u32) -> &'static str
 | 线程优先级等级 | [ThreadPriority](ThreadPriority.md) |
 | 每进程配置记录 | [ProcessConfig](../config.rs/ProcessConfig.md) |
 | 优先级应用逻辑 | [apply_priority](../apply.rs/apply_priority.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

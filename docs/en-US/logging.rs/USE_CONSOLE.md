@@ -42,3 +42,7 @@ pub static USE_CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
 | Find-mode log file handle | [FIND_LOG_FILE](FIND_LOG_FILE.md) |
 | Timestamped log output function | [log_message](log_message.md) |
 | logging module overview | [logging module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

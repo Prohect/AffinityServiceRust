@@ -70,3 +70,7 @@ Because the input is a `u64`, this function can only represent CPUs 0–63. Syst
 | CPU indices → display string | [format_cpu_indices](format_cpu_indices.md) |
 | Convenience parse-to-mask | [parse_mask](parse_mask.md) |
 | Module overview | [config module](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

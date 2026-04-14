@@ -27,3 +27,7 @@
 | 主力线程提升和降级 | [apply_prime_threads](../apply.rs/apply_prime_threads.md) |
 | 线程句柄管理 | [ThreadHandle](../winapi.rs/ThreadHandle.md) |
 | 线程优先级等级 | [ThreadPriority](../priority.rs/ThreadPriority.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

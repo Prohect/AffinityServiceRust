@@ -52,3 +52,7 @@ pub struct ApplyConfigResult {
 | 错误去重辅助函数 | [log_error_if_new](log_error_if_new.md) |
 | 进程级编排 | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
 | 线程级编排 | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

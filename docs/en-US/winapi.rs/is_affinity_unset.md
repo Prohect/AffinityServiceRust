@@ -80,3 +80,7 @@ The [apply_affinity](../apply.rs/apply_affinity.md) function uses a [ProcessHand
 | CPU indices to bitmask utility | [cpu_indices_to_mask](../config.rs/cpu_indices_to_mask.md) |
 | Error code formatting | [error_codes module](../error_codes.rs/README.md) |
 | GetProcessAffinityMask (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

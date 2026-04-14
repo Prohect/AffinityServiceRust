@@ -45,3 +45,7 @@ macro_rules! get_logger {
 | 无时间戳的日志写入函数 | [log_pure_message](log_pure_message.md) |
 | 控制台与文件路由标志 | [USE_CONSOLE](USE_CONSOLE.md) |
 | logging 模块概述 | [logging 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

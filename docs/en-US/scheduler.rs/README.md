@@ -27,3 +27,7 @@ The `scheduler` module implements hysteresis-based prime thread scheduling for t
 | Prime thread promotion and demotion | [apply_prime_threads](../apply.rs/apply_prime_threads.md) |
 | Thread handle management | [ThreadHandle](../winapi.rs/ThreadHandle.md) |
 | Thread priority levels | [ThreadPriority](../priority.rs/ThreadPriority.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

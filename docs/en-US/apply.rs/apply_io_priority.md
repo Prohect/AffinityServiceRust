@@ -102,3 +102,7 @@ The function is idempotent: when the current I/O priority already matches the ta
 | Configuration model | [ProcessConfig](../config.rs/ProcessConfig.md) |
 | Handle extraction helper | [get_handles](get_handles.md) |
 | apply module overview | [apply](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

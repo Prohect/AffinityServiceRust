@@ -81,3 +81,7 @@ The function always passes group `0` to `set_thread_ideal_processor_ex`. This is
 | Ideal processor Win32 wrapper | [set_thread_ideal_processor_ex](../winapi.rs/set_thread_ideal_processor_ex.md) |
 | Rule-based ideal processor assignment | [apply_ideal_processors](apply_ideal_processors.md) |
 | Process thread enumeration | [ProcessEntry](../process.rs/ProcessEntry.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

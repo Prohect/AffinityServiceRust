@@ -256,3 +256,7 @@ After logging, `drop_module_cache` is called for the PID, and the process entry 
 | [ConfigConstants](../config.rs/ConfigConstants.md) | Hysteresis tuning parameters. |
 | [apply_prime_threads](../apply.rs/apply_prime_threads.md) | Entry point that drives the prime thread promotion/demotion pipeline. |
 | [ProcessSnapshot](../process.rs/ProcessSnapshot.md) | Provides the process/thread enumeration consumed by the scheduler's callers. |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

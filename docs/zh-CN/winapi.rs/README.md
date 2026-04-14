@@ -56,3 +56,7 @@
 | 错误码格式化辅助函数 | [error_codes 模块](../error_codes.rs/README.md) |
 | CLI 参数解析 | [cli 模块](../cli.rs/README.md) |
 | 服务主循环 | [main 模块](../main.rs/README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

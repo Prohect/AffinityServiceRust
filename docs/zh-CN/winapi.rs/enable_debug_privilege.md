@@ -76,3 +76,7 @@ pub fn enable_debug_privilege()
 | CLI 参数（--no_debug_priv 标志） | [cli 模块](../cli.rs/README.md) |
 | AdjustTokenPrivileges (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-adjusttokenprivileges) |
 | SeDebugPrivilege 概述 | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/secauthz/privilege-constants) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

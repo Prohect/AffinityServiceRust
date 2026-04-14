@@ -41,3 +41,7 @@ Each public function follows a common pattern: accept a process identifier, a re
 | OS handle wrappers | [ProcessHandle](../winapi.rs/ProcessHandle.md), [ThreadHandle](../winapi.rs/ThreadHandle.md) |
 | Priority enumerations | [ProcessPriority](../priority.rs/ProcessPriority.md), [IOPriority](../priority.rs/IOPriority.md), [MemoryPriority](../priority.rs/MemoryPriority.md), [ThreadPriority](../priority.rs/ThreadPriority.md) |
 | Error formatting helpers | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md), [error_from_ntstatus](../error_codes.rs/error_from_ntstatus.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

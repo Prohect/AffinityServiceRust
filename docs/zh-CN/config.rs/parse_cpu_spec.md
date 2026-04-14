@@ -78,3 +78,7 @@ parse_cpu_spec("")          → []
 | 支持别名的 CPU 规格解析 | [resolve_cpu_spec](resolve_cpu_spec.md) |
 | 便捷的规格到掩码包装器 | [parse_mask](parse_mask.md) |
 | 模块概述 | [config 模块](README.md) |
+
+## Documentation on Commit SHA
+
+678734d5df2c1188fb1bd6e448aae0884fb174fd

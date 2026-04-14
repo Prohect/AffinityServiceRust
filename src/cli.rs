@@ -116,7 +116,7 @@ pub fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()> {
             "-no_etw" | "-noetw" => {
                 cli.no_etw = true;
             }
-            "continuous_process_level_apply" => {
+            "-continuous_process_level_apply" => {
                 cli.continuous_process_level_apply = true;
             }
             _ => {}
@@ -163,32 +163,33 @@ pub fn print_cli_help() {
         === COMMAND LINE OPTIONS ===
 
         Basic Arguments:
-          -help | --help       print basic help message
-          -? | /? | ?          print basic help message
-          -helpall | --helpall print this detailed help with debug options
-          -console             use console as output instead of log file
-          -noUAC | -nouac      disable UAC elevation request
-          -config <file>       the config file u wanna use (config.ini by default)
-          -find                find those whose affinity is same as system default which is all possible cores windows could use
-          -blacklist <file>    the blacklist for -find
-          -interval <ms>       set interval for checking again (5000 by default, minimal 16)
-          -resolution <t>      time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)
+          -help | --help                    print basic help message
+          -? | /? | ?                       print basic help message
+          -helpall | --helpall              print this detailed help with debug options
+          -console                          use console as output instead of log file
+          -noUAC | -nouac                   disable UAC elevation request
+          -config <file>                    the config file u wanna use (config.ini by default)
+          -find                             find those whose affinity is same as system default which is all possible cores windows could use
+          -blacklist <file>                 the blacklist for -find
+          -interval <ms>                    set interval for checking again (5000 by default, minimal 16)
+          -resolution <t>                   time resolution 5210 -> 0.5210ms (default: 0, 0 means do not set time resolution)
 
-        Operating Modes:
-          -validate            validate config file for syntax errors and undefined aliases then exit
-          -processlogs         process logs (from -find mode) to find new processes and search paths with everything (-config <file> -blacklist <file> -in <logs dir> -out <file>)
-          -dryrun              simulate changes without applying (shows what would happen)
-          -convert             convert process configs from -in <file>(from process lasso) to -out <file>
-          -autogroup           auto-group rules with identical settings into named group blocks (-in <file> -out <file>)
-          -in <file>           input file for -convert / logs directory for -processlogs (default: logs)
-          -out <file>          output file for -convert / results file for -processlogs (default: new_processes_results.txt)
+          Operating Modes:
+          -validate                         validate config file for syntax errors and undefined aliases then exit
+          -processlogs                      process logs (from -find mode) to find new processes and search paths with everything (-config <file> -blacklist <file> -in <logs dir> -out <file>)
+          -dryrun                           simulate changes without applying (shows what would happen)
+          -convert                          convert process configs from -in <file>(from process lasso) to -out <file>
+          -autogroup                        auto-group rules with identical settings into named group blocks (-in <file> -out <file>)
+          -in <file>                        input file for -convert / logs directory for -processlogs (default: logs)
+          -out <file>                       output file for -convert / results file for -processlogs (default: new_processes_results.txt)
 
-        Debug & Testing Options:
-          -loop <count>        number of loops to run (default: infinite) - for testing
-          -logloop             log a message at the start of each loop for testing
-          -noDebugPriv         not request SeDebugPrivilege
-          -noIncBasePriority   not request SeIncreaseBasePriorityPrivilege
-          -no_etw | -noetw     not request ETW tracing
+          Debug & Testing Options:
+          -loop <count>                     number of loops to run (default: infinite) - for testing
+          -logloop                          log a message at the start of each loop for testing
+          -noDebugPriv                      not request SeDebugPrivilege
+          -noIncBasePriority                not request SeIncreaseBasePriorityPrivilege
+          -no_etw | -noetw                  not request ETW tracing
+          -continuous_process_level_apply   process-level settings (priority, affinity, CPU set, IO priority, memory priority) are re-applied on every grade fit polling iteration instead of only once per PID.
 
         === DEBUGGING ===
 

@@ -116,7 +116,7 @@ pub struct CliArgs {
 
 `continuous_process_level_apply` (`bool`)
 
-为 `true` 时，服务会在每次循环时对每个匹配规则的进程调用`apply_config_process_level`，而不是默认情况下（且没有指定 cli 参数`-no_etw`）的每一个进程在其生命周期内只尝试一次`apply_config_process_level`。默认值：**false**。
+为 `true` 时，服务会在每次循环时对每个匹配规则的进程调用`apply_config_process_level`，而不是默认情况下（且没有指定 cli 参数`-no_etw`）的每一个进程在其生命周期内只尝试一次`apply_config_process_level`。由`-continuous_process_level_apply`设置。默认值：**false**。
 
 ## 备注
 

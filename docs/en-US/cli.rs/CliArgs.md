@@ -116,7 +116,7 @@ When `true`, the service does not request `SeIncreaseBasePriorityPrivilege` at s
 
 `continuous_process_level_apply` (`bool`)
 
-When `true`, process-level settings (priority, affinity, CPU set, IO priority, memory priority) are re-applied on every polling iteration instead of only once per PID. Set by `continuous_process_level_apply`. Default: **false**.
+When `true`, process-level settings (priority, affinity, CPU set, IO priority, memory priority) are re-applied on every polling iteration instead of only once per PID. Set by `-continuous_process_level_apply`. Default: **false**.
 
 ## Remarks
 

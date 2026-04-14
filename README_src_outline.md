@@ -136,10 +136,10 @@
 }
 - [L40:L127]fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()> 
 - [L129:L155]fn print_help() 
-- [L157:L206]fn print_cli_help() 
-- [L208:L317]fn get_config_help_lines() -> Vec<&'static str> 
-- [L319:L323]fn print_config_help() 
-- [L325:L330]fn print_help_all() 
+- [L157:L207]fn print_cli_help() 
+- [L209:L318]fn get_config_help_lines() -> Vec<&'static str> 
+- [L320:L324]fn print_config_help() 
+- [L326:L331]fn print_help_all() 
 
 ## src/config.rs
 - [L17:L21]struct PrimePrefix {

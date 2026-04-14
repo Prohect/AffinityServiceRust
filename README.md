@@ -453,24 +453,6 @@ The release binary will be at:
 target/release/AffinityServiceRust.exe
 ```
 
-## Project Structure
-
-| File | Description | Documentation |
-|------|-------------|---------------|
-| `src/main.rs` | Main loop, config application logic | [main.md](docs/en-US/main.rs/README.md) |
-| `src/config.rs` | Config file parsing, CPU spec parsing, validation | [config.md](docs/en-US/config.rs/README.md) |
-| `src/cli.rs` | Command-line argument parsing | [cli.md](docs/en-US/cli.rs/README.md) |
-| `src/priority.rs` | Priority enums (Process, Thread, I/O, Memory) | [priority.md](docs/en-US/priority.rs/README.md) |
-| `src/logging.rs` | Logging infrastructure (file and console) | [logging.md](docs/en-US/logging.rs/README.md) |
-| `src/process.rs` | Process enumeration and snapshot management | [process.md](docs/en-US/process.rs/README.md) |
-| `src/scheduler.rs` | Prime thread scheduler implementation | [scheduler.md](docs/en-US/scheduler.rs/README.md) |
-| `src/apply.rs` | Config application to processes | [apply.md](docs/en-US/apply.rs/README.md) |
-| `src/winapi.rs` | Windows API wrappers, module resolution, privilege handling | [winapi.md](docs/en-US/winapi.rs/README.md) |
-| `src/event_trace.rs` | ETW-based real-time process start/stop monitoring | [event_trace.md](docs/en-US/event_trace.rs/README.md) |
-| `config.ini` | Default configuration file | - |
-| `blacklist.ini` | Default blacklist for process discovery | - |
-| `DEBUG.md` | Debug guide and troubleshooting | - |
-
 ## How It Works
 
 1. **Startup**: Parse config file via [`read_config()`](docs/en-US/config.rs/read_config.md), request necessary privileges ([`enable_debug_privilege()`](docs/en-US/winapi.rs/enable_debug_privilege.md), [`enable_inc_base_priority_privilege()`](docs/en-US/winapi.rs/enable_inc_base_priority_privilege.md)), optionally elevate to admin; then terminate any child processes inherited from the launcher (e.g. `conhost.exe` attached by a scheduled task runner) before entering the main loop

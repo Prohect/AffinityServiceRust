@@ -618,24 +618,6 @@ cargo build --release
    - 通过 `psapi GetMappedFileName` 解析线程起始地址为 `module.dll+offset` 格式
    - 清理模块缓存
 
-## 项目结构
-
-| 文件 | 说明 | 文档 |
-|------|------|------|
-| `src/main.rs` | 主循环、配置应用逻辑 | [main.md](docs/zh-CN/main.rs/README.md) |
-| `src/config.rs` | 配置文件解析、CPU 规格解析、验证 | [config.md](docs/zh-CN/config.rs/README.md) |
-| `src/cli.rs` | 命令行参数解析 | [cli.md](docs/zh-CN/cli.rs/README.md) |
-| `src/priority.rs` | 优先级枚举（进程、线程、I/O、内存） | [priority.md](docs/zh-CN/priority.rs/README.md) |
-| `src/logging.rs` | 日志基础设施（控制台和文件） | [logging.md](docs/zh-CN/logging.rs/README.md) |
-| `src/process.rs` | 进程枚举和快照管理 | [process.md](docs/zh-CN/process.rs/README.md) |
-| `src/scheduler.rs` | Prime 线程调度器实现 | [scheduler.md](docs/zh-CN/scheduler.rs/README.md) |
-| `src/apply.rs` | 将配置应用到进程 | [apply.md](docs/zh-CN/apply.rs/README.md) |
-| `src/winapi.rs` | Windows API 包装器、模块解析、权限处理 | [winapi.md](docs/zh-CN/winapi.rs/README.md) |
-| `src/event_trace.rs` | 基于 ETW 的实时进程启停监控 | [event_trace.md](docs/zh-CN/event_trace.rs/README.md) |
-| `config.ini` | 默认配置文件 | - |
-| `blacklist.ini` | 进程发现的默认黑名单 | - |
-| `DEBUG.md` | 调试指南和故障排除 | - |
-
 ## 已知行为
 
 7. **自身子进程上出现 `[SET_AFFINITY][ACCESS_DENIED]`**：当本服务派生了子进程（例如由计划任务运行器附加的 `conhost.exe`，或 UAC 重启动时产生的进程），而该子进程的名称恰好匹配某条配置规则时，服务会尝试对其应用亲和性，并向 `.find.log` 写入如下一行：

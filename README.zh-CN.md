@@ -167,6 +167,7 @@ game.exe:normal:*a:@0-3:*p:normal:normal:1
 | `-noDebugPriv` | 不请求 SeDebugPrivilege |
 | `-noIncBasePriority` | 不请求 SeIncreaseBasePriorityPrivilege |
 | `-noETW` | 不启动 ETW 进程监控 |
+| `continuous_process_level_apply` | 每个循环重新应用进程级设置，而不是每个 PID 仅应用一次 |
 
 完整 CLI 文档请参见 [cli.md](docs/zh-CN/cli.rs/README.md)。
 
@@ -577,7 +578,7 @@ cargo build --release
 2. **主循环**（每个间隔，默认 5000ms）
    - 通过 [`NtQuerySystemInformation`](docs/zh-CN/process.rs/ProcessSnapshot.md) 获取所有运行进程的快照
    - 对于每个匹配配置规则的进程：
-     - 通过 [`apply_config_process_level()`](docs/zh-CN/main.rs/apply_config_process_level.md) 应用进程级设置（一次性：优先级、亲和性、CPU 集、I/O、内存）
+     - 通过 [`apply_config_process_level()`](docs/zh-CN/main.rs/apply_config_process_level.md) 应用进程级设置（默认一次性，启用 `continuous_process_level_apply` 后则每个循环都应用：优先级、亲和性、CPU 集、I/O、内存）
      - 通过 [`apply_config_thread_level()`](docs/zh-CN/main.rs/apply_config_thread_level.md) 应用线程级设置（每次迭代：prime 线程调度、理想处理器分配）
    - 记录所有更改
    - 清理已死进程/线程句柄
@@ -667,7 +668,7 @@ cargo build --release
 
 欢迎提交问题和拉取请求。
 
-请尝试更新此 README 时更新提交 SHA：**678734d5df2c1188fb1bd6e448aae0884fb174fd**。这让开发者能够对比最新源码以理解变更。
+请尝试更新此 README 时更新提交 SHA：**920d8fafb3d9e22e6078f62bbb7d8d97e7d21c4b**。这让开发者能够对比最新源码以理解变更。
 
 ## 许可证
 

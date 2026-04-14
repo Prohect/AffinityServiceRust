@@ -420,7 +420,7 @@ fn main() -> windows::core::Result<()> {
                             };
 
                             let mut result = ApplyConfigResult::new();
-                            if !process_level_applied.contains(pid) {
+                            if cli.continuous_process_level_apply || !process_level_applied.contains(pid) {
                                 apply_config_process_level(*pid, config, process, cli.dry_run, &mut result);
                                 process_level_applied.insert(*pid);
                             }

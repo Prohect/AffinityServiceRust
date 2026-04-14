@@ -28,6 +28,7 @@ pub struct CliArgs {
     pub no_debug_priv: bool,
     pub no_inc_base_priority: bool,
     pub no_etw: bool,
+    pub continuous_process_level_apply: bool,
 }
 ```
 
@@ -113,6 +114,10 @@ When `true`, the service does not request `SeDebugPrivilege` at startup. This li
 
 When `true`, the service does not request `SeIncreaseBasePriorityPrivilege` at startup. This prevents setting process priority to High or Realtime for other processes. Set by `-noIncBasePriority` or `-noincbasepriority`. Default: **false**.
 
+`continuous_process_level_apply` (`bool`)
+
+When `true`, process-level settings (priority, affinity, CPU set, IO priority, memory priority) are re-applied on every polling iteration instead of only once per PID. Set by `continuous_process_level_apply`. Default: **false**.
+
 ## Remarks
 
 ### Construction
@@ -173,4 +178,4 @@ Two flags cause console output to be forced (`*get_use_console!() = true`): `-co
 
 ## Documentation on Commit SHA
 
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+920d8fafb3d9e22e6078f62bbb7d8d97e7d21c4b

@@ -1,6 +1,6 @@
 # apply_config_process_level 函数 (main.rs)
 
-为单个受管进程应用进程级设置。此函数在每个进程的生命周期内仅调用一次（一次性），负责处理优先级类别、CPU affinity、CPU set、IO 优先级和内存优先级。它会打开目标进程的句柄，并将具体操作委托给 `apply` 模块中的各个应用函数。
+为单个受管进程应用进程级设置。默认情况下此函数在每个进程的生命周期内仅调用一次（一次性），但当启用 `continuous_process_level_apply` CLI 标志时，会在每次轮询迭代中调用。负责处理优先级类别、CPU affinity、CPU set、IO 优先级和内存优先级。它会打开目标进程的句柄，并将具体操作委托给 `apply` 模块中的各个应用函数。
 
 ## 语法
 
@@ -54,7 +54,7 @@ fn apply_config_process_level(
 
 进程句柄通过 [get_process_handle](../winapi.rs/get_process_handle.md) 获取，该函数同时请求查询和设置访问权限。如果无法打开句柄（例如进程已退出，或调用方缺少 `SeDebugPrivilege`），函数会立即返回，不应用任何设置。
 
-此函数被设计为每个进程仅调用一次。调用方（`main`）在名为 `process_level_applied` 的 `HashSet<u32>` 中跟踪已处理的 PID，并跳过对同一 PID 的后续调用。如果进程退出后创建了具有相同 PID 的新进程，ETW 监视器会将该 PID 从已应用集合中移除，允许重新应用。
+默认情况下此函数被设计为每个进程仅调用一次。调用方（`main`）在名为 `process_level_applied` 的 `HashSet<u32>` 中跟踪已处理的 PID，除非设置了 `continuous_process_level_apply` CLI 标志，否则跳过对同一 PID 的后续调用。如果进程退出后创建了具有相同 PID 的新进程，ETW 监视器会将该 PID 从已应用集合中移除，允许重新应用。
 
 在试运行模式（`-dryrun` CLI 标志）下，所有子函数会将其预期变更记录在 `apply_config_result.changes` 中，而不调用任何 Win32 API。这对于在部署前验证配置非常有用。
 
@@ -79,4 +79,4 @@ fn apply_config_process_level(
 
 ## Documentation on Commit SHA
 
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+920d8fafb3d9e22e6078f62bbb7d8d97e7d21c4b

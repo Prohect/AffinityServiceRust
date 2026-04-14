@@ -28,6 +28,7 @@ pub struct CliArgs {
     pub no_debug_priv: bool,
     pub no_inc_base_priority: bool,
     pub no_etw: bool,
+    pub continuous_process_level_apply: bool,
 }
 ```
 
@@ -113,6 +114,10 @@ pub struct CliArgs {
 
 为 `true` 时，服务在启动时不请求 `SeIncreaseBasePriorityPrivilege`。这会阻止为其他进程设置高或实时进程优先级。由 `-noIncBasePriority` 或 `-noincbasepriority` 设置。默认值：**false**。
 
+`continuous_process_level_apply` (`bool`)
+
+为 `true` 时，服务会在每次循环时对每个匹配规则的进程调用`apply_config_process_level`，而不是默认情况下（且没有指定 cli 参数`-no_etw`）的每一个进程在其生命周期内只尝试一次`apply_config_process_level`。默认值：**false**。
+
 ## 备注
 
 ### 构造
@@ -173,4 +178,4 @@ pub struct CliArgs {
 
 ## Documentation on Commit SHA
 
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+920d8fafb3d9e22e6078f62bbb7d8d97e7d21c4b

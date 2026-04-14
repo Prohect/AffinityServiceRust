@@ -24,6 +24,7 @@ pub struct CliArgs {
     pub no_debug_priv: bool,
     pub no_inc_base_priority: bool,
     pub no_etw: bool,
+    pub continuous_process_level_apply: bool,
 }
 
 impl CliArgs {
@@ -114,6 +115,9 @@ pub fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()> {
             }
             "-no_etw" | "-noetw" => {
                 cli.no_etw = true;
+            }
+            "continuous_process_level_apply" => {
+                cli.continuous_process_level_apply = true;
             }
             _ => {}
         }

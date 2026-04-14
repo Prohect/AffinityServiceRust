@@ -110,7 +110,7 @@
 - [L1327:L1340]fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler) 
 
 ## src/cli.rs
-- [L5:L27]struct CliArgs {
+- [L5:L28]struct CliArgs {
     pub interval_ms: u64,
     pub help_mode: bool,
     pub help_all_mode: bool,
@@ -132,13 +132,14 @@
     pub no_debug_priv: bool,
     pub no_inc_base_priority: bool,
     pub no_etw: bool,
+    pub continuous_process_level_apply: bool,
 }
-- [L39:L123]fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()> 
-- [L125:L151]fn print_help() 
-- [L153:L202]fn print_cli_help() 
-- [L204:L313]fn get_config_help_lines() -> Vec<&'static str> 
-- [L315:L319]fn print_config_help() 
-- [L321:L326]fn print_help_all() 
+- [L40:L127]fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()> 
+- [L129:L155]fn print_help() 
+- [L157:L206]fn print_cli_help() 
+- [L208:L317]fn get_config_help_lines() -> Vec<&'static str> 
+- [L319:L323]fn print_config_help() 
+- [L325:L330]fn print_help_all() 
 
 ## src/config.rs
 - [L17:L21]struct PrimePrefix {

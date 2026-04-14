@@ -37,6 +37,7 @@ pub fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()>
 | `-noDebugPriv` | `-nodebugpriv` |
 | `-noIncBasePriority` | `-noincbasepriority` |
 | `-no_etw` | `-noetw` |
+| `continuous_process_level_apply` | — |
 
 ### 带值标志
 
@@ -104,4 +105,4 @@ parse_args(&args, &mut cli)?;
 
 ## Documentation on Commit SHA
 
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+920d8fafb3d9e22e6078f62bbb7d8d97e7d21c4b

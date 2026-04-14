@@ -344,6 +344,7 @@ browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal:
 | `-noDebugPriv` | Don't request SeDebugPrivilege |
 | `-noIncBasePriority` | Don't request SeIncreaseBasePriorityPrivilege |
 | `-noETW` | Don't start ETW process monitoring |
+| `continuous_process_level_apply` | Re-apply process-level settings every loop instead of once per PID |
 
 See [cli.md](docs/en-US/cli.rs/README.md) for complete CLI documentation.
 
@@ -477,7 +478,7 @@ target/release/AffinityServiceRust.exe
 3. **Main Loop**: 
    - Enumerate all running processes via [`ProcessSnapshot`](docs/en-US/process.rs/ProcessSnapshot.md)
    - Match each process against configured rules
-   - Apply process-level settings via [`apply_config_process_level()`](docs/en-US/main.rs/apply_config_process_level.md) (one-shot: priority, affinity, CPU sets, I/O, memory) and thread-level settings via [`apply_config_thread_level()`](docs/en-US/main.rs/apply_config_thread_level.md) (per-iteration: prime scheduling, ideal processors)
+   - Apply process-level settings via [`apply_config_process_level()`](docs/en-US/main.rs/apply_config_process_level.md) (one-shot by default, or every loop when `continuous_process_level_apply` is enabled: priority, affinity, CPU sets, I/O, memory) and thread-level settings via [`apply_config_thread_level()`](docs/en-US/main.rs/apply_config_thread_level.md) (per-iteration: prime scheduling, ideal processors)
    - Sleep for configured interval
 4. **ETW Reactive Detection**: Process start events from [`EtwProcessMonitor`](docs/en-US/event_trace.rs/EtwProcessMonitor.md) trigger immediate process-level rule application; process stop events clean up scheduler state and error tracking
 5. **Hot Reload**: Monitor config files for changes, automatically reload and reapply
@@ -527,7 +528,7 @@ See [`is_new_error()`](docs/en-US/logging.rs/is_new_error.md) for error deduplic
 
 Issues and pull requests are welcome.
 
-Please update the commit SHA here when you try to update this README: **678734d5df2c1188fb1bd6e448aae0884fb174fd**. This give the developer a way to compare source code from the newest to understand changes.
+Please update the commit SHA here when you try to update this README: **920d8fafb3d9e22e6078f62bbb7d8d97e7d21c4b**. This give the developer a way to compare source code from the newest to understand changes.
 
 ## License
 

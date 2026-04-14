@@ -63,7 +63,7 @@ The loop runs indefinitely (or for a fixed count if `-loop` is specified) with a
 3. **Process ETW pending queue** — For each PID in `process_level_pending` (populated by ETW process-start events between iterations), the function attempts to apply process-level settings immediately, regardless of grade. This provides near-instant rule application for newly launched processes. Successfully applied PIDs are moved to `process_level_applied` and removed from the pending set.
 
 4. **Grade-based iteration** — Iterates over all grade levels in the configuration. A grade `N` means the rules at that level are only evaluated when `current_loop` is a multiple of `N`. For each process at the current grade:
-   - If the PID has not yet had process-level settings applied, calls [apply_config_process_level](apply_config_process_level.md) and records the PID in `process_level_applied`.
+   - If the PID has not yet had process-level settings applied, or if `continuous_process_level_apply` is enabled, calls [apply_config_process_level](apply_config_process_level.md) and records the PID in `process_level_applied`.
    - Calls [apply_config_thread_level](apply_config_thread_level.md) for thread-level settings (always re-evaluated).
    - Logs all changes and errors from the [ApplyConfigResult](../apply.rs/ApplyConfigResult.md).
 
@@ -121,7 +121,7 @@ After the polling loop exits (due to `-loop` count, `-dryrun`, or signal), the f
 |-------|------|
 | CLI argument parsing | [parse_args](../cli.rs/parse_args.md) |
 | CLI arguments structure | [CliArgs](../cli.rs/CliArgs.md) |
-| Process-level settings (one-shot) | [apply_config_process_level](apply_config_process_level.md) |
+| Process-level settings (one-shot by default) | [apply_config_process_level](apply_config_process_level.md) |
 | Thread-level settings (per-iteration) | [apply_config_thread_level](apply_config_thread_level.md) |
 | Configuration file parsing | [read_config](../config.rs/read_config.md) |
 | Prime thread scheduler | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
@@ -133,4 +133,4 @@ After the polling loop exits (due to `-loop` count, `-dryrun`, or signal), the f
 
 ## Documentation on Commit SHA
 
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+920d8fafb3d9e22e6078f62bbb7d8d97e7d21c4b

@@ -1,6 +1,6 @@
 # apply_config_process_level function (main.rs)
 
-Applies process-level settings for a single managed process. This function is called once per process lifetime (one-shot) and handles priority class, CPU affinity, CPU set, IO priority, and memory priority. It opens a handle to the target process and delegates to the individual apply functions in the `apply` module.
+Applies process-level settings for a single managed process. By default this function is called once per process lifetime (one-shot), but when the `continuous_process_level_apply` CLI flag is enabled it is invoked on every polling iteration. It handles priority class, CPU affinity, CPU set, IO priority, and memory priority. It opens a handle to the target process and delegates to the individual apply functions in the `apply` module.
 
 ## Syntax
 
@@ -54,7 +54,7 @@ The ordering matters: affinity is set before CPU set because `apply_affinity` tr
 
 A process handle is obtained via [get_process_handle](../winapi.rs/get_process_handle.md), which requests both query and set access rights. If the handle cannot be opened (e.g., the process has exited, or the caller lacks `SeDebugPrivilege`), the function returns immediately and no settings are applied.
 
-This function is designed to be called exactly once per process. The caller (`main`) tracks which PIDs have already been processed in a `HashSet<u32>` named `process_level_applied` and skips subsequent calls for the same PID. If the process exits and a new process with the same PID is created, the ETW monitor removes the PID from the applied set, allowing re-application.
+By default this function is designed to be called exactly once per process. The caller (`main`) tracks which PIDs have already been processed in a `HashSet<u32>` named `process_level_applied` and skips subsequent calls for the same PID unless the `continuous_process_level_apply` CLI flag is set. If the process exits and a new process with the same PID is created, the ETW monitor removes the PID from the applied set, allowing re-application.
 
 In dry-run mode (`-dryrun` CLI flag), all sub-functions record their intended changes in `apply_config_result.changes` without invoking any Win32 APIs. This is useful for validating configuration before deployment.
 
@@ -79,4 +79,4 @@ In dry-run mode (`-dryrun` CLI flag), all sub-functions record their intended ch
 
 ## Documentation on Commit SHA
 
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+920d8fafb3d9e22e6078f62bbb7d8d97e7d21c4b

@@ -216,7 +216,7 @@ process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_p
 | I/O | `none`、`very low`、`low`、`normal`、`high`（需要管理员） |
 | 内存 | `none`、`very low`、`low`、`medium`、`below normal`、`normal` |
 
-详细配置语法，包括别名、组、prime 调度、理想分配、常量和示例，请参见 [docs](docs/README.md)。
+详细配置语法，包括别名、组、prime 调度、理想分配、常量和示例，请参见 [parse_and_insert_rules](docs/en-US/config.rs/parse_and_insert_rules.md)。
 
 ## 特权和能力
 

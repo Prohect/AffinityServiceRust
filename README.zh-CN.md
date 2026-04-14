@@ -4,6 +4,9 @@
 - 🇺🇸 [English](https://github.com/Prohect/AffinityServiceRust/blob/master/README.md)
 - 🇨🇳 [中文 (简体)](https://github.com/Prohect/AffinityServiceRust/blob/master/README.zh-CN.md)
 
+![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/prohect/AffinityServiceRust/total)
+
+
 基于 Rust 编写的高性能 Windows 进程管理服务，根据配置文件自动为进程应用 CPU 亲和性、优先级、I/O 优先级和内存优先级规则。
 
 ## 概述

@@ -317,28 +317,6 @@ AffinityServiceRust.exe -validate -config config.ini
 - 无效的优先级值
 - 格式错误的进程组
 
-## 调试
-
-```bash
-# 验证配置语法
-AffinityServiceRust.exe -validate -config config.ini
-
-# 试运行 - 查看将会更改的内容（不实际应用）
-AffinityServiceRust.exe -dryrun -config config.ini
-
-# 非管理员，带控制台（用于测试）
-AffinityServiceRust.exe -console -noUAC -logloop -loop 3 -interval 2000
-
-# 管理员模式（运行后查看 logs/YYYYMMDD.log）
-AffinityServiceRust.exe -logloop -loop 3 -interval 2000
-```
-
-> **注意：** 使用 UAC 提权运行时，避免使用 `-console`，因为 UAC 会生成新进程且窗口立即关闭。请检查日志文件。
-
-详见 [cli.md](docs/zh-CN/cli.rs/README.md)。
-
-AI 代理贡献者（Zed、Cursor 等）请参阅 project_specific_agent.md 了解 CLI 工具和工作流技巧。
-
 ## 构建
 
 ```bash

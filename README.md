@@ -130,14 +130,14 @@ See [`reset_thread_ideal_processors()`](docs/en-US/apply.rs/reset_thread_ideal_p
 
 ## Configuration
 
-### Config Format
+The configuration file uses INI-like format with sections for constants, aliases, and rules.
 
 Process rules follow this format:
 ```
 process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority:ideal[@prefixes]:grade
 ```
 
-See [`ProcessConfig`](docs/en-US/config.rs/ProcessConfig.md) struct for the parsed representation.
+See [`ProcessConfig`](docs/en-US/config.rs/ProcessConfig.md) for the parsed representation.
 
 ### CPU Specification Formats
 
@@ -151,8 +151,6 @@ See [`ProcessConfig`](docs/en-US/config.rs/ProcessConfig.md) struct for the pars
 | Alias | `*pcore` | Reference to predefined CPU alias |
 
 **Important:** Plain numbers mean core indices, not bitmasks. Use `0-7` for cores 0-7, NOT `7`.
-
-See [`parse_cpu_spec()`](docs/en-US/config.rs/parse_cpu_spec.md) for parsing implementation.
 
 ### Rule Grades
 
@@ -175,139 +173,7 @@ The `grade` field (default: 1) controls how often a rule is applied:
 
 **Memory Priority:** `none`, `very low`, `low`, `medium`, `below normal`, `normal`
 
-See [priority.md](docs/en-US/priority.rs/README.md) for all priority level definitions.
-
-### CPU Aliases
-
-Define reusable CPU specifications under the `ALIASES` section:
-
-```ini
-# === ALIASES ===
-*a = 0-19           # All cores (8P+12E example)
-*p = 0-7            # P-cores (performance cores)
-*e = 8-19           # E-cores (efficiency cores)
-*pN01 = 2-7         # P-cores except 0-1
-```
-
-Aliases support all CPU specification formats, including multiple ranges for >64 core systems.
-
-### Process Groups
-
-Group multiple processes with the same rule using `{ }` syntax:
-
-```ini
-# Named group (multi-line)
-browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal
-
-# Anonymous group (no name needed)
-{
-    ctfmon.exe: chsime.exe
-    sihost.exe: ShellHost.exe
-}:none:*e:0:0:low:none
-```
-
-### Prime Thread Scheduling Syntax
-
-The `prime_cpus` field supports advanced features:
-
-```
-[?[?]x]*alias[@module1[!priority];module2[!priority]*alias2@module3...]
-```
-
-**Components:**
-- `?x*cpus` - Track top x threads, apply rules, log on exit
-- `??x*cpus` - Monitor only: track and log on exit, don't apply CPU sets
-- `*alias@module1;module2` - Only affect threads from specified modules
-- `*alias1@mod1*alias2@mod2` - Multi-segment: different CPUs per module
-- `module!priority` - Set explicit thread priority (idle to time critical)
-- `module` - Auto-boost (current priority + 1 tier, capped at highest)
-
-**Examples:**
-
-```ini
-# Track top 10 threads on P-cores (except 0-1)
-game.exe:normal:*a:*p:?10*pN01:normal:normal:1
-
-# Multi-segment: CS2 on P-cores, NVIDIA on E-cores
-cs2.exe:normal:*a:*p:*p@cs2.exe*e@nvwgf2umx.dll:normal:normal:1
-
-# Per-module thread priorities
-cs2.exe:normal:*a:*p:*pN01@cs2.exe!time critical;nvwgf2umx.dll!above normal:normal:normal:1
-
-# Monitor only (no apply): track top 20 threads
-game.exe:normal:*a:*p:??20*pN01:normal:normal:1
-```
-
-### Ideal Processor Assignment Syntax
-
-Add `ideal` specification before the `grade` field:
-
-```ini
-# Simple: top N threads get ideal CPUs from alias
-background.exe:normal:*a:*p:*p:normal:normal:*p:5
-
-# Module-filtered: only threads from UnityPlayer.dll
-game.exe:normal:*a:*p:*pN01@UnityPlayer.dll:normal:normal:*pN01@UnityPlayer.dll:1
-
-# Multi-rule: engine threads -> p cores, render threads -> subset
-game.exe:normal:*a:*p:*p@engine.dll*pN01@render.dll:normal:normal:*p@engine.dll*pN01@render.dll:1
-```
-
-### Scheduler Constants
-
-Configure prime thread scheduler behavior:
-
-```ini
-@MIN_ACTIVE_STREAK = 2    # Consecutive intervals before promotion (default: 2)
-@ENTRY_THRESHOLD = 0.42   # Fraction of max cycles to become candidate (default: 0.42)
-@KEEP_THRESHOLD = 0.69    # Fraction of max cycles to stay prime (default: 0.69)
-```
-These constants govern **both** prime thread scheduling and ideal processor assignment — they share the same hysteresis filter.
-
-See [`ConfigConstants`](docs/en-US/config.rs/ConfigConstants.md) for the struct definition.
-
-### Complete Example
-
-```ini
-# ============================================================================
-# AffinityServiceRust Configuration File
-# ============================================================================
-
-# === CONSTANTS ===
-@MIN_ACTIVE_STREAK = 2
-@ENTRY_THRESHOLD = 0.42
-@KEEP_THRESHOLD = 0.69
-
-# === ALIASES ===
-*a = 0-19           # All cores
-*p = 0-7            # P-cores
-*e = 8-19           # E-cores
-*pN01 = 2-7         # P-cores except 0-1
-
-# === RULES ===
-# Format: name:priority:affinity:cpuset:prime:io:memory:ideal:grade
-
-# Simple rule
-cs2.exe:normal:*a:*p:*pN01:normal:normal:1
-
-# Prime with module filtering
-game.exe:normal:*a:*p:*pN01@UnityPlayer.dll;GameModule.dll:normal:normal:1
-
-# Multi-segment prime scheduling
-cs2.exe:normal:*a:*p:*p@cs2.exe*e@nvwgf2umx.dll:normal:normal:1
-
-# Per-module thread priorities
-engine.exe:normal:*a:*p:*p@engine.dll!time critical*pN01@render.dll!highest:normal:normal:1
-
-# Thread tracking
-game.exe:normal:*a:*p:?10*pN01:normal:normal:1
-
-# Ideal processor assignment
-background.exe:normal:*a:*p:*p:normal:normal:*p:5
-
-# Named group
-browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal:1
-```
+For detailed configuration syntax, including aliases, groups, prime scheduling, ideal assignment, constants, and examples, see [docs](docs/README.md).
 
 ## Command Line Options
 
@@ -455,28 +321,9 @@ target/release/AffinityServiceRust.exe
 
 ## How It Works
 
-1. **Startup**: Parse config file via [`read_config()`](docs/en-US/config.rs/read_config.md), request necessary privileges ([`enable_debug_privilege()`](docs/en-US/winapi.rs/enable_debug_privilege.md), [`enable_inc_base_priority_privilege()`](docs/en-US/winapi.rs/enable_inc_base_priority_privilege.md)), optionally elevate to admin; then terminate any child processes inherited from the launcher (e.g. `conhost.exe` attached by a scheduled task runner) before entering the main loop
-2. **ETW Process Monitor**: Start [`EtwProcessMonitor`](docs/en-US/event_trace.rs/EtwProcessMonitor.md) for reactive process detection — new processes trigger immediate rule application without waiting for the next polling interval
-3. **Main Loop**: 
-   - Enumerate all running processes via [`ProcessSnapshot`](docs/en-US/process.rs/ProcessSnapshot.md)
-   - Match each process against configured rules
-   - Apply process-level settings via [`apply_config_process_level()`](docs/en-US/main.rs/apply_config_process_level.md) (one-shot by default, or every loop when `continuous_process_level_apply` is enabled: priority, affinity, CPU sets, I/O, memory) and thread-level settings via [`apply_config_thread_level()`](docs/en-US/main.rs/apply_config_thread_level.md) (per-iteration: prime scheduling, ideal processors)
-   - Sleep for configured interval
-4. **ETW Reactive Detection**: Process start events from [`EtwProcessMonitor`](docs/en-US/event_trace.rs/EtwProcessMonitor.md) trigger immediate process-level rule application; process stop events clean up scheduler state and error tracking
-5. **Hot Reload**: Monitor config files for changes, automatically reload and reapply
-6. **Prime Thread Scheduler**:
-   - Track thread cycle time at each interval
-   - Apply hysteresis-based promotion/demotion logic via [`PrimeThreadScheduler`](docs/en-US/scheduler.rs/PrimeThreadScheduler.md)
-   - Use Windows CPU Sets for fine-grained thread placement
-7. **Shared Cycle Prefetch** (per process, before prime and ideal scheduling):
-   - Rank all threads by CPU-time delta from `NtQuerySystemInformation` data (no extra syscall)
-   - Keep only the top-N threads (N = logical CPU count) — threads below cannot win any assignment slot
-   - Open handles and call `QueryThreadCycleTime` for the top-N only; results cached in [`ThreadStats::cached_cycles`](docs/en-US/scheduler.rs/ThreadStats.md)
-8. **Ideal Processor Assignment** (per process, per interval):
-   - Apply the same hysteresis filter (streak + keep/entry thresholds) as prime thread scheduling
-   - Pass 1: already-assigned threads above `keep_threshold` keep their slot — no write syscall
-   - Pass 2: promote threads above `entry_threshold` with satisfied streak; skip `SetThreadIdealProcessorEx` if thread is already on a free-pool CPU (lazy set)
-   - Demote threads no longer selected: restore original ideal processor
+AffinityServiceRust continuously monitors running processes and applies configured rules for process priority, CPU affinity/sets, I/O/memory priority, prime thread scheduling, and ideal processor assignment. It uses ETW for reactive process detection and supports hot reloading of config files.
+
+For detailed architecture and implementation, see [docs/main.md](docs/en-US/main.rs/README.md).
 
 ## Known Behaviours
 

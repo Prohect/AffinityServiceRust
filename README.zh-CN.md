@@ -173,53 +173,39 @@ game.exe:normal:*a:@0-3:*p:normal:normal:1
 
 ## 配置
 
-### 格式
+配置文件使用类似 INI 的格式，包含常量、别名和规则部分。
+
+进程规则遵循以下格式：
 
 ```
-process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority:grade
+process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority:ideal[@prefixes]:grade
 ```
 
 解析后的表示请参见 [`ProcessConfig`](docs/zh-CN/config.rs/ProcessConfig.md) 结构体。
 
-### CPU 规格
+### CPU 规格格式
 
 | 格式 | 示例 | 说明 |
 |------|------|------|
 | 范围 | `0-7` | 核心 0 到 7 |
 | 多范围 | `0-7;64-71` | 用于 >64 核系统 |
 | 单独核心 | `0;2;4;6` | 指定核心 |
-| 单核 | `7` | 单个核心（不是掩码） |
+| 单核 | `5` | 单个核心（NOT a bitmask） |
 | 十六进制掩码 | `0xFF` | 旧格式（≤64 核） |
 | 别名 | `*pcore` | 预定义别名 |
-| 不修改 | `0` | 不修改 |
 
-### CPU 规格注意事项
-
-**重要：** 普通数字如 `7` 表示核心 7，不是位掩码。使用 `0-7` 表示核心 0-7，而不是 `7`。
-
-解析实现请参见 [`parse_cpu_spec()`](docs/zh-CN/config.rs/parse_cpu_spec.md)。
+**重要：** 普通数字表示核心索引，不是位掩码。使用 `0-7` 表示核心 0-7，而不是 `7`。
 
 ### 规则等级
 
-`grade` 字段控制规则的应用频率（默认值：1 = 每次循环）：
+`grade` 字段控制规则的应用频率（默认：1）：
 
 | 等级 | 频率 | 使用场景 |
 |------|------|----------|
 | `1` | 每次循环 | 关键进程（游戏、实时应用） |
 | `2` | 每第 2 次循环 | 半关键进程 |
 | `5` | 每第 5 次循环 | 后台工具 |
-| `10` | 每第 10 次循环 | 极少变化的进程（更新程序） |
-
-```ini
-# 每次循环应用（默认）
-game.exe:high:*pcore:0:*pcore:normal:normal:0:1
-
-# 每第 3 次循环应用（用于较不关键的进程）
-background.exe:normal:*ecore:0:0:low:none:0:3
-
-# 每第 10 次循环应用（最小监控频率）
-updater.exe:normal:0:0:0:normal:none:0:10
-```
+| `10` | 每第 10 次循环 | 极少变化的进程 |
 
 ### 优先级级别
 
@@ -230,207 +216,7 @@ updater.exe:normal:0:0:0:normal:none:0:10
 | I/O | `none`、`very low`、`low`、`normal`、`high`（需要管理员） |
 | 内存 | `none`、`very low`、`low`、`medium`、`below normal`、`normal` |
 
-所有优先级级别定义请参见 [priority.md](docs/zh-CN/priority.rs/README.md)。
-
-### CPU 别名
-
-使用 `*name = spec` 定义可重用的 CPU 规格：
-
-```ini
-# === 别名 ===
-*a = 0-19           # 所有核心（8P+12E）
-*p = 0-7            # P 核
-*e = 8-19           # E 核
-*pN01 = 2-7         # P 核除 0-1
-```
-
-别名支持所有 CPU 规格格式，包括 >64 核系统的多范围。
-
-### 进程组
-
-使用 `{ }` 语法将多个进程组合使用相同规则。组名是可选的（仅用于文档）：
-
-```ini
-# 命名组（多行）
-browsers {
-    chrome.exe: firefox.exe: msedge.exe
-    # 组内允许注释
-}:normal:*e:0:0:low:below normal
-
-# 命名组（单行）
-sys_utils { notepad.exe: calc.exe }:none:*e:0:0:low:none
-
-# 匿名组（无需名称）
-{
-    textinputhost.exe: ctfmon.exe: chsime.exe
-    dllhost.exe: sihost.exe: ShellHost.exe
-}:none:*e:0:0:low:none
-
-# 匿名单行组
-{ taskmgr.exe: perfmon.exe }:none:*a:0:0:none:none
-```
-
-### Prime 线程调度
-
-`prime_cpus` 字段支持多段式 CPU 分配，包括按模块过滤和线程优先级控制。
-
-**语法：**
-```
-[?[?]x]*alias1[@module1[!priority1];module2[!priority2]*alias2@module3[!priority3];module4...]
-```
-
-**解析规则：**
-1. 可选跟踪前缀：`?x`（跟踪并应用）或 `??x`（仅跟踪，不应用）
-2. 按 `*` 分割得到段（每段 = CPU 别名 + 其模块列表）
-3. 在每段的 `@` 之后，按 `;` 分割得到模块前缀
-4. 每个模块前缀可以有可选的 `!priority` 后缀
-
-**组成部分：**
-
-| 组成部分 | 说明 |
-|----------|------|
-| `prime_cpus` | Prime 线程的基础 CPU 集（所有模块） |
-| `?x*prime_cpus` | 跟踪前 x 个线程，应用规则，退出时记录 |
-| `??x*prime_cpus` | 仅监控：跟踪前 x 个线程，退出时记录，不应用 CPU 集 |
-| `*alias@module1;module2` | 仅提升来自指定模块前缀的线程，使用 alias CPU |
-| `*alias1@mod1*alias2@mod2` | 多段式：mod1 线程在 alias1 CPU，mod2 线程在 alias2 CPU |
-| `module!priority` | 设置显式线程优先级（idle 到 time critical） |
-| `module` | 使用自动提升（当前优先级 + 1 级，上限为 highest） |
-
-**示例：**
-
-```ini
-# 简单 - 所有 prime 线程在除 0-1 外的 P 核
-game.exe:normal:*a:*p:*pN01:normal:normal:0:1
-
-# 跟踪前 10 个线程，应用规则，退出时记录
-game.exe:normal:*a:*p:?10*pN01:normal:normal:0:1
-
-# 仅监控 - 跟踪前 20 个线程，退出时记录，不应用 CPU 集
-game.exe:normal:*a:*p:??20*pN01:normal:normal:0:1
-
-# 模块过滤 - 仅 CS2 和 NVIDIA 线程
-cs2.exe:normal:*a:*p:*pN01@cs2.exe;nvwgf2umx.dll:normal:normal:0:1
-
-# 多段式 - CS2 在 P 核，NVIDIA 在 E 核
-cs2.exe:normal:*a:*p:*p@cs2.exe*e@nvwgf2umx.dll:normal:normal:0:1
-
-# 按模块线程优先级 - CS2 为 time critical，NVIDIA 为 above normal
-cs2.exe:normal:*a:*p:*pN01@cs2.exe!time critical;nvwgf2umx.dll!above normal:normal:normal:0:1
-
-# 三段式，不同 CPU 和优先级
-game.exe:normal:*a:*p:*p@engine.dll!time critical*pN01@render.dll!highest*e@background.dll!normal:normal:normal:0:1
-
-# 混合 - 部分显式优先级，其他自动提升
-game.exe:normal:*a:*p:*pN01@UnityPlayer.dll!time critical;GameModule.dll:normal:normal:0:1
-
-# 跟踪和多段式 - 跟踪前 10，CS2 在 P 核，NVIDIA 在 E 核
-cs2.exe:normal:*a:*p:?10*p@cs2.exe*e@nvwgf2umx.dll:normal:normal:0:1
-```
-
-### 理想处理器（首核）分配（Ideal Processor Assignment）
-
-可选的 `ideal` 字段可以插入到规则的最后 `grade` 字段之前，用于请求对进程中最繁忙线程的静态理想处理器分配。该配置使用与 ALIASES 中相同的 `*name` CPU 别名，并支持按模块前缀进行可选过滤。
-
-- 位置：`ideal` 字段位于规则中的最后 `grade` 字段之前。
-- 语法：
-  - `*alias` — 将该别名表示的 CPUs 用作匹配线程的候选理想处理器（匹配所有线程）。
-  - `*alias@prefix1;prefix2` — 仅对其起始模块名以某个前缀开始的线程应用该别名的 CPUs（多个前缀以 `;` 分隔）。
-  - 支持链式多规则：`*alias1@mod1*alias2@mod2`
-- 语义：
-  - 对于每个 `*alias` 规则，程序会按照线程的总 CPU 使用（内核 + 用户时间）对匹配线程进行排序。对于该别名所包含的 CPU 数量 N，选取排名前 N 的线程，将它们分别按排名映射到别名内的 CPU 索引并设置为理想处理器（ideal processor）。
-  - 当某线程不再位列前 N 时，会尝试将其之前的理想处理器值恢复回去。
-  - 如果别名不包含模块过滤（没有 `@...`），则匹配该进程的所有线程。
-  - 当前实现将理想处理器应用到处理器组 0（对于 >64 逻辑处理器且存在多个处理器组的系统暂不支持。
-- 示例：
-```ini
-# 将 *pN01 的 CPUs 作为 UnityPlayer.dll 相关线程的理想处理器
-game.exe:normal:*a:*p:*pN01@UnityPlayer.dll:normal:normal:*pN01@UnityPlayer.dll:1
-
-# 多规则：engine 线程 -> p 核，render 线程 -> pN01 子集
-game.exe:normal:*a:*p:*p@engine.dll*pN01@render.dll:normal:normal:*p@engine.dll*pN01@render.dll:1
-
-# 别名无过滤：对所有线程应用（对最繁忙的 N 个线程分配理想 CPU）
-background.exe:normal:*a:*p:*p:normal:normal:*p:5
-```
-
-**当跟踪的进程退出时**，为每个线程记录详细统计信息：
-- 线程 ID 和总 CPU 周期
-- 起始地址解析为 `module.dll+offset` 格式
-- 内核时间和用户时间
-- 线程优先级和状态
-- 上下文切换和等待原因
-
-### 调度器常量
-
-配置 prime 线程调度行为：
-
-```ini
-@MIN_ACTIVE_STREAK = 2   # 提升前需要的连续活跃间隔数
-@ENTRY_THRESHOLD = 0.42  # 成为候选的最大周期比例
-@KEEP_THRESHOLD = 0.69   # 保持 prime 状态的最大周期比例
-```
-
-上述常量同时适用于 **Prime 线程调度**和**理想处理器分配**——两者共用同一个滞后过滤器。
-
-结构体定义请参见 [`ConfigConstants`](docs/zh-CN/config.rs/ConfigConstants.md)。
-
-### 完整示例
-
-```ini
-# === 常量 ===
-@MIN_ACTIVE_STREAK = 2   # 提升前需要的连续活跃间隔数
-@ENTRY_THRESHOLD = 0.42  # 成为候选的最大周期比例
-@KEEP_THRESHOLD = 0.69   # 保持 prime 状态的最大周期比例
-
-# === 别名 ===
-*a = 0-19           # 所有核心（8P+12E）
-*p = 0-7            # P 核
-*e = 8-19           # E 核
-*pN01 = 2-7         # P 核除 0-1
-*pN0 = 1-7          # P 核除 0
-
-# === 规则 ===
-# 格式：process:priority:affinity:cpuset:prime[@prefixes]:io:memory:ideal[@prefixes]:grade
-
-# 单进程 - 简单
-cs2.exe:normal:*a:*p:*pN01:normal:normal:0:1
-
-# Prime 带模块过滤 - 仅特定模块
-game.exe:normal:*a:*p:*pN01@UnityPlayer.dll;GameModule.dll:normal:normal:0:1
-
-# 多段式 - 不同模块不同核心
-cs2.exe:normal:*a:*p:*p@cs2.exe*e@nvwgf2umx.dll:normal:normal:0:1
-
-# 按模块线程优先级
-cs2.exe:normal:*a:*p:*pN01@cs2.exe!time critical;nvwgf2umx.dll!above normal:normal:normal:0:1
-
-# 三段式，不同 CPU 和优先级
-game.exe:normal:*a:*p:*p@engine.dll!time critical*pN01@render.dll!highest*e@background.dll!normal:normal:normal:0:1
-
-# 跟踪前 10 个线程 - 退出时记录
-game.exe:normal:*a:*p:?10*pN01@UnityPlayer.dll:normal:normal:0:1
-
-# 仅监控 - 跟踪但不应用
-game.exe:normal:*a:*p:??20*pN01:normal:normal:0:1
-
-# 命名组 - 浏览器在 E 核
-browsers { chrome.exe: firefox.exe: msedge.exe }:normal:*e:0:0:low:below normal:1
-
-# 匿名组 - 后台应用
-{
-    discord.exe: telegram.exe: slack.exe
-}:below normal:*e:0:0:low:low:2
-
-# 系统进程（高 I/O 需要管理员）
-dwm.exe:high:*p:0:0:high:normal:1
-
-# Process Lasso（E 核低优先级）
-process_mgmt {
-    bitsumsessionagent.exe: processgovernor.exe: processlasso.exe
-    affinityservicerust.exe: affinityserverc.exe
-}:none:*e:0:0:low:none:1
-```
+详细配置语法，包括别名、组、prime 调度、理想分配、常量和示例，请参见 [docs](docs/README.md)。
 
 ## 特权和能力
 
@@ -566,57 +352,9 @@ cargo build --release
 
 ## 工作原理
 
-1. **初始化**
-   - 解析命令行参数
-   - 通过 [`read_config()`](docs/zh-CN/config.rs/read_config.md) 加载并验证配置文件
-   - 请求管理员提权（除非 `-noUAC`）
-   - 启用 [`SeDebugPrivilege`](docs/zh-CN/winapi.rs/enable_debug_privilege.md) 和 [`SeIncreaseBasePriorityPrivilege`](docs/zh-CN/winapi.rs/enable_inc_base_priority_privilege.md)
-   - 设置计时器分辨率（如果指定）
-   - 终止从启动器继承的任何子进程（如计划任务运行器附加的 `conhost.exe`），在进入主循环前执行清理
-   - 启动 [`EtwProcessMonitor`](docs/zh-CN/event_trace.rs/EtwProcessMonitor.md) 用于响应式进程检测——新进程无需等待下一个轮询间隔即可触发规则应用
+AffinityServiceRust 持续监控运行中的进程，并应用配置的规则，包括进程优先级、CPU 亲和性/集、I/O/内存优先级、Prime 线程调度和理想处理器分配。它使用 ETW 进行响应式进程检测，并支持配置文件的热重载。
 
-2. **主循环**（每个间隔，默认 5000ms）
-   - 通过 [`NtQuerySystemInformation`](docs/zh-CN/process.rs/ProcessSnapshot.md) 获取所有运行进程的快照
-   - 对于每个匹配配置规则的进程：
-     - 通过 [`apply_config_process_level()`](docs/zh-CN/main.rs/apply_config_process_level.md) 应用进程级设置（默认一次性，启用 `continuous_process_level_apply` 后则每个循环都应用：优先级、亲和性、CPU 集、I/O、内存）
-     - 通过 [`apply_config_thread_level()`](docs/zh-CN/main.rs/apply_config_thread_level.md) 应用线程级设置（每次迭代：prime 线程调度、理想处理器分配）
-   - 记录所有更改
-   - 清理已死进程/线程句柄
-   - 休眠直到下一个间隔
-
-3. **ETW 响应式检测**：来自 [`EtwProcessMonitor`](docs/zh-CN/event_trace.rs/EtwProcessMonitor.md) 的进程启动事件会立即触发进程级规则应用；进程停止事件清理调度器状态和错误跟踪
-
-4. **Prime 线程调度**（每个进程，每个间隔）
-   - 选择候选线程（按 CPU 时间排序，过滤已死线程）
-   - 查询候选线程的 CPU 周期（通过 `QueryThreadCycleTime`）
-   - 计算自上次检查以来的增量周期
-   - 更新活跃连击（连续高活跃间隔）
-   - 提升超过入场阈值且连击充足的线程
-   - 降级低于保持阈值的线程
-   - 通过 [`SetThreadSelectedCpuSets`](docs/zh-CN/scheduler.rs/PrimeThreadScheduler.md) 应用 CPU 集
-   - 可选提升线程优先级（自动或显式）
-
-5. **共享周期预取**（每进程，prime 与 ideal 调度前）
-   - 利用 `NtQuerySystemInformation` 缓冲区中的 CPU 时间增量对所有线程排序（无额外系统调用）
-   - 仅保留前 N 个线程（N = 逻辑 CPU 数）——排名以外的线程不可能赢得任何分配槽位
-   - 仅对前 N 个线程打开句柄并调用 `QueryThreadCycleTime`；结果缓存于 [`ThreadStats::cached_cycles`](docs/zh-CN/scheduler.rs/ThreadStats.md)
-
-6. **理想处理器分配**（每进程，每间隔）
-   - 应用与 Prime 线程调度相同的滞后过滤器（连击 + 保留/入场阈值）
-   - 第 1 轮：已分配且高于 `keep_threshold` 的线程保留槽位，无写系统调用
-   - 第 2 轮：晋升满足连击条件的新线程；若线程已在空闲 CPU 池中则跳过 `SetThreadIdealProcessorEx`（延迟设置）
-   - 降级不再被选中的线程，恢复原始理想处理器
-
-7. **热重载**
-   - 监控配置文件修改时间
-   - 变更时，重新加载并验证
-   - 如果有效，立即应用新配置
-   - 如果无效，保持先前配置并记录错误
-
-8. **进程退出跟踪**
-   - 当跟踪的进程退出时，记录 CPU 周期消耗最高的前 N 个线程
-   - 通过 `psapi GetMappedFileName` 解析线程起始地址为 `module.dll+offset` 格式
-   - 清理模块缓存
+详细架构和实现请参见 [docs/main.md](docs/zh-CN/main.rs/README.md)。
 
 ## 已知行为
 

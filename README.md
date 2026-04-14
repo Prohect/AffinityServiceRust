@@ -173,7 +173,7 @@ The `grade` field (default: 1) controls how often a rule is applied:
 
 **Memory Priority:** `none`, `very low`, `low`, `medium`, `below normal`, `normal`
 
-For detailed configuration syntax, including aliases, groups, prime scheduling, ideal assignment, constants, and examples, see [docs](docs/README.md).
+For detailed configuration syntax, including aliases, groups, prime scheduling, ideal assignment, constants, and examples, see [parse_and_insert_rules](docs/en-US/config.rs/parse_and_insert_rules.md).
 
 ## Command Line Options
 

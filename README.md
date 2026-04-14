@@ -4,6 +4,9 @@
 - 🇺🇸 [English](README.md)
 - 🇨🇳 [中文 (简体)](README.zh-CN.md)
 
+![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/prohect/AffinityServiceRust/total)
+
+
 A high-performance Windows process management service written in Rust that automatically applies CPU affinity, priority, I/O priority, and memory priority rules to running processes based on configuration files.
 
 ## Overview

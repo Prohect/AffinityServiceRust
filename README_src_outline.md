@@ -299,14 +299,14 @@ Read this by multiple calls if it's too large to fit in one
 - [L212:221]fn log_process_find(process_name: &str) 
 
 ## src/main.rs
-- [L54:72]fn apply_process_level(
+- [L55:73]fn apply_process_level(
     pid: u32,
     config: &ProcessLevelConfig,
     threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     dry_run: bool,
     apply_configs: &mut ApplyConfigResult,
 ) 
-- [L74:115]fn apply_thread_level(
+- [L75:116]fn apply_thread_level(
     pid: u32,
     config: &ThreadLevelConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
@@ -315,7 +315,7 @@ Read this by multiple calls if it's too large to fit in one
     dry_run: bool,
     apply_configs: &mut ApplyConfigResult,
 ) 
-- [L117:151]fn apply_config(
+- [L118:152]fn apply_config(
     cli: &CliArgs,
     configs: &ConfigResult,
     prime_core_scheduler: &mut PrimeThreadScheduler,
@@ -327,10 +327,10 @@ Read this by multiple calls if it's too large to fit in one
     process_level_config: &ProcessLevelConfig,
     process: &ProcessEntry,
 ) 
-- [L153:167]fn log_apply_results(pid: &u32, name: &String, result: ApplyConfigResult) 
-- [L169:261]fn process_logs(configs: &ConfigResult, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
-- [L263:300]fn process_find(cli: &CliArgs, configs: &ConfigResult, blacklist: &[String]) -> Result<(), windows::core::Error> 
-- [L302:612]fn main() -> windows::core::Result<()> 
+- [L154:168]fn log_apply_results(pid: &u32, name: &String, result: ApplyConfigResult) 
+- [L170:262]fn process_logs(configs: &ConfigResult, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
+- [L264:301]fn process_find(cli: &CliArgs, configs: &ConfigResult, blacklist: &[String]) -> Result<(), windows::core::Error> 
+- [L303:613]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L8:16]enum ProcessPriority {

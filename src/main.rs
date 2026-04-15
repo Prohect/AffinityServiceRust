@@ -37,6 +37,7 @@ use std::{
     io::Write,
     mem::size_of,
     process::Command,
+    sync::mpsc::RecvTimeoutError,
     thread,
     time::Duration,
 };
@@ -558,15 +559,15 @@ fn main() -> windows::core::Result<()> {
             {
                 etw_sleep = true;
                 loop {
-                    match event_trace_receiver.recv() {
-                        Ok(_) => {
+                    match event_trace_receiver.recv_timeout(Duration::from_millis(((cli.interval_ms + 16) / 2) as u64)) {
+                        Err(RecvTimeoutError::Disconnected) => {
+                            should_continue = false;
+                            break;
+                        }
+                        _ => {
                             if Local::now() - *get_local_time!() > TimeDelta::milliseconds(cli.interval_ms as i64) {
                                 break;
                             }
-                        }
-                        Err(_) => {
-                            should_continue = false;
-                            break;
                         }
                     }
                 }

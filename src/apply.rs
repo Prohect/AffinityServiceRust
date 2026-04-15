@@ -254,10 +254,10 @@ pub fn reset_thread_ideal_processors(
         .iter()
         .map(|&(tid, _)| {
             if let Some(thread_handle) = get_thread_handle(tid, pid, &config.name) {
-                let handle = if thread_handle.w_limited_handle.is_invalid() {
-                    thread_handle.w_handle
-                } else {
+                let handle = if thread_handle.w_handle.is_invalid() {
                     thread_handle.w_limited_handle
+                } else {
+                    thread_handle.w_handle
                 };
                 if !handle.is_invalid() {
                     let target_cpu_index = (counter_set_success + random_shift as usize) % target_cpu_count;

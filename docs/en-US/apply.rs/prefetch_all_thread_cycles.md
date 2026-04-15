@@ -1,14 +1,14 @@
 # prefetch_all_thread_cycles function (apply.rs)
 
-Queries thread cycle times for the top CPU-consuming threads in a process, establishing baseline measurements that drive the hysteresis-based prime-thread promotion and demotion algorithm. This function opens thread handles, reads cycle counters via `QueryThreadCycleTime`, and updates the cached cycle/time values in the [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) so that downstream functions can compute per-thread CPU deltas.
+The `prefetch_all_thread_cycles` function opens handles to the top CPU-consuming threads in a process and queries their hardware cycle counters via `QueryThreadCycleTime`. This establishes baseline measurements that are later consumed by the prime-thread selection algorithm to compute per-thread cycle deltas. The function also resolves and caches each thread's start address for later module-prefix matching during promotion. After querying cycles, it updates the active-streak counters used by the hysteresis-based selection logic.
 
 ## Syntax
 
-```AffinityServiceRust/src/apply.rs#L602-612
+```AffinityServiceRust/src/apply.rs#L584-594
 pub fn prefetch_all_thread_cycles(
     pid: u32,
-    config: &ProcessConfig,
-    process: &mut ProcessEntry,
+    config: &ThreadLevelConfig,
+    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     prime_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 )
@@ -18,75 +18,78 @@ pub fn prefetch_all_thread_cycles(
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `pid` | `u32` | Process identifier of the target process. Used as the key into the scheduler's per-process stats map and for thread handle acquisition. |
-| `config` | `&`[ProcessConfig](../config.rs/ProcessConfig.md) | The parsed configuration for this process. The `name` field is used in error messages when thread handle opening or cycle-time queries fail. |
-| `process` | `&mut`[ProcessEntry](../process.rs/ProcessEntry.md) | Snapshot entry for the target process. Provides the thread list and per-thread kernel/user time from the most recent `NtQuerySystemInformation` snapshot. |
-| `prime_scheduler` | `&mut`[PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) | The scheduler state that holds per-thread [ThreadStats](../scheduler.rs/ThreadStats.md). This function writes `cached_total_time`, `cached_cycles`, `start_address`, and thread handles into the stats entries. It also calls `update_active_streaks` at the end to maintain streak counters used by the hysteresis algorithm. |
-| `apply_config_result` | `&mut`[ApplyConfigResult](ApplyConfigResult.md) | Accumulator for error messages. This function does not record changes — it only records errors when `QueryThreadCycleTime` or handle acquisition fails. |
+| `pid` | `u32` | The process ID of the target process. Used for thread-stats lookup in the scheduler and for error deduplication in log messages. |
+| `config` | `&ThreadLevelConfig` | The thread-level configuration. The `name` field is used in error log messages and passed to `get_thread_handle` for handle acquisition. |
+| `threads` | `&HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots from the most recent system process information query. The `KernelTime` and `UserTime` fields are summed to compute each thread's total CPU time for initial sorting and delta computation. |
+| `prime_scheduler` | `&mut PrimeThreadScheduler` | The mutable prime-thread scheduler state that stores per-thread statistics including cached cycles, last cycles, total time values, active streaks, thread handles, and start addresses. This function reads and updates multiple fields in the scheduler's per-thread stats. |
+| `apply_config_result` | `&mut ApplyConfigResult` | Accumulator for error messages. Only `QueryThreadCycleTime` failures are logged here; no change messages are produced by this function. |
 
 ## Return value
 
-None (`()`). Results are written into `prime_scheduler` (cached cycle/time values, thread handles, active streaks) and errors are accumulated in `apply_config_result`.
+This function does not return a value. All outcomes are communicated through mutations to `prime_scheduler` thread stats and error messages appended to `apply_config_result`.
 
 ## Remarks
 
 ### Algorithm
 
-The function operates in three phases:
+1. **Compute time deltas**: For every thread in `threads`, the function computes `KernelTime + UserTime` and stores it in `thread_stats.cached_total_time`. It also computes the delta from the previous cycle's `last_total_time`. The results are collected into a fixed-capacity list of `(tid, delta_time)` tuples.
 
-**Phase 1 — Collect and sort by kernel+user time delta.**
-All threads from `process.get_threads()` are collected into a `Vec<(tid, delta_time)>`, where `delta_time` is the difference between the current total CPU time (`KernelTime + UserTime`) and the `last_total_time` stored in the thread's [ThreadStats](../scheduler.rs/ThreadStats.md). The current total is also written to `cached_total_time` for later commit by [update_thread_stats](update_thread_stats.md). The vector is sorted in descending order of delta time so the most CPU-active threads are processed first.
+2. **Sort by time delta**: The list is sorted in descending order of time delta using `sort_unstable_by_key` with `Reverse`, so the most CPU-active threads appear first.
 
-**Phase 2 — Open handles and query cycle counters.**
-The function iterates over the sorted thread list up to a limit of `min(cpu_count * 2, thread_count) - 1`, where `cpu_count` is the number of entries in the system CPU set information. For each thread:
+3. **Cap the candidate count**: Only the top `min(cpu_count * 2, thread_count) - 1 + 1` threads are retained for cycle querying. This limits the number of thread handles opened to approximately twice the CPU count, which is sufficient to cover prime candidates and a margin of alternates without opening handles to every thread in a process that may have hundreds or thousands.
 
-1. If the thread does not already have an open handle in its [ThreadStats](../scheduler.rs/ThreadStats.md), a [ThreadHandle](../winapi.rs/ThreadHandle.md) is obtained via [get_thread_handle](../winapi.rs/get_thread_handle.md). The handle is stored persistently in `thread_stats.handle` for reuse across polling cycles.
-2. The best available read handle (`r_handle`, falling back to `r_limited_handle`) is selected.
-3. If the thread's `start_address` is `0`, it is resolved via [get_thread_start_address](../winapi.rs/get_thread_start_address.md). The start address is later used by [apply_prime_threads_promote](apply_prime_threads_promote.md) and [apply_ideal_processors](apply_ideal_processors.md) to resolve the thread's start module name for prefix matching.
-4. `QueryThreadCycleTime` is called to read the thread's cumulative cycle count. On success, the value is written to `cached_cycles`. On failure, the error is routed through [log_error_if_new](log_error_if_new.md) with `Operation::QueryThreadCycleTime`.
+4. **Open handles and query cycles**: For each candidate thread:
+   - If the thread does not already have a cached handle in the scheduler, `get_thread_handle` is called to open one. The handle is stored in `thread_stats.handle` for reuse across apply cycles.
+   - The read handle is selected (preferring `r_handle` over `r_limited_handle`).
+   - If `thread_stats.start_address` is `0` (not yet resolved), `get_thread_start_address` is called to populate it.
+   - `QueryThreadCycleTime` is called with the read handle to obtain the current hardware cycle count. On success, the value is stored in `thread_stats.cached_cycles`. On failure, the Win32 error code is logged via [`log_error_if_new`](log_error_if_new.md) with `Operation::QueryThreadCycleTime`.
 
-**Phase 3 — Compute cycle deltas and update active streaks.**
-After all handles have been queried, the function builds a `Vec<(tid, delta_cycles)>` from every thread in the scheduler's stats for this pid that has a non-zero `cached_cycles`, computing `delta_cycles = cached_cycles - last_cycles`. Threads with zero `cached_cycles` (those that were not queried or whose query failed) have their `active_streak` reset to `0`. The delta vector is passed to `prime_scheduler.update_active_streaks(pid, &tid_with_delta_cycles)`, which increments or resets the per-thread streak counter used by the [hysteresis selection algorithm](../scheduler.rs/PrimeThreadScheduler.md#hysteresis-algorithm).
+5. **Compute cycle deltas**: After all candidate threads have been queried, the function iterates over the scheduler's thread stats for the process and computes `cached_cycles - last_cycles` (saturating subtraction) for each thread that has a non-zero `cached_cycles`. Threads with zero `cached_cycles` (i.e., those whose handles could not be opened or whose cycle query failed) have their `active_streak` reset to `0`.
 
-### Thread handle caching
+6. **Update active streaks**: The computed cycle deltas are passed to `prime_scheduler.update_active_streaks`, which increments the streak counter for threads with positive deltas and resets it for threads with zero deltas. The active streak is used by the hysteresis selection in [`apply_prime_threads_select`](apply_prime_threads_select.md) to require sustained activity before promotion.
 
-Unlike [reset_thread_ideal_processors](reset_thread_ideal_processors.md), which opens and closes thread handles within a single call, `prefetch_all_thread_cycles` stores opened handles in `thread_stats.handle` for reuse across polling cycles. This avoids the overhead of repeatedly opening and closing handles for threads that remain active. Stale handles for threads that no longer exist are cleaned up by [apply_prime_threads](apply_prime_threads.md) after the promote/demote pipeline completes.
+### Side effects
 
-### Counter limit
+- Opens and caches OS thread handles in `prime_scheduler` for threads that did not previously have handles.
+- Resolves and caches thread start addresses for later module-name resolution during the promotion phase.
+- Updates `cached_total_time`, `cached_cycles`, and active-streak counters in the scheduler's per-thread stats.
+- This function does **not** apply any CPU sets, priorities, or other scheduling changes to threads. It is a pure measurement/prefetch phase.
 
-The iteration limit `min(cpu_count * 2, thread_count) - 1` ensures the function queries a reasonable number of threads proportional to the system's core count. On a 16-core system, this means up to 31 threads are queried (the most CPU-active ones). This bounds the cost of cycle-time queries for processes with hundreds or thousands of threads while still covering more candidates than can be promoted to prime status.
+### Edge cases
 
-### Relationship to apply_prime_threads
+- If `threads` is empty or all time deltas are zero, the function returns early after the initial collection step.
+- Threads for which `get_thread_handle` returns `None` (e.g., the thread has exited or access is denied) are silently skipped. The handle acquisition function logs its own errors internally.
+- The candidate cap uses `(cpu_count * 2).min(thread_count) - 1` which could underflow if `thread_count` is 0, but the empty check earlier prevents this path.
+- The `TIDS_CAPED` and `TIDS_FULL` constants from the `collections` module control the maximum capacity of the fixed-size lists used internally.
 
-`prefetch_all_thread_cycles` must be called *before* [apply_prime_threads](apply_prime_threads.md) in each polling cycle. The prefetch populates `cached_cycles` and `cached_total_time` in the scheduler; `apply_prime_threads` reads these cached values to compute deltas and drive the selection algorithm. After both complete, [update_thread_stats](update_thread_stats.md) commits the cached values to `last_cycles` and `last_total_time` for the next iteration.
+### When this function is called
 
-### Active streak tracking
-
-The active streak counter in [ThreadStats](../scheduler.rs/ThreadStats.md) tracks how many consecutive polling cycles a thread has shown non-zero cycle activity. The [hysteresis selection algorithm](../scheduler.rs/PrimeThreadScheduler.md#hysteresis-algorithm) uses this to prevent ephemeral CPU bursts from immediately promoting a thread to prime status — a thread must sustain activity for at least `min_active_streak` consecutive cycles (configured in [ConfigConstants](../config.rs/ConfigConstants.md)) before it becomes eligible for promotion.
+This function is called **before** [`apply_prime_threads`](apply_prime_threads.md) in the per-process apply pipeline. The cycle values it caches are consumed by `apply_prime_threads` to compute deltas for the select/promote/demote pipeline. After the pipeline completes, [`update_thread_stats`](update_thread_stats.md) commits the cached values into `last_cycles` and `last_total_time` and clears the caches for the next cycle.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `apply` |
-| Visibility | `pub` (crate-public) |
-| Callers | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
-| Callees | [get_thread_handle](../winapi.rs/get_thread_handle.md), [get_thread_start_address](../winapi.rs/get_thread_start_address.md), [get_cpu_set_information](../winapi.rs/get_cpu_set_information.md), [log_error_if_new](log_error_if_new.md), [PrimeThreadScheduler::get_thread_stats](../scheduler.rs/PrimeThreadScheduler.md), [PrimeThreadScheduler::update_active_streaks](../scheduler.rs/PrimeThreadScheduler.md) |
-| Win32 API | [`QueryThreadCycleTime`](https://learn.microsoft.com/en-us/windows/win32/api/realtimeapiset/nf-realtimeapiset-querythreadcycletime) |
-| Privileges | `THREAD_QUERY_LIMITED_INFORMATION` (for `QueryThreadCycleTime` and `NtQueryInformationThread`). `SeDebugPrivilege` is used for cross-process thread access. |
+| Module | `apply.rs` |
+| Crate | `AffinityServiceRust` |
+| Visibility | `pub` |
+| Windows APIs | `QueryThreadCycleTime`, `GetLastError` |
+| Callers | Orchestrator code in `scheduler.rs` / `main.rs` that iterates matched processes |
+| Callees | [`log_error_if_new`](log_error_if_new.md), `winapi::get_thread_handle`, `winapi::get_thread_start_address`, `winapi::get_cpu_set_information`, `PrimeThreadScheduler::get_thread_stats`, `PrimeThreadScheduler::update_active_streaks`, `error_codes::error_from_code_win32` |
+| Privileges | Requires thread handles with `THREAD_QUERY_INFORMATION` or `THREAD_QUERY_LIMITED_INFORMATION` for `QueryThreadCycleTime`. |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Prime thread orchestration (consumes prefetched data) | [apply_prime_threads](apply_prime_threads.md) |
-| Commit cached counters after a cycle | [update_thread_stats](update_thread_stats.md) |
-| Hysteresis-based thread selection | [apply_prime_threads_select](apply_prime_threads_select.md) |
-| Scheduler state and streak tracking | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
-| Per-thread stats model | [ThreadStats](../scheduler.rs/ThreadStats.md) |
-| Thread handle wrapper | [ThreadHandle](../winapi.rs/ThreadHandle.md) |
-| apply module overview | [apply](README.md) |
+| Reference | Link |
+|-----------|------|
+| apply module overview | [`README`](README.md) |
+| ApplyConfigResult | [`ApplyConfigResult`](ApplyConfigResult.md) |
+| apply_prime_threads | [`apply_prime_threads`](apply_prime_threads.md) |
+| apply_prime_threads_select | [`apply_prime_threads_select`](apply_prime_threads_select.md) |
+| update_thread_stats | [`update_thread_stats`](update_thread_stats.md) |
+| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
+| ThreadLevelConfig | [`config.rs/ThreadLevelConfig`](../config.rs/ThreadLevelConfig.md) |
+| PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

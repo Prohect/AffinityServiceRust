@@ -1,13 +1,12 @@
-# CliArgs struct (cli.rs)
+# CliArgs type (cli.rs)
 
-Container for all command-line arguments accepted by AffinityServiceRust. Every runtime option — polling interval, mode flags, file paths, privilege toggles, and debug knobs — is stored as a public field on this structure. A `CliArgs` instance is created once at startup via `CliArgs::new()`, populated by [parse_args](parse_args.md), and then passed by shared reference (`&CliArgs`) throughout the service lifetime to gate behavior in the polling loop, hot-reload logic, and utility modes.
+The `CliArgs` struct holds all command-line options and flags that control the runtime behavior of the AffinityServiceRust Windows service. It is populated by [`parse_args`](parse_args.md) and consumed throughout the application to determine operating mode, polling interval, file paths, privilege requests, and debug settings.
 
 ## Syntax
 
-```rust
-#[derive(Debug, Default)]
+```AffinityServiceRust/src/cli.rs#L5-28
 pub struct CliArgs {
-    pub interval_ms: u64,
+    pub interval_ms: u32,
     pub help_mode: bool,
     pub help_all_mode: bool,
     pub convert_mode: bool,
@@ -34,148 +33,54 @@ pub struct CliArgs {
 
 ## Members
 
-`interval_ms` (`u64`)
-
-Polling interval in milliseconds between successive iterations of the main loop. Corresponds to the `-interval <ms>` CLI flag. Default: **5000**. Minimum enforced by [parse_args](parse_args.md): **16**.
-
-`help_mode` (`bool`)
-
-When `true`, the [main](../main.rs/main.md) function prints the basic help message via [print_help](print_help.md) and exits immediately. Set by `-help`, `--help`, `-?`, `/?`, or `?`. Default: **false**.
-
-`help_all_mode` (`bool`)
-
-When `true`, the [main](../main.rs/main.md) function prints the combined detailed CLI and configuration help via [print_help_all](print_help_all.md) and exits immediately. Set by `-helpall` or `--helpall`. Default: **false**.
-
-`convert_mode` (`bool`)
-
-When `true`, the service runs in convert mode, translating a Process Lasso configuration file to AffinityServiceRust format. Uses `in_file_name` as input and `out_file_name` as output. Set by `-convert`. Default: **false**.
-
-`autogroup_mode` (`bool`)
-
-When `true`, the service runs in autogroup mode, reading a configuration file, grouping rules with identical settings into named group blocks, and writing the result to an output file. Uses `in_file_name` as input and `out_file_name` as output. Set by `-autogroup`. Default: **false**.
-
-`find_mode` (`bool`)
-
-When `true`, enables unmanaged-process discovery on every polling iteration. Processes with default (system-wide) CPU affinity that are not in the configuration or blacklist are logged to `.find.log` files. Set by `-find`. Default: **false**.
-
-`validate_mode` (`bool`)
-
-When `true`, the service loads and validates the configuration file for syntax errors and undefined aliases, prints the report, and exits without entering the polling loop. Also forces console output. Set by `-validate`. Default: **false**.
-
-`process_logs_mode` (`bool`)
-
-When `true`, the service runs in log-processing mode. It scans `.find.log` files in the logs directory, filters out known/blacklisted processes, uses Everything search (`es.exe`) to resolve executable paths, and writes results to a file. Set by `-processlogs`. Default: **false**.
-
-`dry_run` (`bool`)
-
-When `true`, the service simulates all changes without making any Win32 API calls. The [ApplyConfigResult](../apply.rs/ApplyConfigResult.md) records what would have been changed, and the service exits after one iteration. Set by `-dryrun`, `-dry-run`, or `--dry-run`. Default: **false**.
-
-`config_file_name` (`String`)
-
-Path to the configuration file. Corresponds to `-config <file>`. Default: **`"config.ini"`**.
-
-`blacklist_file_name` (`Option<String>`)
-
-Optional path to a blacklist file containing process names to exclude from management and find-mode discovery. Corresponds to `-blacklist <file>`. Default: **`None`**.
-
-`in_file_name` (`Option<String>`)
-
-Optional input file path. Semantics depend on the active mode: the source configuration for `-convert` and `-autogroup`, or the logs directory for `-processlogs`. Corresponds to `-in <file>`. Default: **`None`** (each mode applies its own default, e.g., `"logs"` for `-processlogs`).
-
-`out_file_name` (`Option<String>`)
-
-Optional output file path. Semantics depend on the active mode: the destination file for `-convert`, `-autogroup`, and `-processlogs`. Corresponds to `-out <file>`. Default: **`None`** (each mode applies its own default, e.g., `"new_processes_results.txt"` for `-processlogs`).
-
-`no_uac` (`bool`)
-
-When `true`, suppresses the automatic UAC elevation request when the service detects it is not running as administrator. The service continues with limited privileges and logs a warning. Set by `-noUAC` or `-nouac`. Default: **false**.
-
-`loop_count` (`Option<u32>`)
-
-Optional maximum number of polling iterations. When `Some(n)`, the service exits after completing `n` loops. Useful for testing and scripted runs. Minimum enforced: **1**. Corresponds to `-loop <count>`. Default: **`None`** (infinite loop).
-
-`time_resolution` (`u32`)
-
-System timer resolution in 100-nanosecond units. A value of `5210` corresponds to 0.5210 ms. When non-zero, [set_timer_resolution](../winapi.rs/set_timer_resolution.md) is called at startup. Corresponds to `-resolution <t>`. Default: **0** (do not change timer resolution).
-
-`log_loop` (`bool`)
-
-When `true`, a log message is emitted at the start of each polling iteration, including the loop number. Useful for debugging timing and loop behavior. Set by `-logloop`. Default: **false**.
-
-`skip_log_before_elevation` (`bool`)
-
-When `true`, suppresses log output during the startup phase before UAC elevation. This prevents duplicated or confusing log entries when the service re-launches itself with elevated privileges. Set by `-skip_log_before_elevation`. Default: **false**.
-
-`no_debug_priv` (`bool`)
-
-When `true`, the service does not request `SeDebugPrivilege` at startup. This limits the service's ability to open handles to protected processes. Set by `-noDebugPriv` or `-nodebugpriv`. Default: **false**.
-
-`no_inc_base_priority` (`bool`)
-
-When `true`, the service does not request `SeIncreaseBasePriorityPrivilege` at startup. This prevents setting process priority to High or Realtime for other processes. Set by `-noIncBasePriority` or `-noincbasepriority`. Default: **false**.
-
-`continuous_process_level_apply` (`bool`)
-
-When `true`, process-level settings (priority, affinity, CPU set, IO priority, memory priority) are re-applied on every polling iteration instead of only once per PID. Set by `-continuous_process_level_apply`. Default: **false**.
+| Member | Type | Default | Description |
+|--------|------|---------|-------------|
+| `interval_ms` | `u32` | `5000` | Polling interval in milliseconds between process-scanning loops. Clamped to the range 16–86 400 000 by [`parse_args`](parse_args.md). |
+| `help_mode` | `bool` | `false` | When `true`, the service prints the concise help message and exits. Set by `-help`, `--help`, `-?`, `/?`, or `?`. |
+| `help_all_mode` | `bool` | `false` | When `true`, the service prints the detailed help (CLI + config reference) and exits. Set by `-helpall` or `--helpall`. |
+| `convert_mode` | `bool` | `false` | Enables Process Lasso config conversion mode. Requires `-in` and `-out`. Set by `-convert`. |
+| `autogroup_mode` | `bool` | `false` | Enables auto-grouping of rules with identical settings. Requires `-in` and `-out`. Set by `-autogroup`. |
+| `find_mode` | `bool` | `false` | Enables process-discovery mode that logs processes running with default (all-core) affinity. Set by `-find`. |
+| `validate_mode` | `bool` | `false` | Validates the config file for syntax errors and undefined aliases, then exits. Also forces console output. Set by `-validate`. |
+| `process_logs_mode` | `bool` | `false` | Enables log-processing mode that scans find-mode logs to discover new processes. Set by `-processlogs`. |
+| `dry_run` | `bool` | `false` | When `true`, the service simulates changes without applying them. Set by `-dryrun`, `-dry-run`, or `--dry-run`. |
+| `config_file_name` | `String` | `"config.ini"` | Path to the configuration file. Set by `-config <file>`. |
+| `blacklist_file_name` | `Option<String>` | `None` | Optional path to a blacklist file used by find mode. Set by `-blacklist <file>`. |
+| `in_file_name` | `Option<String>` | `None` | Input file path for `-convert`, or logs directory for `-processlogs`. Set by `-in <file>`. |
+| `out_file_name` | `Option<String>` | `None` | Output file path for `-convert`, `-autogroup`, or `-processlogs`. Set by `-out <file>`. |
+| `no_uac` | `bool` | `false` | Disables the UAC elevation request on startup. Set by `-noUAC` or `-nouac`. |
+| `loop_count` | `Option<u32>` | `None` | When set, limits the number of polling loops (minimum 1). `None` means infinite. Set by `-loop <count>`. |
+| `time_resolution` | `u32` | `0` | Windows timer resolution in 100-nanosecond units (e.g., `5210` → 0.5210 ms). `0` means do not modify. Set by `-resolution <t>`. |
+| `log_loop` | `bool` | `false` | Logs a diagnostic message at the start of each polling loop. Set by `-logloop`. |
+| `skip_log_before_elevation` | `bool` | `false` | Suppresses log output before UAC elevation completes. Set by `-skip_log_before_elevation`. |
+| `no_debug_priv` | `bool` | `false` | Skips requesting `SeDebugPrivilege` at startup. Set by `-noDebugPriv` or `-nodebugpriv`. |
+| `no_inc_base_priority` | `bool` | `false` | Skips requesting `SeIncreaseBasePriorityPrivilege` at startup. Set by `-noIncBasePriority` or `-noincbasepriority`. |
+| `no_etw` | `bool` | `false` | Disables ETW (Event Tracing for Windows) tracing. Set by `-no_etw` or `-noetw`. |
+| `continuous_process_level_apply` | `bool` | `false` | Re-applies process-level settings (priority, affinity, CPU set, I/O priority, memory priority) on every polling iteration instead of only once per PID. Set by `-continuous_process_level_apply`. |
 
 ## Remarks
 
-### Construction
-
-`CliArgs::new()` returns a struct with sensible defaults:
-
-- `interval_ms` = 5000
-- `config_file_name` = `"config.ini"`
-- All `bool` fields = `false`
-- All `Option` fields = `None`
-- All `u32` fields = 0
-
-The remaining fields are set to their `Default` trait values via `..Default::default()`. The `#[derive(Default)]` attribute on the struct provides this behavior.
-
-### Mode exclusivity
-
-The mode flags (`help_mode`, `help_all_mode`, `convert_mode`, `autogroup_mode`, `validate_mode`, `process_logs_mode`, `dry_run`, `find_mode`) are not mutually exclusive at the parsing level. However, the [main](../main.rs/main.md) function checks them in a priority order and exits after handling the first active mode:
-
-1. `help_mode`
-2. `help_all_mode`
-3. `convert_mode`
-4. `autogroup_mode`
-5. `validate_mode` (checked after config load)
-6. `process_logs_mode` (checked after config and blacklist load)
-
-The `find_mode` and `dry_run` flags are compatible with the main polling loop and do not cause early exit. If multiple mutually exclusive mode flags are set, only the highest-priority one takes effect.
-
-### Lifetime
-
-A single `CliArgs` instance is created on the stack in [main](../main.rs/main.md) and lives for the duration of the program. It is passed by shared reference to functions such as [hotreload_config](../config.rs/hotreload_config.md), [hotreload_blacklist](../config.rs/hotreload_blacklist.md), [process_find](../main.rs/process_find.md), and [set_timer_resolution](../winapi.rs/set_timer_resolution.md). The struct is never modified after [parse_args](parse_args.md) returns.
-
-### Console output
-
-Two flags cause console output to be forced (`*get_use_console!() = true`): `-console` (handled directly in [parse_args](parse_args.md)) and `-validate` (which implies `-console`). The `-console` flag does not have a corresponding field in `CliArgs` because it writes directly to the global `USE_CONSOLE` static in the [logging](../logging.rs/README.md) module.
+- `CliArgs` derives `Debug` and `Default`. The `Default` derivation zero-initializes all fields; use `CliArgs::new()` to obtain an instance with production defaults (`interval_ms = 5000`, `config_file_name = "config.ini"`).
+- Operating modes (`convert_mode`, `autogroup_mode`, `find_mode`, `validate_mode`, `process_logs_mode`) are mutually exclusive by convention. Setting more than one simultaneously produces undefined behavior at the application level; the parser does not enforce exclusivity.
+- When `validate_mode` is set, console output is force-enabled so validation results are visible regardless of whether `-console` was also specified.
+- The `loop_count` field is useful for integration testing; combined with `-logloop` and `-interval`, it bounds the runtime of a test session.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `cli` |
-| Callers | [main](../main.rs/main.md), [hotreload_config](../config.rs/hotreload_config.md), [hotreload_blacklist](../config.rs/hotreload_blacklist.md), [process_find](../main.rs/process_find.md), [set_timer_resolution](../winapi.rs/set_timer_resolution.md) |
-| Populated by | [parse_args](parse_args.md) |
-| Derives | `Debug`, `Default` |
-| Privileges | N/A (data structure only) |
+| Module | `cli.rs` |
+| Constructed by | `CliArgs::new()` |
+| Populated by | [`parse_args`](parse_args.md) |
+| Consumed by | `main.rs`, [`read_config`](../config.rs/read_config.md), [`hotreload_config`](../config.rs/hotreload_config.md), [`hotreload_blacklist`](../config.rs/hotreload_blacklist.md), [`convert`](../config.rs/convert.md), [`sort_and_group_config`](../config.rs/sort_and_group_config.md) |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Argument parser | [parse_args](parse_args.md) |
-| Basic help output | [print_help](print_help.md) |
-| Full help output | [print_help_all](print_help_all.md) |
-| Entry point that consumes CliArgs | [main](../main.rs/main.md) |
-| Configuration loading | [read_config](../config.rs/read_config.md) |
-| Hot-reload of config | [hotreload_config](../config.rs/hotreload_config.md) |
-| Hot-reload of blacklist | [hotreload_blacklist](../config.rs/hotreload_blacklist.md) |
+| Resource | Link |
+|----------|------|
+| parse_args | [parse_args](parse_args.md) |
+| config module | [config.rs overview](../config.rs/README.md) |
+| cli module overview | [README](README.md) |
 
-
-## Documentation on Commit SHA
-
-920d8fafb3d9e22e6078f62bbb7d8d97e7d21c4b
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

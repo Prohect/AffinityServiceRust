@@ -17,6 +17,9 @@ if [ ! -f "$FILE" ]; then
 fi
 
 echo "# File outline for $FILE"
+
+echo ""
+echo "Read this by multiple calls if it's too large to fit in one"
 echo ""
 
 # Use awk to parse and accumulate multi-line declarations
@@ -47,7 +50,7 @@ function count_braces(line) {
                 gsub(/\n\n+/, "\n", processed)
                 gsub(/^\n+/, "", processed)
                 gsub(/\n+$/, "", processed)
-                print "- [L" start_line ":L" NR "]" processed
+                print "- [L" start_line ":" NR "]" processed
                 in_decl = 0
                 is_fn = 0
                 decl = ""
@@ -72,7 +75,7 @@ function count_braces(line) {
                 gsub(/\n\n+/, "\n", processed)
                 gsub(/^\n+/, "", processed)
                 gsub(/\n+$/, "", processed)
-                print "- [L" start_line ":L" NR "]" processed
+                print "- [L" start_line ":" NR "]" processed
                 in_decl = 0
                 is_struct_enum = 0
                 decl = ""
@@ -110,7 +113,7 @@ function count_braces(line) {
                 gsub(/\n\n+/, "\n", processed)
                 gsub(/^\n+/, "", processed)
                 gsub(/\n+$/, "", processed)
-                print "- [L" start_line ":L" NR "]" processed
+                print "- [L" start_line ":" NR "]" processed
                 in_decl = 0
                 is_fn = 0
                 decl = ""
@@ -135,7 +138,7 @@ function count_braces(line) {
                 gsub(/\n\n+/, "\n", processed)
                 gsub(/^\n+/, "", processed)
                 gsub(/\n+$/, "", processed)
-                print "- [L" start_line ":L" NR "]" processed
+                print "- [L" start_line ":" NR "]" processed
                 in_decl = 0
                 is_struct_enum = 0
                 decl = ""
@@ -148,10 +151,10 @@ function count_braces(line) {
         }
     } else if (/^static/) {
         sub(/^pub /, "", $0)
-        print "- [L" NR ":L" NR "]" $0
+        print "- [L" NR ":" NR "]" $0
     } else if (/^pub / && !/^pub (struct|enum|fn|use)/) {
         sub(/^pub /, "", $0)
-        print "- [L" NR ":L" NR "]" $0
+        print "- [L" NR ":" NR "]" $0
     } else if ($0 ~ /^\/\/\//) {
         if (doc_start == 0) doc_start = NR
     } else if ($0 !~ /^[ \t]*$/ && $0 !~ /^\/\// && $0 !~ /^#/) {

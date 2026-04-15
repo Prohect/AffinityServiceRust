@@ -1,76 +1,71 @@
 # mask_to_cpu_indices 函数 (config.rs)
 
-将 64 位位掩码转换为已排序的 CPU 索引向量。掩码中每个被置位的比特对应返回向量中的一个逻辑 CPU 索引。此函数是 [cpu_indices_to_mask](cpu_indices_to_mask.md) 的逆操作（适用于 64 位以内的值）。
+将 64 位位掩码转换为位被设置的 CPU 索引位置的已排序列表。这是一个私有辅助函数，在 [`parse_cpu_spec`](parse_cpu_spec.md) 解析十六进制 CPU 掩码值时内部使用。
 
 ## 语法
 
-```rust
-fn mask_to_cpu_indices(mask: u64) -> Vec<u32>
+```AffinityServiceRust/src/config.rs#L115-117
+fn mask_to_cpu_indices(mask: u64) -> List<[u32; CONSUMER_CPUS]>
 ```
 
 ## 参数
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `mask` | `u64` | 一个位掩码，其中第 *N* 位被置位表示逻辑 CPU *N* 应包含在输出中。检查范围为第 0–63 位；更高编号的 CPU 无法在此格式中表示。 |
+| `mask` | `u64` | 一个 64 位无符号整数，每个被设置的位代表一个逻辑处理器。位 0 对应 CPU 0，位 1 对应 CPU 1，以此类推直到位 63 对应 CPU 63。 |
 
 ## 返回值
 
-返回一个 `Vec<u32>`，包含 `mask` 中所有被置位比特的从零开始的索引，按升序排列。
+类型：`List<[u32; CONSUMER_CPUS]>`
 
-如果 `mask` 为 `0`，则返回空向量。
-
-## 备注
-
-此函数是 [parse_cpu_spec](parse_cpu_spec.md) 中十六进制掩码分支的底层核心。当 CPU 规格字符串以 `0x` 或 `0X` 开头时，`parse_cpu_spec` 将十六进制值解析为 `u64`，然后委托给 `mask_to_cpu_indices` 进行位提取。
-
-### 实现
-
-该函数对范围 `0..64` 进行过滤，收集每个满足 `(mask >> i) & 1 == 1` 的索引 `i`。由于范围按升序迭代，结果自然是排序的。
-
-```rust
-fn mask_to_cpu_indices(mask: u64) -> Vec<u32> {
-    (0..64).filter(|i| (mask >> i) & 1 == 1).collect()
-}
-```
-
-### 可见性
-
-此函数具有 **crate 内部**可见性（`fn`，而非 `pub fn`）。它仅在 `config` 模块内部被 [parse_cpu_spec](parse_cpu_spec.md) 调用。
-
-### 64 核限制
-
-由于输入类型为 `u64`，此函数只能表示 CPU 0–63。拥有超过 64 个逻辑处理器的系统应在其 CPU 规格中使用范围/分号语法（`0-7;64-71`）而非十六进制掩码。[parse_cpu_spec](parse_cpu_spec.md) 中的范围语法没有上限限制。
+与 `mask` 中被设置的位对应的 `u32` CPU 索引列表，按升序排列。如果 `mask` 为 `0`，则返回空列表。
 
 ### 示例
 
-| 输入掩码 | 输出 |
-|----------|------|
-| `0x00` | `[]` |
-| `0x01` | `[0]` |
+| 输入 (`mask`) | 输出 |
+|---------------|------|
 | `0x0F` | `[0, 1, 2, 3]` |
-| `0xFF00` | `[8, 9, 10, 11, 12, 13, 14, 15]` |
-| `0x8000_0000_0000_0001` | `[0, 63]` |
+| `0x8001` | `[0, 15]` |
+| `0x00` | `[]` |
+| `0xFFFFFFFFFFFFFFFF` | `[0, 1, 2, ..., 63]` |
+
+## 备注
+
+- 该函数遍历位位置 0 到 63，收集满足 `(mask >> i) & 1 == 1` 的位置。它使用 Rust 的 `Iterator::filter` 和 `Iterator::collect` 实现简洁的实现。
+
+- 由于它从位 0 到位 63 按顺序遍历，因此结果列表天然按升序排列，无需额外的排序步骤。
+
+- 此函数仅支持最多 64 个逻辑处理器（单个 Windows 处理器组）。对于拥有超过 64 个逻辑处理器的系统，应使用基于范围的 CPU 规格格式（`0-7;64-71`）而非十六进制位掩码。十六进制掩码格式被视为旧式格式，保留是为了向后兼容。
+
+- 此函数是模块私有的（`fn`，非 `pub fn`），在 `config.rs` 外部不可访问。
+
+### 算法
+
+```/dev/null/pseudocode.txt#L1-3
+for i in 0..64:
+    if bit i of mask is set:
+        append i to result list
+```
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `config` (`src/config.rs`) |
-| **可见性** | Crate 内部 |
-| **调用者** | [parse_cpu_spec](parse_cpu_spec.md) |
-| **逆操作** | [cpu_indices_to_mask](cpu_indices_to_mask.md)（截断为 `usize`） |
+| 要求 | 值 |
+|------|-----|
+| 模块 | `config.rs` |
+| 可见性 | 私有（crate 内部） |
+| 调用方 | [`parse_cpu_spec`](parse_cpu_spec.md) |
+| 被调用方 | 标准迭代器方法（`filter`、`collect`） |
+| 依赖 | [`collections.rs`](../collections.rs/README.md) 中的 `List` 和 `CONSUMER_CPUS` |
+| 权限 | 无 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 资源 | 链接 |
 |------|------|
-| CPU 规格字符串解析器 | [parse_cpu_spec](parse_cpu_spec.md) |
-| CPU 索引 → 位掩码 | [cpu_indices_to_mask](cpu_indices_to_mask.md) |
-| CPU 索引 → 显示字符串 | [format_cpu_indices](format_cpu_indices.md) |
-| 便捷的解析到掩码函数 | [parse_mask](parse_mask.md) |
-| 模块概述 | [config 模块](README.md) |
+| parse_cpu_spec | [parse_cpu_spec](parse_cpu_spec.md) |
+| cpu_indices_to_mask | [cpu_indices_to_mask](cpu_indices_to_mask.md) |
+| format_cpu_indices | [format_cpu_indices](format_cpu_indices.md) |
+| config 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

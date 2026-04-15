@@ -1,13 +1,13 @@
-# IdealProcessorRule 结构体 (config.rs)
+# IdealProcessorRule 类型 (config.rs)
 
-定义从一组 CPU 索引到可选模块名前缀过滤器的映射，用于理想处理器分配。当服务将理想处理器规则应用于进程的线程时，会检查每个线程的起始地址模块名是否与 `prefixes` 列表匹配。如果列表为空（无过滤器），则所有线程都符合条件；否则，只有起始模块名与某个前缀匹配的线程才会从 `cpus` 集合中分配理想处理器。
+`IdealProcessorRule` 结构体将一组 CPU 索引映射到可选的线程启动模块名称前缀列表，用于理想处理器分配。当调度器为进程的线程分配理想处理器时，它使用这些规则来确定应优先使用哪些 CPU，并且可以选择性地将分配限制为启动模块与指定前缀之一匹配的线程。
 
 ## 语法
 
-```rust
+```AffinityServiceRust/src/config.rs#L24-27
 #[derive(Debug, Clone)]
 pub struct IdealProcessorRule {
-    pub cpus: Vec<u32>,
+    pub cpus: List<[u32; CONSUMER_CPUS]>,
     pub prefixes: Vec<String>,
 }
 ```
@@ -16,66 +16,49 @@ pub struct IdealProcessorRule {
 
 | 成员 | 类型 | 描述 |
 |------|------|------|
-| `cpus` | `Vec<u32>` | 已排序的逻辑 CPU 索引列表，匹配此规则的线程应作为理想处理器分布在这些索引上。这些索引在解析时通过 [parse_ideal_processor_spec](parse_ideal_processor_spec.md) 从 CPU 别名解析而来。apply 模块以轮询方式在此集合上分配线程的理想处理器。 |
-| `prefixes` | `Vec<String>` | 模块名前缀过滤器。每个条目是一个小写字符串，与线程起始地址的已解析模块名进行匹配（例如 `"engine.dll"`、`"ntdll"`）。空向量表示该规则无条件地应用于所有线程。非空时，只有起始地址模块名以其中一个前缀开头的线程才会从 `cpus` 中分配理想处理器。 |
+| `cpus` | `List<[u32; CONSUMER_CPUS]>` | 调度器应分配为理想处理器的已排序 CPU 索引列表。列表中的 CPU 数量决定了有多少个排名靠前的线程（按总 CPU 时间排名）会从此规则获得理想处理器分配。 |
+| `prefixes` | `Vec<String>` | 用于过滤此规则适用于哪些线程的小写模块名称前缀列表。当为空时，规则适用于进程的**所有**线程。当非空时，仅考虑启动模块名称以这些前缀之一开头的线程。 |
 
 ## 备注
 
-### 配置语法
+### 与理想处理器规格的关系
 
-理想处理器规则出现在规则行的第 7 个字段（`ideal_processor` 位置）。规范格式为：
+`IdealProcessorRule` 实例由 [`parse_ideal_processor_spec`](parse_ideal_processor_spec.md) 在配置文件包含形如 `*alias[@prefix1;prefix2]` 的理想处理器字段时生成。当存在多个 `*` 分隔的段时（例如 `*p@engine.dll*e@helper.dll`），单个规格字符串可以产生多条规则。
 
-```
-*alias[@prefix1;prefix2]*alias2[@prefix3]
-```
+### 线程选择算法
 
-其中：
+调度器使用 `cpus` 列表来确定应从此规则获得理想处理器分配的排名靠前的线程数量（N = `cpus.len()`）。线程按其累计 CPU 时间排名。当线程跌出前 N 名时，它会回退到之前的理想处理器值。
 
-- 每个段以 `*` 开头，后跟一个 CPU 别名名称（必须事先通过 `*alias = cpu_spec` 定义）。
-- 可选的 `@` 后缀提供分号分隔的模块名前缀，用于过滤哪些线程从该段的 CPU 集合中接收理想处理器分配。
-- 可以链接多个段，为单个进程创建多个 `IdealProcessorRule` 条目。
+### 前缀匹配
 
-**示例：**
+前缀字符串以小写存储，并与线程启动模块名称的小写形式进行比较。这允许匹配部分模块名称——例如，前缀 `engine` 可匹配 `engine.dll`、`engine_worker.dll` 等。
 
-| 规范字符串 | 结果 |
-|------------|------|
-| `*perf` | 一条规则：所有线程从别名 `perf` 的 CPU 获取理想处理器。 |
-| `*perf@engine.dll` | 一条规则：只有在 `engine.dll` 中启动的线程从 `perf` 获取理想处理器。 |
-| `*p@engine.dll;render.dll*e@audio.dll` | 两条规则：`engine.dll`/`render.dll` 线程 → 别名 `p` 的 CPU；`audio.dll` 线程 → 别名 `e` 的 CPU。 |
-| `0` | 无规则（禁用理想处理器分配）。 |
+### 边界情况
 
-### 分配行为
-
-在运行时，apply 模块遍历进程的线程，对于每个 `IdealProcessorRule`，按顺序循环遍历 `cpus` 来分配理想处理器。这将线程调度提示分布到指定的核心上。分配使用 `SetThreadIdealProcessorEx`，仅应用于匹配前缀过滤器的线程。
-
-### 空的 cpus
-
-如果引用的别名解析为空的 CPU 集合，则在解析期间会静默跳过该规则，不会为该段生成 `IdealProcessorRule` 条目。
-
-### 与 CPU 集合的交互
-
-当进程同时配置了带 `@` 前缀的 `cpu_set_cpus`（即 `cpu_set_reset_ideal` 为 true）时，会先调用 `reset_thread_ideal_processors`，将理想处理器分布到 CPU 集合上。此结构体中的理想处理器规则会单独应用，并可能为特定线程覆盖这些分配。
+- 如果 `cpus` 为空（例如，因为引用的别名解析为空 CPU 集合），则该规则在解析期间会被**跳过**，不会出现在最终的 `Vec<IdealProcessorRule>` 中。
+- 如果 `prefixes` 为空，则该规则是一个通配规则，适用于进程中的每个线程。
+- 如果前缀过滤存在重叠，多条规则可以定位到同一个线程；调度器按顺序处理规则。
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `config` (`src/config.rs`) |
-| **构造者** | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
-| **使用者** | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
-| **父结构体** | [ProcessConfig](ProcessConfig.md)（字段 `ideal_processor_rules`） |
+| 要求 | 值 |
+|------|-----|
+| 模块 | `config.rs` |
+| 构造方式 | [`parse_ideal_processor_spec`](parse_ideal_processor_spec.md) |
+| 存储位置 | [`ThreadLevelConfig.ideal_processor_rules`](ThreadLevelConfig.md) |
+| 使用方 | `scheduler.rs`（主线程调度器理想处理器分配） |
+| 依赖 | `collections.rs` 中的 `List`、`CONSUMER_CPUS` 常量 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 资源 | 链接 |
 |------|------|
-| 每进程配置记录 | [ProcessConfig](ProcessConfig.md) |
-| 理想处理器规范解析器 | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
-| 理想处理器应用逻辑 | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
-| CPU 别名解析 | [parse_alias](parse_alias.md) |
-| CPU 别名解析 | [resolve_cpu_spec](resolve_cpu_spec.md) |
-| 模块概述 | [config 模块](README.md) |
+| ThreadLevelConfig | [ThreadLevelConfig](ThreadLevelConfig.md) |
+| parse_ideal_processor_spec | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
+| PrimePrefix | [PrimePrefix](PrimePrefix.md) |
+| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| scheduler 模块 | [scheduler.rs 概述](../scheduler.rs/README.md) |
+| config 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

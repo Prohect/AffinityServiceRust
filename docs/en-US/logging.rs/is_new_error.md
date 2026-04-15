@@ -1,10 +1,10 @@
 # is_new_error function (logging.rs)
 
-Checks whether a specific Windows API operation failure has already been recorded for a given process and, if not, registers it for future deduplication. Returns `true` when the error combination is seen for the first time, signaling the caller that a log message should be emitted. Returns `false` on subsequent encounters of the same failure, suppressing duplicate log output.
+Tracks operation failures to avoid spamming logs with repeated error messages. Returns `true` only on the first occurrence of a given PID/TID/process-name/operation/error-code combination, allowing callers to conditionally log or handle the error only once per unique failure.
 
 ## Syntax
 
-```logging.rs
+```rust
 pub fn is_new_error(pid: u32, tid: u32, process_name: &str, operation: Operation, error_code: u32) -> bool
 ```
 
@@ -12,72 +12,74 @@ pub fn is_new_error(pid: u32, tid: u32, process_name: &str, operation: Operation
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `pid` | `u32` | The process identifier of the target process that experienced the failure. Used as the outer key in [PID_MAP_FAIL_ENTRY_SET](PID_MAP_FAIL_ENTRY_SET.md). |
-| `tid` | `u32` | The thread identifier associated with the failure. Included in the [ApplyFailEntry](ApplyFailEntry.md) key so that the same operation failing on different threads of the same process can be independently tracked. |
-| `process_name` | `&str` | The executable name of the target process (e.g., `"notepad.exe"`). Used both as part of the dedup key and for a PID-reuse consistency check. |
-| `operation` | `Operation` | The [Operation](Operation.md) variant identifying which Windows API call failed (e.g., `Operation::SetPriorityClass`, `Operation::OpenProcess2processSetLimitedInformation`). |
-| `error_code` | `u32` | The Win32 or NTSTATUS error code returned by the failed API call. If no contextual error code is available, pass `0` or a custom discriminant value. |
+| `pid` | `u32` | The process identifier associated with the failure. Used as the top-level key in the failure tracking map. |
+| `tid` | `u32` | The thread identifier associated with the failure. Combined with `process_name`, `operation`, and `error_code` to form a unique failure key. Use `0` for process-level operations that are not thread-specific. |
+| `process_name` | `&str` | The name of the process associated with the failure. Used both as part of the failure key and for stale-entry detection (see Remarks). |
+| `operation` | [`Operation`](Operation.md) | The Windows API operation that failed. Each variant of the [`Operation`](Operation.md) enum represents a distinct API call or handle-acquisition step. |
+| `error_code` | `u32` | The Win32 error code or custom discriminator returned by the failed operation. Use `0` when there is no contextual error code, or a custom value if you need to differentiate failures that share the same operation but have distinct causes. |
 
 ## Return value
 
-| Value | Meaning |
-|-------|---------|
-| `true` | This is the **first** time this exact `(pid, tid, process_name, operation, error_code)` combination has been seen. The caller should log the error. |
-| `false` | An identical failure entry already exists for this PID. The caller should suppress the duplicate log message. |
+Returns `true` if this is the **first** time this specific `(pid, tid, process_name, operation, error_code)` combination has been recorded. Returns `false` if the same combination was already present in the failure tracking map.
 
 ## Remarks
 
-### Deduplication algorithm
+### Data structure
 
-1. The function constructs an [ApplyFailEntry](ApplyFailEntry.md) from the supplied parameters.
-2. It locks the [PID_MAP_FAIL_ENTRY_SET](PID_MAP_FAIL_ENTRY_SET.md) global via the [get_pid_map_fail_entry_set!](get_pid_map_fail_entry_set.md) macro.
-3. **If an inner map exists for `pid`:**
-   - Scans the inner `HashMap<ApplyFailEntry, bool>` for a matching entry.
-   - If found, marks the entry as alive (`true`) and returns `false` (duplicate).
-   - If not found, performs a **PID-reuse check** (see below) and inserts the new entry with alive = `true`, then returns `true` (new error).
-4. **If no inner map exists for `pid`:**
-   - Creates a new inner map containing the single entry and inserts it into the outer map, then returns `true`.
+The function uses the global [`PID_MAP_FAIL_ENTRY_SET`](statics.md#pid_map_fail_entry_set) static, which has the type:
 
-### PID-reuse safety (invariant A)
+```text
+Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>
+```
 
-All entries in a PID's inner map are expected to share the same `process_name`. When inserting a new entry, the function checks whether the existing entries belong to a different process name. If a mismatch is detected — indicating that the operating system has reused the PID for a new process — the inner map is **cleared** before the new entry is inserted. This prevents stale deduplication state from suppressing legitimate first-occurrence errors for the new process.
+- The **outer key** is the `pid`.
+- The **inner key** is an [`ApplyFailEntry`](ApplyFailEntry.md) struct containing `(tid, process_name, operation, error_code)`.
+- The **inner value** is a `bool` "alive" flag used by [`purge_fail_map`](purge_fail_map.md) to detect and remove stale entries.
+
+### Algorithm
+
+1. Construct an [`ApplyFailEntry`](ApplyFailEntry.md) from the provided parameters.
+2. Lock the `PID_MAP_FAIL_ENTRY_SET` mutex.
+3. Look up the `pid` in the outer map:
+   - **If found** — Search the inner `HashMap` for a matching entry:
+     - **If a matching entry exists** — Mark it as alive (`true`) and return `false` (not a new error).
+     - **If no matching entry exists** — Check whether the existing entries have the same `process_name` as the new entry. If not (indicating PID reuse by a different process), **clear the entire inner map** before inserting the new entry. Insert the new entry with `alive = true` and return `true`.
+   - **If not found** — Create a new inner map containing only the new entry with `alive = true`, insert it under the `pid` key, and return `true`.
+
+### PID reuse detection
+
+When a PID is reused by a different process (e.g., the original process exited and a new process was assigned the same PID), the existing failure entries become stale. The function detects this by comparing the `process_name` of the first existing entry against the new entry's `process_name`. If they differ, the inner map is cleared before inserting the new entry. This prevents false negatives (where a genuinely new error is suppressed because a previous, unrelated process with the same PID had the same operation failure).
 
 ### Alive flag
 
-Each entry's `bool` value tracks liveness for the [purge_fail_map](purge_fail_map.md) garbage collection cycle:
-
-- When `is_new_error` encounters an existing entry, it sets the `bool` to `true`, indicating the process was still active during this polling iteration.
-- [purge_fail_map](purge_fail_map.md) periodically resets all flags to `false`, then re-marks entries for currently running processes. Entries that remain `false` after this pass are removed.
-
-### Error code semantics
-
-When no contextual Win32 error code is available (e.g., an API returned a boolean failure with no `GetLastError` call), the caller should pass `0` for `error_code`. If the caller needs to distinguish between multiple logical failure modes of the same operation, a custom non-zero sentinel value can be used as `error_code` to maintain separate dedup entries.
+Each entry stores an `alive` flag (`bool` value in the inner `HashMap`). When `is_new_error` finds a matching entry, it sets `alive = true`. The companion function [`purge_fail_map`](purge_fail_map.md) uses this flag to implement a mark-and-sweep garbage collection scheme: it first marks all entries as dead (`false`), then re-marks entries for currently running processes as alive, and finally removes any entries that remain dead.
 
 ### Thread safety
 
-The function acquires the [PID_MAP_FAIL_ENTRY_SET](PID_MAP_FAIL_ENTRY_SET.md) mutex for the entire duration of the lookup-and-insert operation, ensuring atomicity. In practice, this function is called exclusively from the single-threaded service loop, so contention does not occur.
+The function acquires the `PID_MAP_FAIL_ENTRY_SET` mutex via the `get_pid_map_fail_entry_set!()` macro. The lock is held for the duration of the lookup-and-insert operation.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `logging` |
-| Callers | [log_error_if_new](../apply.rs/log_error_if_new.md) |
-| Callees | [get_pid_map_fail_entry_set!](get_pid_map_fail_entry_set.md) (macro) |
-| Data structures | [PID_MAP_FAIL_ENTRY_SET](PID_MAP_FAIL_ENTRY_SET.md), [ApplyFailEntry](ApplyFailEntry.md), [Operation](Operation.md) |
+| **Module** | `logging.rs` |
+| **Callers** | [`get_process_handle`](../winapi.rs/get_process_handle.md), [`get_thread_handle`](../winapi.rs/get_thread_handle.md), `apply.rs` rule application logic |
+| **Callees** | `get_pid_map_fail_entry_set!()` macro (locks [`PID_MAP_FAIL_ENTRY_SET`](statics.md#pid_map_fail_entry_set)) |
+| **Statics** | [`PID_MAP_FAIL_ENTRY_SET`](statics.md#pid_map_fail_entry_set) |
+| **Dependencies** | [`ApplyFailEntry`](ApplyFailEntry.md), [`Operation`](Operation.md) |
+| **Platform** | Platform-independent logic (data is platform-specific) |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| Stale entry cleanup | [purge_fail_map](purge_fail_map.md) |
-| Failure entry composite key | [ApplyFailEntry](ApplyFailEntry.md) |
-| Operation identifiers enum | [Operation](Operation.md) |
-| Global failure tracking map | [PID_MAP_FAIL_ENTRY_SET](PID_MAP_FAIL_ENTRY_SET.md) |
-| Error formatting for log messages | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
-| Apply-module error logging helper | [log_error_if_new](../apply.rs/log_error_if_new.md) |
-| logging module overview | [logging module](README.md) |
+| purge_fail_map | [purge_fail_map](purge_fail_map.md) |
+| ApplyFailEntry struct | [ApplyFailEntry](ApplyFailEntry.md) |
+| Operation enum | [Operation](Operation.md) |
+| PID_MAP_FAIL_ENTRY_SET | [statics](statics.md#pid_map_fail_entry_set) |
+| get_process_handle | [get_process_handle](../winapi.rs/get_process_handle.md) |
+| get_thread_handle | [get_thread_handle](../winapi.rs/get_thread_handle.md) |
+| logging module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

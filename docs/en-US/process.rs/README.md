@@ -1,30 +1,32 @@
 # process module (AffinityServiceRust)
 
-Provides an RAII-based process snapshot mechanism built on the Windows Native API function `NtQuerySystemInformation` with `SystemProcessInformation` information class. This module captures a point-in-time view of all running processes and their threads on the system, exposing them through safe Rust abstractions. The snapshot data is stored in global buffers guarded by `Mutex`, and the `ProcessSnapshot` struct ensures cleanup on drop. Individual processes are represented by `ProcessEntry`, which lazily parses raw thread arrays into `HashMap` collections for efficient TID-based lookup.
+The `process` module provides efficient process and thread enumeration by wrapping the native `NtQuerySystemInformation` API. It captures point-in-time snapshots of every running process and its threads on the system, storing them in a reusable buffer and a PID-keyed lookup map. The snapshot model uses RAII semantics — the buffer and map are automatically cleared when the `ProcessSnapshot` is dropped, preventing stale data from persisting between scheduling cycles.
 
-## Statics
+## Functions
 
-| Name | Type | Description |
-|------|------|-------------|
-| [SNAPSHOT_BUFFER](SNAPSHOT_BUFFER.md) | `Lazy<Mutex<Vec<u8>>>` | Global byte buffer used by `NtQuerySystemInformation` to receive process/thread data. |
-| [PID_TO_PROCESS_MAP](PID_TO_PROCESS_MAP.md) | `Lazy<Mutex<HashMap<u32, ProcessEntry>>>` | Global map from process ID to `ProcessEntry`, populated during each snapshot. |
+This module does not export standalone functions. All functionality is exposed through `ProcessSnapshot` and `ProcessEntry` methods.
 
 ## Structs
 
-| Name | Description |
-|------|-------------|
-| [ProcessSnapshot](ProcessSnapshot.md) | RAII wrapper that captures and owns a process/thread snapshot. Clears all data on drop. |
-| [ProcessEntry](ProcessEntry.md) | Represents a single process with its `SYSTEM_PROCESS_INFORMATION` and lazily-parsed thread map. |
+| Struct | Description |
+|--------|-------------|
+| [ProcessSnapshot](ProcessSnapshot.md) | RAII wrapper that captures a point-in-time snapshot of all processes and threads via `NtQuerySystemInformation`, with automatic cleanup on drop. |
+| [ProcessEntry](ProcessEntry.md) | Represents a single process from the snapshot, wrapping `SYSTEM_PROCESS_INFORMATION` with cached process name and lazy thread enumeration. |
+
+## Statics
+
+| Static | Description |
+|--------|-------------|
+| [SNAPSHOT_BUFFER](SNAPSHOT_BUFFER.md) | `Lazy<Mutex<Vec<u8>>>` — Shared backing buffer for `NtQuerySystemInformation` results. Must not be accessed directly; use `ProcessSnapshot` instead. |
+| [PID_TO_PROCESS_MAP](PID_TO_PROCESS_MAP.md) | `Lazy<Mutex<HashMap<u32, ProcessEntry>>>` — Shared PID-to-process lookup map populated by `ProcessSnapshot::take`. Must not be accessed directly; use `ProcessSnapshot` instead. |
 
 ## See Also
 
 | Link | Description |
 |------|-------------|
-| [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) | Consumes thread cycle data from `ProcessEntry` to drive prime-thread scheduling decisions. |
-| [ProcessConfig](../config.rs/ProcessConfig.md) | Per-process configuration (priority, affinity, CPU set, prime threads) applied to entries from the snapshot. |
-| [apply_prime_threads](../apply.rs/apply_prime_threads.md) | Reads thread data from `ProcessEntry` and feeds it into the scheduler for promotion/demotion. |
-| [prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md) | Iterates `ProcessEntry` threads to query and cache cycle times before scheduling. |
+| [winapi.rs](../winapi.rs/README.md) | Low-level Windows API wrappers including handle management and CPU set operations. |
+| [collections.rs](../collections.rs/README.md) | Type aliases (`HashMap`, `HashSet`, `List`) and capacity constants used throughout the project. |
+| [event_trace.rs](../event_trace.rs/README.md) | ETW-based real-time process monitoring that complements polling-based snapshots. |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit: `7221ea0694670265d4eb4975582d8ed2ae02439d`

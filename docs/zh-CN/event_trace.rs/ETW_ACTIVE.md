@@ -1,56 +1,65 @@
 # ETW_ACTIVE 静态变量 (event_trace.rs)
 
-一个原子布尔标志，指示 ETW (Windows 事件跟踪) 跟踪会话当前是否处于活动状态。此标志通过 `SeqCst` 排序在加载和存储操作中跨线程共享，无需互斥锁开销，以确保一致的可见性。它保护 [EtwProcessMonitor::stop](EtwProcessMonitor.md) 方法免受冗余拆除操作的影响，并标示整体会话生命周期状态。
+一个 `AtomicBool` 标志，指示 ETW（Windows 事件跟踪）会话当前是否处于活动状态。此标志用于防止冗余的停止操作，并协调由 [`EtwProcessMonitor`](EtwProcessMonitor.md) 管理的 ETW 跟踪会话的生命周期。
 
 ## 语法
 
-```event_trace.rs
+```rust
 static ETW_ACTIVE: AtomicBool = AtomicBool::new(false);
 ```
 
+## 类型
+
+`std::sync::atomic::AtomicBool`
+
 ## 备注
 
-`ETW_ACTIVE` 初始化为 `false`，并在 ETW (Windows 事件跟踪) 会话生命周期中经历以下状态转换：
+### 状态转换
 
-| 状态 | 设置者 | 含义 |
-|------|--------|------|
-| `false` → `true` | [EtwProcessMonitor::start](EtwProcessMonitor.md) | 跟踪会话已成功启动，后台处理线程已生成。 |
-| `true` → `false` | [EtwProcessMonitor::stop](EtwProcessMonitor.md) | 跟踪会话正在拆除。调用 `CloseTrace` 和带有 `EVENT_TRACE_CONTROL_STOP` 的 `ControlTraceW`，并等待后台线程加入。 |
+| 转换 | 触发条件 | 内存排序 |
+|------|---------|----------|
+| `false` → `true` | [`EtwProcessMonitor::start`](EtwProcessMonitor.md) 成功生成后台处理线程。 | `SeqCst`（store） |
+| `true` → `false` | [`EtwProcessMonitor::stop`](EtwProcessMonitor.md) 被调用（显式调用或通过 `Drop` 触发）。 | `SeqCst`（store） |
+
+### 使用模式
+
+- **在 `start()` 中**：在 ETW 会话完全初始化之后（跟踪已启动、提供程序已启用、跟踪已打开且处理线程已生成），`ETW_ACTIVE` 通过 `store(true, Ordering::SeqCst)` 设置为 `true`。
+
+- **在 `stop()` 中**：该方法首先通过 `load(Ordering::SeqCst)` 检查 `ETW_ACTIVE`。如果标志已经为 `false`，则停止操作立即返回——这可以防止重复关闭跟踪句柄和冗余清理。如果为 `true`，则在继续清理（关闭跟踪、停止会话、加入线程和清除全局发送器）之前将标志设置为 `false`。
 
 ### 线程安全
 
-`ETW_ACTIVE` 对所有加载和存储操作使用 `Ordering::SeqCst`，这是最强的内存排序保证。这确保了：
+`ETW_ACTIVE` 对所有操作使用带有 `SeqCst` 排序的 `AtomicBool`，提供最强的内存排序保证。这确保了：
 
-- 一个线程上的 `stop` 方法能看到另一个线程上 `start` 设置的 `true` 值。
-- 第二次调用 `stop`（包括来自 `Drop` 的隐式调用）能观察到第一次调用设置的 `false` 值并立即短路返回。
+- `stop()` 中的标志更新对任何并发读取者立即可见。
+- `stop()` 顶部的守卫检查正确地防止并发或重复的停止调用发生竞争。
 
-### 防止双重停止
+### 可见性
 
-`stop` 方法在入口处检查 `ETW_ACTIVE`，如果已经为 `false` 则立即返回。这防止了在显式调用 `stop` 后又通过 [EtwProcessMonitor](EtwProcessMonitor.md) 的 `Drop` 实现再次调用时出现的双重调用问题。
+此静态变量为**模块私有**（没有 `pub` 修饰符）。它仅在 `EtwProcessMonitor::start` 和 `EtwProcessMonitor::stop` 方法内部被访问。
 
-### 模块私有可见性
+### 初始化
 
-此静态变量**未**标记为 `pub` —— 它是 `event_trace` 模块的内部实现。外部代码仅通过 [EtwProcessMonitor](EtwProcessMonitor.md) API 与 ETW (Windows 事件跟踪) 会话进行交互。
+与此模块中的其他静态变量（使用 `once_cell::sync::Lazy`）不同，`ETW_ACTIVE` 是一个在编译时初始化为 `false` 的普通 `AtomicBool`。不需要延迟初始化，因为 `AtomicBool::new` 是一个 `const fn`。
 
 ## 要求
 
 | 要求 | 值 |
 |------|-----|
-| 模块 | `event_trace` |
-| 类型 | `AtomicBool`（来自 `std::sync::atomic`） |
-| 调用者 | [EtwProcessMonitor::start](EtwProcessMonitor.md)、[EtwProcessMonitor::stop](EtwProcessMonitor.md) |
-| 被调用者 | *（无 —— 原子原语）* |
-| 权限 | 无 |
+| **模块** | `event_trace.rs` |
+| **可见性** | 私有（模块内部） |
+| **访问者** | [`EtwProcessMonitor::start`](EtwProcessMonitor.md)、[`EtwProcessMonitor::stop`](EtwProcessMonitor.md) |
+| **依赖** | `std::sync::atomic::{AtomicBool, Ordering}` |
+| **平台** | Windows |
 
 ## 另请参阅
 
 | 主题 | 链接 |
 |------|------|
-| 全局 ETW (Windows 事件跟踪) 事件发送通道 | [ETW_SENDER](ETW_SENDER.md) |
-| ETW (Windows 事件跟踪) 会话管理器结构体 | [EtwProcessMonitor](EtwProcessMonitor.md) |
-| 进程事件载荷 | [EtwProcessEvent](EtwProcessEvent.md) |
-| 模块概述 | [event_trace 模块](README.md) |
+| EtwProcessMonitor 结构体 | [EtwProcessMonitor](EtwProcessMonitor.md) |
+| ETW_SENDER 静态变量 | [ETW_SENDER](ETW_SENDER.md) |
+| EtwProcessEvent 结构体 | [EtwProcessEvent](EtwProcessEvent.md) |
+| event_trace 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

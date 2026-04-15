@@ -1,6 +1,6 @@
-# MemoryPriorityInformation 结构体 (priority.rs)
+# MemoryPriorityInformation 类型 (priority.rs)
 
-一个 `#[repr(C)]` 新类型包装器，包装了一个表示进程内存优先级的 `u32` 值。此结构体用作直接传递给 Windows `SetProcessInformation` 和 `GetProcessInformation` API 的内存缓冲区，用于查询或设置 `ProcessMemoryPriority`。C 兼容的内存布局保证了该结构体的内存表示与内核期望的 `MEMORY_PRIORITY_INFORMATION` 结构一致。
+一个 `#[repr(C)]` 的 `u32` 新类型包装器，与 Windows `NtSetInformationProcess` API 期望的 `MEMORY_PRIORITY_INFORMATION` 结构体的二进制布局匹配。此结构体用于通过未公开的 `ProcessMemoryPriority` 信息类设置进程的内存优先级时使用，确保 Rust 侧的数据与内核期望的 C 结构体在布局上兼容。
 
 ## 语法
 
@@ -14,43 +14,35 @@ pub struct MemoryPriorityInformation(pub u32);
 
 | 成员 | 类型 | 描述 |
 |------|------|------|
-| `0` | `u32` | 原始内存优先级值。对应于 Win32 `MEMORY_PRIORITY_INFORMATION` 结构的 `MemoryPriority` 字段。有效值为 `0`（`MEMORY_PRIORITY_VERY_LOW`）到 `5`（`MEMORY_PRIORITY_NORMAL`）。 |
+| `0`（元组字段） | `u32` | 原始内存优先级值。对应于 Windows SDK 定义的 `MEMORY_PRIORITY_*` 常量：`MEMORY_PRIORITY_VERY_LOW` (1)、`MEMORY_PRIORITY_LOW` (2)、`MEMORY_PRIORITY_MEDIUM` (3)、`MEMORY_PRIORITY_BELOW_NORMAL` (4) 或 `MEMORY_PRIORITY_NORMAL` (5)。该值通常通过调用 [`MemoryPriority::as_win_const()`](MemoryPriority.md) 并从结果 `MEMORY_PRIORITY` 包装器中提取内部 `.0` 字段来获取。 |
 
 ## 备注
 
-这是一个具有单个公共 `u32` 字段的元组结构体，设计用于在调用带有 `ProcessMemoryPriority` 信息类的 `SetProcessInformation` / `GetProcessInformation` 时转换为原始指针或从原始指针转换而来。`#[repr(C)]` 属性确保结构体具有可预测的、C 兼容的内存布局且无填充，使其可安全地用作 FFI 调用中的类型化缓冲区。
-
-内部 `u32` 中存储的数值对应于 [MemoryPriority](MemoryPriority.md) 枚举通过其 `as_win_const` 方法定义的常量：
-
-| 值 | 常量 |
-|----|------|
-| `1` | `MEMORY_PRIORITY_VERY_LOW` |
-| `2` | `MEMORY_PRIORITY_LOW` |
-| `3` | `MEMORY_PRIORITY_MEDIUM` |
-| `4` | `MEMORY_PRIORITY_BELOW_NORMAL` |
-| `5` | `MEMORY_PRIORITY_NORMAL` |
-
-该结构体派生了 `PartialEq`、`Eq`、`Clone` 和 `Copy`，以支持值语义和比较操作。它未派生 `Debug`；可通过 `.0` 直接检查内部值。
+- `#[repr(C)]` 属性保证该结构体的内存布局与包含单个 `ULONG` 字段的 C `struct` 匹配，这正是调用 `NtSetInformationProcess` 使用 `ProcessMemoryPriority` 信息类时 Windows 所期望的布局。
+- 该结构体派生了 `PartialEq`、`Eq`、`Clone` 和 `Copy`，使其适合比较和值类型语义。
+- 与本模块中的其他优先级类型不同，`MemoryPriorityInformation` 是一个结构体而非枚举，因为它直接充当 FFI 边界类型。对应的用户层逻辑枚举是 [`MemoryPriority`](MemoryPriority.md)，它提供字符串转换和查找表功能。
+- 此类型**未**派生 `Debug`。如果需要调试输出，可以通过 `.0` 直接访问内部的 `u32` 值。
+- 该结构体在 `apply` 模块中通过指针传递给 `NtSetInformationProcess`。结构体的大小（`std::mem::size_of::<MemoryPriorityInformation>()`）作为信息长度参数传递给 NT API 调用。
 
 ## 要求
 
 | 要求 | 值 |
 |------|-----|
-| 模块 | `priority` |
-| 调用方 | [apply_memory_priority](../apply.rs/apply_memory_priority.md) |
-| Win32 API | `SetProcessInformation`、`GetProcessInformation`（使用 `ProcessMemoryPriority`） |
-| 对应头文件 | `MEMORY_PRIORITY_INFORMATION` (processthreadsapi.h) |
+| 模块 | `priority.rs` |
+| 调用方 | `apply` 模块（在设置进程内存优先级时，用作 `NtSetInformationProcess` 调用的数据缓冲区） |
+| Win32 API | 对应于传递给 `NtSetInformationProcess`（信息类 `ProcessMemoryPriority`）的 `MEMORY_PRIORITY_INFORMATION` |
+| 权限 | 对其他用户拥有的进程设置内存优先级时，可能需要 `SeDebugPrivilege` |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 参考 | 链接 |
 |------|------|
-| 具有命名级别的内存优先级枚举 | [MemoryPriority](MemoryPriority.md) |
-| 进程优先级类枚举 | [ProcessPriority](ProcessPriority.md) |
-| I/O 优先级枚举 | [IOPriority](IOPriority.md) |
-| 内存优先级应用逻辑 | [apply_memory_priority](../apply.rs/apply_memory_priority.md) |
-| 优先级模块概述 | [priority 模块](README.md) |
+| MemoryPriority 枚举 | [MemoryPriority](MemoryPriority.md) |
+| ProcessPriority | [ProcessPriority](ProcessPriority.md) |
+| IOPriority | [IOPriority](IOPriority.md) |
+| ThreadPriority | [ThreadPriority](ThreadPriority.md) |
+| priority 模块概述 | [README](README.md) |
+| apply_process_level | [apply_process_level](../main.rs/apply_process_level.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

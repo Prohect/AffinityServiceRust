@@ -1,6 +1,6 @@
 # is_affinity_unset 函数 (winapi.rs)
 
-检查进程的 CPU 亲和性掩码是否等于系统默认值（所有逻辑处理器均已启用）。此函数用于 `-find` 模式中识别尚未应用自定义亲和性的进程，帮助用户发现哪些进程仍在使用默认设置运行。
+检查进程是否具有默认（全 CPU）亲和性掩码——即进程亲和性掩码是否等于系统亲和性掩码。此函数由 `-find` 模式使用，用于识别未显式配置 CPU 亲和性的进程。
 
 ## 语法
 
@@ -13,74 +13,60 @@ pub fn is_affinity_unset(pid: u32, process_name: &str) -> bool
 | 参数 | 类型 | 描述 |
 |------|------|------|
 | `pid` | `u32` | 目标进程的进程标识符。 |
-| `process_name` | `&str` | 目标进程的映像名称（例如 `"game.exe"`）。用于诊断日志记录，以及在访问被拒绝时填充 find-fail 集合。 |
+| `process_name` | `&str` | 目标进程的名称，用于诊断日志记录以及在访问被拒绝错误时填充查找失败集合。 |
 
 ## 返回值
 
-| 值 | 含义 |
-|------|------|
-| `true` | 进程的当前亲和性掩码等于系统亲和性掩码——即所有 CPU 均已启用，未设置自定义亲和性。 |
-| `false` | 进程具有自定义亲和性掩码（CPU 的子集），**或者**无法打开进程，**或者**亲和性查询失败。 |
+如果进程的当前亲和性掩码等于系统亲和性掩码（即未应用自定义亲和性），则返回 `true`。在所有其他情况下返回 `false`，包括：
+
+- 无法打开进程句柄。
+- 句柄已打开但无效。
+- `GetProcessAffinityMask` 调用失败。
+- 进程具有与系统掩码不同的自定义亲和性掩码。
 
 ## 备注
 
 ### 算法
 
-1. 通过 `OpenProcess` 以 `PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION` 访问权限打开进程。
-2. 如果打开失败，通过 `log_to_find` 记录错误。如果错误码为 `5`（访问被拒绝），则将 `process_name` 插入 `FINDS_FAIL_SET`，以便 find 模式报告可以标注此进程不可访问。
-3. 调用 `GetProcessAffinityMask` 获取进程亲和性掩码（`current_mask`）和系统亲和性掩码（`system_mask`）。
-4. 当且仅当 `current_mask == system_mask` 时返回 `true`。
-5. 返回前关闭进程句柄。
+1. 通过 `OpenProcess` 以 `PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION` 访问权限打开目标进程。
+2. 如果打开失败，通过 [`log_to_find`](../logging.rs/log_to_find.md) 将错误记录到查找日志中。如果错误代码为 `5`（`ACCESS_DENIED`），则将进程名称添加到 `FINDS_FAIL_SET`，以便在后续查找迭代中排除该进程。
+3. 如果返回的句柄无效，记录诊断信息并返回 `false`。
+4. 调用 `GetProcessAffinityMask` 获取进程亲和性掩码（`current_mask`）和系统亲和性掩码（`system_mask`）。
+5. 比较两个掩码。仅当它们相等时返回 `true`。
+6. 返回前关闭进程句柄。
 
-### 句柄管理
+### 访问被拒绝处理
 
-与此模块中的大多数其他函数不同，`is_affinity_unset` **不**使用 [ProcessHandle](ProcessHandle.md) RAII 包装器。它通过 `OpenProcess` 直接打开单个组合访问权限的句柄，并在函数末尾通过 `CloseHandle` 手动关闭。这是因为该函数是仅在 `-find` 模式下使用的独立查询，不参与主 apply 循环的句柄生命周期管理。
+当 `OpenProcess` 或 `GetProcessAffinityMask` 返回错误代码 `5`（`ACCESS_DENIED`）时，进程名称会被插入全局 `FINDS_FAIL_SET` 集合。查找模式逻辑使用此集合来跳过已知不可访问的进程（例如受保护进程、反作弊服务），从而避免重复的失败尝试和日志噪音。
 
-### 错误行为
+### 句柄生命周期
 
-函数在遇到任何错误时返回 `false`，将无法访问或查询失败的进程视为"已配置"，以避免在 find 模式输出中产生误报。具体错误处理如下：
+该函数在自身作用域内打开和关闭进程句柄。它**不**使用 [`ProcessHandle`](ProcessHandle.md) RAII 包装器，因为它只需要一个具有特定组合访问权限（`PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION`）的句柄。
 
-| 场景 | 行为 |
-|------|------|
-| `OpenProcess` 失败 | 通过 `log_to_find` 记录错误；如果错误码为 5（访问被拒绝），添加到 fail 集合；返回 `false` |
-| `OpenProcess` 返回无效句柄 | 通过 `log_to_find` 记录 `[INVALID_HANDLE]`；返回 `false` |
-| `GetProcessAffinityMask` 失败 | 通过 `log_to_find` 记录错误；如果错误码为 5，添加到 fail 集合；返回 `false` |
+### 平台说明
 
-### 访问被拒绝跟踪
-
-当错误码为 `5`（`ERROR_ACCESS_DENIED`）时，进程名称会被插入全局 `FINDS_FAIL_SET`（通过 `get_fail_find_set!()` 宏访问）。此集合由 find 模式报告使用，用于列出无法检查的进程，通常是因为未持有 `SeDebugPrivilege` 或进程受到保护。
-
-### 系统亲和性掩码
-
-`GetProcessAffinityMask` 返回的系统亲和性掩码反映了调用进程可用的所有逻辑处理器集合。在单处理器组系统（≤ 64 个 CPU）上，这通常为 `(1 << cpu_count) - 1`。当进程未调用过 `SetProcessAffinityMask` 时，其进程掩码等于系统掩码。
-
-### 与 apply 模块中亲和性的比较
-
-[apply_affinity](../apply.rs/apply_affinity.md) 函数在主服务循环期间使用 [ProcessHandle](ProcessHandle.md) 来获取和设置亲和性。`is_affinity_unset` 独立运行，仅在 `-find` 模式发现过程中被调用，而非在 apply 周期中。
+- **仅限 Windows。** 使用 Win32 API 中的 `OpenProcess`、`GetProcessAffinityMask`、`GetLastError` 和 `CloseHandle`。
+- 系统亲和性掩码表示进程所在处理器组中所有可用的逻辑处理器。在具有超过 64 个逻辑处理器的系统上，此函数仅考虑主处理器组。
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `winapi` (`src/winapi.rs`) |
-| **可见性** | `pub` |
-| **调用者** | [process_find](../main.rs/process_find.md)（通过 `-find` CLI 模式） |
-| **被调用者** | `OpenProcess`、`GetProcessAffinityMask`、`GetLastError`、`CloseHandle`（Win32）；`log_to_find`、`get_fail_find_set!()` |
-| **API** | [`GetProcessAffinityMask`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask)、[`OpenProcess`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocess) |
-| **特权** | 建议启用 `SeDebugPrivilege`；没有该特权时，受保护进程将返回访问被拒绝 |
+| 要求 | 值 |
+|------|-----|
+| **模块** | `winapi.rs` |
+| **调用者** | `apply.rs` / `scheduler.rs` 中的查找模式逻辑 |
+| **被调用者** | `OpenProcess`、`GetProcessAffinityMask`、`GetLastError`、`CloseHandle`（Win32）、[`log_to_find`](../logging.rs/log_to_find.md)、[`error_from_code_win32`](../error_codes.rs/error_from_code_win32.md) |
+| **Win32 API** | [OpenProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocess)、[GetProcessAffinityMask](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask) |
+| **权限** | 建议具有 `SeDebugPrivilege` 以查询受保护/提升权限的进程。 |
 
 ## 另请参阅
 
 | 主题 | 链接 |
 |------|------|
-| 亲和性应用逻辑 | [apply_affinity](../apply.rs/apply_affinity.md) |
-| Find 模式入口点 | [process_find](../main.rs/process_find.md) |
-| 进程句柄 RAII 包装器 | [ProcessHandle](ProcessHandle.md) |
-| 调试特权启用 | [enable_debug_privilege](enable_debug_privilege.md) |
-| CPU 索引转位掩码工具 | [cpu_indices_to_mask](../config.rs/cpu_indices_to_mask.md) |
-| 错误码格式化 | [error_codes 模块](../error_codes.rs/README.md) |
-| GetProcessAffinityMask (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask) |
+| get_process_handle | [get_process_handle](get_process_handle.md) |
+| log_to_find | [log_to_find](../logging.rs/log_to_find.md) |
+| error_from_code_win32 | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
+| FINDS_FAIL_SET 静态变量 | [statics](../logging.rs/statics.md#finds_fail_set) |
+| logging 模块 | [logging.rs](../logging.rs/README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

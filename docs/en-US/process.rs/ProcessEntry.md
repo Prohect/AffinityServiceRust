@@ -1,8 +1,6 @@
 # ProcessEntry struct (process.rs)
 
-Represents a single process from a system snapshot, wrapping the native `SYSTEM_PROCESS_INFORMATION` structure with lazy thread parsing and cached name lookup.
-
-`ProcessEntry` stores a raw pointer to the thread array from the snapshot buffer and defers parsing into a `HashMap<u32, SYSTEM_THREAD_INFORMATION>` until `get_threads` or `get_thread` is first called. The process image name is parsed and lowercased eagerly at construction time for efficient matching during configuration lookups.
+Represents a single process from a system snapshot, wrapping the native `SYSTEM_PROCESS_INFORMATION` structure with a cached lowercase process name and lazy thread enumeration. `ProcessEntry` is the per-process data unit stored in the PID-keyed lookup map built by [`ProcessSnapshot::take`](ProcessSnapshot.md).
 
 ## Syntax
 
@@ -10,7 +8,6 @@ Represents a single process from a system snapshot, wrapping the native `SYSTEM_
 #[derive(Clone)]
 pub struct ProcessEntry {
     pub process: SYSTEM_PROCESS_INFORMATION,
-    threads: HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     threads_base_ptr: usize,
     name: String,
 }
@@ -18,16 +15,15 @@ pub struct ProcessEntry {
 
 ## Members
 
-| Member | Type | Description |
-|--------|------|-------------|
-| `process` | `SYSTEM_PROCESS_INFORMATION` | The raw NT process information structure. Public for direct field access (e.g., `UniqueProcessId`, `NumberOfThreads`, `WorkingSetSize`). |
-| `threads` | `HashMap<u32, SYSTEM_THREAD_INFORMATION>` | Lazily-populated map from thread ID (TID) to thread information. Empty until `get_threads` is called. Private. |
-| `threads_base_ptr` | `usize` | Base address of the `Threads` flexible array member from the snapshot buffer, stored as `usize` to satisfy `Send`. Private. |
-| `name` | `String` | Lowercased process image name (e.g., `"explorer.exe"`), parsed from the `ImageName` `UNICODE_STRING` at construction. Private. |
+| Field | Type | Visibility | Description |
+|-------|------|------------|-------------|
+| `process` | `SYSTEM_PROCESS_INFORMATION` | `pub` | The raw NT process information structure as returned by `NtQuerySystemInformation`. Contains fields such as `UniqueProcessId`, `NumberOfThreads`, `ImageName`, and various resource counters. |
+| `threads_base_ptr` | `usize` | Private | The base address (stored as `usize`) of the thread information array (`SYSTEM_THREAD_INFORMATION[]`) that immediately follows the process entry in the snapshot buffer. Stored as a numeric value rather than a raw pointer to satisfy `Clone` and `Send` requirements. |
+| `name` | `String` | Private | The process image name in **lowercase**, decoded from the UTF-16 `ImageName` field during construction. Empty string for the System Idle Process (PID 0), which has a null `ImageName.Buffer`. |
 
 ## Methods
 
-### new
+### `new`
 
 ```rust
 pub fn new(
@@ -36,132 +32,97 @@ pub fn new(
 ) -> Self
 ```
 
-Constructs a `ProcessEntry` from a raw process information structure and a pointer to its thread array.
+Constructs a new `ProcessEntry` from a raw `SYSTEM_PROCESS_INFORMATION` structure and a pointer to its thread array. The process image name is decoded from `ImageName.Buffer` (UTF-16) into a lowercase `String` during construction. If `ImageName.Length` is zero or `ImageName.Buffer` is null, the name is set to an empty string.
 
-The image name is decoded from `process.ImageName` (UTF-16LE `UNICODE_STRING`) and lowercased immediately. If the image name buffer is null or the length is zero, the name is set to an empty string. The thread map is left empty; threads are parsed lazily on first access via `get_threads`.
-
-| Parameter | Description |
-|-----------|-------------|
-| `process` | A copy of the `SYSTEM_PROCESS_INFORMATION` structure for this process. |
-| `threads_base_ptr` | Pointer to the first element of the `Threads` flexible array member. Stored as `usize` internally. Must remain valid for the lifetime of the owning `ProcessSnapshot`. |
-
-**Return value:** A new `ProcessEntry` with an eagerly-parsed name and a deferred thread map.
-
-### get_threads
+### `get_threads`
 
 ```rust
-pub fn get_threads(&mut self) -> &HashMap<u32, SYSTEM_THREAD_INFORMATION>
+pub fn get_threads(&self) -> HashMap<u32, SYSTEM_THREAD_INFORMATION>
 ```
 
-Returns the thread information map, lazily populating it from the raw thread array pointer on first call.
+Builds and returns a `HashMap` mapping thread IDs (`u32`) to their corresponding `SYSTEM_THREAD_INFORMATION` structures. The raw thread array from `SYSTEM_PROCESS_INFORMATION` is parsed by iterating over `NumberOfThreads` entries starting at `threads_base_ptr`. Each thread's `ClientId.UniqueThread` is used as the map key.
 
-If the internal thread map length does not match `process.NumberOfThreads`, the map is cleared and repopulated by iterating over the raw `SYSTEM_THREAD_INFORMATION` array. Each thread is keyed by its TID (`ClientId.UniqueThread`). On subsequent calls with no change in thread count, the cached map is returned directly.
+Returns an empty map if the `threads_base_ptr` is null.
 
-**Return value:** A reference to the `HashMap<u32, SYSTEM_THREAD_INFORMATION>` keyed by thread ID.
+> **Note:** This method reconstructs the map on every call. It does not cache the result internally.
 
-> [!IMPORTANT]
-> The raw pointer dereference is safe only while the parent `ProcessSnapshot` (and its backing buffer) is alive. Calling this method after the snapshot is dropped is undefined behavior.
-
-### get_thread
-
-```rust
-pub fn get_thread(&mut self, tid: u32) -> Option<&SYSTEM_THREAD_INFORMATION>
-```
-
-Returns thread information for a specific TID, or `None` if the thread does not belong to this process.
-
-Internally calls `get_threads` to ensure the map is populated, then performs a hash lookup.
-
-| Parameter | Description |
-|-----------|-------------|
-| `tid` | The thread ID to look up. |
-
-**Return value:** `Some(&SYSTEM_THREAD_INFORMATION)` if the thread exists, `None` otherwise.
-
-### get_name
+### `get_name`
 
 ```rust
 pub fn get_name(&self) -> &str
 ```
 
-Returns the lowercased process image name (e.g., `"chrome.exe"`).
+Returns a reference to the cached lowercase process name. This is an `#[inline]` accessor with zero allocation overhead.
 
-This value is computed once during `new` and cached. Returns an empty string for the System Idle Process (PID 0) or any process whose `ImageName` buffer was null.
-
-**Return value:** A string slice referencing the cached lowercase name.
-
-### get_name_original_case
+### `get_name_original_case`
 
 ```rust
 pub fn get_name_original_case(&self) -> String
 ```
 
-Returns the process image name preserving original casing from the snapshot buffer.
+Re-reads the process image name from the raw `ImageName` UTF-16 buffer **without** lowercasing, returning the original-case name as a new `String`. This method performs an unsafe read of the `ImageName.Buffer` pointer, which is only valid while the parent [`ProcessSnapshot`](ProcessSnapshot.md) is alive and the backing buffer has not been cleared.
 
-Unlike `get_name`, this method re-reads the `ImageName` `UNICODE_STRING` from the `process` field on each call without lowercasing. Useful for display or logging where the original casing matters.
+Marked `#[allow(dead_code)]` — reserved for diagnostic or display use cases where the original casing matters.
 
-**Return value:** A new `String` with the original-case image name, or an empty string if the buffer is null.
-
-> [!NOTE]
-> This method dereferences the `ImageName.Buffer` pointer, which points into the snapshot buffer. It is safe only while the parent `ProcessSnapshot` is alive.
-
-### pid
+### `pid`
 
 ```rust
 pub fn pid(&self) -> u32
 ```
 
-Returns the process ID.
+Returns the process identifier extracted from `process.UniqueProcessId`, cast through `usize` to `u32`. This is an `#[inline]` accessor.
 
-Extracts `UniqueProcessId` from the underlying `SYSTEM_PROCESS_INFORMATION` structure, casting through `usize` to `u32`.
-
-**Return value:** The PID as a `u32`.
-
-### thread_count
+### `thread_count`
 
 ```rust
 pub fn thread_count(&self) -> u32
 ```
 
-Returns the number of threads reported by the operating system for this process.
-
-This reads `NumberOfThreads` from the underlying `SYSTEM_PROCESS_INFORMATION` and does **not** require the thread map to be populated.
-
-**Return value:** The thread count as a `u32`.
+Returns the number of threads in the process from `process.NumberOfThreads`. This is an `#[inline]` accessor.
 
 ## Remarks
 
-### Lazy thread parsing
+### Send safety
 
-The primary design goal of `ProcessEntry` is to avoid parsing thread arrays for processes that are not targeted by any configuration rule. In a typical system snapshot with hundreds of processes and thousands of threads, only a handful of processes match user-defined rules. Deferring the `O(n)` thread array walk to `get_threads` keeps per-snapshot overhead proportional to the number of *matched* processes.
+`ProcessEntry` has an explicit `unsafe impl Send for ProcessEntry` declaration. This is safe under the following invariants:
 
-### Safety and Send
+- `ProcessEntry` instances are only accessed through `Mutex`-protected containers (`PID_TO_PROCESS_MAP`), ensuring single-threaded access at any given time.
+- The raw pointers inside `SYSTEM_PROCESS_INFORMATION` (such as `ImageName.Buffer`) point into the snapshot buffer owned by [`ProcessSnapshot`](ProcessSnapshot.md). These pointers are only valid for the lifetime of that buffer and must not be dereferenced after the snapshot is dropped.
 
-`ProcessEntry` stores the thread array pointer as a `usize` rather than a raw `*const` to allow the type to implement `Send`. An `unsafe impl Send for ProcessEntry` is provided with the contract that instances are only accessed through a `Mutex` (via `PID_TO_PROCESS_MAP`) and that the snapshot buffer outlives all references.
+### Lifetime coupling
 
-### Cloning
+The `threads_base_ptr` and `process.ImageName.Buffer` point into the [`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md) owned by the parent [`ProcessSnapshot`](ProcessSnapshot.md). Once the snapshot is dropped (which clears the buffer), these pointers become dangling. Methods that dereference these pointers (`get_threads`, `get_name_original_case`) are only safe to call while the snapshot is alive.
 
-`ProcessEntry` derives `Clone`. Cloned instances share the same `threads_base_ptr` value, meaning clones are also only valid within the snapshot buffer lifetime. The `threads` `HashMap` is deep-cloned, so a clone that has already parsed threads does not need to re-parse.
+The `name` field (lowercase `String`) is an owned copy, so `get_name()` is always safe to call regardless of snapshot lifetime.
+
+### Clone behavior
+
+`ProcessEntry` derives `Clone`. Cloned instances share the same `threads_base_ptr` value (a numeric address) and the same `SYSTEM_PROCESS_INFORMATION` content. Cloned entries have the same lifetime constraints as the original regarding pointer validity.
+
+### Name normalization
+
+Process names are stored in lowercase to enable case-insensitive matching against configuration rules. The conversion uses `String::to_lowercase()` on the UTF-16-decoded name, following Rust's Unicode lowercasing rules (which match Windows case-insensitive file name comparison for ASCII process names).
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `process.rs` |
-| Constructed by | [`ProcessSnapshot::take`](ProcessSnapshot.md) |
-| Used by | [`apply_affinity`](../apply.rs/apply_affinity.md), [`apply_prime_threads`](../apply.rs/apply_prime_threads.md), [`apply_ideal_processors`](../apply.rs/apply_ideal_processors.md), [`prefetch_all_thread_cycles`](../apply.rs/prefetch_all_thread_cycles.md) |
-| NT API | `SYSTEM_PROCESS_INFORMATION`, `SYSTEM_THREAD_INFORMATION` (ntapi) |
-| Privileges | None (data is read from a snapshot already captured with appropriate privilege) |
+| **Module** | `process.rs` |
+| **Created by** | `ProcessEntry::new` (called from [`ProcessSnapshot::take`](ProcessSnapshot.md)) |
+| **Stored in** | [`PID_TO_PROCESS_MAP`](PID_TO_PROCESS_MAP.md) |
+| **Dependencies** | `ntapi::ntexapi::{SYSTEM_PROCESS_INFORMATION, SYSTEM_THREAD_INFORMATION}`, [`HashMap`](../collections.rs/HashMap.md) |
+| **Platform** | Windows only |
 
 ## See Also
 
-| Link | Description |
-|------|-------------|
-| [ProcessSnapshot](ProcessSnapshot.md) | RAII wrapper that captures the snapshot and owns the buffer lifetime. |
-| [SNAPSHOT_BUFFER](SNAPSHOT_BUFFER.md) | Global buffer backing the snapshot data. |
-| [PID_TO_PROCESS_MAP](PID_TO_PROCESS_MAP.md) | Global map that stores `ProcessEntry` instances by PID. |
-| [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) | Consumes thread cycle data from `ProcessEntry` for prime thread selection. |
+| Topic | Link |
+|-------|------|
+| ProcessSnapshot struct | [ProcessSnapshot](ProcessSnapshot.md) |
+| SNAPSHOT_BUFFER static | [SNAPSHOT_BUFFER](SNAPSHOT_BUFFER.md) |
+| PID_TO_PROCESS_MAP static | [PID_TO_PROCESS_MAP](PID_TO_PROCESS_MAP.md) |
+| HashMap type alias | [HashMap](../collections.rs/HashMap.md) |
+| winapi module | [winapi.rs](../winapi.rs/README.md) |
+| process module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

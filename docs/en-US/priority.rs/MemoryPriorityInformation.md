@@ -1,6 +1,6 @@
-# MemoryPriorityInformation struct (priority.rs)
+# MemoryPriorityInformation type (priority.rs)
 
-A `#[repr(C)]` newtype wrapper around a `u32` value that represents the memory priority of a process. This struct is used as the in-memory buffer passed directly to the Windows `SetProcessInformation` and `GetProcessInformation` APIs when querying or setting `ProcessMemoryPriority`. The C-compatible layout guarantees that the struct's memory representation matches the `MEMORY_PRIORITY_INFORMATION` structure expected by the kernel.
+A `#[repr(C)]` newtype wrapper around a `u32` value that matches the binary layout of the `MEMORY_PRIORITY_INFORMATION` structure expected by the Windows `NtSetInformationProcess` API. This struct is used when setting the memory priority of a process through the undocumented `ProcessMemoryPriority` information class, ensuring that the Rust-side data is layout-compatible with the C structure the kernel expects.
 
 ## Syntax
 
@@ -14,43 +14,35 @@ pub struct MemoryPriorityInformation(pub u32);
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `0` | `u32` | The raw memory priority value. Corresponds to the `MemoryPriority` field of the Win32 `MEMORY_PRIORITY_INFORMATION` structure. Valid values are `0` (`MEMORY_PRIORITY_VERY_LOW`) through `5` (`MEMORY_PRIORITY_NORMAL`). |
+| `0` (tuple field) | `u32` | The raw memory priority value. Corresponds to one of the `MEMORY_PRIORITY_*` constants defined by the Windows SDK: `MEMORY_PRIORITY_VERY_LOW` (1), `MEMORY_PRIORITY_LOW` (2), `MEMORY_PRIORITY_MEDIUM` (3), `MEMORY_PRIORITY_BELOW_NORMAL` (4), or `MEMORY_PRIORITY_NORMAL` (5). The value is typically obtained by calling [`MemoryPriority::as_win_const()`](MemoryPriority.md) and extracting the inner `.0` field from the resulting `MEMORY_PRIORITY` wrapper. |
 
 ## Remarks
 
-This is a tuple struct with a single public `u32` field, designed to be cast to and from a raw pointer when calling `SetProcessInformation` / `GetProcessInformation` with the `ProcessMemoryPriority` information class. The `#[repr(C)]` attribute ensures the struct has a predictable, C-compatible layout with no padding, making it safe for use as a typed buffer in FFI calls.
-
-The numeric values stored in the inner `u32` correspond to the constants defined on the [MemoryPriority](MemoryPriority.md) enum via its `as_win_const` method:
-
-| Value | Constant |
-|-------|----------|
-| `1` | `MEMORY_PRIORITY_VERY_LOW` |
-| `2` | `MEMORY_PRIORITY_LOW` |
-| `3` | `MEMORY_PRIORITY_MEDIUM` |
-| `4` | `MEMORY_PRIORITY_BELOW_NORMAL` |
-| `5` | `MEMORY_PRIORITY_NORMAL` |
-
-The struct derives `PartialEq`, `Eq`, `Clone`, and `Copy` for value semantics and comparison. It does not derive `Debug`; the inner value can be inspected directly via `.0`.
+- The `#[repr(C)]` attribute guarantees that the struct's memory layout matches a C `struct` containing a single `ULONG` field, which is the layout Windows expects when calling `NtSetInformationProcess` with the `ProcessMemoryPriority` information class.
+- The struct derives `PartialEq`, `Eq`, `Clone`, and `Copy`, making it suitable for comparison and value-type semantics.
+- Unlike the other priority types in this module, `MemoryPriorityInformation` is a struct rather than an enum because it serves as a direct FFI-boundary type. The corresponding enum for user-facing logic is [`MemoryPriority`](MemoryPriority.md), which provides string conversion and lookup table functionality.
+- This type does **not** derive `Debug`. If debug output is needed, the inner `u32` value can be accessed directly via `.0`.
+- The struct is passed by pointer to `NtSetInformationProcess` in the `apply` module. The size of the struct (`std::mem::size_of::<MemoryPriorityInformation>()`) is passed as the information length parameter to the NT API call.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `priority` |
-| Callers | [apply_memory_priority](../apply.rs/apply_memory_priority.md) |
-| Win32 API | `SetProcessInformation`, `GetProcessInformation` with `ProcessMemoryPriority` |
-| Header equivalent | `MEMORY_PRIORITY_INFORMATION` (processthreadsapi.h) |
+| Module | `priority.rs` |
+| Callers | `apply` module (used as the data buffer for `NtSetInformationProcess` calls when setting process memory priority) |
+| Win32 API | Corresponds to `MEMORY_PRIORITY_INFORMATION` passed to `NtSetInformationProcess` with information class `ProcessMemoryPriority` |
+| Privileges | `SeDebugPrivilege` may be required to set memory priority on processes owned by other users |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Memory priority enum with named levels | [MemoryPriority](MemoryPriority.md) |
-| Process priority class enum | [ProcessPriority](ProcessPriority.md) |
-| I/O priority enum | [IOPriority](IOPriority.md) |
-| Memory priority application logic | [apply_memory_priority](../apply.rs/apply_memory_priority.md) |
-| priority module overview | [priority module](README.md) |
+| Reference | Link |
+|-----------|------|
+| MemoryPriority enum | [MemoryPriority](MemoryPriority.md) |
+| ProcessPriority | [ProcessPriority](ProcessPriority.md) |
+| IOPriority | [IOPriority](IOPriority.md) |
+| ThreadPriority | [ThreadPriority](ThreadPriority.md) |
+| priority module overview | [README](README.md) |
+| apply_process_level | [apply_process_level](../main.rs/apply_process_level.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

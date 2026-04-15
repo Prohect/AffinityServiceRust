@@ -1,94 +1,104 @@
 # read_list function (config.rs)
 
-Reads a simple line-per-entry list file and returns a vector of trimmed, lowercased, non-empty, non-comment strings. This function is used to load the blacklist file, which contains process names that the service should skip during rule application.
+Reads a text file and returns its non-empty, non-comment lines as a vector of lowercase strings. This utility function is used to load simple line-oriented list files such as the blacklist file used in find mode.
 
 ## Syntax
 
-```rust
-pub fn read_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>>
+```AffinityServiceRust/src/config.rs#L877-886
+pub fn read_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    Ok(reader
+        .lines()
+        .map_while(Result::ok)
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty() && !s.starts_with('#'))
+        .collect())
+}
 ```
 
 ## Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `path` | `P: AsRef<Path>` | File system path to the list file. Accepts any type that implements `AsRef<Path>`, including `&str`, `String`, and `PathBuf`. The file is opened with `File::open` and read line-by-line via a buffered reader. |
+| `path` | `P: AsRef<Path>` | A file system path to the text file to read. Accepts any type that can be converted to a `Path` reference, including `&str`, `String`, and `PathBuf`. |
 
 ## Return value
 
-Returns `Result<Vec<String>>`:
+Type: `std::io::Result<Vec<String>>`
 
-- **`Ok(Vec<String>)`** — A vector of lowercased, trimmed process names extracted from the file. The vector preserves the order of entries as they appear in the file, with blank lines and comment lines removed.
-- **`Err(io::Error)`** — Propagated from `File::open` if the file cannot be opened (e.g., file not found, permission denied).
+On success, returns `Ok` containing a vector of strings where each element is a trimmed, lowercased, non-empty line from the file that does not begin with `#`. On failure, returns the `std::io::Error` from `File::open` (e.g., file not found, permission denied).
+
+### Examples
+
+Given a file with the following content:
+
+```/dev/null/example_blacklist.txt#L1-6
+# Processes to ignore during find mode
+svchost.exe
+System
+  Explorer.EXE
+
+# End of list
+```
+
+The returned vector would be:
+
+```/dev/null/example_result.txt#L1-3
+["svchost.exe", "system", "explorer.exe"]
+```
 
 ## Remarks
 
-### Parsing rules
+### Processing pipeline
 
-For each line in the file:
-
-1. The line is trimmed of leading and trailing whitespace.
-2. The trimmed line is converted to lowercase via `to_lowercase()`.
-3. The line is **skipped** if:
-   - It is empty after trimming.
-   - It starts with `#` (treated as a comment).
-4. All surviving lines are collected into the returned vector.
-
-### File format
-
-The list file is a plain-text file with one entry per line. Comments and blank lines are supported for readability:
-
-```text
-# Processes to skip
-system
-svchost.exe
-csrss.exe
-
-# Development tools
-devenv.exe
-code.exe
-```
+1. The file is opened with `File::open` and wrapped in a `BufReader` for line-buffered reading.
+2. Lines are read lazily via the `lines()` iterator. The `map_while(Result::ok)` combinator stops reading at the first I/O error encountered after a successful open (partial results are not returned in that case — the iterator simply terminates early and returns what was collected so far).
+3. Each line is trimmed of leading and trailing whitespace and converted to lowercase for case-insensitive matching at runtime.
+4. Empty lines (after trimming) and lines that start with `#` (comments) are filtered out.
+5. The remaining lines are collected into a `Vec<String>`.
 
 ### Case normalization
 
-All entries are lowercased to ensure case-insensitive matching when the service compares running process names against the blacklist. Windows process names are case-insensitive, so this normalization is consistent with the rest of the configuration system.
+All entries are lowercased to enable case-insensitive comparisons with Windows process names, which are inherently case-insensitive.
 
-### Encoding
+### Comment syntax
 
-The file is read using Rust's default UTF-8 file I/O. Lines that contain invalid UTF-8 are silently dropped by the `map_while(Result::ok)` iterator adapter — no error is raised for individual malformed lines.
-
-### Difference from read_config
-
-Unlike [read_config](read_config.md), which handles a complex multi-format configuration language, `read_list` performs simple line-by-line extraction with no special syntax for aliases, constants, groups, or rule fields. Each line is either a process name or a comment.
-
-### Blacklist usage
-
-The primary consumer of `read_list` is the service main loop, which loads the blacklist at startup and via [hotreload_blacklist](hotreload_blacklist.md). Processes whose lowercased names appear in the blacklist vector are skipped during the apply phase, regardless of any matching rules in the configuration.
+Lines beginning with `#` (after trimming) are treated as comments and excluded from the result. Inline comments (e.g., `svchost.exe # system process`) are **not** supported — the entire line would be included as-is (lowercased and trimmed) because it does not start with `#`.
 
 ### Error propagation
 
-The `?` operator on `File::open` means that file-not-found or permission errors are propagated to the caller as `io::Error`. The caller is responsible for handling this — for example, [hotreload_blacklist](hotreload_blacklist.md) uses `unwrap_or_default()` to fall back to an empty blacklist on error.
+Only the `File::open` call can produce an error that propagates to the caller via the `?` operator. Subsequent line-reading errors are silently absorbed by `map_while(Result::ok)`, which terminates iteration at the first failed line read rather than propagating the error.
+
+### Encoding
+
+The function reads the file as UTF-8 (the default for `BufReader::lines`). For files encoded in other formats (e.g., UTF-16 LE), use [`read_utf16le_file`](read_utf16le_file.md) instead.
+
+### Usage
+
+`read_list` is primarily used by:
+- The main loop to load the blacklist file (`-blacklist <file>`) for find mode.
+- [`hotreload_blacklist`](hotreload_blacklist.md) to reload the blacklist when it changes on disk.
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `config` (`src/config.rs`) |
-| **Visibility** | `pub` |
-| **Callers** | [main](../main.rs/main.md), [hotreload_blacklist](hotreload_blacklist.md) |
-| **Callees** | `std::fs::File::open`, `std::io::BufReader`, `std::io::BufRead::lines` |
-| **API** | Standard library file I/O only — no Windows API calls |
-| **Privileges** | Read access to the list file path |
+| Requirement | Value |
+|-------------|-------|
+| Module | `config.rs` |
+| Visibility | `pub` |
+| Callers | `main.rs` (blacklist loading), [`hotreload_blacklist`](hotreload_blacklist.md) |
+| Callees | `File::open`, `BufReader::new`, `BufRead::lines` |
+| API | `std::io::Result`, `std::fs::File`, `std::io::BufReader`, `std::path::Path` |
+| Privileges | File system read access to the specified path |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Main config file reader | [read_config](read_config.md) |
-| Blacklist hot-reload | [hotreload_blacklist](hotreload_blacklist.md) |
-| UTF-16 LE file reader | [read_utf16le_file](read_utf16le_file.md) |
-| Config module overview | [README](README.md) |
+| Resource | Link |
+|----------|------|
+| read_utf16le_file | [read_utf16le_file](read_utf16le_file.md) |
+| read_config | [read_config](read_config.md) |
+| hotreload_blacklist | [hotreload_blacklist](hotreload_blacklist.md) |
+| config module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

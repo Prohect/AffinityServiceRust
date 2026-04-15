@@ -1,15 +1,15 @@
 # apply_ideal_processors function (apply.rs)
 
-Assigns ideal processors to threads based on configurable rules that match thread start-module prefixes to dedicated CPU sets. For each rule, the function identifies threads whose start module matches one of the rule's prefixes, selects the top *N* threads by CPU cycle delta (where *N* equals the number of CPUs in the rule) using the same hysteresis algorithm as prime-thread selection, and pins each selected thread to a dedicated CPU via `SetThreadIdealProcessorEx`. When a thread drops out of the top *N*, its ideal processor is restored to the value it had before assignment.
+The `apply_ideal_processors` function assigns ideal processors to threads based on module-prefix matching rules defined in the configuration. For each rule, it identifies threads whose start module matches the specified prefixes, selects the top N threads by cycle-count delta (where N equals the number of CPUs in the rule), and assigns each selected thread to a dedicated CPU via `SetThreadIdealProcessorEx`. When a thread drops out of the top N in a subsequent apply cycle, its ideal processor is restored to its previous value. The function uses the same hysteresis-based selection mechanism as the prime-thread pipeline to prevent rapid oscillation.
 
 ## Syntax
 
-```AffinityServiceRust/src/apply.rs#L1061-1072
+```AffinityServiceRust/src/apply.rs#L1047-1058
 pub fn apply_ideal_processors(
     pid: u32,
-    config: &ProcessConfig,
+    config: &ThreadLevelConfig,
     dry_run: bool,
-    process: &mut ProcessEntry,
+    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     prime_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 )
@@ -19,113 +19,90 @@ pub fn apply_ideal_processors(
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `pid` | `u32` | Process identifier of the target process. Used as the key into the [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) state maps and for logging. |
-| `config` | `&`[ProcessConfig](../config.rs/ProcessConfig.md) | Parsed configuration for this process. The `ideal_processor_rules` field (a `Vec<`[IdealProcessorRule](../config.rs/IdealProcessorRule.md)`>`) contains zero or more rules, each specifying a set of CPU indices and a list of module-name prefixes. |
-| `dry_run` | `bool` | When `true`, the function records a summary of what each rule *would* do in `apply_config_result` without calling any Windows APIs or modifying scheduler state. |
-| `process` | `&mut`[ProcessEntry](../process.rs/ProcessEntry.md) | Snapshot entry for the target process. Provides the thread list (thread IDs) used to enumerate candidates. |
-| `prime_scheduler` | `&mut`[PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) | Persistent scheduler state that holds per-thread [ThreadStats](../scheduler.rs/ThreadStats.md), including cached cycle counts, thread handles, start addresses, and [IdealProcessorState](../scheduler.rs/IdealProcessorState.md). The function reads `cached_cycles`, `last_cycles`, `start_address`, and `ideal_processor` fields and writes to `ideal_processor.current_group`, `ideal_processor.current_number`, `ideal_processor.previous_group`, `ideal_processor.previous_number`, and `ideal_processor.is_assigned`. |
-| `apply_config_result` | `&mut`[ApplyConfigResult](ApplyConfigResult.md) | Accumulator for change descriptions and error messages produced during this operation. |
+| `pid` | `u32` | The process ID of the target process. Used for scheduler lookups, error deduplication, and log messages. |
+| `config` | `&ThreadLevelConfig` | The thread-level configuration containing `ideal_processor_rules`, a list of rules each specifying a set of CPU indices (`cpus`) and optional module prefixes (`prefixes`). If `ideal_processor_rules` is empty, the function returns immediately. |
+| `dry_run` | `bool` | When `true`, synthetic change messages are recorded describing what ideal processor assignments would be made, without calling any Windows APIs. When `false`, the actual assignments and restorations are performed. |
+| `threads` | `&HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots from the most recent system process information query. Used to enumerate candidate threads. |
+| `prime_scheduler` | `&mut PrimeThreadScheduler` | The mutable prime-thread scheduler state that tracks per-thread statistics including cached cycles, start addresses, thread handles, and ideal processor assignment state across apply cycles. |
+| `apply_config_result` | `&mut ApplyConfigResult` | Accumulator for change descriptions and error messages produced during execution. |
 
 ## Return value
 
-None (`()`). Results are communicated through `apply_config_result` and side effects on `prime_scheduler`.
+This function does not return a value. All outcomes are communicated through mutations to `prime_scheduler` thread stats and appended entries in `apply_config_result`.
 
 ## Remarks
 
-### Algorithm
+### Early exit
 
-The function processes each [IdealProcessorRule](../config.rs/IdealProcessorRule.md) independently. For each rule:
+If `config.ideal_processor_rules` is empty, the function returns immediately without performing any work.
 
-**Step 1 — Collect thread info.**
-All threads with non-zero `cached_cycles` in the scheduler are collected into a `Vec<(tid, delta_cycles, start_address, start_module)>`. The start module is resolved from the thread's start address via [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md). This collection is computed once and shared across all rules.
+### Dry-run mode
 
-**Step 2 — Filter by prefix.**
-The thread list is filtered to include only threads whose start module (lowercased) starts with one of the rule's prefixes (also lowercased). If the rule's `prefixes` list is empty, *all* threads match — this allows a "catch-all" rule that assigns ideal processors across the entire process without module filtering.
+In dry-run mode, for each rule, a change message is recorded of the form:
+`"Ideal Processor: CPUs [<cpu_list>] for top <N> threads from [<prefixes>]"`
+where `<N>` is the number of CPUs in the rule and `<prefixes>` is either the joined list of module prefixes or `"all modules"` if no prefixes are specified.
 
-**Step 3 — Select top N via hysteresis.**
-A `Vec<(tid, delta_cycles, is_selected)>` is built from the filtered threads and passed to `prime_scheduler.select_top_threads_with_hysteresis()`. The selection uses the same [hysteresis algorithm](../scheduler.rs/PrimeThreadScheduler.md#hysteresis-algorithm) as [apply_prime_threads_select](apply_prime_threads_select.md), but the "is currently assigned" predicate checks `thread_stats.ideal_processor.is_assigned` instead of `pinned_cpu_set_ids`. *N* equals `rule.cpus.len()` — the number of CPUs available for ideal-processor assignment in this rule.
+### Algorithm (non-dry-run)
 
-**Step 4 — Claim CPUs already held.**
-For each selected thread that already has `is_assigned == true`, the CPU it currently holds is added to a "claimed" set. For newly-selected threads (not yet assigned), the function reads the thread's current ideal processor via [get_thread_ideal_processor_ex](../winapi.rs/get_thread_ideal_processor_ex.md) and saves it into `ideal_processor.previous_group` and `ideal_processor.previous_number`. If the thread's current ideal processor happens to already be in `rule.cpus`, it is claimed in-place without needing reassignment.
+1. **Resolve module names**: For all threads with `cached_cycles > 0`, the function resolves each thread's start address to a module name via `resolve_address_to_module`. Module names are collected into a shared `Vec<String>` and indexed to avoid redundant resolution. Each thread is represented as a `(tid, delta_cycles, start_address, name_index)` tuple.
 
-**Step 5 — Assign from free pool.**
-CPUs in `rule.cpus` that are not in the claimed set form the "free pool". Newly-selected threads that are not yet assigned are allocated a CPU from this pool in order. [set_thread_ideal_processor_ex](../winapi.rs/set_thread_ideal_processor_ex.md) is called with group `0` and the target CPU number. On success, `ideal_processor.current_group`, `ideal_processor.current_number`, and `ideal_processor.is_assigned` are updated. A change message is recorded:
+2. **Per-rule processing**: For each rule in `config.ideal_processor_rules`:
 
-`"Thread 1234 -> ideal CPU 5 (group 0) start=game.dll!WorkerThread"`
+   a. **Filter by prefix**: If the rule has prefixes, only threads whose start module (lowercased) starts with one of the prefixes are included. If the rule has no prefixes, all threads are candidates.
 
-If the free pool is exhausted before all selected threads are assigned, the remaining threads are skipped.
+   b. **Hysteresis-based selection**: The function calls `PrimeThreadScheduler::select_top_threads_with_hysteresis` with `rule.cpus.len()` as the target count and `|ts| ts.ideal_processor.is_assigned` as the "is currently selected" predicate. Threads already assigned an ideal processor receive the more lenient keep threshold; new candidates must exceed the stricter entry threshold and meet the active-streak minimum.
 
-**Step 6 — Restore unselected threads.**
-For each thread that was previously assigned (`is_assigned == true`) but is no longer in the selected set, the function restores the ideal processor to `(previous_group, previous_number)` if they differ from `(current_group, current_number)`. [set_thread_ideal_processor_ex](../winapi.rs/set_thread_ideal_processor_ex.md) is called with the previous values, and `is_assigned` is set to `false`. A change message is recorded:
+   c. **Claim existing assignments**: For threads selected as prime that already have `ideal_processor.is_assigned == true`, their current CPU number is added to a `claimed` set. For newly-selected threads, `GetThreadIdealProcessorEx` is called to capture the thread's current ideal processor as the `previous_group`/`previous_number` baseline. If the thread's current ideal processor happens to already be one of the rule's CPUs, it is marked as assigned and claimed immediately.
 
-`"Thread 1234 -> restored ideal CPU 3 (group 0) start=game.dll!WorkerThread"`
+   d. **Assign from free pool**: CPUs from the rule that are not in the `claimed` set form the free pool. Each newly-selected thread that is not yet assigned is given the next available CPU from the free pool via `set_thread_ideal_processor_ex` (group 0, target CPU). On success, the thread's `ideal_processor.current_group` and `current_number` are updated, `is_assigned` is set to `true`, and a change message is recorded:
+      `"Thread <tid> -> ideal CPU <cpu> (group 0) start=<module>"`
 
-### Dry-run behaviour
+   e. **Restore unselected threads**: Threads that have `ideal_processor.is_assigned == true` but are no longer in the selected set are restored to their `previous_group`/`previous_number` via `set_thread_ideal_processor_ex`. On success, the thread's `current_group`/`current_number` are updated to match the previous values, and `is_assigned` is cleared to `false`. A change message is recorded:
+      `"Thread <tid> -> restored ideal CPU <prev_number> (group <prev_group>) start=<module>"`
 
-In dry-run mode, the function records one change message per rule summarising the intent:
+### Edge cases
 
-`"Ideal Processor: CPUs [4,5,6] for top 3 threads from [game.dll; render.dll]"`
+- If a rule's `cpus` list is empty, that rule is skipped entirely.
+- If a rule has no prefixes, all threads with cached cycles are eligible candidates for that rule.
+- If `GetThreadIdealProcessorEx` fails during the claim phase, the error is logged via [`log_error_if_new`](log_error_if_new.md) with `Operation::GetThreadIdealProcessorEx` and the thread is not assigned.
+- If `set_thread_ideal_processor_ex` fails during assignment or restoration, the error is logged via [`log_error_if_new`](log_error_if_new.md) with `Operation::SetThreadIdealProcessorEx`. The thread's `is_assigned` state is left unchanged on assignment failure, but is cleared on restoration failure to avoid infinite retries.
+- Threads with `cached_cycles == 0` (i.e., threads whose cycles were not prefetched successfully) are excluded from all rule processing.
+- Thread handle validation follows the same pattern as other functions: `w_handle` is preferred, falling back to `w_limited_handle`. If both are invalid, an error is logged and the thread is skipped.
+- When restoring an ideal processor, the restoration is only performed when the previous and current values differ (`prev_group != cur_group || prev_number != cur_number`), avoiding unnecessary API calls for threads that were assigned to a CPU they were already on.
 
-When the rule's prefix list is empty, the message reads `"from [all modules]"`.
+### Per-thread ideal processor state
 
-No thread handles are opened, no Win32 calls are made, and no scheduler state is modified.
-
-### Multiple rules
-
-Each rule operates independently. A single thread can potentially match multiple rules if its start module matches prefixes in more than one rule. However, the `is_assigned` flag is shared across rules, so once a thread is assigned by an earlier rule, later rules will see it as already assigned and may claim its CPU or skip it. The order of rules in the configuration therefore matters when rules have overlapping prefix sets.
-
-### Processor group limitation
-
-Like [reset_thread_ideal_processors](reset_thread_ideal_processors.md), this function always operates within processor group `0`. Systems with more than 64 logical processors that span multiple processor groups are not fully supported; only group-0 CPUs are assignable.
-
-### Relationship to prime-thread scheduling
-
-`apply_ideal_processors` and [apply_prime_threads](apply_prime_threads.md) address different use cases:
-
-| Aspect | Prime threads | Ideal processors |
-|--------|--------------|------------------|
-| Mechanism | Per-thread CPU sets (`SetThreadSelectedCpuSets`) | Ideal processor hint (`SetThreadIdealProcessorEx`) |
-| Strength | Hard constraint — thread *cannot* run elsewhere | Soft hint — scheduler *prefers* the indicated CPU |
-| Priority boost | Yes (configurable or auto +1 level) | No |
-| Module filtering | Via `prime_threads_prefixes` | Via `ideal_processor_rules[].prefixes` |
-
-Both features share the [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) state and the same hysteresis selection algorithm, but they write to different fields in [ThreadStats](../scheduler.rs/ThreadStats.md) (`pinned_cpu_set_ids` vs. `ideal_processor`).
-
-### Error handling
-
-Handle resolution and Win32 API call failures are routed through [log_error_if_new](log_error_if_new.md). The operations logged include:
-
-| Operation | When |
-|-----------|------|
-| `Operation::OpenThread` | Thread handle is invalid (both `w_handle` and `w_limited_handle`). |
-| `Operation::GetThreadIdealProcessorEx` | Reading current ideal processor for a newly-selected thread fails. |
-| `Operation::SetThreadIdealProcessorEx` | Setting or restoring an ideal processor fails. |
+The `ideal_processor` field in `ThreadStats` tracks three pieces of information:
+- **`previous_group` / `previous_number`**: The thread's ideal processor at the time it was first selected. This is the value that will be restored on demotion.
+- **`current_group` / `current_number`**: The thread's currently assigned ideal processor. Updated after each successful `set_thread_ideal_processor_ex` call.
+- **`is_assigned`**: A boolean indicating whether this function has an active ideal processor assignment for the thread.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `apply` |
-| Visibility | `pub` (crate-public) |
-| Callers | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
-| Callees | [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md), [set_thread_ideal_processor_ex](../winapi.rs/set_thread_ideal_processor_ex.md), [get_thread_ideal_processor_ex](../winapi.rs/get_thread_ideal_processor_ex.md), [format_cpu_indices](../config.rs/format_cpu_indices.md), [log_error_if_new](log_error_if_new.md), [PrimeThreadScheduler::select_top_threads_with_hysteresis](../scheduler.rs/PrimeThreadScheduler.md), [PrimeThreadScheduler::get_thread_stats](../scheduler.rs/PrimeThreadScheduler.md) |
-| Win32 API | [`SetThreadIdealProcessorEx`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadidealprocessorex), [`GetThreadIdealProcessorEx`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getthreadidealprocessorex) |
-| Privileges | `THREAD_SET_INFORMATION` (write), `THREAD_QUERY_INFORMATION` (read ideal processor). `SeDebugPrivilege` provides cross-process thread access. |
+| Module | `apply.rs` |
+| Crate | `AffinityServiceRust` |
+| Visibility | `pub` |
+| Windows APIs | `SetThreadIdealProcessorEx` (via `winapi::set_thread_ideal_processor_ex`), `GetThreadIdealProcessorEx` (via `winapi::get_thread_ideal_processor_ex`), `GetLastError` |
+| Callers | Orchestrator code in `scheduler.rs` / `main.rs` that iterates matched processes |
+| Callees | [`log_error_if_new`](log_error_if_new.md), `winapi::resolve_address_to_module`, `winapi::get_thread_ideal_processor_ex`, `winapi::set_thread_ideal_processor_ex`, `config::format_cpu_indices`, `error_codes::error_from_code_win32`, `PrimeThreadScheduler::get_thread_stats`, `PrimeThreadScheduler::select_top_threads_with_hysteresis` |
+| Privileges | Requires thread handles with `THREAD_SET_INFORMATION` or `THREAD_SET_LIMITED_INFORMATION` (write) and `THREAD_QUERY_INFORMATION` or `THREAD_QUERY_LIMITED_INFORMATION` (read for `GetThreadIdealProcessorEx`). |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| apply module overview | [apply](README.md) |
-| Ideal processor rule configuration | [IdealProcessorRule](../config.rs/IdealProcessorRule.md) |
-| Ideal processor redistribution after affinity change | [reset_thread_ideal_processors](reset_thread_ideal_processors.md) |
-| Prime-thread scheduling (hard CPU set pinning) | [apply_prime_threads](apply_prime_threads.md) |
-| Hysteresis selection algorithm | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
-| Per-thread ideal processor state | [IdealProcessorState](../scheduler.rs/IdealProcessorState.md) |
-| Thread start-module resolution | [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md) |
-| Win32 ideal processor wrappers | [set_thread_ideal_processor_ex](../winapi.rs/set_thread_ideal_processor_ex.md), [get_thread_ideal_processor_ex](../winapi.rs/get_thread_ideal_processor_ex.md) |
-| Thread-level apply orchestration | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
+| Reference | Link |
+|-----------|------|
+| apply module overview | [`README`](README.md) |
+| ApplyConfigResult | [`ApplyConfigResult`](ApplyConfigResult.md) |
+| reset_thread_ideal_processors | [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) |
+| apply_prime_threads | [`apply_prime_threads`](apply_prime_threads.md) |
+| apply_prime_threads_select | [`apply_prime_threads_select`](apply_prime_threads_select.md) |
+| prefetch_all_thread_cycles | [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md) |
+| update_thread_stats | [`update_thread_stats`](update_thread_stats.md) |
+| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
+| ThreadLevelConfig | [`config.rs/ThreadLevelConfig`](../config.rs/ThreadLevelConfig.md) |
+| PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

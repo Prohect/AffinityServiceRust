@@ -1,6 +1,6 @@
 # get_cpu_set_information function (winapi.rs)
 
-Returns a reference to the lazily-initialized, mutex-guarded global vector of [CpuSetData](CpuSetData.md) entries that describes the system's CPU set topology. On the first call, the backing [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) static is initialized by querying `GetSystemCpuSetInformation`; subsequent calls return the same cached reference.
+Returns a reference to the lazily-initialized, mutex-protected cache of system CPU set information. On first access, the cache is populated by calling `GetSystemCpuSetInformation` to enumerate all CPU sets on the system.
 
 ## Syntax
 
@@ -10,63 +10,43 @@ pub fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>>
 
 ## Parameters
 
-None.
+This function takes no parameters.
 
 ## Return value
 
-A `&'static Mutex<Vec<CpuSetData>>` reference to the global [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) static. The caller must `.lock().unwrap()` the mutex to access the inner vector. The returned reference is valid for the lifetime of the process.
+Returns a `&'static Mutex<Vec<CpuSetData>>` — a reference to the global, lazily-initialized mutex containing a vector of [CpuSetData](CpuSetData.md) entries. Each entry maps a CPU Set ID to its logical processor index.
+
+The returned reference has `'static` lifetime because it points to the [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) global static, which is initialized once via `Lazy` and lives for the duration of the program.
 
 ## Remarks
 
-This function is a thin accessor that dereferences the `Lazy<Mutex<Vec<CpuSetData>>>` static. It exists to encapsulate the global and provide a clean public API — callers never reference `CPU_SET_INFORMATION` directly.
-
-### Thread safety
-
-The `Mutex` guarantees exclusive access to the inner `Vec<CpuSetData>`. Because the data is populated once at initialization time and never mutated afterward, contention is limited to the brief lock/unlock sequence. All CPU set translation functions ([cpusetids_from_indices](cpusetids_from_indices.md), [cpusetids_from_mask](cpusetids_from_mask.md), [indices_from_cpusetids](indices_from_cpusetids.md), [mask_from_cpusetids](mask_from_cpusetids.md)) lock the mutex for the duration of their scan through the vector.
-
-### Initialization trigger
-
-The first call to `get_cpu_set_information` (or the first dereference of `CPU_SET_INFORMATION`) triggers the `Lazy` initializer, which:
-
-1. Calls `GetSystemCpuSetInformation` with a zero-length buffer to determine the required size.
-2. Allocates a byte buffer of the required size.
-3. Calls `GetSystemCpuSetInformation` again to fill the buffer.
-4. Walks the variable-length `SYSTEM_CPU_SET_INFORMATION` entries and extracts each `(id, logical_processor_index)` pair into a [CpuSetData](CpuSetData.md).
-
-If `GetSystemCpuSetInformation` fails, the vector is empty and a message is logged via `log_to_find`.
-
-### Typical usage
-
-```rust
-let guard = get_cpu_set_information().lock().unwrap();
-for entry in guard.iter() {
-    // access entry.id and entry.logical_processor_index
-}
-```
+- This function is a thin accessor for the [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) static. It does not perform any allocation or system calls after the first access.
+- The underlying `Lazy` initializer calls `GetSystemCpuSetInformation` twice: once to determine the required buffer size, and once to retrieve the data. The results are parsed into a `Vec<CpuSetData>` of `(id, logical_processor_index)` pairs.
+- If the initial `GetSystemCpuSetInformation` call fails, a diagnostic message is written via `log_to_find` and the returned vector will be empty.
+- Callers must lock the mutex before reading the data. Because the CPU set topology is fixed for the lifetime of the OS boot, the data inside never changes after initialization.
+- This function is called internally by [cpusetids_from_indices](cpusetids_from_indices.md), [cpusetids_from_mask](cpusetids_from_mask.md), [indices_from_cpusetids](indices_from_cpusetids.md), and [mask_from_cpusetids](mask_from_cpusetids.md).
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `winapi` (`src/winapi.rs`) |
-| **Visibility** | `pub` |
+| Requirement | Value |
+|-------------|-------|
+| **Module** | `winapi.rs` |
 | **Callers** | [cpusetids_from_indices](cpusetids_from_indices.md), [cpusetids_from_mask](cpusetids_from_mask.md), [indices_from_cpusetids](indices_from_cpusetids.md), [mask_from_cpusetids](mask_from_cpusetids.md) |
-| **Backing static** | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
-| **API** | [`GetSystemCpuSetInformation`](https://learn.microsoft.com/en-us/windows/win32/api/systeminformationapi/nf-systeminformationapi-getsystemcpusetinformation) (during initialization only) |
-| **Privileges** | None |
+| **Callees** | None (accessor only; initialization calls `GetSystemCpuSetInformation` from the Windows API) |
+| **Win32 API** | [GetSystemCpuSetInformation](https://learn.microsoft.com/en-us/windows/win32/api/systeminfomationapi/nf-systeminfomationapi-getsystemcpusetinformation) (during `Lazy` initialization) |
+| **Privileges** | None required |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| Global CPU set cache | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
-| CPU set entry type | [CpuSetData](CpuSetData.md) |
-| CPU indices → CPU Set IDs | [cpusetids_from_indices](cpusetids_from_indices.md) |
-| Affinity mask → CPU Set IDs | [cpusetids_from_mask](cpusetids_from_mask.md) |
-| CPU Set IDs → CPU indices | [indices_from_cpusetids](indices_from_cpusetids.md) |
-| CPU Set IDs → affinity mask | [mask_from_cpusetids](mask_from_cpusetids.md) |
-| GetSystemCpuSetInformation (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/systeminformationapi/nf-systeminformationapi-getsystemcpusetinformation) |
+| CpuSetData struct | [CpuSetData](CpuSetData.md) |
+| CPU_SET_INFORMATION static | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
+| cpusetids_from_indices | [cpusetids_from_indices](cpusetids_from_indices.md) |
+| cpusetids_from_mask | [cpusetids_from_mask](cpusetids_from_mask.md) |
+| indices_from_cpusetids | [indices_from_cpusetids](indices_from_cpusetids.md) |
+| mask_from_cpusetids | [mask_from_cpusetids](mask_from_cpusetids.md) |
 
-## Documentation on Commit SHA
+---
 
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

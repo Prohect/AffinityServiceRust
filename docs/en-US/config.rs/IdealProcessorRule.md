@@ -1,13 +1,13 @@
-# IdealProcessorRule struct (config.rs)
+# IdealProcessorRule type (config.rs)
 
-Defines a mapping from a set of CPU indices to optional module-name prefix filters for ideal processor assignment. When the service applies ideal processor rules to a process's threads, each thread's start-address module name is checked against the `prefixes` list. If the list is empty (no filter), all threads are eligible; otherwise, only threads whose start module matches one of the prefixes are assigned ideal processors from the `cpus` set.
+The `IdealProcessorRule` struct maps a set of CPU indices to an optional list of thread start-module name prefixes for ideal-processor assignment. When the scheduler assigns ideal processors to a process's threads, it uses these rules to determine which CPUs should be preferred and, optionally, restricts the assignment to threads whose start module matches one of the specified prefixes.
 
 ## Syntax
 
-```rust
+```AffinityServiceRust/src/config.rs#L24-27
 #[derive(Debug, Clone)]
 pub struct IdealProcessorRule {
-    pub cpus: Vec<u32>,
+    pub cpus: List<[u32; CONSUMER_CPUS]>,
     pub prefixes: Vec<String>,
 }
 ```
@@ -16,66 +16,49 @@ pub struct IdealProcessorRule {
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `cpus` | `Vec<u32>` | Sorted list of logical CPU indices that threads matching this rule should be distributed across as ideal processors. These indices are resolved from a CPU alias at parse time via [parse_ideal_processor_spec](parse_ideal_processor_spec.md). The apply module round-robins thread ideal processor assignments across this set. |
-| `prefixes` | `Vec<String>` | Module-name prefix filters. Each entry is a lowercased string matched against the resolved module name of a thread's start address (e.g., `"engine.dll"`, `"ntdll"`). An empty vector means the rule applies to all threads unconditionally. When non-empty, only threads whose start-address module begins with one of these prefixes are assigned ideal processors from `cpus`. |
+| `cpus` | `List<[u32; CONSUMER_CPUS]>` | A sorted list of CPU indices that the scheduler should assign as ideal processors to qualifying threads. The number of CPUs in the list determines how many top threads (ranked by total CPU time) receive an ideal-processor assignment from this rule. |
+| `prefixes` | `Vec<String>` | A list of lowercase module-name prefixes used to filter which threads this rule applies to. When empty, the rule applies to **all** threads of the process. When non-empty, only threads whose start module name begins with one of these prefixes are considered. |
 
 ## Remarks
 
-### Config syntax
+### Relationship to the ideal-processor specification
 
-Ideal processor rules appear in field 7 (the `ideal_processor` position) of a rule line. The specification format is:
+`IdealProcessorRule` instances are produced by [`parse_ideal_processor_spec`](parse_ideal_processor_spec.md) when the configuration file contains an ideal-processor field of the form `*alias[@prefix1;prefix2]`. A single specification string can produce multiple rules when multiple `*`-delimited segments are present (e.g., `*p@engine.dll*e@helper.dll` produces two rules).
 
-```
-*alias[@prefix1;prefix2]*alias2[@prefix3]
-```
+### Thread selection algorithm
 
-Where:
+The scheduler uses the `cpus` list to determine the number of top threads (N = `cpus.len()`) that should receive ideal-processor assignments from this rule. Threads are ranked by their cumulative CPU time. When a thread drops out of the top N, it falls back to its previous ideal processor value.
 
-- Each segment begins with `*` followed by a CPU alias name (must be previously defined with `*alias = cpu_spec`).
-- The optional `@` suffix provides semicolon-separated module-name prefixes that filter which threads receive ideal processor assignment from this segment's CPU set.
-- Multiple segments can be chained to create multiple `IdealProcessorRule` entries for a single process.
+### Prefix matching
 
-**Examples:**
+Prefix strings are stored in lowercase and compared against the lowercase form of the thread's start module name. This allows matching partial module names — for example, a prefix of `engine` matches `engine.dll`, `engine_worker.dll`, etc.
 
-| Spec string | Result |
-|-------------|--------|
-| `*perf` | One rule: all threads get ideal processors from alias `perf`'s CPUs. |
-| `*perf@engine.dll` | One rule: only threads starting in `engine.dll` get ideal processors from `perf`. |
-| `*p@engine.dll;render.dll*e@audio.dll` | Two rules: `engine.dll`/`render.dll` threads → alias `p` CPUs; `audio.dll` threads → alias `e` CPUs. |
-| `0` | No rules (ideal processor assignment disabled). |
+### Edge cases
 
-### Distribution behavior
-
-At runtime, the apply module iterates over a process's threads and, for each `IdealProcessorRule`, assigns ideal processors by cycling through `cpus` in order. This distributes thread scheduling hints across the specified cores. The assignment uses `SetThreadIdealProcessorEx` and only applies to threads that match the prefix filter.
-
-### Empty cpus
-
-If the referenced alias resolves to an empty CPU set, the rule is silently skipped during parsing and no `IdealProcessorRule` entry is produced for that segment.
-
-### Interaction with CPU sets
-
-When a process also has a `cpu_set_cpus` configured with the `@` prefix (i.e., `cpu_set_reset_ideal` is true), `reset_thread_ideal_processors` is called first, distributing ideal processors across the CPU set. Ideal processor rules from this struct are applied separately and may override those assignments for specific threads.
+- If `cpus` is empty (e.g., because the referenced alias resolved to an empty CPU set), the rule is **skipped** during parsing and will not appear in the final `Vec<IdealProcessorRule>`.
+- If `prefixes` is empty, the rule is a catch-all that applies to every thread in the process.
+- Multiple rules can target the same thread if their prefix filters overlap; the scheduler processes rules in order.
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `config` (`src/config.rs`) |
-| **Constructed by** | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
-| **Consumed by** | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
-| **Parent struct** | [ProcessConfig](ProcessConfig.md) (field `ideal_processor_rules`) |
+| Requirement | Value |
+|-------------|-------|
+| Module | `config.rs` |
+| Constructed by | [`parse_ideal_processor_spec`](parse_ideal_processor_spec.md) |
+| Stored in | [`ThreadLevelConfig.ideal_processor_rules`](ThreadLevelConfig.md) |
+| Consumed by | `scheduler.rs` (prime-thread scheduler ideal-processor assignment) |
+| Dependencies | `List` from `collections.rs`, `CONSUMER_CPUS` constant |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Per-process configuration record | [ProcessConfig](ProcessConfig.md) |
-| Ideal processor spec parser | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
-| Ideal processor application logic | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
-| CPU alias parsing | [parse_alias](parse_alias.md) |
-| CPU alias resolution | [resolve_cpu_spec](resolve_cpu_spec.md) |
-| Module overview | [config module](README.md) |
+| Resource | Link |
+|----------|------|
+| ThreadLevelConfig | [ThreadLevelConfig](ThreadLevelConfig.md) |
+| parse_ideal_processor_spec | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
+| PrimePrefix | [PrimePrefix](PrimePrefix.md) |
+| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| scheduler module | [scheduler.rs overview](../scheduler.rs/README.md) |
+| config module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

@@ -1,10 +1,10 @@
 # log_pure_message function (logging.rs)
 
-Writes a message to the console or the main log file **without** a timestamp prefix. Unlike [log_message](log_message.md), which prepends a `[HH:MM:SS]` timestamp to every line, `log_pure_message` outputs the message string exactly as provided. This function is used for continuation lines, banners, and other output where a timestamp would be redundant or visually disruptive.
+Writes a message to the main log file or stdout **without** a timestamp prefix. This is used for continuation lines, banners, or structured output where the `[HH:MM:SS]` prefix added by [`log_message`](log_message.md) would be undesirable.
 
 ## Syntax
 
-```logging.rs
+```rust
 pub fn log_pure_message(args: &str)
 ```
 
@@ -12,49 +12,60 @@ pub fn log_pure_message(args: &str)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `args` | `&str` | The message string to write. Written verbatim followed by a newline (`writeln!`). |
+| `args` | `&str` | The message string to write. A trailing newline is appended automatically via `writeln!`. |
 
 ## Return value
 
-None (`()`).
+This function does not return a value. Write errors from `writeln!` are silently ignored.
 
 ## Remarks
 
-- The output destination is determined by the [USE_CONSOLE](USE_CONSOLE.md) flag:
-  - When `true`, the message is written to `stdout` via `writeln!(stdout(), "{}", args)`.
-  - When `false`, the message is written to the main [LOG_FILE](LOG_FILE.md) via `writeln!(get_logger!(), "{}", args)`.
-- Unlike [log_message](log_message.md), this function does **not** check [DUST_BIN_MODE](DUST_BIN_MODE.md). Messages passed to `log_pure_message` are always emitted, even during the pre-elevation phase when normal logging is suppressed. Callers that need suppression semantics should check `DUST_BIN_MODE` themselves or use [log_message](log_message.md) / the [log!](log.md) macro instead.
-- Write errors from `writeln!` are silently ignored (the `Result` is bound to `let _ = …`). This prevents I/O failures — such as a full disk or a broken pipe — from propagating panics into the service loop.
-- The function acquires two mutex locks in sequence during a single call: first [USE_CONSOLE](USE_CONSOLE.md) (via [get_use_console!](get_use_console.md)), and then either `stdout` or [LOG_FILE](LOG_FILE.md) (via [get_logger!](get_logger.md)). The `USE_CONSOLE` guard is dropped before the file write occurs because the `if *get_use_console!()` temporary is evaluated and released before the branch body executes.
+- Unlike [`log_message`](log_message.md), this function does **not** check the [`DUST_BIN_MODE`](statics.md#dust_bin_mode) flag. Messages sent through `log_pure_message` are always written regardless of dust-bin mode.
 
-### Typical use cases
+- The output destination is determined by the [`USE_CONSOLE`](statics.md#use_console) flag:
+  - When `true`, the message is written to `stdout` via `writeln!(stdout(), ...)`.
+  - When `false`, the message is written to the main daily log file via `writeln!(get_logger!(), ...)`.
 
-- **Startup banners:** Multi-line service identification output where only the first line carries a timestamp.
-- **Continuation output:** Supplementary detail lines that follow a timestamped header line produced by [log_message](log_message.md).
-- **Structured output blocks:** Configuration dumps, rule listings, or other formatted blocks where per-line timestamps would harm readability.
+- No timestamp is prepended — the raw `args` string is written directly. This is the key difference from [`log_message`](log_message.md), which formats the current time from [`LOCAL_TIME_BUFFER`](statics.md#local_time_buffer) as a `[HH:MM:SS]` prefix.
+
+- Write errors (e.g., broken pipe, full disk) are discarded via `let _ = writeln!(...)`. The function does not propagate I/O errors to the caller.
+
+### Comparison with other logging functions
+
+| Function | Timestamp | Dust-bin check | Output target |
+|----------|-----------|----------------|---------------|
+| [`log_message`](log_message.md) | `[HH:MM:SS]` prefix | Yes — skips if `DUST_BIN_MODE` is `true` | Main log / stdout |
+| **log_pure_message** | None | No — always writes | Main log / stdout |
+| [`log_to_find`](log_to_find.md) | `[HH:MM:SS]` prefix | No — always writes | Find log / stdout |
+
+### Locking behavior
+
+The function acquires up to two mutex locks per call:
+
+1. `USE_CONSOLE` — to check the console mode flag.
+2. Either `LOG_FILE` (via `get_logger!()`) or no additional lock for `stdout`.
+
+Callers should avoid holding other logging-related locks when calling this function to prevent potential deadlocks.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `logging` |
-| Callers | [main](../main.rs/README.md), [apply module](../apply.rs/README.md) |
-| Callees | [get_use_console!](get_use_console.md), [get_logger!](get_logger.md) |
-| Reads | [USE_CONSOLE](USE_CONSOLE.md), [LOG_FILE](LOG_FILE.md) |
-| Does **not** read | [DUST_BIN_MODE](DUST_BIN_MODE.md), [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) |
+| **Module** | `logging.rs` |
+| **Callers** | `main.rs`, `scheduler.rs` — for banner lines and structured output that should not carry a timestamp. |
+| **Callees** | `get_use_console!()` macro, `get_logger!()` macro, `std::io::stdout`, `writeln!` |
+| **Statics read** | [`USE_CONSOLE`](statics.md#use_console), [`LOG_FILE`](statics.md#log_file) |
+| **Platform** | Windows (log file paths assume Windows directory conventions) |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| Timestamped log output | [log_message](log_message.md) |
-| Convenience logging macro (timestamped) | [log!](log.md) |
-| Find-mode log output | [log_to_find](log_to_find.md) |
-| Console vs. file routing flag | [USE_CONSOLE](USE_CONSOLE.md) |
-| Log suppression flag (not checked here) | [DUST_BIN_MODE](DUST_BIN_MODE.md) |
-| Main log file handle | [LOG_FILE](LOG_FILE.md) |
-| logging module overview | [logging module](README.md) |
+| log_message function | [log_message](log_message.md) |
+| log_to_find function | [log_to_find](log_to_find.md) |
+| log_process_find function | [log_process_find](log_process_find.md) |
+| logging statics | [statics](statics.md) |
+| logging module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

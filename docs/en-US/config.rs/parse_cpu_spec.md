@@ -1,11 +1,11 @@
 # parse_cpu_spec function (config.rs)
 
-Parses a CPU specification string into a sorted, deduplicated vector of logical CPU indices. This is the foundational CPU-spec parser used throughout the configuration module; it accepts hex bitmasks, inclusive ranges, and semicolon-separated individual indices. All other CPU-spec–aware functions ultimately delegate to `parse_cpu_spec` or consume its output.
+Parses a CPU specification string into a sorted list of CPU indices. This function is the primary entry point for interpreting the various CPU specification formats supported by the AffinityServiceRust configuration file, including numeric ranges, semicolon-separated individual indices, and legacy hexadecimal bitmasks.
 
 ## Syntax
 
-```rust
-pub fn parse_cpu_spec(s: &str) -> Vec<u32>
+```AffinityServiceRust/src/config.rs#L78-113
+pub fn parse_cpu_spec(s: &str) -> List<[u32; CONSUMER_CPUS]>
 ```
 
 ## Parameters
@@ -16,11 +16,9 @@ pub fn parse_cpu_spec(s: &str) -> Vec<u32>
 
 ## Return value
 
-Returns a `Vec<u32>` of logical CPU indices in ascending sorted order with no duplicates. Returns an empty vector when:
+Type: `List<[u32; CONSUMER_CPUS]>`
 
-- `s` is empty or contains only whitespace.
-- `s` is `"0"` (the canonical "no change" sentinel).
-- `s` is a hex prefix (`0x` / `0X`) followed by a value that fails to parse as `u64`.
+A sorted, deduplicated list of `u32` CPU indices. Returns an empty list when the input is empty, `"0"`, or cannot be parsed.
 
 ## Remarks
 
@@ -28,57 +26,60 @@ Returns a `Vec<u32>` of logical CPU indices in ascending sorted order with no du
 
 | Format | Example | Result | Notes |
 |--------|---------|--------|-------|
-| Empty / `"0"` | `""`, `"0"` | `[]` | Sentinel meaning "do not modify this setting." |
-| Hex bitmask | `"0xFF"`, `"0x0F"` | `[0,1,2,3,4,5,6,7]`, `[0,1,2,3]` | Legacy format; limited to 64 CPUs because the mask is parsed as `u64`. Prefix is case-insensitive (`0x` or `0X`). Delegates to [mask_to_cpu_indices](mask_to_cpu_indices.md) for bit extraction. |
-| Inclusive range | `"0-7"` | `[0,1,2,3,4,5,6,7]` | Start and end are inclusive. If the end value fails to parse, it defaults to the start value, producing a single-element range. |
-| Individual indices | `"0;4;8"` | `[0,4,8]` | Semicolon-separated. Whitespace around each part is trimmed. Non-numeric parts are silently skipped. |
-| Mixed ranges and indices | `"0-3;8;12-15"` | `[0,1,2,3,8,12,13,14,15]` | Ranges and individual indices can be freely combined. |
+| Empty or `"0"` | `""`, `"0"` | `[]` (empty) | Indicates "no change" — the current CPU assignment is left unmodified. |
+| Hex bitmask | `"0xFF"`, `"0X0F"` | `[0,1,2,3,4,5,6,7]`, `[0,1,2,3]` | Legacy format for ≤ 64 logical processors. Must start with `0x` or `0X`. Parsed via `u64::from_str_radix`. |
+| CPU range | `"0-7"` | `[0,1,2,3,4,5,6,7]` | Inclusive range. The recommended format for modern configurations. |
+| Individual CPUs | `"0;4;8"` | `[0,4,8]` | Semicolon-separated list of individual CPU indices. |
+| Mixed ranges | `"0-3;8-11"` | `[0,1,2,3,8,9,10,11]` | Multiple ranges and/or individual indices separated by semicolons. Supports >64 core systems. |
+| Single CPU | `"7"` | `[7]` | Interpreted as CPU index 7, **not** as a bitmask. Use `"0x7"` or `"0-2"` for cores 0–2. |
 
-### Deduplication and sorting
+### Algorithm
 
-Duplicate CPU indices that arise from overlapping ranges or repeated values are suppressed during accumulation (each index is checked against the existing vector before insertion). The final vector is sorted in ascending order before being returned.
+1. The input string is trimmed of whitespace.
+2. If the result is empty or exactly `"0"`, an empty list is returned immediately.
+3. If the string starts with `"0x"` or `"0X"`, it is treated as a hexadecimal bitmask:
+   - The hex portion is parsed as a `u64`.
+   - Bit positions that are set (`1`) are converted to CPU indices via [`mask_to_cpu_indices`](mask_to_cpu_indices.md).
+   - If hex parsing fails, an empty list is returned.
+4. Otherwise, the string is split on `';'` and each segment is processed:
+   - Empty segments (from trailing or double semicolons) are skipped.
+   - If the segment contains a `'-'`, it is parsed as an inclusive range `start-end`. Both bounds default to `0` on parse failure; `start` defaults the end on failure.
+   - If the segment is a plain integer, it is added as a single CPU index.
+   - Duplicate CPU indices are suppressed during insertion.
+5. The resulting list is sorted in ascending order before being returned.
 
-### Systems with more than 64 logical processors
+### Important disambiguation
 
-The range and semicolon formats support arbitrary `u32` indices, making them suitable for systems with more than 64 logical processors (e.g., `"0-7;64-71"` for a dual-processor-group configuration). The hex bitmask format is limited to 64 bits and should be considered a legacy compatibility path.
+The value `"7"` means **CPU index 7** (a single logical processor), not a bitmask for CPUs 0–2. This is a deliberate design choice to avoid ambiguity between bitmask and index interpretations. To specify CPUs 0, 1, and 2, use either the hex notation `"0x7"` or the range notation `"0-2"`.
 
-### Error handling
+### Edge cases
 
-`parse_cpu_spec` is intentionally lenient. Unparseable range endpoints default to `0`, unparseable individual indices are skipped, and an invalid hex value after `0x` returns an empty vector. No errors are reported to the caller; validation with user-facing error messages is the responsibility of higher-level functions like [resolve_cpu_spec](resolve_cpu_spec.md).
-
-### Examples
-
-```text
-parse_cpu_spec("0-3")       → [0, 1, 2, 3]
-parse_cpu_spec("0;2;4")     → [0, 2, 4]
-parse_cpu_spec("0x0F")      → [0, 1, 2, 3]
-parse_cpu_spec("0-3;8;12")  → [0, 1, 2, 3, 8, 12]
-parse_cpu_spec("0")         → []
-parse_cpu_spec("")          → []
-```
+- Invalid hex strings after the `0x`/`0X` prefix return an empty list without error.
+- Non-numeric range bounds (e.g., `"a-z"`) fall back to `0` via `unwrap_or(0)`.
+- Duplicate indices within a specification are silently deduplicated.
+- The function does not validate that CPU indices correspond to physically present processors on the system; that validation occurs at application time.
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `config` (`src/config.rs`) |
-| **Visibility** | `pub` |
-| **Callers** | [resolve_cpu_spec](resolve_cpu_spec.md), [parse_alias](parse_alias.md), [parse_mask](parse_mask.md), [convert](convert.md) |
-| **Callees** | [mask_to_cpu_indices](mask_to_cpu_indices.md) (for hex bitmask inputs) |
-| **API** | Pure function — no I/O, no Windows API calls |
-| **Privileges** | None |
+| Requirement | Value |
+|-------------|-------|
+| Module | `config.rs` |
+| Visibility | `pub` |
+| Callers | [`resolve_cpu_spec`](resolve_cpu_spec.md), [`parse_alias`](parse_alias.md), [`parse_mask`](parse_mask.md), [`read_config`](read_config.md) (indirectly) |
+| Callees | [`mask_to_cpu_indices`](mask_to_cpu_indices.md) (for hex bitmask inputs) |
+| API | `List` and `CONSUMER_CPUS` from [`collections.rs`](../collections.rs/README.md) |
+| Privileges | None |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Bitmask to CPU index conversion | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
-| CPU index list to bitmask conversion | [cpu_indices_to_mask](cpu_indices_to_mask.md) |
-| Compact range formatting (inverse operation) | [format_cpu_indices](format_cpu_indices.md) |
-| Alias-aware CPU spec resolution | [resolve_cpu_spec](resolve_cpu_spec.md) |
-| Convenience parse-to-mask wrapper | [parse_mask](parse_mask.md) |
-| Module overview | [config module](README.md) |
+| Resource | Link |
+|----------|------|
+| mask_to_cpu_indices | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
+| cpu_indices_to_mask | [cpu_indices_to_mask](cpu_indices_to_mask.md) |
+| format_cpu_indices | [format_cpu_indices](format_cpu_indices.md) |
+| resolve_cpu_spec | [resolve_cpu_spec](resolve_cpu_spec.md) |
+| parse_mask | [parse_mask](parse_mask.md) |
+| config module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

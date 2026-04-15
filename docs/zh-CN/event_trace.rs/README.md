@@ -1,30 +1,34 @@
 # event_trace 模块 (AffinityServiceRust)
 
-`event_trace` 模块提供了一个精简的 ETW (Windows 事件跟踪) 消费者，用于实时监控进程的启动与停止。它订阅 `Microsoft-Windows-Kernel-Process` 提供程序以接收进程创建或终止的通知，使服务能够在新进程启动时立即应用配置规则，而无需等待下一个轮询间隔。该模块管理完整的 ETW (Windows 事件跟踪) 会话生命周期——启动、消费和停止跟踪会话——并通过通道分发进程事件，供主服务循环消费。
+`event_trace` 模块提供了一个精简的 ETW（Windows 事件跟踪）消费者，用于实时监控进程的启动和停止。它使用 `Microsoft-Windows-Kernel-Process` 提供程序（GUID `{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}`）来接收进程创建或终止的通知，从而无需轮询即可实现响应式的规则应用。
 
-## 静态变量
+该模块在后台线程上管理一个 ETW 实时跟踪会话。全局通道（`ETW_SENDER`）通过 `mpsc::Sender` 将操作系统级别的 `extern "system"` 回调与安全的 Rust 代码桥接起来。`EtwProcessMonitor` 结构体拥有会话的生命周期，并在销毁时自动清理资源。
 
-| 静态变量 | 描述 |
-|--------|-------------|
-| [ETW_SENDER](ETW_SENDER.md) | 全局互斥锁保护的 MPSC 通道发送端，供 ETW (Windows 事件跟踪) 回调用于分发进程事件。 |
-| [ETW_ACTIVE](ETW_ACTIVE.md) | 原子布尔标志，指示 ETW (Windows 事件跟踪) 跟踪会话当前是否处于活动状态。 |
+## 函数
+
+本模块不直接公开公共函数。所有功能均通过 `EtwProcessMonitor` 结构体的方法访问。
 
 ## 结构体
 
 | 结构体 | 描述 |
-|--------|-------------|
-| [EtwProcessEvent](EtwProcessEvent.md) | 轻量级值类型，携带进程 ID 和启动/停止标志，由 ETW (Windows 事件跟踪) 回调产生。 |
-| [EtwProcessMonitor](EtwProcessMonitor.md) | 拥有 ETW (Windows 事件跟踪) 跟踪会话句柄和后台处理线程；提供 `start`、`stop` 和 `stop_existing_session` 方法。 |
+|--------|------|
+| [EtwProcessEvent](EtwProcessEvent.md) | 从 ETW 接收的进程事件，包含进程 ID 以及该事件是启动事件还是停止事件。 |
+| [EtwProcessMonitor](EtwProcessMonitor.md) | 管理用于进程监控的 ETW 实时跟踪会话，包括会话设置、后台线程生命周期和清理。 |
+
+## 静态变量
+
+| 静态变量 | 描述 |
+|----------|------|
+| [ETW_SENDER](ETW_SENDER.md) | 全局 `Mutex<Option<Sender<EtwProcessEvent>>>`，供 ETW 回调向消费者发送事件。之所以需要全局静态变量，是因为 ETW 回调是一个 `extern "system"` 函数指针，无法捕获状态。 |
+| [ETW_ACTIVE](ETW_ACTIVE.md) | `AtomicBool` 标志，指示 ETW 会话当前是否处于活动状态。用于防止冗余的停止操作。 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
-|-------|------|
-| ETW (Windows 事件跟踪) 错误报告中使用的 Win32 错误码转换 | [error_codes 模块](../error_codes.rs/README.md) |
-| 消费 ETW (Windows 事件跟踪) 事件的服务主循环 | [main 模块](../main.rs/README.md) |
-| 诊断日志基础设施 | [logging 模块](../logging.rs/README.md) |
-| Windows API 封装（句柄、权限） | [winapi 模块](../winapi.rs/README.md) |
+| 链接 | 描述 |
+|------|------|
+| [process.rs 模块](../process.rs/README.md) | 与 ETW 配合使用的进程快照枚举，用于进程数据查找。 |
+| [logging.rs 模块](../logging.rs/README.md) | 用于诊断和错误报告的日志工具。 |
+| [error_codes.rs 模块](../error_codes.rs/README.md) | ETW API 调用失败时使用的 Win32 错误码翻译。 |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+源代码提交: `7221ea0694670265d4eb4975582d8ed2ae02439d`

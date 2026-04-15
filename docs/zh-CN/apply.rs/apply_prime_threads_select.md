@@ -1,10 +1,10 @@
 # apply_prime_threads_select 函数 (apply.rs)
 
-使用基于滞后阈值的机制，从候选池中选择排名前 *N* 的线程授予主力线程状态。此函数是 [PrimeThreadScheduler::select_top_threads_with_hysteresis](../scheduler.rs/PrimeThreadScheduler.md#hysteresis-algorithm) 的轻量封装，提供滞后算法所需的"当前已固定"谓词，用于区分已经是主力线程（因而适用更宽松的*保持*阈值）的线程和必须达到更严格的*准入*阈值才能被新晋升的线程。
+`apply_prime_threads_select` 函数使用基于滞后（hysteresis）的算法选择最优线程作为 prime 线程。它委托给 `PrimeThreadScheduler::select_top_threads_with_hysteresis`，该方法对进入和保持阈值进行差异化处理，以防止线程在连续的应用周期中快速地在 prime 和非 prime 状态之间翻转。已经固定到 CPU 集合的线程（即当前为 prime 状态）使用更宽松的保持阈值进行评估，而非 prime 线程必须超过更严格的进入阈值并满足最低活跃连续次数要求才能被提升。
 
 ## 语法
 
-```AffinityServiceRust/src/apply.rs#L807-816
+```AffinityServiceRust/src/apply.rs#L793-802
 pub fn apply_prime_threads_select(
     pid: u32,
     prime_count: usize,
@@ -17,72 +17,59 @@ pub fn apply_prime_threads_select(
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `pid` | `u32` | 目标进程的进程标识符。用作 [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) 中按进程统计映射的键。 |
-| `prime_count` | `usize` | 可用的主力线程槽位数——等于 `config.prime_threads_cpus.len()`。`tid_with_delta_cycles` 中最多有这么多条目的 `is_prime` 标志会被设置为 `true`。 |
-| `tid_with_delta_cycles` | `&mut [(u32, u64, bool)]` | 候选元组 `(tid, delta_cycles, is_prime)` 的可变切片。输入时，每个元素的 `is_prime` 均为 `false`。返回时，最多有 `prime_count` 个元素的 `is_prime` 被设为 `true`。调用方（[apply_prime_threads](apply_prime_threads.md)）应预先按 `delta_cycles` 降序排列该切片，以便滞后算法优先评估 CPU 使用率最高的线程。 |
-| `prime_core_scheduler` | `&mut` [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) | 持久调度器状态。提供对每线程 [ThreadStats](../scheduler.rs/ThreadStats.md)（活跃连续计数器、已固定 CPU 集合 ID）以及定义滞后阈值（`entry_threshold`、`keep_threshold`、`min_active_streak`）的 [ConfigConstants](../config.rs/ConfigConstants.md) 的访问。 |
+| `pid` | `u32` | 目标进程的进程 ID。传递给调度器用于查找每个进程的线程统计信息。 |
+| `prime_count` | `usize` | 可被选为 prime 的最大线程数。此值等于 `config.prime_threads_cpus` 中的 CPU 数量，即可用于固定的专用高性能核心数量。 |
+| `tid_with_delta_cycles` | `&mut [(u32, u64, bool)]` | 可变的元组切片，每个候选线程对应一个元组。每个元组包含：线程 ID（`u32`）、自上次测量以来的增量周期计数（`u64`）和一个布尔选择标志（`bool`）。输入时，所有元素的布尔值为 `false`。输出时，被选为 prime 的线程的布尔值被设置为 `true`。调用者（[`apply_prime_threads`](apply_prime_threads.md)）应预先按增量周期降序排列该切片。 |
+| `prime_core_scheduler` | `&mut PrimeThreadScheduler` | 维护每个进程、每个线程统计信息（活跃连续次数、固定的 CPU 集合 ID、周期历史记录）的 prime 线程调度器。该函数在此调度器上调用 `select_top_threads_with_hysteresis`，读取并更新线程统计信息。 |
 
 ## 返回值
 
-无（`()`）。函数通过修改 `tid_with_delta_cycles` 中每个元素的 `is_prime` 标志来传达结果。
+此函数不返回值。选择结果通过修改 `tid_with_delta_cycles` 切片中每个元组的 `is_prime` 布尔值（第三个元素）来传达。
 
 ## 备注
 
 ### 滞后算法
 
-该函数完全委托给 `prime_core_scheduler.select_top_threads_with_hysteresis()`，传入以下参数：
+该函数完全委托给 `PrimeThreadScheduler::select_top_threads_with_hysteresis`，传递闭包 `|thread_stats| !thread_stats.pinned_cpu_set_ids.is_empty()` 作为"当前是否为 prime"的谓词。当线程已经固定了 CPU 集合 ID（即在上一个周期中被提升）时，此闭包返回 `true`，使调度器应用更宽松的**保持阈值**。未被固定的线程必须超过更严格的**进入阈值**，并且其 `active_streak` 计数达到或超过配置的最低值才能被选中。
 
-- `pid` — 用于查找按进程的 [ProcessStats](../scheduler.rs/ProcessStats.md)。
-- `tid_with_delta_cycles` — 带有可变 `is_prime` 标志的候选池。
-- `prime_count` — 要选择的最大线程数。
-- 闭包 `|thread_stats| !thread_stats.pinned_cpu_set_ids.is_empty()` — 当线程*当前*处于主力状态（即在前一轮周期中已被 [apply_prime_threads_promote](apply_prime_threads_promote.md) 固定到某个 CPU 集合）时，此谓词返回 `true`。
+滞后机制确保：
+- 已经在 prime 核心上运行的线程即使其周期计数暂时低于进入阈值也会留在那里。这避免了不必要的降级后重新提升的抖动。
+- 线程必须展示持续的高 CPU 活动（通过活跃连续次数衡量）才能被提升，防止短暂的峰值触发随即被撤销的提升。
 
-滞后算法（详细文档见 [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md#hysteresis-algorithm)）使用两个阈值来防止频繁的晋升/降级振荡：
+### 选择限制
 
-| 阈值 | 适用对象 | 条件 |
-|------|----------|------|
-| **keep_threshold** | *已经*是主力线程的线程（`pinned_cpu_set_ids` 非空） | 当 `delta_cycles >= keep_threshold% × max_delta_cycles`（在候选者中）时，线程保持主力状态。这是一个较低的门槛，提供粘性以防止线程在短暂的 CPU 使用率下降期间被降级。 |
-| **entry_threshold** | *当前不是*主力线程的线程 | 仅当 `delta_cycles >= entry_threshold% × max_delta_cycles` **且** `active_streak >= min_active_streak` 时，线程才成为主力线程。这是一个较高的门槛，防止短暂的 CPU 突发使用立即触发晋升。 |
+最多 `prime_count` 个线程被标记为 prime。如果符合条件的线程数超过 prime 槽位数，则只选择增量周期最高的前 `prime_count` 个线程。
 
-`entry_threshold` 始终大于或等于 `keep_threshold`，形成一个死区以抑制振荡。`min_active_streak` 要求（来自 [ConfigConstants](../config.rs/ConfigConstants.md)）通过要求线程在多个连续轮询周期内保持持续的 CPU 活动，进一步稳定选择。
+### 与提升/降级的交互
 
-### 候选排序的重要性
+此函数是由 [`apply_prime_threads`](apply_prime_threads.md) 编排的 prime 线程管道中三个阶段中的第一个：
 
-尽管滞后算法通过检查周期增量来决定哪些线程符合条件，但输入切片中候选者的顺序会影响平局决断。调用方（[apply_prime_threads](apply_prime_threads.md)）在调用此函数前按时间增量降序排列，确保 CPU 使用率最高的线程被优先评估。当多个线程超过准入阈值但符合条件的线程数超过 `prime_count` 时，切片中靠前的线程（CPU 使用率更高）会被优先选择。
-
-### 关注点分离
-
-`apply_prime_threads_select` *仅*执行选择步骤。它不打开任何操作系统句柄、不调用任何 Windows API，也不修改任何线程状态。实际的固定和优先级变更由 [apply_prime_threads_promote](apply_prime_threads_promote.md) 和 [apply_prime_threads_demote](apply_prime_threads_demote.md) 根据此处设置的 `is_prime` 标志来处理。这种分离使选择逻辑可以独立于操作系统副作用进行测试和推理。
-
-### 在理想处理器规则中的复用
-
-[apply_ideal_processors](apply_ideal_processors.md) 也使用了相同的 `select_top_threads_with_hysteresis` 方法，但使用不同的"当前已分配"谓词（`|ts| ts.ideal_processor.is_assigned`）。两个调用点共享滞后算法，但在什么构成"已选中"状态方面有所不同。
+1. **选择**（`apply_prime_threads_select`）— 在 `tid_with_delta_cycles` 切片中将线程标记为 prime 或非 prime。
+2. **提升**（[`apply_prime_threads_promote`](apply_prime_threads_promote.md)）— 将新选中的 prime 线程固定到 CPU 并提升其优先级。
+3. **降级**（[`apply_prime_threads_demote`](apply_prime_threads_demote.md)）— 取消固定并恢复失去 prime 状态的线程的优先级。
 
 ## 要求
 
 | 要求 | 值 |
 |------|-----|
-| 模块 | `apply` |
-| 可见性 | `pub`（crate 公开） |
-| 调用方 | [apply_prime_threads](apply_prime_threads.md) |
-| 被调用方 | [PrimeThreadScheduler::select_top_threads_with_hysteresis](../scheduler.rs/PrimeThreadScheduler.md) |
-| Win32 API | 无 — 纯 Rust 逻辑；无操作系统调用 |
+| 模块 | `apply.rs` |
+| Crate | `AffinityServiceRust` |
+| 可见性 | `pub` |
+| Windows API | 无（纯逻辑；无操作系统调用） |
+| 调用者 | [`apply_prime_threads`](apply_prime_threads.md) |
+| 被调用者 | `PrimeThreadScheduler::select_top_threads_with_hysteresis` |
 | 权限 | 无 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 参考 | 链接 |
 |------|------|
-| 主力线程编排 | [apply_prime_threads](apply_prime_threads.md) |
-| 选择后的晋升 | [apply_prime_threads_promote](apply_prime_threads_promote.md) |
-| 未选中线程的降级 | [apply_prime_threads_demote](apply_prime_threads_demote.md) |
-| 滞后算法与调度器状态 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
-| 每线程统计（活跃连续计数、已固定 ID） | [ThreadStats](../scheduler.rs/ThreadStats.md) |
-| 滞后常量 | [ConfigConstants](../config.rs/ConfigConstants.md) |
-| 理想处理器规则选择（复用相同算法） | [apply_ideal_processors](apply_ideal_processors.md) |
-| 周期时间预取（填充 cached_cycles） | [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) |
-| apply 模块概述 | [apply](README.md) |
+| apply 模块概览 | [`README`](README.md) |
+| apply_prime_threads | [`apply_prime_threads`](apply_prime_threads.md) |
+| apply_prime_threads_promote | [`apply_prime_threads_promote`](apply_prime_threads_promote.md) |
+| apply_prime_threads_demote | [`apply_prime_threads_demote`](apply_prime_threads_demote.md) |
+| prefetch_all_thread_cycles | [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md) |
+| PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

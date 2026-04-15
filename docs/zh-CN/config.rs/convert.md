@@ -1,10 +1,10 @@
 # convert 函数 (config.rs)
 
-将 Process Lasso 配置文件（UTF-16 LE 编码的 INI 格式）转换为 AffinityServiceRust 原生配置格式。该函数从 Process Lasso 文件中读取命名亲和性、默认优先级和默认亲和性，将其映射为等效的 AffinityServiceRust 规则语法，并以 UTF-8 编码将结果写入输出文件，包含 CPU 别名和每进程规则行。
+将 Process Lasso 配置文件（UTF-16 LE 编码的 INI 格式）转换为 AffinityServiceRust 的原生配置格式。该函数从输入文件中读取命名亲和性、默认优先级和默认亲和性，将它们映射为等效的 AffinityServiceRust 规则语法，并将结果写入指定的输出文件，同时在文件头部附加完整的配置参考信息。
 
 ## 语法
 
-```rust
+```AffinityServiceRust/src/config.rs#L908-1063
 pub fn convert(in_file: Option<String>, out_file: Option<String>)
 ```
 
@@ -12,73 +12,54 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>)
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `in_file` | `Option<String>` | 输入 Process Lasso 配置文件的路径（UTF-16 LE 编码）。如果为 `None`，则记录错误消息并立即返回。传递给 [read_utf16le_file](read_utf16le_file.md) 进行解码。 |
-| `out_file` | `Option<String>` | 转换后的 AffinityServiceRust 配置将写入的输出文件路径。如果为 `None`，则记录错误消息并立即返回。使用 `File::create` 创建（或覆盖）文件。 |
+| `in_file` | `Option<String>` | 输入 Process Lasso 配置文件的路径。该文件必须为 UTF-16 LE 编码（Process Lasso 使用的默认编码）。如果为 `None`，函数记录错误并立即返回。对应 `-in <file>` CLI 参数。 |
+| `out_file` | `Option<String>` | 转换后的 AffinityServiceRust 配置将写入的输出文件路径。如果为 `None`，函数记录错误并立即返回。对应 `-out <file>` CLI 参数。 |
 
 ## 返回值
 
-此函数不返回值。结果写入输出文件，进度/错误消息通过 `log!` 宏输出。
+此函数不返回值。输出写入 `out_file` 指定的文件。诊断消息通过 `log!` 宏发出。
 
 ## 备注
 
-### Process Lasso INI 格式
+### 解析的 Process Lasso INI 键
 
-该函数从 Process Lasso 配置中解析三个特定的 INI 键：
+该函数逐行扫描输入文件，从三个特定的 INI 键中提取数据：
 
 | 键 | 格式 | 描述 |
 |----|------|------|
-| `NamedAffinities=` | `alias1,cpuspec1,alias2,cpuspec2,...` | 以逗号分隔的别名和 CPU 规格对。每对被转换为输出中的 `*alias = cpu_spec` 行。 |
-| `DefaultPriorities=` | `process1,priority1,process2,priority2,...` | 以逗号分隔的进程名称和优先级值对。优先级值可以是可读字符串（`"idle"`、`"high"`）或数字代码（`1`–`6`）。 |
-| `DefaultAffinitiesEx=` | `process1,mask1,cpuset1,process2,mask2,cpuset2,...` | 以逗号分隔的进程名称、旧版亲和性掩码（通常为 `0`，忽略）和 CPU 集规格的三元组。仅包含 CPU 集非空且不为 `"0"` 的条目。 |
-
-### 转换算法
-
-1. **读取输入** — 通过 [read_utf16le_file](read_utf16le_file.md) 读取输入文件，处理 UTF-16 LE 到 UTF-8 的转换。
-2. **解析 INI 键** — 函数遍历各行，将三个已识别键的值提取到中间数据结构中：
-   - `named_affinities: Vec<(String, String)>` — 别名/CPU 规格对。
-   - `priorities: HashMap<String, String>` — 进程名称 → 优先级字符串。
-   - `affinities: HashMap<String, String>` — 进程名称 → CPU 集字符串。
-3. **构建别名反向映射** — 从 `named_affinities` 构建 `spec_to_alias` 映射，允许在输出中用 `*alias` 引用替换亲和性值以提高可读性。
-4. **生成输出** — 输出文件在内存中以 `Vec<String>` 形式组装：
-   a. 配置帮助行（来自 `get_config_help_lines()`）作为注释添加在前面。
-   b. 添加 `"# Converted from Process Lasso config"` 标题。
-   c. 为每个命名亲和性写入 CPU 别名定义（`*alias = cpu_spec`）。
-   d. 对于每个唯一的进程名称（`priorities` 和 `affinities` 键的并集，按字母排序），以 `name:priority:affinity:0:0:none:none` 格式输出一行规则。
-5. **写入输出** — 使用 `writeln!` 将组装好的行逐行写入输出文件。
+| `NamedAffinities=` | `alias,cpus,alias,cpus,...` | 以逗号分隔的别名和 CPU 规格配对。每对转换为输出中的 `*alias = cpus` 别名定义。 |
+| `DefaultPriorities=` | `process,priority,process,priority,...` | 以逗号分隔的进程名称（小写）和优先级值配对。优先级值可以是字符串名称（`"idle"`、`"normal"` 等）或数字代码（`1`–`6`）。 |
+| `DefaultAffinitiesEx=` | `process,mask,cpuset,process,mask,cpuset,...` | 以逗号分隔的进程名称、旧式位掩码（通常为 `0`，被忽略）和 CPU 集合规格三元组。仅使用 CPU 集合值；CPU 集合为 `"0"` 或为空的条目将被跳过。 |
 
 ### 优先级映射
 
-Process Lasso 优先级值映射为 AffinityServiceRust 优先级字符串：
+Process Lasso 数字优先级代码映射到 AffinityServiceRust 的字符串名称：
 
-| Process Lasso 值 | AffinityServiceRust 等效值 |
-|------------------|---------------------------|
-| `idle` 或 `1` | `idle` |
-| `below normal` 或 `2` | `below normal` |
-| `normal` 或 `3` | `normal` |
-| `above normal` 或 `4` | `above normal` |
-| `high` 或 `5` | `high` |
-| `realtime` / `real time` 或 `6` | `real time` |
-| *（其他任何值）* | `none` |
+| 数字代码 | 字符串等效 | AffinityServiceRust 值 |
+|---------|-----------|----------------------|
+| `1` | `idle` | `idle` |
+| `2` | `below normal` | `below normal` |
+| `3` | `normal` | `normal` |
+| `4` | `above normal` | `above normal` |
+| `5` | `high` | `high` |
+| `6` | `realtime` / `real time` | `real time` |
+| 其他 | — | `none` |
 
-字符串匹配不区分大小写（比较前先转为小写）。
+### 输出结构
 
-### 亲和性别名替换
+生成的输出文件按以下顺序包含三个部分：
 
-当进程的亲和性 CPU 规格与已知命名亲和性的 CPU 规格完全匹配时，输出使用 `*alias` 引用而非原始规格。这使转换后的文件更简洁，并且通过编辑单行别名即可更轻松地调整 CPU 分配。
+1. **配置参考头部** — 来自 [`get_config_help_lines`](../cli.rs/get_config_help_lines.md) 的完整配置文件帮助模板，为用户提供语法文档。
+2. **CPU 别名** — 每个 `NamedAffinities` 条目对应一行 `*alias = cpu_spec`，位于标题 `# CPU Aliases (from Process Lasso NamedAffinities)` 下。
+3. **进程规则** — 在 `DefaultPriorities` 和 `DefaultAffinitiesEx` 中找到的每个唯一进程对应一行规则，按字母顺序排列。每行遵循格式：`name:priority:affinity:0:0:none:none`。在可能的情况下，字面 CPU 规格会使用命名亲和性的反向查找替换为 `*alias` 引用。
 
-### 输出格式
+### 别名到规格的反向查找
 
-生成的输出是有效的 AffinityServiceRust 配置文件。每条进程规则使用完整的 7 字段格式，未使用的字段设置为显式默认值：
+该函数构建一个 `spec_to_alias` 映射，将原始 CPU 规格字符串映射回其 `*alias` 名称。写入进程规则时，如果进程的亲和性规格与已知的命名亲和性匹配，则使用 `*alias` 形式代替原始规格。这会生成更清晰、更易读的输出。
 
-```text
-process.exe:priority:affinity:0:0:none:none
-```
+### 文件编码
 
-其中：
-- 字段 3–4（`cpuset`、`prime_cpus`）设置为 `0`（禁用）。
-- 字段 5–6（`io_priority`、`memory_priority`）设置为 `none`。
-
-这为用户提供了一个干净的起点，之后可以自定义 cpuset、prime-thread 和其他高级字段。
+输入文件通过 [`read_utf16le_file`](read_utf16le_file.md) 读取，该函数使用有损转换将 UTF-16 LE 字节对解码为 Rust `String`。输出文件以 UTF-8 编码写入。
 
 ### 错误处理
 
@@ -88,52 +69,37 @@ process.exe:priority:affinity:0:0:none:none
 | `out_file` 为 `None` | 记录 `"Error: -out <file> is required for -convert"` 并返回。 |
 | 无法读取输入文件 | 记录 `"Failed to read {path}: {error}"` 并返回。 |
 | 无法创建输出文件 | 记录 `"Failed to create {path}: {error}"` 并返回。 |
-| 写入失败 | 记录 `"Failed to write to {path}"` 并返回。 |
+| 输出期间写入失败 | 记录 `"Failed to write to {path}"` 并返回。 |
 
-不会向调用方传播错误 — 所有失败均通过 `log!` 报告，函数优雅地返回。
+成功时，函数记录摘要：`"Parsed {n} aliases, {n} priorities, {n} affinities"`，随后 `"Converted {in_path} to {out_path}"`。
 
-### 日志记录
+### CLI 用法
 
-成功时，函数记录：
-
-```text
-Parsed {N} aliases, {N} priorities, {N} affinities
-Converted {in_path} to {out_path}
+```/dev/null/example.sh#L1
+AffinityServiceRust.exe -convert -in ProcessLassoConfig.ini -out config.ini
 ```
-
-### CLI 集成
-
-当用户在命令行传递 `-convert` 标志时调用此函数。`-in` 和 `-out` 参数分别提供 `in_file` 和 `out_file` 参数。详见 [cli 模块](../cli.rs/README.md) 了解参数解析。
-
-### 限制
-
-- 仅解析三个已识别的 INI 键。其他 Process Lasso 设置（例如 I/O 优先级、电源计划、看门狗规则）不会被转换。
-- 函数不会尝试合并或去重可能对同一进程存在冲突优先级和亲和性的规则 — 它只是输出源文件中找到的内容。
-- CPU 规格从 Process Lasso 文件中按原样传递，不进行重新规范化。如果 Process Lasso 文件使用了不常见的格式，可能需要手动清理输出。
-- 输入文件必须为 UTF-16 LE 编码。UTF-8 或其他编码将产生乱码输出，且不会有明确的错误提示。
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `config` (`src/config.rs`) |
-| **可见性** | `pub` |
-| **调用方** | [main](../main.rs/main.md)（通过 `-convert` CLI 标志） |
-| **被调用方** | [read_utf16le_file](read_utf16le_file.md), `get_config_help_lines`（来自 [cli 模块](../cli.rs/README.md)）, `File::create`, `writeln!` |
-| **API** | 输出使用 `std::fs::File::create`，输入使用 [read_utf16le_file](read_utf16le_file.md) |
-| **权限** | 需要输入文件的读取权限，输出文件路径的写入权限 |
+| 要求 | 值 |
+|------|-----|
+| 模块 | `config.rs` |
+| 可见性 | `pub` |
+| 调用方 | `main.rs`（当 `cli.convert_mode` 为 `true` 时） |
+| 被调用方 | [`read_utf16le_file`](read_utf16le_file.md)、[`get_config_help_lines`](../cli.rs/get_config_help_lines.md)、`File::create`、`writeln!`、`log!` |
+| 依赖 | [`collections.rs`](../collections.rs/README.md) 中的 `HashMap`、`HashSet`；`std::fs::File`、`std::io::Write` |
+| 权限 | 无（需要文件系统读写访问权限） |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 资源 | 链接 |
 |------|------|
-| UTF-16 LE 文件读取器 | [read_utf16le_file](read_utf16le_file.md) |
-| 转换输出的自动分组 | [sort_and_group_config](sort_and_group_config.md) |
-| 原生配置文件读取器 | [read_config](read_config.md) |
-| CPU 规格解析器 | [parse_cpu_spec](parse_cpu_spec.md) |
-| CLI 参数解析 | [cli 模块](../cli.rs/README.md) |
-| 模块概述 | [README](README.md) |
+| sort_and_group_config | [sort_and_group_config](sort_and_group_config.md) |
+| read_utf16le_file | [read_utf16le_file](read_utf16le_file.md) |
+| get_config_help_lines | [get_config_help_lines](../cli.rs/get_config_help_lines.md) |
+| read_config | [read_config](read_config.md) |
+| CliArgs | [CliArgs](../cli.rs/CliArgs.md) |
+| config 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

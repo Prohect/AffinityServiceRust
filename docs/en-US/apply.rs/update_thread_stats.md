@@ -1,10 +1,10 @@
 # update_thread_stats function (apply.rs)
 
-Commits cached cycle and time counters stored in [ThreadStats](../scheduler.rs/ThreadStats.md) so that the next polling iteration can compute correct deltas. This function is the final step in the per-process thread-level apply pipeline — it must be called after [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) and [apply_prime_threads](apply_prime_threads.md) have finished, but before the next cycle begins.
+The `update_thread_stats` function commits the cached cycle-count and total-time measurements collected during the current apply cycle into the persistent `last_cycles` and `last_total_time` fields of each thread's statistics, then resets the cached values to zero. This establishes the baseline for computing deltas in the next apply cycle. It is intended to be called at the end of the per-process apply pipeline, after all prime-thread selection, promotion, and demotion logic has consumed the cached values.
 
 ## Syntax
 
-```AffinityServiceRust/src/apply.rs#L1327-1340
+```AffinityServiceRust/src/apply.rs#L1311-1324
 pub fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler) {
     if let Some(ps) = prime_scheduler.pid_to_process_stats.get_mut(&pid) {
         for ts in ps.tid_to_thread_stats.values_mut() {
@@ -25,68 +25,60 @@ pub fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `pid` | `u32` | Process identifier whose thread stats should be committed. Used as the key into `prime_scheduler.pid_to_process_stats`. If no entry exists for this pid (e.g., the process was never tracked), the function returns immediately. |
-| `prime_scheduler` | `&mut`[PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) | The scheduler state that holds per-process, per-thread statistics. This function mutates the [ThreadStats](../scheduler.rs/ThreadStats.md) entries for every tracked thread of the given process. |
+| `pid` | `u32` | The process ID whose thread statistics should be committed. Used to look up the corresponding `ProcessStats` entry in the scheduler's `pid_to_process_stats` map. If no entry exists for this PID, the function is a no-op. |
+| `prime_scheduler` | `&mut PrimeThreadScheduler` | The mutable prime-thread scheduler state containing per-process, per-thread statistics. The function iterates over all thread stats for the given PID and updates their `last_*` / `cached_*` fields. |
 
 ## Return value
 
-None (`()`).
+This function does not return a value.
 
 ## Remarks
 
-### Double-buffer commit pattern
+### Commit semantics
 
-The prime-thread pipeline uses a double-buffer strategy for cycle counts and CPU times:
+The function uses a guard pattern: only cached values that are strictly greater than zero are committed. This ensures that threads whose cycles or total time could not be measured during the current cycle (e.g., because handle acquisition failed in [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md)) retain their previous `last_*` baseline rather than being reset to zero.
 
-| Field | Written by | Read by | Committed by |
-|-------|-----------|---------|--------------|
-| `cached_cycles` | [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) | [apply_prime_threads](apply_prime_threads.md) (delta = `cached_cycles - last_cycles`) | `update_thread_stats` → `last_cycles` |
-| `cached_total_time` | [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) | [apply_prime_threads](apply_prime_threads.md) (delta = `cached_total_time - last_total_time`) | `update_thread_stats` → `last_total_time` |
+After committing, the `cached_cycles` and `cached_total_time` fields are set to `0`. This ensures that if a thread is not measured in the *next* cycle, its delta will be computed correctly (the delta calculation uses `cached_cycles.saturating_sub(last_cycles)`, so a cached value of `0` yields a delta of `0`).
 
-During a polling cycle:
+### Call order
 
-1. [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) writes the latest counters into the `cached_*` fields.
-2. [apply_prime_threads](apply_prime_threads.md) computes deltas by subtracting `last_*` from `cached_*`.
-3. `update_thread_stats` promotes `cached_*` → `last_*` and zeroes out `cached_*`.
+This function must be called **after** all of the following have consumed the cached measurements:
 
-This separation ensures that the delta calculation in step 2 always compares the *current* snapshot against the *previous* snapshot, even if intermediate functions read or mutate the cached values.
+1. [`apply_prime_threads`](apply_prime_threads.md) — uses `cached_cycles` and `cached_total_time` to build candidate lists and compute deltas.
+2. [`apply_prime_threads_select`](apply_prime_threads_select.md) — reads cycle deltas computed from the cached values.
+3. [`apply_prime_threads_promote`](apply_prime_threads_promote.md) — logs `delta_cycles` in change messages.
+4. [`apply_prime_threads_demote`](apply_prime_threads_demote.md) — operates on the same selection results.
+5. [`apply_ideal_processors`](apply_ideal_processors.md) — uses `cached_cycles - last_cycles` for thread ranking.
 
-### Zero-guard
+Calling `update_thread_stats` before these functions would cause all deltas to be zero, effectively disabling the prime-thread algorithm.
 
-Only non-zero `cached_*` values are committed. A thread whose cycle count or total time was not queried during the current cycle (because it fell outside the [prefetch counter limit](prefetch_all_thread_cycles.md#counter-limit) or because `QueryThreadCycleTime` failed) retains its previous `last_*` values. This prevents a missed query from resetting the baseline to zero, which would cause an artificially large delta on the next successful query and could incorrectly promote a low-activity thread.
+### Edge cases
 
-After the commit, the `cached_*` field is set to `0` to indicate that no fresh data has been collected yet for the next cycle.
-
-### Idempotency
-
-Calling this function more than once within the same polling cycle is harmless — the second call sees `cached_*` values of `0` and skips every entry. However, doing so would cause the *next* cycle to compute a delta against the same `last_*` baseline twice, effectively halving the reported delta. Callers must therefore invoke `update_thread_stats` exactly once per process per cycle.
-
-### No-op when process is untracked
-
-If `pid` does not exist in `prime_scheduler.pid_to_process_stats`, the `if let Some(ps)` guard causes an immediate return. This is safe and expected for processes that have a [ProcessConfig](../config.rs/ProcessConfig.md) but do not use prime-thread or ideal-processor features (i.e., `track_top_x_threads == 0` and `prime_threads_cpus` is empty).
+- If `pid` is not present in `pid_to_process_stats` (e.g., the process was never registered with the scheduler or has already been cleaned up), the `if let Some` guard causes the function to return immediately without error.
+- If a thread's `cached_cycles` is `0` (because `QueryThreadCycleTime` failed or was never called for that thread), `last_cycles` retains its previous value. This means the next cycle's delta for that thread will still be based on the most recent successful measurement.
+- The function does not remove stale thread entries. Thread cleanup is handled separately by [`apply_prime_threads`](apply_prime_threads.md), which drops handles for threads no longer present in the live thread snapshot.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `apply` |
-| Visibility | `pub` (crate-public) |
-| Callers | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
-| Callees | None — pure Rust field assignments on [ThreadStats](../scheduler.rs/ThreadStats.md) |
-| Win32 API | None |
+| Module | `apply.rs` |
+| Crate | `AffinityServiceRust` |
+| Visibility | `pub` |
+| Windows APIs | None (pure data manipulation; no OS calls) |
+| Callers | Orchestrator code in `scheduler.rs` / `main.rs` that runs the per-process apply pipeline |
+| Callees | None (reads and writes fields of `PrimeThreadScheduler` directly) |
 | Privileges | None |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Cycle-time prefetch (populates cached values) | [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) |
-| Prime-thread orchestration (consumes cached values) | [apply_prime_threads](apply_prime_threads.md) |
-| Per-thread stats model | [ThreadStats](../scheduler.rs/ThreadStats.md) |
-| Scheduler state | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
-| Thread-level apply orchestration | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
-| apply module overview | [apply](README.md) |
+| Reference | Link |
+|-----------|------|
+| apply module overview | [`README`](README.md) |
+| prefetch_all_thread_cycles | [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md) |
+| apply_prime_threads | [`apply_prime_threads`](apply_prime_threads.md) |
+| apply_ideal_processors | [`apply_ideal_processors`](apply_ideal_processors.md) |
+| PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

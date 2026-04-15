@@ -1,10 +1,10 @@
 # get_log_path function (logging.rs)
 
-Constructs a date-prefixed log file path under the `logs/` directory. The function reads the cached local time from [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) to derive the `YYYYMMDD` date component and appends an optional suffix before the `.log` extension. If the `logs/` directory does not exist, it is created automatically.
+Builds a date-stamped log file path under the `logs/` directory. The function reads the current local time from the [`LOCAL_TIME_BUFFER`](statics.md#local_time_buffer) static to construct a filename in the format `YYYYMMDD<suffix>.log`, and ensures the `logs/` directory exists before returning the path.
 
 ## Syntax
 
-```logging.rs
+```rust
 fn get_log_path(suffix: &str) -> PathBuf
 ```
 
@@ -12,55 +12,68 @@ fn get_log_path(suffix: &str) -> PathBuf
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `suffix` | `&str` | A string appended between the date prefix and the `.log` extension. Pass `""` for the main log file or `".find"` for the find-mode log file. The suffix is inserted verbatim — if a dot separator is desired, it must be included in the string (e.g., `".find"` not `"find"`). |
+| `suffix` | `&str` | A string appended to the date portion of the filename before the `.log` extension. Pass `""` for the main log file, or `".find"` for the find-mode log file. |
 
 ## Return value
 
-A `PathBuf` representing the fully qualified relative path to the log file, e.g., `logs/20250114.log` or `logs/20250114.find.log`.
+Returns a `PathBuf` pointing to the log file. The path is relative to the working directory and takes the form `logs/YYYYMMDD<suffix>.log`.
+
+### Examples
+
+| `suffix` | Date | Resulting path |
+|----------|------|----------------|
+| `""` | 2025-01-15 | `logs/20250115.log` |
+| `".find"` | 2025-01-15 | `logs/20250115.find.log` |
 
 ## Remarks
 
-- The function acquires the [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) mutex lock via the [get_local_time!](get_local_time.md) macro, extracts the `year`, `month`, and `day` components using `chrono::Datelike`, and then explicitly drops the guard before performing any file-system operations. This is important because `create_dir_all` could block on I/O, and holding the time buffer lock during I/O would unnecessarily delay other threads.
-- The `logs/` directory is created with `std::fs::create_dir_all` if it does not already exist. The result of `create_dir_all` is silently discarded (`let _ = …`), so a failure to create the directory does not produce an error at this point — it will instead surface when the caller attempts to open the file.
-- This function is **not** `pub` — it is module-private (`fn`, not `pub fn`). It is called only during the lazy initialization of [LOG_FILE](LOG_FILE.md) and [FIND_LOG_FILE](FIND_LOG_FILE.md), and is not intended for use outside the `logging` module.
-- The date portion of the filename is determined by the value in [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) at the time the function is called. Because `LOG_FILE` and `FIND_LOG_FILE` are `Lazy` statics, the path is computed exactly once — on first access — and the resulting file handle is reused for the entire process lifetime. Log files are not automatically rotated at midnight; a new process (or service restart) is required to start a new dated log file.
+- This function is **module-private** (`fn` without `pub`). It is called during `Lazy` initialization of the [`LOG_FILE`](statics.md#log_file) and [`FIND_LOG_FILE`](statics.md#find_log_file) statics and is not accessible outside the `logging` module.
 
-### Path format
+- The function locks the [`LOCAL_TIME_BUFFER`](statics.md#local_time_buffer) mutex to read the cached local time. The lock is explicitly dropped (via `drop(time)`) before proceeding with directory creation, minimizing lock hold time.
 
-The generated path follows this pattern:
+- The `logs/` directory is created via `std::fs::create_dir_all` if it does not already exist. If directory creation fails, the error is silently ignored (`let _ = create_dir_all(...)`) and the returned path may point to a non-existent directory. Subsequent file-open operations using this path will fail at that point.
 
-```/dev/null/example.txt#L1-1
-logs/{YYYY}{MM}{DD}{suffix}.log
-```
+- The date components are extracted using `chrono::Datelike` trait methods (`year()`, `month()`, `day()`) and formatted with zero-padding to ensure consistent 8-digit date strings.
 
-Examples:
+### Algorithm
 
-| Suffix | Resulting path |
-|--------|---------------|
-| `""` | `logs/20250114.log` |
-| `".find"` | `logs/20250114.find.log` |
+1. Lock the `LOCAL_TIME_BUFFER` mutex and extract `(year, month, day)`.
+2. Drop the lock.
+3. Construct a `PathBuf` for the `logs/` directory.
+4. If the directory does not exist, attempt to create it (including parent directories).
+5. Join the directory path with the formatted filename `YYYYMMDD<suffix>.log`.
+6. Return the resulting `PathBuf`.
+
+### Call sites
+
+This function is called exactly twice during program initialization:
+
+- `Lazy` initializer for [`LOG_FILE`](statics.md#log_file): `get_log_path("")`
+- `Lazy` initializer for [`FIND_LOG_FILE`](statics.md#find_log_file): `get_log_path(".find")`
+
+Because these statics are lazily initialized, `get_log_path` is not called until the first log message is written or the first find-log entry is recorded.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `logging` |
-| Visibility | Module-private (`fn`, not `pub fn`) |
-| Callers | [LOG_FILE](LOG_FILE.md) initializer, [FIND_LOG_FILE](FIND_LOG_FILE.md) initializer |
-| Callees | [get_local_time!](get_local_time.md), `std::fs::create_dir_all` |
-| Crate dependencies | `chrono` (`Datelike`), `std::path::PathBuf`, `std::fs::create_dir_all` |
+| **Module** | `logging.rs` |
+| **Visibility** | Private (module-internal) |
+| **Callers** | `LOG_FILE` and `FIND_LOG_FILE` `Lazy` initializers |
+| **Callees** | `LOCAL_TIME_BUFFER.lock()`, `chrono::Datelike` methods, `std::fs::create_dir_all`, `PathBuf::join` |
+| **Dependencies** | `chrono`, `std::fs`, `std::path::PathBuf` |
+| **Platform** | Cross-platform (no Windows-specific API calls) |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| Main log file handle initialized by this function | [LOG_FILE](LOG_FILE.md) |
-| Find-mode log file handle initialized by this function | [FIND_LOG_FILE](FIND_LOG_FILE.md) |
-| Cached local time used for date derivation | [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) |
-| Timestamped log writing | [log_message](log_message.md) |
-| Find-mode log writing | [log_to_find](log_to_find.md) |
-| logging module overview | [logging module](README.md) |
+| log_message function | [log_message](log_message.md) |
+| log_to_find function | [log_to_find](log_to_find.md) |
+| LOG_FILE static | [statics](statics.md#log_file) |
+| FIND_LOG_FILE static | [statics](statics.md#find_log_file) |
+| LOCAL_TIME_BUFFER static | [statics](statics.md#local_time_buffer) |
+| logging module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

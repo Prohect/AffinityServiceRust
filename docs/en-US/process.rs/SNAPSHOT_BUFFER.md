@@ -1,6 +1,6 @@
 # SNAPSHOT_BUFFER static (process.rs)
 
-Global buffer used by [`ProcessSnapshot::take`](ProcessSnapshot.md#processsnapshottake) to store the raw byte output of `NtQuerySystemInformation(SystemProcessInformation, ...)`.
+Shared backing buffer for `NtQuerySystemInformation` results. This static provides the raw byte storage that [`ProcessSnapshot::take`](ProcessSnapshot.md) fills with system process information data. It is lazily initialized with a small initial capacity and dynamically resized as needed during snapshot capture.
 
 ## Syntax
 
@@ -8,39 +8,47 @@ Global buffer used by [`ProcessSnapshot::take`](ProcessSnapshot.md#processsnapsh
 pub static SNAPSHOT_BUFFER: Lazy<Mutex<Vec<u8>>> = Lazy::new(|| Mutex::new(vec![0u8; 32]));
 ```
 
-## Members
+## Type
 
-| Member | Type | Description |
-|--------|------|-------------|
-| Inner value | `Vec<u8>` | Byte buffer that receives the variable-length array of `SYSTEM_PROCESS_INFORMATION` structures returned by the kernel. Initialized to 32 bytes; grown automatically by `ProcessSnapshot::take` when the kernel returns `STATUS_INFO_LENGTH_MISMATCH`. |
+`once_cell::sync::Lazy<std::sync::Mutex<Vec<u8>>>`
 
 ## Remarks
 
-> **Important:** Do not lock or access `SNAPSHOT_BUFFER` directly. Always go through the [`ProcessSnapshot`](ProcessSnapshot.md) RAII wrapper, which locks both `SNAPSHOT_BUFFER` and [`PID_TO_PROCESS_MAP`](PID_TO_PROCESS_MAP.md) together and ensures they stay consistent.
+> **Warning:** Do not access this static directly. Use the [`ProcessSnapshot`](ProcessSnapshot.md) struct instead, which manages the buffer's lifecycle and ensures correctness.
 
-The buffer is allocated once via `once_cell::sync::Lazy` and reused across successive snapshots to amortize allocation cost. `ProcessSnapshot::take` may reallocate the buffer when the system's process list grows beyond the current capacity. When the `ProcessSnapshot` is dropped, the buffer is cleared (length set to zero) but the underlying allocation is retained for the next snapshot.
+### Initial capacity
 
-### Lifetime and thread safety
+The buffer is initialized with a capacity of 32 bytes — intentionally small. On the first call to [`ProcessSnapshot::take`](ProcessSnapshot.md), `NtQuerySystemInformation` will return `STATUS_INFO_LENGTH_MISMATCH`, prompting the snapshot logic to reallocate the buffer to the size reported by the API's `return_length` output parameter (rounded up to an 8-byte boundary). After the first successful snapshot, the buffer retains its enlarged capacity for subsequent calls, avoiding repeated reallocations.
 
-`SNAPSHOT_BUFFER` is wrapped in a `Mutex` to guarantee exclusive access. Because the raw `SYSTEM_PROCESS_INFORMATION` structures inside the buffer contain pointers (e.g., `ImageName.Buffer`) that are only valid while the buffer contents are unchanged, the `ProcessSnapshot` borrow keeps the mutex guard alive for the duration of the snapshot's use.
+### Lifecycle
 
-### Growth strategy
+1. **First access** — `Lazy` initializes the mutex with a 32-byte vector.
+2. **Snapshot capture** — [`ProcessSnapshot::take`](ProcessSnapshot.md) locks the mutex, uses the buffer to call `NtQuerySystemInformation`, and may resize it if the current capacity is insufficient.
+3. **Snapshot drop** — When the `ProcessSnapshot` is dropped, the buffer is cleared (`Vec::clear()`), releasing the data but retaining the allocated capacity for the next snapshot cycle.
+4. **Process exit** — The buffer is never explicitly deallocated; it lives for the duration of the process as a `'static` resource.
 
-When `NtQuerySystemInformation` returns `STATUS_INFO_LENGTH_MISMATCH` (`0xC0000004`):
+### Thread safety
 
-1. If the kernel reported a required length (`return_len > 0`), the buffer is resized to that length rounded up to an 8-byte boundary.
-2. Otherwise, the buffer capacity is doubled.
+The buffer is protected by a `Mutex`. Only one thread can hold the lock at a time, ensuring that concurrent snapshot attempts are serialized. In practice, snapshots are taken from the main scheduling loop on a single thread, so contention is not expected.
 
-The call is then retried in a loop until it succeeds or returns a different NTSTATUS error.
+### Relationship to PID_TO_PROCESS_MAP
+
+This buffer and [`PID_TO_PROCESS_MAP`](PID_TO_PROCESS_MAP.md) are always used together. The `ProcessSnapshot::take` method requires mutable references to both, and the `ProcessSnapshot` struct holds references to both for the duration of its lifetime. The raw pointers inside `SYSTEM_PROCESS_INFORMATION` structures (stored in process entries) point into this buffer, so the buffer **must not** be modified or deallocated while any `ProcessEntry` references are live.
+
+### Why a global static?
+
+The buffer is stored as a global static rather than a local variable to enable buffer reuse across scheduling loop iterations. By retaining the allocated capacity between snapshots, the application avoids repeated large allocations (typically 1–4 MB) on every cycle.
 
 ## Requirements
 
-| | |
-|---|---|
+| Requirement | Value |
+|-------------|-------|
 | **Module** | `process.rs` |
-| **Crate dependencies** | `once_cell`, `ntapi` |
-| **Synchronization** | `std::sync::Mutex` — lock before access |
-| **Privileges** | None beyond those required by the calling [`ProcessSnapshot::take`](ProcessSnapshot.md#processsnapshottake) |
+| **Visibility** | `pub` (but should not be accessed directly; use `ProcessSnapshot`) |
+| **Used by** | [`ProcessSnapshot::take`](ProcessSnapshot.md) |
+| **Dependencies** | `once_cell::sync::Lazy`, `std::sync::Mutex` |
+| **Win32 API** | `NtQuerySystemInformation` (via `ntapi` crate, called by `ProcessSnapshot::take`) |
+| **Platform** | Windows |
 
 ## See Also
 
@@ -49,8 +57,7 @@ The call is then retried in a loop until it succeeds or returns a different NTST
 | ProcessSnapshot struct | [ProcessSnapshot](ProcessSnapshot.md) |
 | PID_TO_PROCESS_MAP static | [PID_TO_PROCESS_MAP](PID_TO_PROCESS_MAP.md) |
 | ProcessEntry struct | [ProcessEntry](ProcessEntry.md) |
-| NtQuerySystemInformation | [Microsoft Learn — NtQuerySystemInformation](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntquerysysteminformation) |
+| process module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

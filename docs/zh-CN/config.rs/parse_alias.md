@@ -1,15 +1,15 @@
 # parse_alias 函数 (config.rs)
 
-解析配置文件中的 `*alias = cpu_spec` 行，将 CPU 规格解析为 CPU 索引列表，并将别名插入到 CPU 别名映射表中。别名为 CPU 集合提供符号名称，可在规则字段中通过 `*alias` 语法引用。
+解析并注册来自配置文件的 `*name = cpu_spec` 别名定义。别名为 CPU 规格提供了命名快捷方式，可以在配置中的其他位置使用 `*name` 语法引用，允许用户一次定义 CPU 拓扑结构并在多个规则中重复使用。
 
 ## 语法
 
-```rust
+```AffinityServiceRust/src/config.rs#L293-313
 fn parse_alias(
     name: &str,
     value: &str,
     line_number: usize,
-    cpu_aliases: &mut HashMap<String, Vec<u32>>,
+    cpu_aliases: &mut HashMap<String, List<[u32; CONSUMER_CPUS]>>,
     result: &mut ConfigResult,
 )
 ```
@@ -18,85 +18,81 @@ fn parse_alias(
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `name` | `&str` | 从前导 `*` 和 `=` 号之间提取的别名名称，已由调用方修剪空白并转换为小写。例如，对于 `*perf = 0-7`，`name` 为 `"perf"`。 |
-| `value` | `&str` | `=` 号右侧的原始 CPU 规格字符串，已由调用方修剪空白。直接传递给 [parse_cpu_spec](parse_cpu_spec.md) 进行解析。 |
-| `line_number` | `usize` | 别名定义在配置文件中的行号（从 1 开始）。用于错误和警告消息。 |
-| `cpu_aliases` | `&mut HashMap<String, Vec<u32>>` | 在配置解析过程中构建的别名映射表的可变引用。解析成功时，已解析的别名将被插入（或覆盖同名的先前条目）。 |
-| `result` | `&mut ConfigResult` | 当前 [ConfigResult](ConfigResult.md) 的可变引用。成功时 `aliases_count` 计数器递增。错误和警告分别推入 `result.errors` 和 `result.warnings`。 |
+| `name` | `&str` | 别名名称（不含前导 `*`），已由调用方转为小写并修剪。例如，对于配置行 `*pcore = 0-7`，调用方传入 `"pcore"`。 |
+| `value` | `&str` | 要与此别名关联的 CPU 规格字符串（例如 `"0-7"`、`"0;4;8"`、`"0xFF"`）。由 [`parse_cpu_spec`](parse_cpu_spec.md) 解析。 |
+| `line_number` | `usize` | 此别名定义在配置文件中出现的从 1 开始的行号。用于错误和警告消息。 |
+| `cpu_aliases` | `&mut HashMap<String, List<[u32; CONSUMER_CPUS]>>` | 可变的别名查找表。新别名作为 `(name, parsed_cpus)` 键值对插入（或覆盖同名的先前定义）。 |
+| `result` | `&mut ConfigResult` | 可变的配置结果累加器。错误会被推送到 `result.errors`；警告推送到 `result.warnings`；成功时 `result.aliases_count` 递增。 |
 
 ## 返回值
 
-此函数没有返回值。结果通过对 `cpu_aliases` 和 `result` 的修改来传达。
+此函数不返回值。副作用应用于 `cpu_aliases` 和 `result`。
 
 ## 备注
 
-### 验证
+### 处理步骤
 
-- **空名称** — 如果 `name` 为空，将向 `result.errors` 推入一条错误消息 `"Line {N}: Empty alias name"`，函数直接返回，不插入任何内容。
-- **空 CPU 集合** — 如果 [parse_cpu_spec](parse_cpu_spec.md) 返回空向量且 `value` 不是字面字符串 `"0"`，将推入一条警告，指出别名解析为空 CPU 集合。别名仍会以空向量被插入；这允许配置文件定义一个占位别名，以禁用引用它的功能。
-
-### 覆盖
-
-如果 `cpu_aliases` 中已存在同名的别名，它将被静默覆盖。重新定义不会生成警告或错误。这允许后面的别名行覆盖先前的定义。
+1. 如果 `name` 为空，则推送一条错误：`"Line {line_number}: Empty alias name"`。
+2. 否则，通过 [`parse_cpu_spec`](parse_cpu_spec.md) 将 `value` 字符串解析为已排序的 CPU 索引列表。
+3. 如果解析后的 CPU 列表为空**且**原始值不是字面字符串 `"0"`，则推送一条警告，指出别名解析为空 CPU 集合。这可区分有意的空操作别名（`*empty = 0`）和解析失败。
+4. 别名以提供的 `name` 作为键插入到 `cpu_aliases` 中。如果已存在同名别名，则被静默覆盖。
+5. `result.aliases_count` 递增 1。
 
 ### 配置文件语法
 
-配置文件中的别名行遵循以下格式：
+别名在配置文件中使用 `*` 前缀定义：
 
-```
-*alias_name = cpu_spec
-```
-
-其中：
-
-- `*` 是标识该行为别名定义的必需前缀标记。
-- `alias_name` 是不区分大小写的标识符（由 [read_config](read_config.md) 中的调用方在解析时转换为小写）。
-- `cpu_spec` 是 [parse_cpu_spec](parse_cpu_spec.md) 接受的任意格式：十六进制掩码 (`0xFF`)、范围 (`0-7`)、分号分隔列表 (`0;4;8`) 或混合格式 (`0-3;8`)。
-
-**示例：**
-
-```
-*perf = 0-7
-*efficiency = 8-15
-*all = 0-15
-*gaming = 0;2;4;6
-*legacy = 0xFF
+```/dev/null/example.ini#L1-3
+*pcore = 0-7
+*ecore = 8-19
+*all = 0-19
 ```
 
-### 别名用法
+然后可以在规则行中引用：
 
-定义后，可通过在别名名称前加 `*` 在规则字段中引用别名：
+```/dev/null/example.ini#L1
+game.exe:high:*pcore:*ecore:0:none:none:0:1
+```
 
-- **CPU 亲和性 / CPU 集合 / 主线程 CPU** — 由 [resolve_cpu_spec](resolve_cpu_spec.md) 解析（例如 `process.exe:high:*perf:*perf`）。
-- **理想处理器规则** — 由 [parse_ideal_processor_spec](parse_ideal_processor_spec.md) 解析（例如 `*perf@engine.dll`）。
+### 名称冲突
 
-### 解析顺序
+如果两个别名定义共享相同名称，后面的定义会覆盖前面的定义，不会产生警告或错误。这允许用户在有条件包含的配置文件部分中重新定义别名。
 
-别名必须在引用它们的规则行之前定义。[read_config](read_config.md) 从上到下处理文件，因此放在文件顶部的别名行对所有后续规则可用。
+### 空别名警告
+
+警告消息遵循以下格式：
+
+```/dev/null/example.txt#L1
+Line {line_number}: Alias '*{name}' has empty CPU set from '{value}'
+```
+
+这会提醒用户，当被引用时该别名实际上是空操作，这很可能是配置错误（例如，范围表达式中的拼写错误）。
+
+### 可见性
+
+此函数是模块私有的（`fn`，非 `pub fn`）。它仅由 [`read_config`](read_config.md) 在逐行解析过程中调用。
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `config` (`src/config.rs`) |
-| **可见性** | 包内私有 |
-| **调用方** | [read_config](read_config.md) |
-| **被调用方** | [parse_cpu_spec](parse_cpu_spec.md) |
-| **API** | 无 Windows API 调用 |
-| **权限** | 无 |
+| 要求 | 值 |
+|------|-----|
+| 模块 | `config.rs` |
+| 可见性 | 私有（包内部） |
+| 调用方 | [`read_config`](read_config.md) |
+| 被调用方 | [`parse_cpu_spec`](parse_cpu_spec.md) |
+| 依赖 | [`collections.rs`](../collections.rs/README.md) 中的 `HashMap`、`List` 和 `CONSUMER_CPUS` |
+| 权限 | 无 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 资源 | 链接 |
 |------|------|
-| CPU 规格解析器 | [parse_cpu_spec](parse_cpu_spec.md) |
-| 支持别名的 CPU 规格解析 | [resolve_cpu_spec](resolve_cpu_spec.md) |
-| 配置文件读取器（调用方） | [read_config](read_config.md) |
-| 常量解析（类似的 `@` 行） | [parse_constant](parse_constant.md) |
-| 理想处理器规格（别名消费者） | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
-| 解析输出聚合 | [ConfigResult](ConfigResult.md) |
-| 模块概述 | [config 模块](README.md) |
+| parse_cpu_spec | [parse_cpu_spec](parse_cpu_spec.md) |
+| resolve_cpu_spec | [resolve_cpu_spec](resolve_cpu_spec.md) |
+| parse_constant | [parse_constant](parse_constant.md) |
+| read_config | [read_config](read_config.md) |
+| ConfigResult | [ConfigResult](ConfigResult.md) |
+| config 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

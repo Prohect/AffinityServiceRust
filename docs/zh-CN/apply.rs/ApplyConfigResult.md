@@ -1,10 +1,10 @@
-# ApplyConfigResult 结构体 (apply.rs)
+# ApplyConfigResult 类型 (apply.rs)
 
-在对进程执行单次配置应用过程中，累积人类可读的变更描述和错误消息。[apply](README.md) 模块中的每个 `apply_*` 函数都接收一个 `&mut ApplyConfigResult`，并将条目推送到其中，而不是直接记录日志，从而为 [main.rs](../main.rs/README.md) 中的调用方提供统一的操作结果视图。
+`ApplyConfigResult` 结构体用于在单个进程的一次配置应用过程中，累积人类可读的变更描述和错误消息。`apply` 模块中的每个函数都接收一个 `ApplyConfigResult` 的可变引用，并向其中追加条目以记录已更改的内容或失败的操作。当所有 apply 函数执行完毕后，调用方检查该结果以输出日志或采取纠正措施。
 
 ## 语法
 
-```AffinityServiceRust/src/apply.rs#L29-33
+```AffinityServiceRust/src/apply.rs#L32-35
 #[derive(Debug, Default)]
 pub struct ApplyConfigResult {
     pub changes: Vec<String>,
@@ -16,43 +16,47 @@ pub struct ApplyConfigResult {
 
 | 成员 | 类型 | 描述 |
 |------|------|------|
-| `changes` | `Vec<String>` | 成功应用于进程或其线程的修改。每个条目是一段简短的、人类可读的描述，例如 `"Priority: Normal -> High"` 或 `"Thread 1234 -> (promoted, [4,5], cycles=98000, start=ntdll.dll)"`。调用方在将这些内容写入日志之前，会加上进程 ID 和名称前缀。 |
-| `errors` | `Vec<String>` | 应用过程中遇到的错误。条目格式为 `"fn_name: [OPERATION][error_message] details"`。只有*新*错误（即之前未针对相同 pid/操作/错误码三元组记录过的错误）才会被添加，因为所有 `apply_*` 函数在调用 `add_error` 之前都会经过 [log_error_if_new](log_error_if_new.md) 过滤。 |
+| `changes` | `Vec<String>` | 一个人类可读字符串列表，描述每个成功应用（或在 dry-run 模式下将会应用）的配置变更。每个条目遵循 `"$operation details"` 的格式，调用方会在前面添加进程 ID 和配置名称作为前缀。 |
+| `errors` | `Vec<String>` | 一个人类可读字符串列表，描述应用过程中发生的每个错误。每个条目遵循 `"$fn_name: [$operation][$error_message] details"` 的格式。错误通过 [`log_error_if_new`](log_error_if_new.md) 在调用端进行去重，因此同一 pid/operation/error-code 的重复失败不会被重复添加。 |
 
 ## 方法
 
 | 方法 | 签名 | 描述 |
 |------|------|------|
-| `new` | `pub fn new() -> Self` | 创建一个空的结果。等价于 `Self::default()`。 |
-| `add_change` | `pub fn add_change(&mut self, change: String)` | 将一条变更描述推入 `changes` 向量。 |
-| `add_error` | `pub fn add_error(&mut self, error: String)` | 将一条错误描述推入 `errors` 向量。 |
-| `is_empty` | `pub fn is_empty(&self) -> bool` | 当 `changes` 和 `errors` 都为空时返回 `true`，允许调用方在没有任何变更时跳过日志记录。 |
+| `new` | `pub fn new() -> Self` | 创建一个新的空 `ApplyConfigResult`。委托给 `Default::default()`。 |
+| `add_change` | `pub fn add_change(&mut self, change: String)` | 将一个变更描述字符串追加到 `changes` 向量中。标记为 `#[inline(always)]`。 |
+| `add_error` | `pub fn add_error(&mut self, error: String)` | 将一个错误描述字符串追加到 `errors` 向量中。标记为 `#[inline(always)]`。 |
+| `is_empty` | `pub fn is_empty(&self) -> bool` | 当 `changes` 和 `errors` 都为空时返回 `true`，表示没有执行任何操作且没有发生失败。 |
 
 ## 备注
 
-`ApplyConfigResult` 在 [apply_config_process_level](../main.rs/apply_config_process_level.md) 和 [apply_config_thread_level](../main.rs/apply_config_thread_level.md) 中每次应用周期为每个进程创建一次。当所有 `apply_*` 调用返回后，调用方通过检查 `is_empty()` 来决定是否输出日志行。变更和错误会一起打印，为运维人员提供每个进程每个周期的单条汇总摘要。
-
-该结构体刻意使用 `String` 而非结构化的错误类型。这使得 apply 函数保持简洁——它们在调用点格式化上下文信息（pid、线程 ID、操作、Win32 错误消息）——并避免日志层与特定的错误枚举产生耦合。
-
-`#[derive(Default)]` 实现会生成一个包含两个空 `Vec` 的实例，因此 `new()` 只是一个为可读性而提供的薄包装。
+- `ApplyConfigResult` 派生了 `Debug` 和 `Default`。`Default` 实现生成一个包含两个空 `Vec` 的实例，与调用 `new()` 完全相同。
+- 该结构体本身不是线程安全的；调用方在单个进程的顺序 apply 流水线中以 `&mut ApplyConfigResult` 的形式传递它。
+- 变更字符串设计为由调用方拼接进程标识前缀（例如 `"{pid:>5}::{config.name}::"`）。`apply` 函数本身**不**包含该前缀。
+- 错误字符串是自包含的，包含产生错误的函数名、失败的 Windows API 操作以及解码后的错误码，可直接用于日志记录。
+- 调用方使用 `is_empty` 方法来避免在进程已处于期望状态时输出空的日志条目。
 
 ## 要求
 
 | 要求 | 值 |
 |------|-----|
-| 模块 | `apply` |
-| 调用方 | [apply_config_process_level](../main.rs/apply_config_process_level.md)、[apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
-| 传递给 | [apply](README.md) 中的每个 `apply_*` 函数 |
+| 模块 | `apply.rs` |
+| Crate | `AffinityServiceRust` |
+| 依赖 | 仅标准库 (`Vec<String>`) |
+| 调用方 | 模块中所有 `apply_*` 函数；`scheduler.rs` 和 `main.rs` 中的编排代码 |
+| 平台 | Windows（内容是平台特定的，但结构体本身与平台无关） |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 参考 | 链接 |
 |------|------|
-| apply 模块概述 | [apply](README.md) |
-| 错误去重辅助函数 | [log_error_if_new](log_error_if_new.md) |
-| 进程级编排 | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
-| 线程级编排 | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
+| apply 模块概述 | [`README`](README.md) |
+| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
+| apply_priority | [`apply_priority`](apply_priority.md) |
+| apply_affinity | [`apply_affinity`](apply_affinity.md) |
+| apply_io_priority | [`apply_io_priority`](apply_io_priority.md) |
+| apply_memory_priority | [`apply_memory_priority`](apply_memory_priority.md) |
+| ProcessLevelConfig | [`config.rs/ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

@@ -1,14 +1,14 @@
-# PrimePrefix 结构体 (config.rs)
+# PrimePrefix 类型 (config.rs)
 
-表示一个模块名前缀过滤器，结合可选的 CPU 集合覆盖和线程优先级提升，用于 prime 线程调度。当 prime 线程调度器识别出一个热线程时，会将该线程的起始地址模块名与 `prefix` 字段进行匹配。如果前缀匹配（或为空，表示"匹配所有"），则该线程将被固定到 `cpus` 中指定的 CPU 上，并可选地将优先级提升至 `thread_priority`。
+`PrimePrefix` 结构体将线程启动模块前缀字符串与可选的 CPU 索引集合和线程优先级覆盖值关联。它在 [`ThreadLevelConfig`](ThreadLevelConfig.md) 中使用，用于控制当主线程的启动模块与给定前缀匹配时，应分配哪些 CPU，以及可选地提升或降低这些线程的调度优先级。
 
 ## 语法
 
-```rust
+```AffinityServiceRust/src/config.rs#L17-21
 #[derive(Debug, Clone)]
 pub struct PrimePrefix {
     pub prefix: String,
-    pub cpus: Option<Vec<u32>>,
+    pub cpus: Option<List<[u32; CONSUMER_CPUS]>>,
     pub thread_priority: ThreadPriority,
 }
 ```
@@ -17,59 +17,53 @@ pub struct PrimePrefix {
 
 | 成员 | 类型 | 描述 |
 |------|------|------|
-| `prefix` | `String` | 用于按线程起始地址过滤线程的模块名前缀。空字符串匹配所有线程。匹配不区分大小写，与线程起始地址解析出的模块名进行比较（例如 `"engine.dll"`）。 |
-| `cpus` | `Option<Vec<u32>>` | 可选的按前缀 CPU 集合覆盖。当为 `Some` 时，匹配的线程将被固定到这些特定的 CPU 索引上，而非父规则的 `prime_threads_cpus`。当为 `None` 时，使用父规则的 CPU 列表。 |
-| `thread_priority` | `ThreadPriority` | 应用于匹配的 prime 线程的线程优先级。`ThreadPriority::None` 表示不更改优先级（保留操作系统自动提升行为）。非 `None` 值（例如 `AboveNormal`、`Highest`）通过 `SetThreadPriority` 显式设置线程的调度优先级。 |
+| `prefix` | `String` | 不区分大小写的线程启动模块名称前缀，用于匹配（例如 `"engine.dll"`、`"render"`）。空字符串表示匹配所有线程，不考虑其启动模块。 |
+| `cpus` | `Option<List<[u32; CONSUMER_CPUS]>>` | 可选的 CPU 索引列表，匹配此前缀的线程应被调度到这些 CPU 上。当为 `Some` 时，覆盖父规则的基础 `prime_threads_cpus`。当为 `None` 时，线程继承包含它的 [`ThreadLevelConfig`](ThreadLevelConfig.md) 的基础 CPU 集合。 |
+| `thread_priority` | `ThreadPriority` | 应用于匹配线程的可选线程级优先级。`ThreadPriority::None` 表示不修改优先级（保留自动提升行为）。通过配置语法中的 `!priority` 后缀设置（例如 `engine.dll!above normal`）。 |
 
 ## 备注
 
-`PrimePrefix` 条目在 [parse_and_insert_rules](parse_and_insert_rules.md) 的规则解析过程中构造，当 prime 线程字段包含 `@` 分隔的前缀规格时触发。
-
 ### 配置语法
 
-prime 线程字段（规则行中的第 4 个字段）支持以下形式的前缀限定规格：
+在配置文件中，`PrimePrefix` 值在规则行的主线程字段（字段 4）中指定。一般语法为：
 
+```/dev/null/example.ini#L1-3
+process.exe:normal:0:0:*alias@prefix1;prefix2!priority:none:none:0:1
 ```
-*alias@prefix1;prefix2!priority*alias2@prefix3
-```
 
-其中：
+`@prefix` 部分按 `;` 分割，为每个条目生成一个 `PrimePrefix`。`!priority` 后缀是可选的，通过 `ThreadPriority::from_str` 解析。
 
-- `*alias` 引用通过 `*alias = cpu_spec` 定义的 CPU 别名。
-- `@prefix1;prefix2` 列出以分号分隔的模块名前缀。
-- `!priority` 可选地为特定前缀附加线程优先级（例如 `engine.dll!highest`）。
+### 多段前缀规则
 
-例如，规格 `*p@engine.dll;render.dll!above normal*e@audio.dll` 将产生三个 `PrimePrefix` 条目：
+当多个 `*alias@prefix` 段被链接在一起时（例如 `*p@engine.dll*e@helper.dll`），每个段会生成自己的 `PrimePrefix` 实例集合，并将对应别名的 CPU 存储在 `cpus` 中。这允许不同组的线程根据其启动模块被调度到不同的 CPU 集合上。
 
-1. `{ prefix: "engine.dll", cpus: Some(<p cpus>), thread_priority: None }`
-2. `{ prefix: "render.dll", cpus: Some(<p cpus>), thread_priority: AboveNormal }`
-3. `{ prefix: "audio.dll", cpus: Some(<e cpus>), thread_priority: None }`
+### 默认行为
 
-当 prime 线程字段中没有 `@` 时，会创建一个具有空前缀和 `cpus: None` 的单个 `PrimePrefix`，表示所有线程都符合条件，并使用父规则的 CPU 列表。
+当规则指定了主线程 CPU 但没有任何 `@prefix` 过滤时，会创建一个 `PrimePrefix`，其 `prefix` 为空（匹配所有线程），`cpus` 设为 `None`（从父级继承），`thread_priority` 设为 `ThreadPriority::None`（不覆盖）。
 
-### 线程匹配
+### 生命周期
 
-在运行时，apply 模块将每个线程的起始地址解析为模块名，并使用不区分大小写的前缀匹配与 `prefix` 字段进行比较。空 `prefix` 充当通配符。
+`PrimePrefix` 实例在配置解析期间由 [`parse_and_insert_rules`](parse_and_insert_rules.md) 创建，并存储在 [`ThreadLevelConfig`](ThreadLevelConfig.md) 中。它们在运行时被 [`PrimeThreadScheduler`](../scheduler.rs/README.md) 使用，用于决定哪些线程具有"主线程"资格以及如何调度它们。
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `config` (`src/config.rs`) |
-| **构造者** | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| **消费者** | [apply_prime_threads](../apply.rs/apply_prime_threads.md)、[apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) |
-| **父结构体** | [ProcessConfig](ProcessConfig.md)（字段 `prime_threads_prefixes`） |
+| 要求 | 值 |
+|------|-----|
+| 模块 | `config.rs` |
+| 构造方式 | [`parse_and_insert_rules`](parse_and_insert_rules.md) |
+| 包含于 | [`ThreadLevelConfig`](ThreadLevelConfig.md)（字段 `prime_threads_prefixes`） |
+| 使用方 | `PrimeThreadScheduler`（见 [scheduler.rs](../scheduler.rs/README.md)） |
+| 派生 | `Debug`、`Clone` |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 资源 | 链接 |
 |------|------|
-| 每进程配置记录 | [ProcessConfig](ProcessConfig.md) |
-| 规则解析和前缀提取 | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| Prime 线程应用逻辑 | [apply_prime_threads](../apply.rs/apply_prime_threads.md) |
-| 线程优先级枚举 | [ThreadPriority](../priority.rs/ThreadPriority.md) |
-| CPU 别名解析 | [parse_alias](parse_alias.md) |
+| ThreadLevelConfig | [ThreadLevelConfig](ThreadLevelConfig.md) |
+| IdealProcessorRule | [IdealProcessorRule](IdealProcessorRule.md) |
+| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| priority 模块 | [priority.rs 概述](../priority.rs/README.md) |
+| config 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

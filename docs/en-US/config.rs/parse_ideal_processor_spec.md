@@ -1,14 +1,14 @@
 # parse_ideal_processor_spec function (config.rs)
 
-Parses an ideal processor specification string into a vector of [IdealProcessorRule](IdealProcessorRule.md) entries. The specification format uses `*alias` segments to reference CPU aliases, with optional `@prefix` suffixes to filter which threads receive ideal processor assignment based on their start-address module name.
+Parses an ideal-processor specification string into a list of [`IdealProcessorRule`](IdealProcessorRule.md) entries. Each rule maps a set of CPU indices (resolved from an alias) to optional module-name prefixes that filter which threads receive ideal-processor assignments. The specification supports chaining multiple segments to assign different CPU sets to threads based on their start module.
 
 ## Syntax
 
-```rust
+```AffinityServiceRust/src/config.rs#L323-384
 fn parse_ideal_processor_spec(
     spec: &str,
     line_number: usize,
-    cpu_aliases: &HashMap<String, Vec<u32>>,
+    cpu_aliases: &HashMap<String, List<[u32; CONSUMER_CPUS]>>,
     errors: &mut Vec<String>,
 ) -> Vec<IdealProcessorRule>
 ```
@@ -17,113 +17,114 @@ fn parse_ideal_processor_spec(
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `spec` | `&str` | The ideal processor specification string from field 7 of a rule line. Must start with `*` unless it is `"0"` or empty. Leading and trailing whitespace is trimmed. |
-| `line_number` | `usize` | 1-based line number in the configuration file. Used in error messages to help the user locate problems. |
-| `cpu_aliases` | `&HashMap<String, Vec<u32>>` | Map of previously defined CPU aliases, keyed by lowercased alias name (without the `*` prefix). Built by earlier [parse_alias](parse_alias.md) calls during the parse pass. |
-| `errors` | `&mut Vec<String>` | Mutable reference to the error accumulator. Errors for undefined aliases, empty alias names, or specs that do not start with `*` are pushed here. |
+| `spec` | `&str` | The ideal-processor specification string. Must start with `*` to indicate alias-based rules. The special value `"0"` or an empty string means no ideal-processor assignment. Leading and trailing whitespace is trimmed. |
+| `line_number` | `usize` | The 1-based line number in the configuration file. Used in error messages to help the user locate problems. |
+| `cpu_aliases` | `&HashMap<String, List<[u32; CONSUMER_CPUS]>>` | The alias lookup table populated by earlier `*name = cpu_spec` lines. Keys are lowercase alias names without the leading `*`. |
+| `errors` | `&mut Vec<String>` | A mutable reference to the error accumulator. Errors are pushed when the spec does not start with `*`, when an alias name is empty, or when a referenced alias is not defined. |
 
 ## Return value
 
-Returns a `Vec<IdealProcessorRule>`. Each element maps a set of CPU indices to an optional list of module-name prefix filters.
+Type: `Vec<IdealProcessorRule>`
+
+A vector of [`IdealProcessorRule`](IdealProcessorRule.md) entries. Each rule contains:
+- `cpus`: A list of CPU indices resolved from the alias.
+- `prefixes`: A list of lowercase module-name prefixes that restrict which threads the rule applies to. An empty vector means the rule applies to all threads.
 
 Returns an empty vector when:
-
-- `spec` is empty or contains only whitespace.
-- `spec` is `"0"` (the canonical "disabled" sentinel).
-- `spec` does not start with `*` (an error is also pushed).
-- All referenced aliases resolve to empty CPU sets (segments with empty CPU lists are silently skipped).
+- `spec` is empty or `"0"` (no ideal-processor assignment requested).
+- `spec` does not start with `*` (an error is recorded).
+- All segments resolve to empty CPU sets (segments with empty CPU sets are silently skipped).
 
 ## Remarks
 
 ### Specification format
 
-The spec string consists of one or more `*`-delimited segments:
+The general format is one or more `*`-delimited segments:
 
+```/dev/null/syntax.txt#L1-3
+*alias[@prefix1;prefix2;...]
+*alias1[@prefix1]*alias2[@prefix2;prefix3]
 ```
-*alias[@prefix1;prefix2]*alias2[@prefix3;prefix4]
-```
-
-Each segment has the following structure:
 
 | Component | Required | Description |
 |-----------|----------|-------------|
-| `*` | Yes | Segment delimiter and alias marker. The spec must start with `*`. |
-| `alias` | Yes | A CPU alias name (case-insensitive). Looked up in `cpu_aliases` after lowercasing. Must have been defined earlier in the config file with `*alias = cpu_spec`. |
-| `@` | No | Separator between the alias name and the prefix filter list. When absent, the rule applies to all threads. |
-| `prefix1;prefix2` | No | Semicolon-separated list of module-name prefixes. Each prefix is trimmed, lowercased, and stored in the resulting [IdealProcessorRule](IdealProcessorRule.md)`.prefixes` vector. |
+| `*` | Yes | Prefix marker that begins each rule segment. |
+| `alias` | Yes | A CPU alias name (case-insensitive) that must be defined in the `[ALIAS]` section of the config file. |
+| `@` | No | Separator between the alias name and the prefix filter list. |
+| `prefix1;prefix2` | No | Semicolon-separated list of module-name prefixes. When present, only threads whose start module begins with one of these strings are eligible for ideal-processor assignment from this rule. |
 
 ### Parsing algorithm
 
-1. **Trim and early-exit** — The spec is trimmed. If empty or equal to `"0"`, return an empty vector immediately.
-2. **Prefix validation** — If the spec does not start with `*`, push an error and return an empty vector.
-3. **Segment splitting** — Split on `*` and skip the first (empty) element produced by the leading `*`.
-4. **Per-segment processing:**
-   a. Skip empty segments (produced by consecutive `**`).
-   b. Split on `@` to separate the alias part from the optional prefixes part.
-   c. Lowercase the alias name and look it up in `cpu_aliases`.
-   d. If the alias is unknown, push an error and use an empty CPU vector.
-   e. If the resolved CPU vector is empty, skip the segment (no rule is emitted).
-   f. Split the prefixes part on `;`, trim and lowercase each entry, and filter out empty strings.
-   g. Construct an [IdealProcessorRule](IdealProcessorRule.md) with the resolved `cpus` and `prefixes`, and push it onto the result vector.
+1. The input is trimmed. If empty or `"0"`, an empty vector is returned immediately.
+2. If the string does not start with `*`, an error is pushed and an empty vector is returned.
+3. The string is split on `*` (the first empty element from the leading `*` is skipped).
+4. For each non-empty segment:
+   a. If the segment contains `@`, it is split into an alias part (before `@`) and a prefixes part (after `@`).
+   b. If no `@` is present, the entire segment is the alias name and the prefix list is empty.
+   c. The alias name is trimmed, lowercased, and looked up in `cpu_aliases`.
+   d. If the alias is empty, an error is pushed and the segment is skipped.
+   e. If the alias is not found in the map, an error is pushed and an empty CPU list is used.
+   f. If the resolved CPU list is empty, the segment is silently skipped (no rule is created).
+   g. The prefixes string is split on `;`, trimmed, lowercased, and filtered for non-empty entries.
+   h. An `IdealProcessorRule { cpus, prefixes }` is created and pushed to the result vector.
 
-### Error conditions
+### Multi-segment chaining
 
-| Condition | Error message format | Behavior |
-|-----------|---------------------|----------|
-| Spec does not start with `*` | `"Line {N}: Ideal processor spec must start with '*', got '{spec}'"` | Returns empty vector. |
-| Empty alias name in a segment | `"Line {N}: Empty alias in ideal processor rule '*{segment}'"` | Segment is skipped; parsing continues. |
-| Undefined alias name | `"Line {N}: Unknown CPU alias '*{alias}' in ideal processor specification"` | Segment produces an empty CPU vector and is skipped; parsing continues. |
+Multiple segments can be chained to assign different CPU sets to different groups of threads. For example:
 
-### Examples
+```/dev/null/example.ini#L1
+*p@engine.dll;render.dll*e@helper.dll
+```
 
-Given aliases `{ "p": [0, 1, 2, 3], "e": [4, 5, 6, 7] }`:
+This produces two rules:
+1. Threads whose start module begins with `engine.dll` or `render.dll` → CPUs from alias `p`.
+2. Threads whose start module begins with `helper.dll` → CPUs from alias `e`.
 
-| Spec string | Result | Notes |
-|-------------|--------|-------|
-| `"0"` | `[]` | Disabled. |
-| `""` | `[]` | Disabled. |
-| `"*p"` | `[IdealProcessorRule { cpus: [0,1,2,3], prefixes: [] }]` | All threads → CPUs 0–3. |
-| `"*p@engine.dll"` | `[IdealProcessorRule { cpus: [0,1,2,3], prefixes: ["engine.dll"] }]` | Only `engine.dll` threads → CPUs 0–3. |
-| `"*p@engine.dll;render.dll*e@audio.dll"` | Two rules: `engine.dll`/`render.dll` → `p`, `audio.dll` → `e`. | Multiple segments chained. |
-| `"*p@*e"` | `[{ cpus: [0..3], prefixes: [] }, { cpus: [4..7], prefixes: [] }]` | No `@` in second segment — `e` is the alias name; no prefix filter. |
-| `"*unknown"` | `[]` | Error pushed for undefined alias; empty CPUs cause segment to be skipped. |
-| `"0-7"` | `[]` | Error pushed (does not start with `*`). |
+### Catch-all rules
 
-### Interaction with rule parsing
+A segment without an `@` prefix filter creates a catch-all rule that applies to all threads:
 
-`parse_ideal_processor_spec` is called from [parse_and_insert_rules](parse_and_insert_rules.md) when processing field 7 of a rule line. The returned vector is stored directly in [ProcessConfig](ProcessConfig.md)`.ideal_processor_rules`. If field 7 can be parsed as a plain integer (grade), it is not interpreted as an ideal processor spec — the function is only called when the field starts with `*` or cannot be parsed as a grade.
+```/dev/null/example.ini#L1
+*pN01
+```
 
-### Runtime application
+This produces one rule with an empty `prefixes` vector, meaning all threads in the process are eligible.
 
-At apply time, the [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) function iterates over the returned rules. For each rule, it walks the process's threads, checks each thread's start-address module name against `prefixes` (or matches all threads if `prefixes` is empty), and assigns ideal processors by round-robining through `cpus` using `SetThreadIdealProcessorEx`.
+### Edge cases
 
-### Empty prefixes vs. no prefixes
+| Input | Result | Notes |
+|-------|--------|-------|
+| `""` or `"0"` | `[]` | No ideal-processor assignment. |
+| `"7"` (no leading `*`) | `[]` + error | Spec must start with `*`. |
+| `"*undefined_alias"` | `[]` | Error pushed; alias not found, empty CPU set, segment skipped. |
+| `"**"` | `[]` | Both segments have empty alias names; errors pushed, segments skipped. |
+| `"*p@"` | Rule with `cpus` from `p`, empty `prefixes` | The `@` is present but no prefixes follow; the prefix filter is effectively empty (catch-all). |
 
-An [IdealProcessorRule](IdealProcessorRule.md) with an empty `prefixes` vector means "match all threads." This is distinct from a rule that was skipped entirely (which produces no entry in the vector at all). The empty-prefixes case arises when a segment has no `@` delimiter — e.g., `*p` creates a rule that applies to every thread in the process.
+### Visibility
+
+This function is module-private (`fn`, not `pub fn`) and is only called from within `config.rs`.
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `config` (`src/config.rs`) |
-| **Visibility** | Crate-private |
-| **Called by** | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| **Callees** | None (alias lookup via `HashMap::get`) |
-| **API** | Pure function — no I/O, no Windows API calls |
-| **Privileges** | None |
+| Requirement | Value |
+|-------------|-------|
+| Module | `config.rs` |
+| Visibility | Private (crate-internal) |
+| Callers | [`parse_and_insert_rules`](parse_and_insert_rules.md) |
+| Callees | `HashMap::get`, `str::split`, `str::find`, `str::trim`, `str::to_lowercase` |
+| Dependencies | [`IdealProcessorRule`](IdealProcessorRule.md), `List` and `CONSUMER_CPUS` from [`collections.rs`](../collections.rs/README.md) |
+| Privileges | None |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Ideal processor rule struct | [IdealProcessorRule](IdealProcessorRule.md) |
-| Rule field parsing (caller) | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| CPU alias definition | [parse_alias](parse_alias.md) |
-| Alias-aware CPU spec resolution | [resolve_cpu_spec](resolve_cpu_spec.md) |
-| Per-process configuration | [ProcessConfig](ProcessConfig.md) |
-| Ideal processor application at runtime | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
-| Config module overview | [README](README.md) |
+| Resource | Link |
+|----------|------|
+| IdealProcessorRule | [IdealProcessorRule](IdealProcessorRule.md) |
+| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| resolve_cpu_spec | [resolve_cpu_spec](resolve_cpu_spec.md) |
+| parse_alias | [parse_alias](parse_alias.md) |
+| ThreadLevelConfig | [ThreadLevelConfig](ThreadLevelConfig.md) |
+| config module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

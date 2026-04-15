@@ -1,6 +1,6 @@
 # get_thread_handle function (winapi.rs)
 
-Opens a thread with multiple access levels and returns a [ThreadHandle](ThreadHandle.md) RAII container. The function requires `THREAD_QUERY_LIMITED_INFORMATION` as the minimum access right; if this fails, the function returns `None`. The remaining three access levels (`THREAD_QUERY_INFORMATION`, `THREAD_SET_LIMITED_INFORMATION`, `THREAD_SET_INFORMATION`) are attempted but their failure is non-fatal — the corresponding handle fields are set to invalid handles.
+Opens multiple thread handles with varying access levels for a given thread ID (TID), returning a [`ThreadHandle`](ThreadHandle.md) RAII wrapper. The `r_limited_handle` (query-limited) is required; if it cannot be obtained, the function returns `None`. The remaining handles (`r_handle`, `w_limited_handle`, `w_handle`) are attempted but may be invalid if the caller lacks sufficient privileges.
 
 ## Syntax
 
@@ -12,71 +12,73 @@ pub fn get_thread_handle(tid: u32, pid: u32, process_name: &str) -> Option<Threa
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `tid` | `u32` | The thread identifier of the thread to open. |
-| `pid` | `u32` | The process identifier that owns the thread. Used only for error logging and deduplication via `is_new_error`. |
-| `process_name` | `&str` | The image name of the owning process (e.g., `"explorer.exe"`). Used only for error logging and deduplication via `is_new_error`. |
+| `tid` | `u32` | The thread identifier of the target thread. |
+| `pid` | `u32` | The process identifier that owns the thread. Used for error tracking via [`is_new_error`](../logging.rs/is_new_error.md). |
+| `process_name` | `&str` | The name of the owning process. Used for error tracking and diagnostic logging. |
 
 ## Return value
 
-| Value | Description |
-|-------|-------------|
-| `Some(ThreadHandle)` | A [ThreadHandle](ThreadHandle.md) whose `r_limited_handle` is guaranteed valid. The `r_handle`, `w_limited_handle`, and `w_handle` fields may be invalid handles if the corresponding `OpenThread` calls failed. |
-| `None` | The `THREAD_QUERY_LIMITED_INFORMATION` open failed or returned an invalid handle. An error is logged via `log_to_find` on the first occurrence for this PID/TID/operation combination. |
+Returns `Some(ThreadHandle)` if the required `THREAD_QUERY_LIMITED_INFORMATION` handle was opened successfully. Returns `None` if the required handle could not be obtained.
+
+The returned [`ThreadHandle`](ThreadHandle.md) contains:
+
+| Field | Access Right | Required |
+|-------|-------------|----------|
+| `r_limited_handle` | `THREAD_QUERY_LIMITED_INFORMATION` | **Yes** — always valid when `Some` is returned. |
+| `r_handle` | `THREAD_QUERY_INFORMATION` | No — may be `HANDLE::default()` (invalid) on failure. |
+| `w_limited_handle` | `THREAD_SET_LIMITED_INFORMATION` | No — may be `HANDLE::default()` (invalid) on failure. |
+| `w_handle` | `THREAD_SET_INFORMATION` | No — may be `HANDLE::default()` (invalid) on failure. |
+
+All valid handles are automatically closed when the `ThreadHandle` is dropped.
 
 ## Remarks
 
-### Handle acquisition strategy
+The function opens handles incrementally using the Windows `OpenThread` API:
 
-The function opens four handles in sequence, each requesting a different access right:
+1. **`r_limited_handle`** — Opened with `THREAD_QUERY_LIMITED_INFORMATION`. This is the only required handle. If it fails or returns an invalid handle, the function logs the failure via [`log_to_find`](../logging.rs/log_to_find.md) (subject to [`is_new_error`](../logging.rs/is_new_error.md) deduplication) and returns `None`.
 
-| Order | Access right | Field | Required |
-|-------|-------------|-------|----------|
-| 1 | `THREAD_QUERY_LIMITED_INFORMATION` | `r_limited_handle` | **Yes** — failure returns `None` |
-| 2 | `THREAD_QUERY_INFORMATION` | `r_handle` | No — invalid handle on failure |
-| 3 | `THREAD_SET_LIMITED_INFORMATION` | `w_limited_handle` | No — invalid handle on failure |
-| 4 | `THREAD_SET_INFORMATION` | `w_handle` | No — invalid handle on failure |
+2. **`r_handle`** — Opened with `THREAD_QUERY_INFORMATION` via [`try_open_thread`](try_open_thread.md) (internal_op_code `1`). Failure is silent; an invalid handle is stored.
 
-The first handle is opened directly via `OpenThread`. The remaining three are opened through the helper function [try_open_thread](try_open_thread.md), which returns `HANDLE::default()` (an invalid handle) on failure instead of propagating an error.
+3. **`w_limited_handle`** — Opened with `THREAD_SET_LIMITED_INFORMATION` via [`try_open_thread`](try_open_thread.md) (internal_op_code `2`). Failure is silent; an invalid handle is stored.
 
-### Error logging
+4. **`w_handle`** — Opened with `THREAD_SET_INFORMATION` via [`try_open_thread`](try_open_thread.md) (internal_op_code `3`). Failure is silent; an invalid handle is stored.
 
-Each failed `OpenThread` call is checked against the per-process/thread error deduplication system (`is_new_error`). Only the first failure for a given `(pid, tid, operation, error_code)` tuple is logged to the find log. The `internal_op_code` mapping is:
+### Error code mapping for `is_new_error`
 
-| Code | Meaning |
-|------|---------|
-| `0` | `THREAD_QUERY_LIMITED_INFORMATION` (fatal) |
+| `internal_op_code` | Meaning |
+|--------------------|---------|
+| `0` | `THREAD_QUERY_LIMITED_INFORMATION` open failure or invalid handle |
 | `1` | `THREAD_QUERY_INFORMATION` |
 | `2` | `THREAD_SET_LIMITED_INFORMATION` |
 | `3` | `THREAD_SET_INFORMATION` |
 
-### RAII cleanup
+Non-required handle failures (codes 1–3) are currently commented out in the source for [`try_open_thread`](try_open_thread.md) and do not generate log output.
 
-The returned [ThreadHandle](ThreadHandle.md) implements `Drop`. When dropped, it unconditionally closes `r_limited_handle` and conditionally closes each of the other three handles only if they are not invalid.
+### Platform notes
 
-### Caller expectations
-
-Callers that need to set thread properties (ideal processor, CPU sets, thread priority) should check whether `w_handle` or `w_limited_handle` is valid before attempting write operations. The [apply module](../apply.rs/README.md) and [scheduler module](../scheduler.rs/README.md) routinely handle the case where only limited-access handles are available.
+- **Windows only.** Uses `OpenThread` from `windows::Win32::System::Threading`.
+- Requires the caller to have appropriate privileges. Running as administrator with [`SeDebugPrivilege`](enable_debug_privilege.md) enabled maximizes the chance of obtaining all four handles.
+- Protected processes and system threads may deny even `THREAD_QUERY_LIMITED_INFORMATION` access.
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `winapi` (`src/winapi.rs`) |
-| **Callers** | [scheduler module](../scheduler.rs/README.md) (`ThreadStats` handle acquisition), [apply module](../apply.rs/README.md) (thread-level operations) |
-| **Callees** | `OpenThread` (Windows API), [try_open_thread](try_open_thread.md), `is_new_error`, `log_to_find`, `error_from_code_win32` |
-| **API** | `Win32::System::Threading::OpenThread` |
-| **Privileges** | `SeDebugPrivilege` recommended for cross-process thread access to protected processes |
+| Requirement | Value |
+|-------------|-------|
+| **Module** | `winapi.rs` |
+| **Callers** | `apply.rs`, `scheduler.rs` |
+| **Callees** | [`try_open_thread`](try_open_thread.md), [`is_new_error`](../logging.rs/is_new_error.md), [`log_to_find`](../logging.rs/log_to_find.md), [`error_from_code_win32`](../error_codes.rs/error_from_code_win32.md) |
+| **Win32 API** | `OpenThread`, `GetLastError` |
+| **Privileges** | `SeDebugPrivilege` recommended |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| Thread handle container | [ThreadHandle](ThreadHandle.md) |
-| Helper for non-required handle opens | [try_open_thread](try_open_thread.md) |
-| Process handle acquisition | [get_process_handle](get_process_handle.md) |
-| Process handle container | [ProcessHandle](ProcessHandle.md) |
-| Error deduplication system | [logging module](../logging.rs/README.md) |
+| ThreadHandle struct | [ThreadHandle](ThreadHandle.md) |
+| try_open_thread helper | [try_open_thread](try_open_thread.md) |
+| get_process_handle | [get_process_handle](get_process_handle.md) |
+| Operation enum | [Operation](../logging.rs/Operation.md) |
+| is_new_error | [is_new_error](../logging.rs/is_new_error.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

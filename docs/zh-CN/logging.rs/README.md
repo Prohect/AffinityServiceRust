@@ -1,67 +1,59 @@
 # logging 模块 (AffinityServiceRust)
 
-`logging` 模块提供 AffinityServiceRust 的所有日志基础设施，包括带时间戳的文件和控制台输出、find 模式下的进程发现日志，以及错误报告的去重系统。它管理基于日期命名的日志文件创建，维护日志路由的全局状态（控制台与文件、dust-bin 抑制），并跟踪每个 PID 的操作失败，使重复错误在每个会话中仅记录一次。该模块公开了直接日志记录函数和用于锁保护访问其全局静态变量的便捷宏。
-
-## 静态变量
-
-| 静态变量 | 描述 |
-|----------|------|
-| [FINDS_SET](FINDS_SET.md) | 去重集合，记录当前会话中在 `-find` 模式下已记录的进程名称。 |
-| [USE_CONSOLE](USE_CONSOLE.md) | 控制日志输出是发送到控制台（`true`）还是日志文件（`false`）的标志。 |
-| [DUST_BIN_MODE](DUST_BIN_MODE.md) | 当为 `true` 时抑制所有日志输出的标志；用于 UAC 提升之前，以避免写入非特权进程无权拥有的文件。 |
-| [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) | 缓存的 `DateTime<Local>`，用于日志时间戳和基于日期的日志文件命名。 |
-| [LOG_FILE](LOG_FILE.md) | 主日志文件句柄，以追加模式打开在 `logs/YYYYMMDD.log`。 |
-| [FIND_LOG_FILE](FIND_LOG_FILE.md) | find 模式日志文件句柄，以追加模式打开在 `logs/YYYYMMDD.find.log`。 |
-| [FINDS_FAIL_SET](FINDS_FAIL_SET.md) | 用于失败查找操作的去重集合，防止重复记录相同的失败。 |
-| [PID_MAP_FAIL_ENTRY_SET](PID_MAP_FAIL_ENTRY_SET.md) | 每 PID 的 [ApplyFailEntry](ApplyFailEntry.md) 记录映射，用于去重 Windows API 操作错误。 |
-
-## 宏
-
-| 宏 | 描述 |
-|----|------|
-| [log!](log.md) | 格式化参数并委托给 [log_message](log_message.md)，带时间戳前缀。 |
-| [get_use_console!](get_use_console.md) | 返回 [USE_CONSOLE](USE_CONSOLE.md) 标志的 `MutexGuard<bool>`。 |
-| [get_dust_bin_mod!](get_dust_bin_mod.md) | 返回 [DUST_BIN_MODE](DUST_BIN_MODE.md) 标志的 `MutexGuard<bool>`。 |
-| [get_local_time!](get_local_time.md) | 返回 [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) 的 `MutexGuard<DateTime<Local>>`。 |
-| [get_logger!](get_logger.md) | 返回 [LOG_FILE](LOG_FILE.md) 句柄的 `MutexGuard<File>`。 |
-| [get_logger_find!](get_logger_find.md) | 返回 [FIND_LOG_FILE](FIND_LOG_FILE.md) 句柄的 `MutexGuard<File>`。 |
-| [get_fail_find_set!](get_fail_find_set.md) | 返回 [FINDS_FAIL_SET](FINDS_FAIL_SET.md) 的 `MutexGuard<HashSet<String>>`。 |
-| [get_pid_map_fail_entry_set!](get_pid_map_fail_entry_set.md) | 返回 [PID_MAP_FAIL_ENTRY_SET](PID_MAP_FAIL_ENTRY_SET.md) 的 `MutexGuard<HashMap<u32, HashMap<ApplyFailEntry, bool>>>`。 |
-
-## 枚举
-
-| 枚举 | 描述 |
-|------|------|
-| [Operation](Operation.md) | 标识规则应用过程中可能失败的每个 Windows API 操作，用作失败去重的键。 |
-
-## 结构体
-
-| 结构体 | 描述 |
-|--------|------|
-| [ApplyFailEntry](ApplyFailEntry.md) | 用于失败去重的复合键：线程 ID、进程名称、操作和错误代码。 |
+`logging` 模块为 AffinityServiceRust 提供基于文件和基于控制台的日志记录功能。它管理每日轮转的日志文件、对进程发现日志条目进行去重，并跟踪每个 PID 的操作失败以抑制重复的错误消息。该模块公开全局静态状态用于日志配置（控制台模式、垃圾桶模式、时间缓冲区、文件句柄），并提供便捷宏以方便访问。
 
 ## 函数
 
 | 函数 | 描述 |
 |------|------|
-| [is_new_error](is_new_error.md) | 如果此 PID/操作/错误组合之前未出现过，则返回 `true`，并将其注册以备将来去重。 |
-| [purge_fail_map](purge_fail_map.md) | 从失败跟踪映射中移除不再运行的进程的过期条目。 |
-| [get_log_path](get_log_path.md) | 构建日期前缀的日志文件路径（`logs/YYYYMMDD<suffix>.log`）。 |
-| [log_message](log_message.md) | 将 `[HH:MM:SS]` 时间戳消息写入控制台或日志文件，遵循 dust-bin 模式。 |
-| [log_pure_message](log_pure_message.md) | 将不带时间戳前缀的消息写入控制台或日志文件。 |
-| [log_to_find](log_to_find.md) | 将带时间戳的消息写入 find 模式日志文件（或控制台）。 |
-| [log_process_find](log_process_find.md) | 在 `-find` 模式下记录已发现的进程，通过 [FINDS_SET](FINDS_SET.md) 按会话去重。 |
+| [is_new_error](is_new_error.md) | 按 PID/TID/进程名/操作/错误码元组跟踪操作失败；仅在首次出现时返回 `true`。 |
+| [purge_fail_map](purge_fail_map.md) | 根据当前正在运行的进程列表，从失败跟踪映射中移除过时的条目。 |
+| [get_log_path](get_log_path.md) | 在 `logs/` 目录下构建带日期戳的日志文件路径，支持可选后缀。 |
+| [log_message](log_message.md) | 将带时间戳的消息写入主日志文件或标准输出，遵循垃圾桶模式设置。 |
+| [log_pure_message](log_pure_message.md) | 将不带时间戳前缀的消息写入主日志文件或标准输出。 |
+| [log_to_find](log_to_find.md) | 将带时间戳的消息写入 `.find` 日志文件或标准输出。 |
+| [log_process_find](log_process_find.md) | 记录已发现的进程名称，通过 `FINDS_SET` 在每个会话中去重。 |
+
+## 结构体 / 枚举
+
+| 项目 | 描述 |
+|------|------|
+| [Operation](Operation.md) | 枚举由 `is_new_error` 跟踪失败的 Windows API 操作。 |
+| [ApplyFailEntry](ApplyFailEntry.md) | 复合键结构体，表示唯一的失败事件（TID、进程名、操作、错误码）。 |
+
+## 静态变量
+
+| 静态变量 | 描述 |
+|----------|------|
+| [FINDS_SET](statics.md#finds_set) | `Lazy<Mutex<HashSet<String>>>` — 当前会话中已被 `log_process_find` 记录的进程名称集合。 |
+| [USE_CONSOLE](statics.md#use_console) | `Lazy<Mutex<bool>>` — 当为 `true` 时，所有日志输出到标准输出而非文件。 |
+| [DUST_BIN_MODE](statics.md#dust_bin_mode) | `Lazy<Mutex<bool>>` — 当为 `true` 时，`log_message` 静默丢弃输出。 |
+| [LOCAL_TIME_BUFFER](statics.md#local_time_buffer) | `Lazy<Mutex<DateTime<Local>>>` — 用于时间戳格式化的缓存本地时间。 |
+| [LOG_FILE](statics.md#log_file) | `Lazy<Mutex<File>>` — 主日志每日文件句柄（追加模式）。 |
+| [FIND_LOG_FILE](statics.md#find_log_file) | `Lazy<Mutex<File>>` — `.find` 每日日志文件句柄（追加模式）。 |
+| [FINDS_FAIL_SET](statics.md#finds_fail_set) | `Lazy<Mutex<HashSet<String>>>` — `-find` 模式访问检查失败的进程名称集合。 |
+| [PID_MAP_FAIL_ENTRY_SET](statics.md#pid_map_fail_entry_set) | `Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>>` — 带存活标志的每 PID 失败跟踪映射。 |
+
+## 宏
+
+| 宏 | 描述 |
+|----|------|
+| `log!` | `log_message` 的便捷包装器，接受 `format!` 风格的参数。 |
+| `get_use_console!` | 锁定并返回 `USE_CONSOLE` 互斥锁守卫。 |
+| `get_dust_bin_mod!` | 锁定并返回 `DUST_BIN_MODE` 互斥锁守卫。 |
+| `get_local_time!` | 锁定并返回 `LOCAL_TIME_BUFFER` 互斥锁守卫。 |
+| `get_logger!` | 锁定并返回 `LOG_FILE` 互斥锁守卫。 |
+| `get_logger_find!` | 锁定并返回 `FIND_LOG_FILE` 互斥锁守卫。 |
+| `get_fail_find_set!` | 锁定并返回 `FINDS_FAIL_SET` 互斥锁守卫。 |
+| `get_pid_map_fail_entry_set!` | 锁定并返回 `PID_MAP_FAIL_ENTRY_SET` 互斥锁守卫。 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 链接 | 描述 |
 |------|------|
-| 日志消息中使用的错误码转换 | [error_codes 模块](../error_codes.rs/README.md) |
-| 生成操作错误的规则应用 | [apply 模块](../apply.rs/README.md) |
-| 进程优先级 / I/O 优先级 / 内存优先级枚举 | [priority 模块](../priority.rs/README.md) |
-| 服务主循环和 find 模式入口点 | [main 模块](../main.rs/README.md) |
-| 控制日志行为的 CLI 标志 | [cli 模块](../cli.rs/README.md) |
+| [collections 模块](../collections.rs/README.md) | 本模块使用的自定义 `HashMap` 和 `HashSet` 类型别名。 |
+| [error_codes 模块](../error_codes.rs/README.md) | 与日志记录配合使用的 Win32/NTSTATUS 错误码翻译。 |
+| [winapi 模块](../winapi.rs/README.md) | 调用日志记录进行错误报告的 Windows API 封装。 |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

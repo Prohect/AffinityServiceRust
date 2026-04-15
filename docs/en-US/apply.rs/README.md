@@ -1,47 +1,45 @@
 # apply module (AffinityServiceRust)
 
-The `apply` module contains all functions that directly modify process and thread attributes via Windows API calls. It is the enforcement layer of AffinityServiceRust: once the configuration has been parsed and processes enumerated, every change to priority class, CPU affinity mask, CPU set, I/O priority, memory priority, ideal processor assignment, and prime-thread scheduling flows through functions defined here.
-
-Each public function follows a common pattern: accept a process identifier, a reference to the parsed [ProcessConfig](../config.rs/ProcessConfig.md), a `dry_run` flag, any required OS handles, and an [ApplyConfigResult](#applyconfigresult) accumulator. The function reads the current value from the OS, compares it with the desired value, and—when they differ and `dry_run` is `false`—calls the appropriate Windows API to apply the change. Successes are recorded as *changes*; failures are recorded as *errors* (deduplicated by the [log_error_if_new](log_error_if_new.md) helper so that repeated failures for the same operation do not flood the log).
-
-## Structs
-
-| Name | Description |
-|------|-------------|
-| [ApplyConfigResult](ApplyConfigResult.md) | Accumulates human-readable change descriptions and error messages produced during a single apply pass. |
+The `apply` module is responsible for applying process- and thread-level configuration policies to running Windows processes. It provides functions that read current process/thread attributes (priority, affinity, CPU sets, I/O priority, memory priority), compare them against a desired configuration, and issue the appropriate Windows API calls to bring the process into compliance. The module also implements a "prime thread" scheduling algorithm that identifies the most CPU-intensive threads in a process and pins them to designated high-performance cores using CPU Sets and ideal processor assignments, with hysteresis-based promotion and demotion to avoid rapid oscillation.
 
 ## Functions
 
-| Name | Description |
-|------|-------------|
-| [get_handles](get_handles.md) | Extracts the best available read and write `HANDLE`s from a [ProcessHandle](../winapi.rs/ProcessHandle.md), preferring full-access over limited. |
-| [log_error_if_new](log_error_if_new.md) | Logs an error message only if the same pid / operation / error-code combination has not been logged before. |
-| [apply_priority](apply_priority.md) | Sets the process priority class (Idle through Realtime) via `SetPriorityClass`. |
-| [apply_affinity](apply_affinity.md) | Sets the hard CPU affinity mask on a process via `SetProcessAffinityMask`. |
-| [reset_thread_ideal_processors](reset_thread_ideal_processors.md) | Redistributes thread ideal processors across a set of CPUs after an affinity or CPU-set change. |
-| [apply_process_default_cpuset](apply_process_default_cpuset.md) | Applies a soft CPU set preference to a process via `SetProcessDefaultCpuSets`. |
-| [apply_io_priority](apply_io_priority.md) | Sets I/O priority on a process via `NtSetInformationProcess`. |
-| [apply_memory_priority](apply_memory_priority.md) | Sets memory priority on a process via `SetProcessInformation(ProcessMemoryPriority)`. |
-| [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) | Queries thread cycle times for the top CPU-consuming threads to establish baselines for prime-thread selection. |
-| [apply_prime_threads](apply_prime_threads.md) | Top-level orchestrator for the prime-thread scheduling pipeline (select → promote → demote). |
-| [apply_prime_threads_select](apply_prime_threads_select.md) | Selects the top *N* threads by CPU cycles using hysteresis thresholds. |
-| [apply_prime_threads_promote](apply_prime_threads_promote.md) | Pins newly-selected prime threads to performance-core CPU sets and optionally boosts their priority. |
-| [apply_prime_threads_demote](apply_prime_threads_demote.md) | Unpins threads that lost prime status and restores their original priority. |
-| [apply_ideal_processors](apply_ideal_processors.md) | Assigns ideal processors to threads whose start module matches configurable prefix rules. |
-| [update_thread_stats](update_thread_stats.md) | Commits cached cycle and time counters so the next iteration computes correct deltas. |
+| Function | Description |
+|----------|-------------|
+| [`get_handles`](get_handles.md) | Extracts read and write `HANDLE` values from a `ProcessHandle`, preferring full-access handles over limited ones. |
+| [`log_error_if_new`](log_error_if_new.md) | Logs an error to `ApplyConfigResult` only if the same pid/operation/error-code combination has not been logged before. |
+| [`apply_priority`](apply_priority.md) | Reads the current process priority class and sets it to the configured value if different. |
+| [`apply_affinity`](apply_affinity.md) | Reads the current process affinity mask and sets it to the configured CPU mask, redistributing thread ideal processors on change. |
+| [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) | Redistributes thread ideal processors across a set of CPUs after an affinity or CPU-set change, ordered by CPU time with a random shift. |
+| [`apply_process_default_cpuset`](apply_process_default_cpuset.md) | Queries and sets the default CPU Set IDs for a process, optionally resetting thread ideal processors afterward. |
+| [`apply_io_priority`](apply_io_priority.md) | Reads the current process I/O priority via `NtQueryInformationProcess` and sets it to the configured value via `NtSetInformationProcess`. |
+| [`apply_memory_priority`](apply_memory_priority.md) | Reads the current process memory priority via `GetProcessInformation` and sets it to the configured value via `SetProcessInformation`. |
+| [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md) | Opens handles to the top CPU-consuming threads and queries their cycle counters to establish baseline measurements for prime-thread selection. |
+| [`apply_prime_threads`](apply_prime_threads.md) | Orchestrates the prime-thread scheduling pipeline: sorts threads by CPU delta, selects candidates, promotes winners, and demotes losers. |
+| [`apply_prime_threads_select`](apply_prime_threads_select.md) | Selects the top threads for prime status using hysteresis thresholds to prevent rapid flipping. |
+| [`apply_prime_threads_promote`](apply_prime_threads_promote.md) | Pins newly-selected prime threads to designated CPUs via `SetThreadSelectedCpuSets` and optionally boosts their priority. |
+| [`apply_prime_threads_demote`](apply_prime_threads_demote.md) | Removes CPU-set pinning and restores original thread priority for threads that no longer qualify as prime. |
+| [`apply_ideal_processors`](apply_ideal_processors.md) | Assigns ideal processors to threads based on module-prefix matching rules, selecting top N threads by cycle count per rule. |
+| [`update_thread_stats`](update_thread_stats.md) | Commits cached cycle and time measurements into `last_cycles`/`last_total_time` and resets the cached values to zero. |
+
+## Structs
+
+| Struct | Description |
+|--------|-------------|
+| [`ApplyConfigResult`](ApplyConfigResult.md) | Accumulates human-readable change descriptions and error messages produced during a single configuration-apply pass. |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Process-level apply orchestration | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
-| Thread-level apply orchestration | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
-| Configuration model | [ProcessConfig](../config.rs/ProcessConfig.md) |
-| Prime-thread scheduler state | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
-| OS handle wrappers | [ProcessHandle](../winapi.rs/ProcessHandle.md), [ThreadHandle](../winapi.rs/ThreadHandle.md) |
-| Priority enumerations | [ProcessPriority](../priority.rs/ProcessPriority.md), [IOPriority](../priority.rs/IOPriority.md), [MemoryPriority](../priority.rs/MemoryPriority.md), [ThreadPriority](../priority.rs/ThreadPriority.md) |
-| Error formatting helpers | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md), [error_from_ntstatus](../error_codes.rs/error_from_ntstatus.md) |
+| Reference | Link |
+|-----------|------|
+| config module | [`config.rs`](../config.rs/README.md) |
+| priority module | [`priority.rs`](../priority.rs/README.md) |
+| process module | [`process.rs`](../process.rs/README.md) |
+| scheduler module | [`scheduler.rs`](../scheduler.rs/README.md) |
+| winapi module | [`winapi.rs`](../winapi.rs/README.md) |
+| logging module | [`logging.rs`](../logging.rs/README.md) |
+| error_codes module | [`error_codes.rs`](../error_codes.rs/README.md) |
+| collections module | [`collections.rs`](../collections.rs/README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

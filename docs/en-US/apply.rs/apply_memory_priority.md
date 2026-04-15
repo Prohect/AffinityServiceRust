@@ -1,13 +1,13 @@
 # apply_memory_priority function (apply.rs)
 
-Sets the memory priority of a process via `SetProcessInformation` with the `ProcessMemoryPriority` information class. Memory priority influences how aggressively the memory manager trims and repurposes a process's physical pages under memory pressure — lower-priority pages are reclaimed first. The function reads the current memory priority with `GetProcessInformation`, compares it to the configured target, and applies the change only when the values differ.
+The `apply_memory_priority` function reads the current process memory priority via `GetProcessInformation` with the `ProcessMemoryPriority` information class and, if it differs from the configured target, sets the new value via `SetProcessInformation`. In dry-run mode, the intended change is recorded without calling any state-modifying APIs.
 
 ## Syntax
 
-```AffinityServiceRust/src/apply.rs#L508-515
+```AffinityServiceRust/src/apply.rs#L490-498
 pub fn apply_memory_priority(
     pid: u32,
-    config: &ProcessConfig,
+    config: &ProcessLevelConfig,
     dry_run: bool,
     process_handle: &ProcessHandle,
     apply_config_result: &mut ApplyConfigResult,
@@ -18,96 +18,50 @@ pub fn apply_memory_priority(
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `pid` | `u32` | Process identifier of the target process. Used for error deduplication in [log_error_if_new](log_error_if_new.md) and in formatted log messages. |
-| `config` | `&`[ProcessConfig](../config.rs/ProcessConfig.md) | The parsed configuration rule matched to this process. The `memory_priority` field (a [MemoryPriority](../priority.rs/MemoryPriority.md) enum) specifies the desired memory priority level. When the value is `MemoryPriority::None`, the function returns immediately without querying or modifying anything. |
-| `dry_run` | `bool` | When `true`, the function records the intended change in `apply_config_result` but does not call `SetProcessInformation`. |
-| `process_handle` | `&`[ProcessHandle](../winapi.rs/ProcessHandle.md) | OS handle wrapper for the target process. Both a read handle (for `GetProcessInformation`) and a write handle (for `SetProcessInformation`) are extracted via [get_handles](get_handles.md). |
-| `apply_config_result` | `&mut`[ApplyConfigResult](ApplyConfigResult.md) | Accumulator for change descriptions and error messages produced during this call. |
+| `pid` | `u32` | The process identifier of the target process. Used for error deduplication keys and log messages. |
+| `config` | `&ProcessLevelConfig` | The process-level configuration containing the desired `memory_priority` value (a `MemoryPriority` enum). If `config.memory_priority.as_win_const()` returns `None` (e.g., `MemoryPriority::None`), the function returns immediately without querying or modifying the process. |
+| `dry_run` | `bool` | When `true`, the function records what *would* change in `apply_config_result` without calling `SetProcessInformation`. When `false`, the Windows API is called to apply the change. |
+| `process_handle` | `&ProcessHandle` | A handle wrapper providing read and write access to the target process. The function extracts a read handle (for `GetProcessInformation`) and a write handle (for `SetProcessInformation`) via [`get_handles`](get_handles.md). If either handle is unavailable, the function returns early. |
+| `apply_config_result` | `&mut ApplyConfigResult` | Accumulator for change descriptions and error messages produced during execution. |
 
 ## Return value
 
-None (`()`). Results are communicated through `apply_config_result`.
+This function does not return a value. All outcomes are communicated through the `apply_config_result` parameter.
 
 ## Remarks
 
-### Control flow
-
-1. [get_handles](get_handles.md) extracts the best available read and write `HANDLE`s. If either is `None`, the function returns immediately.
-
-2. `config.memory_priority.as_win_const()` converts the [MemoryPriority](../priority.rs/MemoryPriority.md) enum to its Win32 [MEMORY_PRIORITY_INFORMATION](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/ns-processthreadsapi-memory_priority_information) value (wrapped in [MemoryPriorityInformation](../priority.rs/MemoryPriorityInformation.md)). If the configured priority is `None`, `as_win_const()` returns `None` and the function exits — no query, no change.
-
-3. `GetProcessInformation` is called with the `ProcessMemoryPriority` class to read the current memory priority into a local [MemoryPriorityInformation](../priority.rs/MemoryPriorityInformation.md) struct.
-   - On failure, the Win32 error code is captured and routed to [log_error_if_new](log_error_if_new.md) with `Operation::GetProcessInformation2ProcessMemoryPriority`. The function returns without attempting a set.
-
-4. If the current value already matches the target, the function exits silently (idempotent).
-
-5. In `dry_run` mode, a summary change message is recorded and the function returns.
-
-6. Otherwise, a new `MemoryPriorityInformation` is constructed with the target value and passed to `SetProcessInformation`. On success the change is recorded; on failure the error is captured and logged.
-
-### Change message format
-
-On a successful set (non-dry-run):
-
-```/dev/null/example.txt#L1
-Memory Priority: Normal -> VeryLow
-```
-
-The message shows the human-readable names of both the old and new memory priority levels, obtained via `MemoryPriority::from_win_const()` and `MemoryPriority::as_str()` respectively.
-
-### Memory priority levels
-
-The [MemoryPriority](../priority.rs/MemoryPriority.md) enum maps to these Windows-defined values:
-
-| Enum variant | Win32 value | Effect |
-|-------------|-------------|--------|
-| `VeryLow` | 1 | Pages are the first to be trimmed under memory pressure. |
-| `Low` | 2 | Pages are trimmed before medium-priority pages. |
-| `Medium` | 3 | Default for background processes. |
-| `BelowNormal` | 4 | Slightly favoured over medium. |
-| `Normal` | 5 | Default for foreground processes. Pages are trimmed last. |
-
-### Error handling
-
-Errors from both the query and set phases are routed through [log_error_if_new](log_error_if_new.md). Common failure scenarios:
-
-| Win32 error | Typical cause |
-|-------------|---------------|
-| `ERROR_ACCESS_DENIED` (5) | The process handle was opened with insufficient access rights, or the target is a protected process. |
-| `ERROR_INVALID_PARAMETER` (87) | An invalid memory priority value was passed (should not occur when using the enum). |
-
-### Idempotency
-
-The function is idempotent: when the current memory priority already matches the configured target, no Win32 call is made and no change is recorded. This avoids unnecessary kernel transitions on every polling cycle.
-
-### Relationship to I/O priority
-
-Memory priority and I/O priority ([apply_io_priority](apply_io_priority.md)) are independent settings. They are configured separately in [ProcessConfig](../config.rs/ProcessConfig.md) and applied by separate functions. Both affect how aggressively the OS reclaims resources from a process, but they target different subsystems (memory manager vs. I/O scheduler).
+- The function first calls `GetProcessInformation` with the `ProcessMemoryPriority` information class and a `MemoryPriorityInformation` struct to retrieve the current memory priority level. If this query fails, the Win32 error code is retrieved via `GetLastError` and logged through [`log_error_if_new`](log_error_if_new.md) with `Operation::GetProcessInformation2ProcessMemoryPriority`. No further action is taken after a query failure.
+- If the current memory priority already matches the target, no change is recorded and the function returns silently.
+- When applying the change (non-dry-run), `SetProcessInformation` is called with a new `MemoryPriorityInformation` struct containing the target value. On failure, the error is logged via [`log_error_if_new`](log_error_if_new.md) with `Operation::SetProcessInformation2ProcessMemoryPriority`.
+- The change message is formatted as `"Memory Priority: <current> -> <target>"` using the human-readable string representations from `MemoryPriority::from_win_const` and `config.memory_priority.as_str()`.
+- The `MemoryPriorityInformation` wrapper type is a newtype around `u32` defined in the `priority` module. It matches the layout of the Windows `MEMORY_PRIORITY_INFORMATION` structure.
+- Windows memory priority values range from 0 (lowest/very low) through 5 (normal). The `MemoryPriority` enum in the `priority` module maps user-facing names to these numeric constants.
+- **Note:** In the dry-run path, the change message text references `config.io_priority.as_str()` rather than `config.memory_priority.as_str()`. This is a known inconsistency in the source code where the dry-run message displays the I/O priority label instead of the memory priority label.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `apply` |
-| Visibility | `pub` (crate-public) |
-| Callers | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
-| Callees | [get_handles](get_handles.md), [log_error_if_new](log_error_if_new.md) |
-| Win32 API | [`GetProcessInformation`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocessinformation), [`SetProcessInformation`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessinformation) with `ProcessMemoryPriority` class |
-| Privileges | `PROCESS_QUERY_LIMITED_INFORMATION` (read via `GetProcessInformation`), `PROCESS_SET_INFORMATION` (write via `SetProcessInformation`). The service typically holds `SeDebugPrivilege` which grants both. |
+| Module | `apply.rs` |
+| Crate | `AffinityServiceRust` |
+| Windows APIs | `GetProcessInformation` (`ProcessMemoryPriority`), `SetProcessInformation` (`ProcessMemoryPriority`), `GetLastError` |
+| Callers | Orchestrator code in `scheduler.rs` / `main.rs` that iterates matched processes |
+| Callees | [`get_handles`](get_handles.md), [`log_error_if_new`](log_error_if_new.md), `MemoryPriority::as_win_const`, `MemoryPriority::from_win_const`, `MemoryPriority::as_str`, `error_from_code_win32` |
+| Privileges | Requires a process handle with `PROCESS_QUERY_INFORMATION` or `PROCESS_QUERY_LIMITED_INFORMATION` (read) and `PROCESS_SET_INFORMATION` (write). |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| apply module overview | [apply](README.md) |
-| I/O priority setting | [apply_io_priority](apply_io_priority.md) |
-| Priority class setting | [apply_priority](apply_priority.md) |
-| Memory priority enum | [MemoryPriority](../priority.rs/MemoryPriority.md) |
-| MemoryPriorityInformation wrapper | [MemoryPriorityInformation](../priority.rs/MemoryPriorityInformation.md) |
-| Configuration model | [ProcessConfig](../config.rs/ProcessConfig.md) |
-| Handle extraction helper | [get_handles](get_handles.md) |
-| Error deduplication | [log_error_if_new](log_error_if_new.md) |
+| Reference | Link |
+|-----------|------|
+| apply module overview | [`README`](README.md) |
+| ApplyConfigResult | [`ApplyConfigResult`](ApplyConfigResult.md) |
+| get_handles | [`get_handles`](get_handles.md) |
+| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
+| apply_priority | [`apply_priority`](apply_priority.md) |
+| apply_io_priority | [`apply_io_priority`](apply_io_priority.md) |
+| apply_affinity | [`apply_affinity`](apply_affinity.md) |
+| ProcessLevelConfig | [`config.rs/ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
+| MemoryPriority | [`priority.rs/MemoryPriority`](../priority.rs/MemoryPriority.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

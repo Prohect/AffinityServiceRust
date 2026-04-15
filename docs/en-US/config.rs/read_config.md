@@ -1,10 +1,10 @@
 # read_config function (config.rs)
 
-Reads and parses a configuration file into a fully resolved [ConfigResult](ConfigResult.md) containing process rules, CPU aliases, tuning constants, and any errors or warnings encountered during parsing. This is the primary entry point for loading the AffinityServiceRust configuration and is called at startup and during hot-reload.
+Reads and parses an entire AffinityServiceRust configuration file, returning a fully populated [`ConfigResult`](ConfigResult.md) containing all process-level rules, thread-level rules, constants, aliases, group expansions, and any errors or warnings produced during parsing. This is the primary entry point for loading configuration from disk.
 
 ## Syntax
 
-```rust
+```AffinityServiceRust/src/config.rs#L743-875
 pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult
 ```
 
@@ -12,133 +12,109 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `path` | `P: AsRef<Path>` | File system path to the configuration file. Accepts any type that implements `AsRef<Path>`, including `&str`, `String`, and `PathBuf`. The file is opened with `File::open` and read line-by-line via a buffered reader. |
+| `path` | `P: AsRef<Path>` | The file system path to the configuration file to read (e.g., `"config.ini"`). Accepts any type that implements `AsRef<Path>`, including `&str`, `String`, and `PathBuf`. |
 
 ## Return value
 
-Returns a [ConfigResult](ConfigResult.md) containing:
+Type: [`ConfigResult`](ConfigResult.md)
 
-- **`configs`** — A `HashMap<u32, HashMap<String, ProcessConfig>>` keyed by grade then by lowercased process name. Each leaf value is a fully resolved [ProcessConfig](ProcessConfig.md).
-- **`constants`** — A [ConfigConstants](ConfigConstants.md) initialized to defaults and overwritten by any `@CONSTANT = value` lines in the file.
-- **Statistical counters** — `constants_count`, `aliases_count`, `groups_count`, `group_members_count`, `process_rules_count`, `redundant_rules_count`.
-- **`errors`** — Fatal parse errors. When non-empty, the configuration should not be applied.
-- **`warnings`** — Non-fatal parse warnings (unknown priorities, redundant rules, etc.).
+A fully populated configuration result struct containing:
 
-If the file cannot be opened, a `ConfigResult` with a single error in the `errors` vector is returned immediately.
+- `process_level_configs` — All parsed process-level rules organized by grade.
+- `thread_level_configs` — All parsed thread-level rules organized by grade.
+- `constants` — Tunable scheduler constants parsed from `@NAME = value` lines (or defaults).
+- Alias, group, and rule counts for diagnostic reporting.
+- `errors` — A list of fatal errors. When non-empty, the configuration is considered invalid (`is_valid()` returns `false`).
+- `warnings` — A list of non-fatal warnings.
+
+If the file cannot be opened, the function returns a `ConfigResult` with a single error message in the `errors` vector and all other fields at their default values.
 
 ## Remarks
 
 ### File format overview
 
-The configuration file uses an INI-like, line-oriented format with five kinds of top-level lines:
+The configuration file is a line-oriented text format. Each line is one of:
 
-| Line prefix | Meaning | Handled by |
-|-------------|---------|------------|
-| `#` | Comment — ignored entirely. | `read_config` (skipped) |
-| `@NAME = value` | Constant definition — sets a scheduler tuning parameter. | [parse_constant](parse_constant.md) |
-| `*name = cpu_spec` | CPU alias definition — creates a named CPU set for use in rule fields. | [parse_alias](parse_alias.md) |
-| `name { ... }:rule` | Process group — defines multiple processes sharing a single rule. | [collect_group_block](collect_group_block.md), [parse_and_insert_rules](parse_and_insert_rules.md) |
-| `name:priority:affinity:...` | Individual process rule — defines settings for a single process. | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| Line type | Prefix | Handler | Description |
+|-----------|--------|---------|-------------|
+| Comment | `#` | Skipped | Comments and blank lines are ignored. |
+| Constant | `@` | [`parse_constant`](parse_constant.md) | Scheduler tuning constants (e.g., `@MIN_ACTIVE_STREAK = 3`). |
+| Alias | `*` | [`parse_alias`](parse_alias.md) | Named CPU specifications (e.g., `*pcore = 0-7`). |
+| Group block | `{` | [`collect_group_block`](collect_group_block.md) + [`parse_and_insert_rules`](parse_and_insert_rules.md) | Multi-process group rules enclosed in braces. |
+| Process rule | *(other)* | [`parse_and_insert_rules`](parse_and_insert_rules.md) | Individual `name:priority:affinity:...` rule lines. |
 
-Blank lines are ignored.
+### Parsing algorithm
 
-### Parse algorithm
+1. The file is opened and read into a buffered reader. All lines are collected into a `Vec<String>`.
+2. A local `cpu_aliases` hash map is initialized to store alias definitions encountered during the pass.
+3. The parser iterates through lines sequentially using an index variable `i`:
+   - **Blank lines and comments** (`#`-prefixed) are skipped.
+   - **Constants** (`@`-prefixed) are split on `=` and dispatched to [`parse_constant`](parse_constant.md).
+   - **Aliases** (`*`-prefixed) are split on `=` and dispatched to [`parse_alias`](parse_alias.md). The parsed alias is stored in `cpu_aliases` for use by subsequent rule lines.
+   - **Group blocks** (lines containing `{`) are handled in two sub-cases:
+     - *Single-line groups*: Both `{` and `}` appear on the same line. Members are extracted inline.
+     - *Multi-line groups*: The opening `{` is on this line but `}` is not. The parser calls [`collect_group_block`](collect_group_block.md) to scan forward through subsequent lines until `}` is found, advancing `i` past the closing brace.
+     - In both cases, the group name (text before `{`) is captured for diagnostics. An empty name produces the label `"anonymous@L{line_number}"`.
+     - The collected members and rule suffix are passed to [`parse_and_insert_rules`](parse_and_insert_rules.md).
+   - **Individual rules**: Lines not matching any of the above patterns are split on `:`, with the first element as the process name and the rest as rule fields. At least 3 colon-separated parts are required (name, priority, affinity). The name is lowercased and passed to [`parse_and_insert_rules`](parse_and_insert_rules.md).
+4. After all lines are processed, the populated `ConfigResult` is returned.
 
-1. **Open and buffer** — The file is opened and all lines are collected into a `Vec<String>` for random-access iteration (needed for multi-line group blocks).
-2. **Initialize state** — A default [ConfigResult](ConfigResult.md) and an empty `cpu_aliases` map are created.
-3. **Line-by-line dispatch** — An index `i` walks through the line vector. Each line is trimmed, and the first non-whitespace character determines the dispatch path:
-   - Empty or `#` → skip, advance `i`.
-   - `@` → split on `=`, delegate to [parse_constant](parse_constant.md), advance `i`.
-   - `*` → split on `=`, delegate to [parse_alias](parse_alias.md), advance `i`.
-   - Contains `{` → begin group parsing (see below).
-   - Otherwise → split on `:`, extract the process name from `parts[0]`, delegate `parts[1..]` to [parse_and_insert_rules](parse_and_insert_rules.md), advance `i`.
-4. **Return** — The completed `ConfigResult` is returned.
+### Error handling strategy
 
-### Group block parsing
+The parser is designed to be **resilient** — it collects all errors and warnings rather than aborting on the first problem. This allows users to see every issue in their config file in a single validation pass. Fatal errors (e.g., unclosed groups, too few fields, invalid constant syntax) are appended to `result.errors`. Non-fatal issues (e.g., unknown priority strings, empty groups, redundant rules) are appended to `result.warnings`.
 
-When a line contains `{`, the parser enters group mode:
+### Key error conditions
 
-1. **Group name** — Text before the `{` is used as a label for diagnostics. If empty, the label is `"anonymous@L{line_number}"`.
-2. **Single-line group** — If `}` appears on the same line as `{`, the text between the braces is parsed inline via [collect_members](collect_members.md) and the text after `}:` is the rule suffix.
-3. **Multi-line group** — If no `}` on the same line, [collect_group_block](collect_group_block.md) scans subsequent lines until the closing `}` is found, accumulating member names. The index `i` is advanced past the block.
-4. **Unclosed group** — If the file ends without `}`, an error is recorded and the group is skipped.
-5. **Empty group** — If no members are found between the braces, a warning is recorded and the group is skipped.
-6. **Rule application** — If a rule suffix is present after the closing brace (i.e., `}:priority:affinity:...`), [parse_and_insert_rules](parse_and_insert_rules.md) is called with the collected member list. If no rule suffix is found, an error is recorded.
+| Condition | Severity | Message pattern |
+|-----------|----------|-----------------|
+| File cannot be opened | Error | `"Cannot open config file: {io_error}"` |
+| Constant line missing `=` | Error | `"Line {n}: Invalid constant - expected '@NAME = value'"` |
+| Alias line missing `=` | Error | `"Line {n}: Invalid alias - expected '*name = cpu_spec'"` |
+| Unclosed group block | Error | `"Line {n}: Unclosed group '{label}' - missing }"` |
+| Group with no members | Warning | `"Line {n}: Group '{label}' has no members"` |
+| Group with no rule suffix | Error | `"Line {n}: Group '{label}' missing rule - use }:priority:affinity,..."` |
+| Individual line with < 3 fields | Error | `"Line {n}: Too few fields - expected name:priority:affinity,..."` |
+| Empty process name | Error | `"Line {n}: Empty process name"` |
 
-### Individual rule parsing
+### Line numbering
 
-For non-group lines, the line is split on `:` and the parts are validated:
+Line numbers in error and warning messages are 1-based (`line_number = i + 1`), matching what users see in their text editors.
 
-- **Fewer than 3 parts** — An error is recorded (`"Too few fields — expected name:priority:affinity,..."`).
-- **Empty process name** — An error is recorded.
-- **Valid line** — `parts[0]` (lowercased) becomes the member name and `parts[1..]` are passed to [parse_and_insert_rules](parse_and_insert_rules.md).
+### Ordering constraints
 
-### Order dependencies
+- **Aliases must be defined before use.** The parser processes lines sequentially, so a `*alias` reference in a rule will fail to resolve if the corresponding `*alias = cpu_spec` definition appears later in the file.
+- **Constants** can appear anywhere and are applied immediately; they do not affect rule parsing.
+- **Rules** can appear in any order. Redundant definitions overwrite earlier ones with a warning.
 
-- **Aliases must precede rules** — CPU alias definitions (`*name = spec`) are processed top-to-bottom and stored in the `cpu_aliases` map. Rule lines that reference an alias via `*name` will fail with an "Undefined alias" error if the alias has not been defined on a prior line.
-- **Constants can appear anywhere** — `@CONSTANT` lines update `result.constants` immediately and do not depend on parse order relative to rules.
-- **Groups cannot nest** — Nested `{ { } }` structures are not supported; a `{` inside an open group block is treated as normal text.
+### Hot-reload usage
 
-### Error accumulation
-
-`read_config` uses a **continue-on-error** strategy. When a parse error is encountered, a descriptive message (including the 1-based line number) is pushed to `result.errors`, and parsing continues to the next line. This allows the user to see all errors in a single parse pass rather than fixing them one at a time.
-
-### Config file example
-
-```text
-# CPU aliases
-*perf = 0-7
-*eff = 8-15
-
-# Scheduler tuning
-@MIN_ACTIVE_STREAK = 3
-@KEEP_THRESHOLD = 0.70
-
-# Individual rule
-game.exe:high:*perf:*perf:?8x*perf@engine.dll:none:none:*perf
-
-# Group rule
-background_apps {
-    updater.exe: telemetry.exe
-    cloud_sync.exe
-}:below normal:*eff:0:0:none:none
-```
-
-### Thread safety
-
-`read_config` is not designed for concurrent access. It reads from the file system and writes to a local `ConfigResult`. The caller ([main](../main.rs/main.md) or [hotreload_config](hotreload_config.md)) is responsible for synchronization when replacing the live configuration with the parsed result.
-
-### Performance
-
-All lines are read into memory before parsing begins. This is acceptable because configuration files are typically small (hundreds of lines at most). The two-pass architecture (collect lines, then parse) is necessary to support multi-line group blocks where the parser must look ahead from `{` to `}`.
+`read_config` is called both at startup and during hot-reload by [`hotreload_config`](hotreload_config.md). During hot-reload, the function parses the modified file into a fresh `ConfigResult`. If `is_valid()` is `true`, the new config replaces the active one; otherwise, the previous config is retained and errors are logged.
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `config` (`src/config.rs`) |
-| **Visibility** | `pub` |
-| **Callers** | [main](../main.rs/main.md), [hotreload_config](hotreload_config.md) |
-| **Callees** | [parse_constant](parse_constant.md), [parse_alias](parse_alias.md), [collect_members](collect_members.md), [collect_group_block](collect_group_block.md), [parse_and_insert_rules](parse_and_insert_rules.md) |
-| **API** | `std::fs::File::open`, `std::io::BufReader`, `std::io::BufRead::lines` |
-| **Privileges** | Read access to the configuration file path |
+| Requirement | Value |
+|-------------|-------|
+| Module | `config.rs` |
+| Visibility | `pub` |
+| Callers | `main.rs` (startup), [`hotreload_config`](hotreload_config.md) (runtime reload) |
+| Callees | [`parse_constant`](parse_constant.md), [`parse_alias`](parse_alias.md), [`collect_group_block`](collect_group_block.md), [`collect_members`](collect_members.md), [`parse_and_insert_rules`](parse_and_insert_rules.md) |
+| Dependencies | [`ConfigResult`](ConfigResult.md), `HashMap`, `List`, `CONSUMER_CPUS` from [`collections.rs`](../collections.rs/README.md) |
+| I/O | Reads a file via `std::fs::File` and `std::io::BufReader` |
+| Privileges | File system read access to the config file path |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Parsed config output | [ConfigResult](ConfigResult.md) |
-| Per-process rule struct | [ProcessConfig](ProcessConfig.md) |
-| Scheduler tuning constants | [ConfigConstants](ConfigConstants.md) |
-| Rule field parser | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| Constant line parser | [parse_constant](parse_constant.md) |
-| Alias line parser | [parse_alias](parse_alias.md) |
-| Group block collector | [collect_group_block](collect_group_block.md) |
-| Member name tokenizer | [collect_members](collect_members.md) |
-| Hot-reload of config | [hotreload_config](hotreload_config.md) |
-| Blacklist file reader | [read_list](read_list.md) |
-| Config module overview | [README](README.md) |
+| Resource | Link |
+|----------|------|
+| ConfigResult | [ConfigResult](ConfigResult.md) |
+| parse_constant | [parse_constant](parse_constant.md) |
+| parse_alias | [parse_alias](parse_alias.md) |
+| collect_group_block | [collect_group_block](collect_group_block.md) |
+| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| hotreload_config | [hotreload_config](hotreload_config.md) |
+| convert | [convert](convert.md) |
+| cli module | [cli.rs overview](../cli.rs/README.md) |
+| config module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

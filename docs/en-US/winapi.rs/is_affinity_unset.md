@@ -1,6 +1,6 @@
 # is_affinity_unset function (winapi.rs)
 
-Checks whether a process's CPU affinity mask equals the system-wide default (all logical processors enabled). This is used by the `-find` mode to identify processes that have not yet had a custom affinity applied, helping users discover which processes are still running with default settings.
+Checks whether a process has its default (all-CPU) affinity mask — that is, whether the process affinity mask equals the system affinity mask. This is used by `-find` mode to identify processes whose CPU affinity has not been explicitly configured.
 
 ## Syntax
 
@@ -13,74 +13,60 @@ pub fn is_affinity_unset(pid: u32, process_name: &str) -> bool
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `pid` | `u32` | The process identifier of the target process. |
-| `process_name` | `&str` | The image name of the target process (e.g., `"game.exe"`). Used for diagnostic logging and to populate the find-fail set when access is denied. |
+| `process_name` | `&str` | The name of the target process, used for diagnostic logging and for populating the find-fail set on access-denied errors. |
 
 ## Return value
 
-| Value | Meaning |
-|-------|---------|
-| `true` | The process's current affinity mask is equal to the system affinity mask — meaning all CPUs are enabled and no custom affinity has been set. |
-| `false` | The process has a custom affinity mask (a subset of CPUs), **or** the process could not be opened, **or** the affinity query failed. |
+Returns `true` if the process's current affinity mask is equal to the system affinity mask, meaning no custom affinity has been applied. Returns `false` in all other cases, including:
+
+- The process handle could not be opened.
+- The handle was opened but is invalid.
+- `GetProcessAffinityMask` failed.
+- The process has a custom affinity mask that differs from the system mask.
 
 ## Remarks
 
 ### Algorithm
 
-1. Opens the process with `PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION` access via `OpenProcess`.
-2. If the open fails, logs the error to `log_to_find`. If the error code is `5` (access denied), inserts `process_name` into the `FINDS_FAIL_SET` so the find-mode report can note this process as inaccessible.
-3. Calls `GetProcessAffinityMask` to retrieve both the process affinity mask (`current_mask`) and the system affinity mask (`system_mask`).
-4. Returns `true` if and only if `current_mask == system_mask`.
-5. Closes the process handle before returning.
+1. Opens the target process with `PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION` access via `OpenProcess`.
+2. If the open fails, logs the error to the find log via [`log_to_find`](../logging.rs/log_to_find.md). If the error code is `5` (`ACCESS_DENIED`), the process name is added to the `FINDS_FAIL_SET` so it is excluded from future find iterations.
+3. If the returned handle is invalid, logs a diagnostic and returns `false`.
+4. Calls `GetProcessAffinityMask` to retrieve both the process affinity mask (`current_mask`) and the system affinity mask (`system_mask`).
+5. Compares the two masks. Returns `true` only if they are equal.
+6. Closes the process handle before returning.
 
-### Handle management
+### Access-denied handling
 
-Unlike most other functions in this module, `is_affinity_unset` does **not** use the [ProcessHandle](ProcessHandle.md) RAII wrapper. It opens a single combined-access handle directly via `OpenProcess` and closes it manually with `CloseHandle` at the end of the function. This is because the function is a standalone query used only in `-find` mode and does not participate in the main apply loop's handle lifecycle.
+When `OpenProcess` or `GetProcessAffinityMask` returns error code `5` (`ACCESS_DENIED`), the process name is inserted into the `FINDS_FAIL_SET` global. This set is used by the find-mode logic to skip processes that are known to be inaccessible (e.g., protected processes, anti-cheat services), avoiding repeated failed attempts and log noise.
 
-### Error behavior
+### Handle lifetime
 
-The function returns `false` on any error, treating inaccessible or failed-to-query processes as "already configured" to avoid false positives in find-mode output. Specific error handling:
+The function opens and closes the process handle within its own scope. It does **not** use the [`ProcessHandle`](ProcessHandle.md) RAII wrapper because it only needs a single handle with specific combined access rights (`PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION`).
 
-| Scenario | Behavior |
-|----------|----------|
-| `OpenProcess` fails | Logs error via `log_to_find`; if error 5 (access denied), adds to fail set; returns `false` |
-| `OpenProcess` returns an invalid handle | Logs `[INVALID_HANDLE]` via `log_to_find`; returns `false` |
-| `GetProcessAffinityMask` fails | Logs error via `log_to_find`; if error 5, adds to fail set; returns `false` |
+### Platform notes
 
-### Access-denied tracking
-
-When the error code is `5` (`ERROR_ACCESS_DENIED`), the process name is inserted into the global `FINDS_FAIL_SET` (accessed via the `get_fail_find_set!()` macro). This set is used by the find-mode report to list processes that could not be inspected, typically because `SeDebugPrivilege` is not held or the process is protected.
-
-### System affinity mask
-
-The system affinity mask returned by `GetProcessAffinityMask` reflects the set of all logical processors available to the calling process. On a single-processor-group system (≤ 64 CPUs), this is typically `(1 << cpu_count) - 1`. When a process has not had `SetProcessAffinityMask` called on it, its process mask equals the system mask.
-
-### Comparison with affinity in the apply module
-
-The [apply_affinity](../apply.rs/apply_affinity.md) function uses a [ProcessHandle](ProcessHandle.md) to get and set affinity during the main service loop. `is_affinity_unset` operates independently and is called only during `-find` mode discovery, not during the apply cycle.
+- **Windows only.** Uses `OpenProcess`, `GetProcessAffinityMask`, `GetLastError`, and `CloseHandle` from the Win32 API.
+- The system affinity mask represents all logical processors available to the process's processor group. On systems with more than 64 logical processors, this function only considers the primary processor group.
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `winapi` (`src/winapi.rs`) |
-| **Visibility** | `pub` |
-| **Callers** | [process_find](../main.rs/process_find.md) (via the `-find` CLI mode) |
-| **Callees** | `OpenProcess`, `GetProcessAffinityMask`, `GetLastError`, `CloseHandle` (Win32); `log_to_find`, `get_fail_find_set!()` |
-| **API** | [`GetProcessAffinityMask`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask), [`OpenProcess`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocess) |
-| **Privileges** | `SeDebugPrivilege` recommended; without it, protected processes return access-denied |
+| Requirement | Value |
+|-------------|-------|
+| **Module** | `winapi.rs` |
+| **Callers** | Find-mode logic in `apply.rs` / `scheduler.rs` |
+| **Callees** | `OpenProcess`, `GetProcessAffinityMask`, `GetLastError`, `CloseHandle` (Win32), [`log_to_find`](../logging.rs/log_to_find.md), [`error_from_code_win32`](../error_codes.rs/error_from_code_win32.md) |
+| **Win32 API** | [OpenProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocess), [GetProcessAffinityMask](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask) |
+| **Privileges** | `SeDebugPrivilege` recommended for querying protected/elevated processes. |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| Affinity application logic | [apply_affinity](../apply.rs/apply_affinity.md) |
-| Find mode entry point | [process_find](../main.rs/process_find.md) |
-| Process handle RAII wrapper | [ProcessHandle](ProcessHandle.md) |
-| Debug privilege enablement | [enable_debug_privilege](enable_debug_privilege.md) |
-| CPU indices to bitmask utility | [cpu_indices_to_mask](../config.rs/cpu_indices_to_mask.md) |
-| Error code formatting | [error_codes module](../error_codes.rs/README.md) |
-| GetProcessAffinityMask (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask) |
+| get_process_handle | [get_process_handle](get_process_handle.md) |
+| log_to_find | [log_to_find](../logging.rs/log_to_find.md) |
+| error_from_code_win32 | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
+| FINDS_FAIL_SET static | [statics](../logging.rs/statics.md#finds_fail_set) |
+| logging module | [logging.rs](../logging.rs/README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

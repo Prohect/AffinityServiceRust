@@ -1,6 +1,6 @@
 # ProcessHandle struct (winapi.rs)
 
-RAII container that holds up to four Windows process handles opened at different access levels. When the `ProcessHandle` is dropped, all valid handles are automatically closed via `CloseHandle`. The two limited handles (`r_limited_handle` and `w_limited_handle`) are always valid when the struct exists; the full-access handles (`r_handle` and `w_handle`) are `Option`-wrapped and may be `None` if the caller lacks sufficient privileges to open the process at that access level.
+The `ProcessHandle` struct is an RAII wrapper that holds a set of Windows process handles with varying access levels. It guarantees that all contained handles are automatically closed when the struct is dropped. The struct maintains up to four handles per process — limited and full variants for both read (query) and write (set) operations — allowing callers to use the appropriate access level for each operation.
 
 ## Syntax
 
@@ -17,61 +17,40 @@ pub struct ProcessHandle {
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `r_limited_handle` | `HANDLE` | Handle opened with `PROCESS_QUERY_LIMITED_INFORMATION`. Always valid when the struct exists. Used for lightweight queries such as reading CPU sets and process times. |
-| `r_handle` | `Option<HANDLE>` | Handle opened with `PROCESS_QUERY_INFORMATION`. `Some` when the caller has sufficient access; `None` otherwise. Required for operations such as `GetProcessAffinityMask` and `NtQueryInformationProcess` with higher information classes. |
-| `w_limited_handle` | `HANDLE` | Handle opened with `PROCESS_SET_LIMITED_INFORMATION`. Always valid when the struct exists. Used for setting CPU sets via `SetProcessDefaultCpuSets`. |
-| `w_handle` | `Option<HANDLE>` | Handle opened with `PROCESS_SET_INFORMATION`. `Some` when the caller has sufficient access; `None` otherwise. Required for operations such as `SetPriorityClass`, `SetProcessAffinityMask`, and `NtSetInformationProcess`. |
+| `r_limited_handle` | `HANDLE` | Process handle opened with `PROCESS_QUERY_LIMITED_INFORMATION`. Always valid when the struct is constructed. |
+| `r_handle` | `Option<HANDLE>` | Process handle opened with `PROCESS_QUERY_INFORMATION`. May be `None` if the higher-privilege open failed (e.g., protected processes). |
+| `w_limited_handle` | `HANDLE` | Process handle opened with `PROCESS_SET_LIMITED_INFORMATION`. Always valid when the struct is constructed. |
+| `w_handle` | `Option<HANDLE>` | Process handle opened with `PROCESS_SET_INFORMATION`. May be `None` if the higher-privilege open failed. |
 
 ## Remarks
 
-### Construction
+- **RAII handle lifecycle.** The `Drop` implementation closes all valid handles automatically. `Option<HANDLE>` variants are only closed if they are `Some`. The limited handles (`r_limited_handle`, `w_limited_handle`) are always closed because they are guaranteed valid at construction time.
 
-`ProcessHandle` instances are created exclusively by [get_process_handle](get_process_handle.md). That function opens all four access levels in sequence; the two limited handles are mandatory (failure returns `None` from the function), while the two full-access handles degrade gracefully to `None`. This design allows AffinityServiceRust to apply as many settings as the current privilege level permits without failing entirely when access is restricted.
+- **Access level fallback pattern.** The struct supports a two-tier access model. Limited handles (`PROCESS_QUERY_LIMITED_INFORMATION`, `PROCESS_SET_LIMITED_INFORMATION`) succeed for most processes, while full handles (`PROCESS_QUERY_INFORMATION`, `PROCESS_SET_INFORMATION`) may fail for protected or system processes. Callers should check whether `r_handle` or `w_handle` is `Some` before using them and fall back to the limited variants.
 
-### Drop behavior
+- **Construction.** Instances are created exclusively by [get_process_handle](get_process_handle.md), which opens all four handles and returns `None` if either of the required limited handles cannot be obtained. The full handles are best-effort.
 
-The `Drop` implementation closes handles in the following order:
+- **Thread safety.** The struct does not implement `Send` or `Sync`. Handles should not be shared across threads; obtain a new `ProcessHandle` on each thread that needs access.
 
-1. `r_handle` (if `Some`)
-2. `w_handle` (if `Some`)
-3. `r_limited_handle` (always)
-4. `w_limited_handle` (always)
-
-Each `CloseHandle` call is wrapped in `unsafe` and its result is intentionally discarded — there is no meaningful recovery action if closing a handle fails.
-
-### Handle access level mapping
-
-| Handle | Win32 Access Flag | Typical operations |
-|--------|-------------------|--------------------|
-| `r_limited_handle` | `PROCESS_QUERY_LIMITED_INFORMATION` | `GetProcessDefaultCpuSets`, `GetProcessInformation` (memory priority) |
-| `r_handle` | `PROCESS_QUERY_INFORMATION` | `GetProcessAffinityMask`, `NtQueryInformationProcess` (IO priority) |
-| `w_limited_handle` | `PROCESS_SET_LIMITED_INFORMATION` | `SetProcessDefaultCpuSets` |
-| `w_handle` | `PROCESS_SET_INFORMATION` | `SetPriorityClass`, `SetProcessAffinityMask`, `NtSetInformationProcess` (IO / memory priority) |
-
-### Usage in the apply module
-
-The [apply module](../apply.rs/README.md) receives a `&ProcessHandle` reference and selects the appropriate handle for each operation via the helper function `get_handles`, which returns the best available read and write handles (preferring full-access over limited).
+- **Platform.** Windows only. Relies on `windows::Win32::Foundation::HANDLE` and `CloseHandle`.
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `winapi` (`src/winapi.rs`) |
-| **Constructed by** | [get_process_handle](get_process_handle.md) |
-| **Consumed by** | [apply_priority](../apply.rs/apply_priority.md), [apply_affinity](../apply.rs/apply_affinity.md), [apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md), [apply_io_priority](../apply.rs/apply_io_priority.md), [apply_memory_priority](../apply.rs/apply_memory_priority.md) |
-| **Win32 API** | `OpenProcess`, `CloseHandle` |
-| **Privileges** | `SeDebugPrivilege` recommended for full-access handles on protected processes |
+| Requirement | Value |
+|-------------|-------|
+| Module | `winapi.rs` |
+| Created by | [get_process_handle](get_process_handle.md) |
+| Depends on | `windows::Win32::Foundation::{CloseHandle, HANDLE}` |
+| Privileges | `SeDebugPrivilege` recommended for full-access handles on protected processes |
+| Platform | Windows |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| Opens and returns a ProcessHandle | [get_process_handle](get_process_handle.md) |
-| Thread handle RAII container | [ThreadHandle](ThreadHandle.md) |
-| Rule application entry point (process level) | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
-| Logging operations for handle failures | [Operation enum](../logging.rs/README.md) |
-| Error code formatting | [error_codes module](../error_codes.rs/README.md) |
+| get_process_handle | [get_process_handle](get_process_handle.md) |
+| ThreadHandle struct | [ThreadHandle](ThreadHandle.md) |
+| process module | [process.rs](../process.rs/README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

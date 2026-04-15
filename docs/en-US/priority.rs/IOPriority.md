@@ -1,94 +1,103 @@
-# IOPriority enum (priority.rs)
+# IOPriority type (priority.rs)
 
-Represents the I/O priority level assigned to a process via `NtSetInformationProcess` with the `ProcessInformationClass` value for I/O priority. Each variant maps to a numeric constant consumed by the NT native API. The `None` variant serves as a sentinel indicating that no I/O priority change was requested in the configuration.
-
-Setting `IOPriority::High` requires the `SeIncreaseBasePriorityPrivilege` privilege and an elevated (administrator) token.
+Represents the Windows I/O priority hint levels that can be applied to a process via `NtSetInformationProcess`. Each variant maps to a raw `u32` constant used by the undocumented `ProcessIoPriority` information class. The `None` sentinel indicates that no I/O priority override is configured.
 
 ## Syntax
 
-```rust
+```AffinityServiceRust/src/priority.rs#L63-69
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IOPriority {
     None,
     VeryLow,
     Low,
     Normal,
-    High,
+    High, // Requires SeIncreaseBasePriorityPrivilege + admin
 }
 ```
 
 ## Members
 
-| Variant | Win32 value | String name | Description |
-|---------|-------------|-------------|-------------|
-| `None` | *(none)* | `"none"` | Sentinel — no I/O priority change requested. `as_win_const` returns `None`. |
-| `VeryLow` | `0` | `"very low"` | Lowest I/O priority. Background-class I/O. |
-| `Low` | `1` | `"low"` | Low I/O priority. |
-| `Normal` | `2` | `"normal"` | Default I/O priority for most processes. |
-| `High` | `3` | `"high"` | Highest I/O priority. Requires `SeIncreaseBasePriorityPrivilege` and administrator elevation. |
+| Variant | Win32 Value | Description |
+|---------|-------------|-------------|
+| `None` | *(no value)* | Sentinel variant indicating that no I/O priority change should be applied. `as_win_const()` returns `None`. |
+| `VeryLow` | `0` | Background I/O priority. Operations issued by the process are serviced at the lowest priority by the I/O scheduler, suitable for maintenance or indexing tasks that should not interfere with interactive workloads. |
+| `Low` | `1` | Low I/O priority. A step above `VeryLow`, appropriate for processes that perform non-urgent disk work. |
+| `Normal` | `2` | Default I/O priority for most processes. This is the level assigned by the Windows kernel unless explicitly changed. |
+| `High` | `3` | Elevated I/O priority. Setting this level requires the `SeIncreaseBasePriorityPrivilege` privilege and administrator rights. Appropriate only for latency-sensitive applications whose I/O should be serviced ahead of normal-priority traffic. |
 
 ## Methods
 
-### as_str
+### `as_str`
 
-```rust
+```AffinityServiceRust/src/priority.rs#L80-85
 pub fn as_str(&self) -> &'static str
 ```
 
-Returns the human-readable string name for this variant (e.g., `"very low"`, `"normal"`). Returns `"unknown"` if the variant is somehow absent from the internal lookup table.
+Returns the human-readable lowercase string representation of the variant (e.g. `"very low"`, `"normal"`). Returns `"unknown"` if the variant is not found in the internal lookup table (unreachable for well-formed values).
 
-### as_win_const
+### `as_win_const`
 
-```rust
+```AffinityServiceRust/src/priority.rs#L87-89
 pub fn as_win_const(&self) -> Option<u32>
 ```
 
-Returns the numeric I/O priority value for use with `NtSetInformationProcess`, or `None` for the `IOPriority::None` sentinel.
+Returns the raw `u32` value suitable for passing to `NtSetInformationProcess` with the `ProcessIoPriority` information class. Returns `None` for the `IOPriority::None` sentinel, signaling that no API call should be made.
 
-### from_str
+### `from_str`
 
-```rust
+```AffinityServiceRust/src/priority.rs#L91-98
 pub fn from_str(s: &str) -> Self
 ```
 
-Parses a case-insensitive string into an `IOPriority` variant. Unrecognized strings return `IOPriority::None`. This is **not** the `std::str::FromStr` trait; it is an inherent method.
+Parses a case-insensitive string into the corresponding `IOPriority` variant. Recognized strings are `"none"`, `"very low"`, `"low"`, `"normal"`, and `"high"`. Unrecognized input falls back to `IOPriority::None`.
 
-### from_win_const
+**Parameters:**
 
-```rust
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `s` | `&str` | The string to parse. Comparison is case-insensitive (the input is lowercased before matching). |
+
+### `from_win_const`
+
+```AffinityServiceRust/src/priority.rs#L100-106
 pub fn from_win_const(val: u32) -> &'static str
 ```
 
-Maps a raw numeric I/O priority value back to its human-readable string name. Returns `"unknown"` for unrecognized values. Note that this returns a `&'static str`, not an `IOPriority` variant.
+Converts a raw `u32` I/O priority constant back to its human-readable string name. Returns `"unknown"` if the value does not match any known constant. This is used for display and logging purposes when reading the current I/O priority of a process.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `val` | `u32` | The raw Win32 I/O priority value to look up. |
 
 ## Remarks
 
-The Win32 constant values (`0` through `3`) correspond to the `IO_PRIORITY_HINT` enumeration defined in `ntddk.h`. AffinityServiceRust uses the `NtSetInformationProcess` / `NtQueryInformationProcess` native API rather than the documented Win32 `SetProcessInformation` surface because the latter does not expose I/O priority directly.
-
-The lookup is driven by a `const TABLE` array of `(Self, &str, Option<u32>)` tuples. All four public methods perform a linear scan of this table; for five variants the cost is negligible.
-
-`from_str` performs a case-insensitive comparison by lowercasing the input before matching.
+- The I/O priority constants (`0`–`3`) are not part of the public Windows SDK; they are used with the undocumented `NtSetInformationProcess` / `NtQueryInformationProcess` information class `ProcessIoPriority` (value `33`). The values are stable across all modern Windows versions (Vista through Windows 11).
+- Setting `IOPriority::High` on a process that the caller does not own, or without the `SeIncreaseBasePriorityPrivilege` privilege enabled, will fail with `STATUS_PRIVILEGE_NOT_HELD`.
+- All conversion methods use a compile-time constant lookup table (`TABLE`) that pairs each variant with its string name and optional raw value. This ensures zero heap allocation and O(n) lookup over a fixed-size array (n ≤ 5).
+- The `from_str` method is used by the configuration parser to deserialize user-supplied strings from the config file. The `as_win_const` method is used by the apply engine to obtain the value passed to the Win32 API.
+- `IOPriority` derives `Clone`, `Copy`, `PartialEq`, and `Eq`, making it suitable for cheap comparisons and storage in configuration structs.
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `priority` |
-| **Callers** | [parse_and_insert_rules](../config.rs/parse_and_insert_rules.md), [apply_io_priority](../apply.rs/apply_io_priority.md) |
-| **Callees** | *(none — pure data mapping)* |
-| **Win32 API** | `NtSetInformationProcess` (`ProcessInformationClass` = I/O priority), `NtQueryInformationProcess` |
-| **Privileges** | `SeIncreaseBasePriorityPrivilege` required for `High` variant |
+| Requirement | Value |
+|-------------|-------|
+| Module | `priority.rs` |
+| Callers | Configuration parser (`config.rs`), apply engine (`apply.rs`), [apply_process_level](../main.rs/apply_process_level.md) |
+| Win32 API | `NtSetInformationProcess` (`ProcessIoPriority`, information class 33) |
+| Privileges | `SeIncreaseBasePriorityPrivilege` + administrator (for `High` variant only) |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Process priority class enum | [ProcessPriority](ProcessPriority.md) |
-| Memory priority level enum | [MemoryPriority](MemoryPriority.md) |
-| Thread priority level enum | [ThreadPriority](ThreadPriority.md) |
-| I/O priority application logic | [apply_io_priority](../apply.rs/apply_io_priority.md) |
+| Reference | Link |
+|-----------|------|
+| ProcessPriority | [ProcessPriority](ProcessPriority.md) |
+| MemoryPriority | [MemoryPriority](MemoryPriority.md) |
+| ThreadPriority | [ThreadPriority](ThreadPriority.md) |
+| MemoryPriorityInformation | [MemoryPriorityInformation](MemoryPriorityInformation.md) |
 | priority module overview | [README](README.md) |
+| apply_process_level | [apply_process_level](../main.rs/apply_process_level.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

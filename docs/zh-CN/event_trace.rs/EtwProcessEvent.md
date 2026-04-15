@@ -1,10 +1,10 @@
 # EtwProcessEvent 结构体 (event_trace.rs)
 
-表示从 ETW (Windows 事件跟踪) 实时跟踪会话接收到的进程生命周期事件。每个实例携带受影响进程的进程 ID 以及一个指示该事件是进程启动还是进程停止的标志。实例由内部 `etw_event_callback` 函数生成，并通过 MPSC 通道传递到主服务循环。
+从 ETW（Windows 事件跟踪）接收的进程事件，表示进程启动或进程停止通知。此结构体的实例由 ETW 回调函数生成，并通过 [`EtwProcessMonitor::start`](EtwProcessMonitor.md) 返回的 `mpsc::Receiver<EtwProcessEvent>` 通道传递给消费者。
 
 ## 语法
 
-```event_trace.rs
+```rust
 #[derive(Debug, Clone)]
 pub struct EtwProcessEvent {
     pub pid: u32,
@@ -16,35 +16,49 @@ pub struct EtwProcessEvent {
 
 | 字段 | 类型 | 描述 |
 |------|------|------|
-| `pid` | `u32` | 被创建或终止的进程的进程标识符。从 ETW 事件记录的 `UserData` 载荷的前 4 个字节中提取。 |
-| `is_start` | `bool` | 如果事件表示进程创建（ETW 事件 ID 1），则为 `true`；如果表示进程终止（ETW 事件 ID 2），则为 `false`。 |
+| `pid` | `u32` | 从 ETW 事件的 `UserData` 载荷（前 4 个字节）中提取的进程标识符。这是被创建或终止的进程的 PID。 |
+| `is_start` | `bool` | 如果事件表示进程创建（ETW 事件 ID `1` — `ProcessStart`），则为 `true`。如果事件表示进程终止（ETW 事件 ID `2` — `ProcessStop`），则为 `false`。 |
 
 ## 备注
 
-- 该结构体派生了 `Debug` 和 `Clone`，使其适合诊断日志记录以及在线程边界之间传递副本。它被有意设计为轻量级——两个标量字段，无堆内存分配——以最大限度减少高频 ETW 回调路径中的开销。
-- 实例在 `extern "system"` 回调 `etw_event_callback` 内部创建，该回调运行在由 [EtwProcessMonitor::start](EtwProcessMonitor.md) 生成的 ETW 处理线程上。回调通过全局 [ETW_SENDER](ETW_SENDER.md) 通道发送每个事件。接收端由主服务循环持有，它使用 `is_start` 来决定是对新启动的进程应用配置规则，还是清理已终止进程的状态。
-- `pid` 值直接来自 `Microsoft-Windows-Kernel-Process` 提供程序的事件载荷。对于 `ProcessStart` 事件（ID 1），这是新创建进程的 PID。对于 `ProcessStop` 事件（ID 2），这是已退出进程的 PID。
-- 由于 ETW 回调从原始 `UserData` 字节中提取 PID，回调在读取之前会执行边界检查（`UserDataLength >= 4`）。如果检查失败，则不会生成 `EtwProcessEvent`。
+- 该结构体派生了 `Debug` 和 `Clone`，允许用于诊断打印以及在通道边界和集合操作中自由复制。
+
+- 实例在 `extern "system"` ETW 回调函数（`etw_event_callback`）内部构造，该回调从原始 `EVENT_RECORD.UserData` 指针中提取 PID，并从 `EVENT_RECORD.EventHeader.EventDescriptor.Id` 确定事件类型。只有事件 ID `1`（启动）和 `2`（停止）会生成 `EtwProcessEvent` 值；所有其他事件 ID 会被回调静默丢弃。
+
+- 事件通过全局 [`ETW_SENDER`](ETW_SENDER.md) 通道发送。如果发送端已被丢弃或通道已满，事件将被静默丢失（回调使用 `let _ = sender.send(...)` 忽略发送错误）。
+
+- 消费者（通常是主调度循环）通过 [`EtwProcessMonitor::start`](EtwProcessMonitor.md) 返回的 `mpsc::Receiver<EtwProcessEvent>` 接收这些事件，并利用它们在新进程出现时主动应用亲和性/优先级规则，而不是仅依赖 [process 模块](../process.rs/README.md) 基于轮询的快照。
+
+### ETW 事件 ID 映射
+
+| ETW 事件 ID | `is_start` 值 | 含义 |
+|-------------|---------------|------|
+| `1` | `true` | `ProcessStart` — 新进程已创建。 |
+| `2` | `false` | `ProcessStop` — 现有进程已终止。 |
+
+### ETW 提供程序详细信息
+
+事件来源于 `Microsoft-Windows-Kernel-Process` 提供程序（GUID `{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}`），并使用关键字过滤器 `WINEVENT_KEYWORD_PROCESS`（`0x10`），确保只有进程相关事件被传递到回调。
 
 ## 要求
 
 | 要求 | 值 |
 |------|-----|
-| 模块 | `event_trace` |
-| 生产者 | `etw_event_callback`（内部 `extern "system"` 函数） |
-| 消费者 | [main 模块](../main.rs/README.md) 中的服务主循环 |
-| 通道 | 通过 [ETW_SENDER](ETW_SENDER.md) 发送，从 [EtwProcessMonitor::start](EtwProcessMonitor.md) 返回的 `Receiver<EtwProcessEvent>` 接收 |
-| ETW 提供程序 | `Microsoft-Windows-Kernel-Process` (`{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}`) |
+| **模块** | `event_trace.rs` |
+| **生成者** | `etw_event_callback`（模块私有的 `extern "system"` 函数） |
+| **消费者** | 主调度循环，通过 `mpsc::Receiver<EtwProcessEvent>` |
+| **传递通道** | [`ETW_SENDER`](ETW_SENDER.md) 全局通道 |
+| **平台** | 仅限 Windows — 需要 ETW 基础设施 |
 
 ## 另请参阅
 
 | 主题 | 链接 |
 |------|------|
-| 生成这些事件的 ETW 会话管理器 | [EtwProcessMonitor](EtwProcessMonitor.md) |
-| 回调使用的全局通道发送端 | [ETW_SENDER](ETW_SENDER.md) |
-| 活跃会话标志 | [ETW_ACTIVE](ETW_ACTIVE.md) |
-| event_trace 模块概述 | [event_trace 模块](README.md) |
+| EtwProcessMonitor 结构体 | [EtwProcessMonitor](EtwProcessMonitor.md) |
+| ETW_SENDER 静态变量 | [ETW_SENDER](ETW_SENDER.md) |
+| ETW_ACTIVE 静态变量 | [ETW_ACTIVE](ETW_ACTIVE.md) |
+| process 模块 | [process.rs](../process.rs/README.md) |
+| event_trace 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

@@ -1,10 +1,10 @@
 # format_cpu_indices function (config.rs)
 
-Formats a slice of CPU indices into a compact, human-readable range string. Consecutive indices are collapsed into `start-end` ranges and non-consecutive indices are separated by commas. This function is used throughout the service for log messages, config file generation, and diagnostic output.
+Formats a slice of CPU indices into a compact, human-readable string representation using range notation where consecutive indices allow it. This is the inverse display operation of [`parse_cpu_spec`](parse_cpu_spec.md) and is used throughout the application for logging and diagnostics.
 
 ## Syntax
 
-```rust
+```AffinityServiceRust/src/config.rs#L129-159
 pub fn format_cpu_indices(cpus: &[u32]) -> String
 ```
 
@@ -12,64 +12,70 @@ pub fn format_cpu_indices(cpus: &[u32]) -> String
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `cpus` | `&[u32]` | Slice of CPU indices to format. Does not need to be sorted or deduplicated — the function creates a sorted copy internally. May be empty. |
+| `cpus` | `&[u32]` | A slice of CPU index values to format. The slice does not need to be sorted or deduplicated — the function creates a sorted copy internally before formatting. |
 
 ## Return value
 
-Returns a `String` containing the formatted CPU index representation.
+Type: `String`
+
+A compact string representation of the CPU indices. Consecutive indices are collapsed into ranges using dash notation, and non-consecutive values are separated by commas.
 
 | Input | Output |
 |-------|--------|
-| `&[]` | `"0"` |
-| `&[0, 1, 2, 3]` | `"0-3"` |
-| `&[0, 2, 4]` | `"0,2,4"` |
-| `&[0, 1, 2, 5, 6, 7, 12]` | `"0-2,5-7,12"` |
-| `&[3]` | `"3"` |
-
-An empty slice produces the string `"0"`, which in the configuration file format represents "no CPUs" / "no change".
+| `[]` (empty) | `"0"` |
+| `[0, 1, 2, 3]` | `"0-3"` |
+| `[0, 2, 4]` | `"0,2,4"` |
+| `[0, 1, 2, 5, 6, 7]` | `"0-2,5-7"` |
+| `[3]` | `"3"` |
+| `[0, 1, 2, 8]` | `"0-2,8"` |
 
 ## Remarks
 
+### Sorting
+
+The function copies the input into a local `List<[u32; CONSUMER_CPUS]>`, sorts it, and then iterates over the sorted list to detect consecutive runs. The original input slice is not modified.
+
+### Empty-input convention
+
+An empty slice returns the string `"0"`, which is the configuration file convention for "no change" or "unset." This matches the behavior of [`parse_cpu_spec`](parse_cpu_spec.md), which treats both an empty string and the literal `"0"` as an empty CPU list.
+
 ### Algorithm
 
-1. If the input slice is empty, return `"0"` immediately.
-2. Create a sorted copy of the input.
-3. Walk the sorted list, extending the current range while indices are consecutive (`sorted[i+1] == sorted[i] + 1`).
-4. When a gap is found, emit the accumulated range:
-   - Single index → `"N"`
-   - Two or more consecutive indices → `"start-end"`
-5. Separate ranges with commas (no spaces).
+The formatting algorithm performs a single linear scan over the sorted list:
 
-### Inverse relationship with parse_cpu_spec
+1. Initialize `start` and `end` to the first element.
+2. While the next element equals `end + 1`, extend the current range by advancing `end`.
+3. When a gap is detected (or the list is exhausted), emit the accumulated range:
+   - If `start == end`, emit a single number (e.g., `"3"`).
+   - If `start < end`, emit a range (e.g., `"0-3"`).
+4. Separate emitted ranges with commas.
 
-`format_cpu_indices` is the display counterpart of [parse_cpu_spec](parse_cpu_spec.md). The round-trip `format_cpu_indices(parse_cpu_spec(s))` produces a normalized representation of the original spec string, with duplicates removed and indices sorted. Note that hex-mask inputs (e.g., `"0xFF"`) are normalized to range notation (e.g., `"0-7"`).
+### Relationship to parse_cpu_spec
 
-### Empty-means-zero convention
+`format_cpu_indices` and [`parse_cpu_spec`](parse_cpu_spec.md) form a round-trip pair for the range subset of CPU specifications. Given sorted, deduplicated input, `parse_cpu_spec(format_cpu_indices(cpus))` reproduces the original list. However, hex-mask specifications (`0xFF`) are not reproduced by `format_cpu_indices` — ranges are always used.
 
-The config file format uses `"0"` to mean "no CPU specification" (i.e., do not change affinity/cpuset). Returning `"0"` for an empty slice preserves this convention so that generated config files are syntactically valid and semantically correct when re-parsed.
+### Usage
 
-### Output in generated files
-
-This function is called by [convert](convert.md) and [sort_and_group_config](sort_and_group_config.md) when writing CPU specifications into output config files. The compact range notation keeps generated files concise, especially for systems with many cores (e.g., `"0-63,128-191"` instead of listing 128 individual indices).
+This function is called in logging and diagnostic output to display CPU sets in a readable form — for example, when printing which CPUs a rule applies to or when generating auto-grouped configuration files via [`sort_and_group_config`](sort_and_group_config.md).
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `config` (`src/config.rs`) |
-| **Visibility** | `pub` |
-| **Callers** | [convert](convert.md), [sort_and_group_config](sort_and_group_config.md), apply module log formatting |
-| **Dependencies** | None (pure function) |
+| Requirement | Value |
+|-------------|-------|
+| Module | `config.rs` |
+| Callers | Logging utilities, [`sort_and_group_config`](sort_and_group_config.md), diagnostic output |
+| Callees | `List::sort` |
+| Dependencies | `List`, `CONSUMER_CPUS` from [`collections.rs`](../collections.rs/README.md) |
+| Privileges | None |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| CPU spec string parser (inverse) | [parse_cpu_spec](parse_cpu_spec.md) |
-| CPU indices to bitmask | [cpu_indices_to_mask](cpu_indices_to_mask.md) |
-| Bitmask to CPU indices | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
-| Config module overview | [README](README.md) |
+| Resource | Link |
+|----------|------|
+| parse_cpu_spec | [parse_cpu_spec](parse_cpu_spec.md) |
+| cpu_indices_to_mask | [cpu_indices_to_mask](cpu_indices_to_mask.md) |
+| mask_to_cpu_indices | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
+| config module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

@@ -1,10 +1,10 @@
 # log_error_if_new function (apply.rs)
 
-Logs an error message to the [ApplyConfigResult](ApplyConfigResult.md) accumulator only if the same pid / tid / operation / error-code combination has not been logged before. This prevents repeated failures—common when a process denies access on every polling cycle—from flooding the log with identical entries.
+The `log_error_if_new` function conditionally appends an error message to an `ApplyConfigResult` only when the given pid/tid/operation/error-code combination has not been recorded before. This prevents the same recurring error from flooding the change log on every apply cycle, while still ensuring every distinct failure is reported at least once.
 
 ## Syntax
 
-```AffinityServiceRust/src/apply.rs#L69-81
+```AffinityServiceRust/src/apply.rs#L71-83
 #[inline(always)]
 fn log_error_if_new(
     pid: u32,
@@ -21,57 +21,45 @@ fn log_error_if_new(
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `pid` | `u32` | Process identifier that the error pertains to. Used together with `tid`, `operation`, and `error_code` to form the deduplication key. |
-| `tid` | `u32` | Thread identifier. Pass `0` for process-level operations that are not thread-specific (e.g., `SetPriorityClass`, `SetProcessAffinityMask`). |
-| `process_name` | `&str` | Display name of the process, forwarded to [is_new_error](../logging.rs/is_new_error.md) for the deduplication map and included in the formatted message. |
-| `operation` | [Operation](../logging.rs/Operation.md) | Enum variant identifying the Windows API call that failed (e.g., `Operation::SetPriorityClass`, `Operation::NtSetInformationProcess2ProcessInformationIOPriority`). |
-| `error_code` | `u32` | The raw Win32 error code (`GetLastError().0`) or the unsigned cast of an NTSTATUS value. |
-| `apply_config_result` | `&mut` [ApplyConfigResult](ApplyConfigResult.md) | Accumulator that receives the formatted error string via `add_error` when the error is new. |
-| `format_msg` | `impl FnOnce() -> String` | Lazy formatting closure. Only evaluated when the error *is* new, avoiding the cost of `format!()` for suppressed duplicates. |
+| `pid` | `u32` | The process ID associated with the error. Used together with `tid`, `process_name`, `operation`, and `error_code` to form the deduplication key. |
+| `tid` | `u32` | The thread ID associated with the error. Pass `0` for process-level operations that are not thread-specific. |
+| `process_name` | `&str` | The human-readable name of the process or configuration rule, used as part of the deduplication key. |
+| `operation` | `Operation` | An enum variant from the `logging` module that identifies which Windows API call failed (e.g., `Operation::SetPriorityClass`, `Operation::SetThreadSelectedCpuSets`). |
+| `error_code` | `u32` | The raw Windows error code (Win32 `GetLastError` result or NTSTATUS cast to `u32`) that was returned by the failing API call. |
+| `apply_config_result` | `&mut ApplyConfigResult` | The result accumulator to which the error string is appended if the error is new. |
+| `format_msg` | `impl FnOnce() -> String` | A lazily-evaluated closure that produces the formatted error message string. The closure is only invoked when the error is determined to be new, avoiding the cost of string formatting for duplicate errors. |
 
 ## Return value
 
-None (`()`).
+This function does not return a value.
 
 ## Remarks
 
-The function delegates deduplication to [is_new_error](../logging.rs/is_new_error.md), which maintains a global `HashMap<u32, HashMap<ApplyFailEntry, bool>>` keyed by pid. If `is_new_error` returns `true`, the `format_msg` closure is invoked and the resulting `String` is pushed into `apply_config_result.errors`. If it returns `false`, neither the closure nor `add_error` is called.
-
-Because `format_msg` is `FnOnce`, the formatting work (which typically involves calls to [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) or [error_from_ntstatus](../error_codes.rs/error_from_ntstatus.md)) is deferred until it is known that the message will actually be recorded. In a steady-state loop where a process continuously denies access, this avoids thousands of wasted allocations per cycle.
-
-The function is marked `#[inline(always)]` because it sits on the hot path of every `apply_*` function's error branch and consists of a single conditional call.
-
-All `apply_*` functions in the [apply](README.md) module route their error handling through `log_error_if_new` rather than calling `add_error` directly. This makes the deduplication policy uniform and centralised.
-
-### Error message convention
-
-Callers format messages following the pattern:
-
-`"fn_name: [OPERATION][error_description] pid-tid-process_name"`
-
-For example:
-
-`"apply_priority: [SET_PRIORITY_CLASS][Access is denied. (0x5)] 1234-chrome"`
+- The function delegates deduplication to `logging::is_new_error`, which maintains a persistent set of previously-seen error keys. If `is_new_error` returns `true`, the `format_msg` closure is called and its result is passed to `ApplyConfigResult::add_error`. Otherwise, the error is silently suppressed.
+- The `format_msg` parameter uses `impl FnOnce() -> String` rather than a pre-formatted `String` to defer the cost of `format!()` macro expansion. In high-frequency apply loops where the same error recurs every cycle, this avoids thousands of unnecessary heap allocations.
+- The function is marked `#[inline(always)]` because it is called at every error site across the module and the body is small (a single branch plus a closure call).
+- This is a module-private function (`fn`, not `pub fn`). It is used exclusively by other functions within `apply.rs`.
+- The `tid` parameter is set to `0` by convention when the error is at the process level (e.g., `apply_priority`, `apply_affinity`). Thread-level callers (e.g., `apply_prime_threads_promote`, `apply_prime_threads_demote`, `apply_ideal_processors`) pass the actual thread ID.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `apply` |
-| Visibility | crate-private (`fn`) |
-| Callers | [apply_priority](apply_priority.md), [apply_affinity](apply_affinity.md), [reset_thread_ideal_processors](reset_thread_ideal_processors.md), [apply_process_default_cpuset](apply_process_default_cpuset.md), [apply_io_priority](apply_io_priority.md), [apply_memory_priority](apply_memory_priority.md), [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md), [apply_prime_threads_promote](apply_prime_threads_promote.md), [apply_prime_threads_demote](apply_prime_threads_demote.md), [apply_ideal_processors](apply_ideal_processors.md) |
-| Callees | [is_new_error](../logging.rs/is_new_error.md), [ApplyConfigResult::add_error](ApplyConfigResult.md) |
+| Module | `apply.rs` |
+| Crate | `AffinityServiceRust` |
+| Visibility | Private (crate-internal) |
+| Dependencies | `logging::is_new_error`, `logging::Operation` |
+| Callers | `apply_priority`, `apply_affinity`, `reset_thread_ideal_processors`, `apply_process_default_cpuset`, `apply_io_priority`, `apply_memory_priority`, `prefetch_all_thread_cycles`, `apply_prime_threads_promote`, `apply_prime_threads_demote`, `apply_ideal_processors` |
+| Platform | Windows |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Deduplication map and purging | [is_new_error](../logging.rs/is_new_error.md), [purge_fail_map](../logging.rs/purge_fail_map.md) |
-| Operation enum | [Operation](../logging.rs/Operation.md) |
-| Error result accumulator | [ApplyConfigResult](ApplyConfigResult.md) |
-| Win32 error formatting | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
-| NTSTATUS error formatting | [error_from_ntstatus](../error_codes.rs/error_from_ntstatus.md) |
+| Reference | Link |
+|-----------|------|
+| apply module overview | [`README`](README.md) |
+| ApplyConfigResult | [`ApplyConfigResult`](ApplyConfigResult.md) |
+| get_handles | [`get_handles`](get_handles.md) |
+| logging module | [`logging.rs`](../logging.rs/README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

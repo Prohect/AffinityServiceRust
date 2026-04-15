@@ -1,78 +1,74 @@
 # read_utf16le_file function (config.rs)
 
-Reads a file encoded as UTF-16 Little Endian and decodes it into a Rust `String`. This function is used to read Process Lasso configuration files, which are stored in UTF-16 LE encoding, as part of the [convert](convert.md) workflow.
+Reads a file encoded as UTF-16 Little Endian and returns its content as a Rust `String`. This function is used to ingest Process Lasso configuration files, which are typically saved in UTF-16 LE encoding on Windows.
 
 ## Syntax
 
-```rust
-pub fn read_utf16le_file(path: &str) -> Result<String>
+```AffinityServiceRust/src/config.rs#L888-892
+pub fn read_utf16le_file(path: &str) -> Result<String> {
+    let bytes = read(path)?;
+    let utf16: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    Ok(String::from_utf16_lossy(&utf16))
+}
 ```
 
 ## Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `path` | `&str` | File system path to the UTF-16 LE encoded file. Passed directly to `std::fs::read` to load the raw bytes. |
+| `path` | `&str` | The filesystem path to the UTF-16 LE encoded file to read. |
 
 ## Return value
 
-Returns `Result<String>`:
+Type: `std::io::Result<String>`
 
-- **`Ok(String)`** — The decoded UTF-8 string content of the file. Any invalid UTF-16 surrogate pairs are replaced with the Unicode replacement character (U+FFFD) via `String::from_utf16_lossy`.
-- **`Err(io::Error)`** — Propagated from `std::fs::read` if the file cannot be opened or read.
+On success, returns `Ok(String)` containing the decoded UTF-8 content of the file. On failure, returns an `Err` propagated from `std::fs::read` (e.g., file not found, permission denied).
 
 ## Remarks
 
-### Decoding algorithm
+### Encoding conversion
 
-1. The entire file is read into memory as a `Vec<u8>` using `std::fs::read`.
-2. The byte vector is iterated in exact 2-byte chunks using `chunks_exact(2)`.
-3. Each chunk is converted to a `u16` value in little-endian byte order via `u16::from_le_bytes`.
-4. The resulting `Vec<u16>` is decoded to a `String` using `String::from_utf16_lossy`, which replaces invalid surrogate pairs with U+FFFD rather than returning an error.
+The function performs the following steps:
+
+1. Reads the entire file into a `Vec<u8>` byte buffer via `std::fs::read`.
+2. Groups the bytes into pairs using `chunks_exact(2)` and reconstructs each pair as a little-endian `u16` code unit via `u16::from_le_bytes`.
+3. Converts the resulting `Vec<u16>` into a Rust `String` using `String::from_utf16_lossy`, which replaces any invalid UTF-16 surrogate sequences with the Unicode replacement character (U+FFFD) rather than returning an error.
 
 ### BOM handling
 
-This function does **not** strip a UTF-16 LE Byte Order Mark (BOM, `U+FEFF` / bytes `FF FE`). If the input file begins with a BOM, it will appear as the first character of the returned string. For the [convert](convert.md) use case this is harmless because the converter parses the file by looking for specific line prefixes (e.g., `NamedAffinities=`), and a leading BOM character does not affect prefix matching on subsequent lines.
+This function does **not** strip the UTF-16 Byte Order Mark (BOM, U+FEFF) if present at the start of the file. The BOM will appear as the first character of the returned string. Callers that need to handle BOM-prefixed files should trim the leading `\u{FEFF}` character from the result if necessary. In practice, the downstream consumer ([`convert`](convert.md)) processes the file line-by-line and the BOM, if present, only affects the first line which is typically a section header or empty line.
+
+### Lossy conversion
+
+`String::from_utf16_lossy` is used instead of `String::from_utf16` (which returns a `Result`). This means malformed UTF-16 sequences — such as unpaired surrogates or files with an odd number of bytes where the trailing byte is silently dropped by `chunks_exact` — are silently replaced with `U+FFFD` rather than causing an error. This trade-off prioritizes robustness over strict correctness, since third-party configuration files may contain minor encoding anomalies.
 
 ### Odd byte count
 
-If the file has an odd number of bytes, the final byte is silently dropped by `chunks_exact(2)`. No error or warning is produced for this edge case.
+If the file has an odd number of bytes, the final trailing byte is discarded by `chunks_exact(2)`. No warning or error is produced for this edge case.
 
-### Lossy decoding
+### Platform notes
 
-The use of `from_utf16_lossy` means this function never fails due to encoding issues — only I/O errors can cause a failure return. Malformed UTF-16 sequences are replaced with the replacement character, which ensures downstream parsing can proceed even with partially corrupted files.
-
-### Usage context
-
-This function is called exclusively by [convert](convert.md) to read Process Lasso `.ini`-style configuration files. Process Lasso stores its configuration in UTF-16 LE encoding, which is common for Windows INI files written by native Win32 applications. The converted output is written in UTF-8 by [convert](convert.md).
-
-### Comparison with read_list and read_config
-
-Unlike [read_list](read_list.md) and [read_config](read_config.md), which use `BufReader` for line-by-line reading of UTF-8 files, `read_utf16le_file` reads the entire file into memory at once and performs a bulk decode. This approach is appropriate because:
-
-- Process Lasso config files are typically small.
-- UTF-16 decoding requires processing pairs of bytes, which does not lend itself to line-buffered reading.
+This function is designed for Windows environments where UTF-16 LE is a common file encoding. Process Lasso and other Windows utilities frequently use this encoding for configuration and export files.
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `config` (`src/config.rs`) |
-| **Visibility** | `pub` |
-| **Callers** | [convert](convert.md) |
-| **Callees** | `std::fs::read`, `u16::from_le_bytes`, `String::from_utf16_lossy` |
-| **API** | `std::fs::read` for file I/O |
-| **Privileges** | Read access to the specified file path |
+| Requirement | Value |
+|-------------|-------|
+| Module | `config.rs` |
+| Visibility | `pub` |
+| Callers | [`convert`](convert.md) |
+| Callees | `std::fs::read`, `u16::from_le_bytes`, `String::from_utf16_lossy` |
+| API | `std::io::Result` |
+| Privileges | Filesystem read access to the specified path |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Process Lasso config converter | [convert](convert.md) |
-| UTF-8 config file reader | [read_config](read_config.md) |
-| UTF-8 list file reader | [read_list](read_list.md) |
-| Config module overview | [README](README.md) |
+| Resource | Link |
+|----------|------|
+| convert | [convert](convert.md) |
+| read_list | [read_list](read_list.md) |
+| read_config | [read_config](read_config.md) |
+| config module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

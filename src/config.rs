@@ -27,20 +27,21 @@ pub struct IdealProcessorRule {
 }
 
 #[derive(Debug, Clone)]
-pub struct ProcessConfig {
+pub struct ProcessLevelConfig {
     pub name: String,
     pub priority: ProcessPriority,
     pub affinity_cpus: List<[u32; CONSUMER_CPUS]>,
     pub cpu_set_cpus: List<[u32; CONSUMER_CPUS]>,
-    /// When true, `reset_thread_ideal_processors` will be called after applying the CPU set,
-    /// distributing thread ideal processors across `cpu_set_cpus`.
-    /// Enabled by prefixing the cpuset field value with `@` in the config rule.
     pub cpu_set_reset_ideal: bool,
+    pub io_priority: IOPriority,
+    pub memory_priority: MemoryPriority,
+}
+#[derive(Debug, Clone)]
+pub struct ThreadLevelConfig {
+    pub name: String,
     pub prime_threads_cpus: List<[u32; CONSUMER_CPUS]>,
     pub prime_threads_prefixes: Vec<PrimePrefix>,
     pub track_top_x_threads: i32,
-    pub io_priority: IOPriority,
-    pub memory_priority: MemoryPriority,
     pub ideal_processor_rules: Vec<IdealProcessorRule>,
 }
 
@@ -159,7 +160,8 @@ pub fn format_cpu_indices(cpus: &[u32]) -> String {
 
 #[derive(Debug, Default)]
 pub struct ConfigResult {
-    pub configs: HashMap<u32, HashMap<String, ProcessConfig>>,
+    pub process_level_configs: HashMap<u32, HashMap<String, ProcessLevelConfig>>,
+    pub thread_level_configs: HashMap<u32, HashMap<String, ThreadLevelConfig>>,
     pub constants: ConfigConstants,
     pub constants_count: usize,
     pub aliases_count: usize,
@@ -169,6 +171,7 @@ pub struct ConfigResult {
     pub redundant_rules_count: usize,
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
+    pub thread_level_configs_count: usize,
 }
 
 impl ConfigResult {
@@ -177,7 +180,9 @@ impl ConfigResult {
     }
 
     pub fn total_rules(&self) -> usize {
-        self.configs.values().map(|grade_configs| grade_configs.len()).sum()
+        let a: usize = self.process_level_configs.values().map(|grade_configs| grade_configs.len()).sum();
+        let b: usize = self.thread_level_configs.values().map(|grade_configs| grade_configs.len()).sum();
+        a + b
     }
 
     pub fn print_report(&self) {
@@ -676,30 +681,61 @@ fn parse_and_insert_rules(
     };
 
     for name in members {
-        if result.configs.values().any(|f| f.contains_key(name)) {
+        if result.process_level_configs.values().any(|f| f.contains_key(name)) {
             result.redundant_rules_count += 1;
             result.warnings.push(format!(
-                "Line {}: Redundant rule - '{}' already defined (previous definition will be overwritten)",
+                "Line {}: Redundant process level rule - '{}' already defined (previous definition will be overwritten)",
+                line_number, name
+            ));
+        }
+        if result.thread_level_configs.values().any(|f| f.contains_key(name)) {
+            result.redundant_rules_count += 1;
+            result.warnings.push(format!(
+                "Line {}: Redundant thread level rule - '{}' already defined (previous definition will be overwritten)",
                 line_number, name
             ));
         }
 
-        result.configs.entry(grade).or_default().insert(
-            name.clone(),
-            ProcessConfig {
+        let process_level_valid = priority != ProcessPriority::None
+            || !&affinity_cpus.is_empty()
+            || !&cpu_set_cpus.is_empty()
+            || io_priority != IOPriority::None
+            || memory_priority != MemoryPriority::None;
+        if process_level_valid {
+            result.process_level_configs.entry(grade).or_default().insert(
+                name.clone(),
+                ProcessLevelConfig {
+                    name: name.clone(),
+                    priority,
+                    affinity_cpus: affinity_cpus.clone(),
+                    cpu_set_cpus: cpu_set_cpus.clone(),
+                    cpu_set_reset_ideal,
+                    io_priority,
+                    memory_priority,
+                },
+            );
+        }
+
+        let thread_level_valid = !&prime_threads_cpus.is_empty() || track_top_x_threads != 0 || !&ideal_processor_rules.is_empty();
+        if thread_level_valid {
+            let thread_level_config = ThreadLevelConfig {
                 name: name.clone(),
-                priority,
-                affinity_cpus: affinity_cpus.clone(),
-                cpu_set_cpus: cpu_set_cpus.clone(),
-                cpu_set_reset_ideal,
                 prime_threads_cpus: prime_threads_cpus.clone(),
                 prime_threads_prefixes: prime_threads_prefixes.clone(),
                 track_top_x_threads,
-                io_priority,
-                memory_priority,
                 ideal_processor_rules: ideal_processor_rules.clone(),
-            },
-        );
+            };
+            result
+                .thread_level_configs
+                .entry(grade)
+                .or_default()
+                .insert(name.clone(), thread_level_config);
+            result.thread_level_configs_count += 1;
+        }
+
+        if !process_level_valid && !thread_level_valid {
+            result.warnings.push(format!("No valid rules(all none/0) for process '{}'", name));
+        }
     }
     result.process_rules_count += members.len();
 }
@@ -835,7 +871,6 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
             i += 1;
         }
     }
-
     result
 }
 
@@ -1267,7 +1302,7 @@ pub fn hotreload_blacklist(cli: &CliArgs, blacklist: &mut Vec<String>, last_blac
 
 pub fn hotreload_config(
     cli: &CliArgs,
-    configs: &mut HashMap<u32, HashMap<String, ProcessConfig>>,
+    configs: &mut ConfigResult,
     last_config_mod_time: &mut Option<std::time::SystemTime>,
     prime_core_scheduler: &mut PrimeThreadScheduler,
     process_level_applied: &mut List<[u32; PIDS]>,
@@ -1280,10 +1315,10 @@ pub fn hotreload_config(
         log!("Configuration file '{}' changed, reloading...", cli.config_file_name);
         let new_config_result = read_config(&cli.config_file_name);
         if new_config_result.errors.is_empty() {
-            new_config_result.print_report();
-            let total_rules = new_config_result.total_rules();
-            *configs = new_config_result.configs;
-            prime_core_scheduler.constants = new_config_result.constants;
+            *configs = new_config_result;
+            (*configs).print_report();
+            prime_core_scheduler.constants = configs.constants.clone();
+            let total_rules = (*configs).total_rules();
             log!("Configuration reload complete: {} rules loaded.", total_rules);
             process_level_applied.clear(); //reset process_level_applied on config reload
         } else {

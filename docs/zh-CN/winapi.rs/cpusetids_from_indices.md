@@ -1,78 +1,52 @@
 # cpusetids_from_indices 函数 (winapi.rs)
 
-将一组逻辑 CPU 索引（0, 1, 2, …）转换为对应的 Windows CPU 集合 ID，方法是在 [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) 全局缓存中查找每个索引。这是从配置文件应用 CPU 集合规则时所使用的主要转换函数，用户在配置中指定人类可读的 CPU 索引。
+将逻辑 CPU 索引数组（0、1、2、……）转换为其对应的 Windows CPU Set ID。Windows CPU Set 使用不一定与逻辑处理器编号匹配的不透明标识符；此函数使用缓存的系统 CPU 集合信息执行转换。
 
 ## 语法
 
 ```rust
-pub fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32>
+pub fn cpusetids_from_indices(cpu_indices: &[u32]) -> List<[u32; CONSUMER_CPUS]>
 ```
 
 ## 参数
 
 | 参数 | 类型 | 描述 |
-|------|------|------|
-| `cpu_indices` | `&[u32]` | 需要转换的从零开始的逻辑处理器索引切片。这些索引对应于任务管理器中可见的 CPU 编号或配置文件中指定的编号（例如 `0;1;4-7`）。允许重复值，但会在输出中产生重复的 ID。 |
+|-----------|------|-------------|
+| `cpu_indices` | `&[u32]` | 要转换的逻辑处理器索引切片。每个值对应操作系统报告的从零开始的逻辑处理器编号。 |
 
 ## 返回值
 
-一个 `Vec<u32>`，包含与所提供的逻辑处理器索引对应的 Windows CPU 集合 ID。输出顺序遵循 [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) 缓存的迭代顺序，**而非**输入索引的顺序。如果某个输入索引在缓存中没有匹配的条目（例如索引超出逻辑处理器数量），则该索引会被静默地从结果中省略。
-
-如果 `cpu_indices` 为空，则立即返回空的 `Vec`。
+返回一个 `List<[u32; CONSUMER_CPUS]>`（内联容量为 32 的 `SmallVec`），包含与给定逻辑索引对应的 CPU Set ID。如果 `cpu_indices` 为空，则返回空列表。不匹配系统 CPU 集合信息中任何条目的索引将被静默跳过。
 
 ## 备注
 
-### 转换机制
-
-该函数获取 [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) 的互斥锁，然后遍历缓存中的每个 [CpuSetData](CpuSetData.md) 条目。对于 `logical_processor_index` 出现在输入切片中的每个条目，将该条目的 `id` 字段推入结果向量。
-
-这实际上是一个查找连接：对于缓存中的每个 `(id, logical_processor_index)` 对，如果 `logical_processor_index ∈ cpu_indices`，则输出 `id`。
-
-### 性能考虑
-
-当前实现执行 O(n × m) 扫描，其中 n 是缓存大小（逻辑处理器数量），m 是输入切片长度，因为它对每个缓存条目调用 `cpu_indices.contains()`。对于典型的桌面和服务器处理器数量（≤ 256 个逻辑处理器）和典型的规则大小（≤ 64 个 CPU），这可以忽略不计。
-
-### 排序
-
-输出的 CPU 集合 ID 按缓存中的存储顺序出现（与 `GetSystemCpuSetInformation` 返回的顺序一致）。这通常按逻辑处理器索引升序排列，但调用者不应依赖任何特定的排序。消费 CPU 集合 ID 的 API（如 `SetProcessDefaultCpuSets`）将它们视为无序集合。
-
-### 空输入快速路径
-
-如果输入切片为空，函数会立即返回空的 `Vec`，而不获取互斥锁，从而避免不必要的同步。
-
-### 用法示例
-
-假设系统中 CPU 0 的集合 ID 为 256，CPU 1 的集合 ID 为 257，CPU 2 的集合 ID 为 258：
-
-| 输入 | 输出 |
-|------|------|
-| `&[0, 2]` | `vec![256, 258]` |
-| `&[1]` | `vec![257]` |
-| `&[99]` | `vec![]`（无此 CPU） |
-| `&[]` | `vec![]` |
+- 该函数获取 `CPU_SET_INFORMATION` 静态变量的锁，以遍历缓存的 `CpuSetData` 条目。每个条目的 `logical_processor_index` 与提供的索引使用 `slice::contains` 进行比较。
+- 由于查找通过对 CPU 集合缓存和输入切片的线性扫描执行，性能为 O(n × m)，其中 n 是系统上的逻辑处理器数量，m 是 `cpu_indices` 的长度。对于典型的 CPU 数量（≤ 128 核心）和小型输入切片，这是可以接受的。
+- 返回的 `SmallVec` 使用 `CONSUMER_CPUS`（32）的内联容量。如果生成超过 32 个 CPU Set ID，向量将溢出到堆分配。
+- 此函数**不会**验证索引是否在可用逻辑处理器的范围内。超出范围的索引不会产生匹配输出。
+- CPU 集合信息在进程启动时通过 `GetSystemCpuSetInformation` 查询一次，并在进程的整个生命周期内缓存。运行时 CPU 拓扑的变化（例如热添加处理器）不会被反映。
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `winapi` (`src/winapi.rs`) |
-| **可见性** | `pub` |
-| **调用者** | [apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md)、[apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) |
-| **被调用** | [get_cpu_set_information](get_cpu_set_information.md)（获取 `Mutex<Vec<CpuSetData>>` 锁） |
-| **依赖** | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md)、[CpuSetData](CpuSetData.md) |
+| 要求 | 值 |
+|------|-----|
+| **模块** | `winapi.rs` |
+| **调用者** | `apply.rs` — 在调用 `SetProcessDefaultCpuSets` 或 `SetThreadSelectedCpuSets` 之前，将配置中指定的 CPU 索引转换为 CPU Set ID 的规则应用逻辑。 |
+| **被调用者** | [get_cpu_set_information](get_cpu_set_information.md)（间接通过 `CPU_SET_INFORMATION` 锁） |
+| **Windows API** | 无直接调用；依赖 `GetSystemCpuSetInformation` 的缓存结果。 |
+| **权限** | 无需特殊权限。 |
 
 ## 另请参阅
 
 | 主题 | 链接 |
-|------|------|
-| 反向操作：CPU 集合 ID → 索引 | [indices_from_cpusetids](indices_from_cpusetids.md) |
-| 亲和性掩码 → CPU 集合 ID | [cpusetids_from_mask](cpusetids_from_mask.md) |
-| CPU 集合 ID → 亲和性掩码 | [mask_from_cpusetids](mask_from_cpusetids.md) |
-| CPU 集合拓扑缓存 | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
-| CPU 集合缓存访问器 | [get_cpu_set_information](get_cpu_set_information.md) |
-| 将 CPU 集合应用于进程 | [apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md) |
-| GetSystemCpuSetInformation (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/systeminformationapi/nf-systeminformationapi-getsystemcpusetinformation) |
+|-------|------|
+| cpusetids_from_mask | [cpusetids_from_mask](cpusetids_from_mask.md) |
+| indices_from_cpusetids | [indices_from_cpusetids](indices_from_cpusetids.md) |
+| mask_from_cpusetids | [mask_from_cpusetids](mask_from_cpusetids.md) |
+| filter_indices_by_mask | [filter_indices_by_mask](filter_indices_by_mask.md) |
+| CpuSetData 结构体 | [CpuSetData](CpuSetData.md) |
+| CPU_SET_INFORMATION 静态变量 | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
+| CONSUMER_CPUS 常量 | [CONSUMER_CPUS](../collections.rs/CONSUMER_CPUS.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

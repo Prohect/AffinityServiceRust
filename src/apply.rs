@@ -1,6 +1,6 @@
 use crate::{
-    collections::{CONSUMER_CPUS, HashSet, List, TIDS_CAPED, TIDS_FULL, list},
-    config::{ProcessConfig, cpu_indices_to_mask, format_cpu_indices},
+    collections::{CONSUMER_CPUS, HashMap, HashSet, List, TIDS_CAPED, TIDS_FULL, list},
+    config::{ProcessLevelConfig, ThreadLevelConfig, cpu_indices_to_mask, format_cpu_indices},
     error_codes::{error_from_code_win32, error_from_ntstatus},
     logging::{Operation, is_new_error},
     priority::{IOPriority, MemoryPriority, MemoryPriorityInformation, ProcessPriority, ThreadPriority},
@@ -13,6 +13,7 @@ use crate::{
     },
 };
 
+use ntapi::ntexapi::SYSTEM_THREAD_INFORMATION;
 use rand::random;
 use std::{cmp::Reverse, ffi::c_void, mem::size_of};
 use windows::Win32::{
@@ -83,7 +84,7 @@ fn log_error_if_new(
 
 pub fn apply_priority(
     pid: u32,
-    config: &ProcessConfig,
+    config: &ProcessLevelConfig,
     dry_run: bool,
     process_handle: &ProcessHandle,
     apply_config_result: &mut ApplyConfigResult,
@@ -132,11 +133,11 @@ pub fn apply_priority(
 /// side effect:  fills in the affinity mask for the given process
 pub fn apply_affinity(
     pid: u32,
-    config: &ProcessConfig,
+    config: &ProcessLevelConfig,
     dry_run: bool,
     current_mask: &mut usize,
     process_handle: &ProcessHandle,
-    process: &mut ProcessEntry,
+    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     apply_config_result: &mut ApplyConfigResult,
 ) {
     let (Some(r_handle), Some(w_handle)) = get_handles(process_handle) else {
@@ -145,8 +146,7 @@ pub fn apply_affinity(
     let mut system_mask: usize = 0;
     let affinity_mask = cpu_indices_to_mask(&config.affinity_cpus);
     let has_affinity = !config.affinity_cpus.is_empty();
-    let has_prime = !config.prime_threads_cpus.is_empty();
-    if has_affinity || has_prime {
+    if has_affinity {
         match unsafe { GetProcessAffinityMask(r_handle, &mut *current_mask, &mut system_mask) } {
             Err(_) => {
                 if !dry_run {
@@ -198,7 +198,7 @@ pub fn apply_affinity(
                             Ok(_) => {
                                 apply_config_result.add_change(change_msg);
                                 *current_mask = affinity_mask;
-                                reset_thread_ideal_processors(pid, config, false, &config.affinity_cpus, process, apply_config_result);
+                                reset_thread_ideal_processors(pid, config, false, &config.affinity_cpus, threads, apply_config_result);
                             }
                         }
                     }
@@ -218,10 +218,10 @@ pub fn apply_affinity(
 ///   change, or `&config.cpu_set_cpus` after a CPU-set change (when `cpu_set_reset_ideal` is set).
 pub fn reset_thread_ideal_processors(
     pid: u32,
-    config: &ProcessConfig,
+    config: &ProcessLevelConfig,
     dry_run: bool,
     cpus: &[u32],
-    process: &mut ProcessEntry,
+    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     apply_config_result: &mut ApplyConfigResult,
 ) {
     if cpus.is_empty() {
@@ -234,7 +234,6 @@ pub fn reset_thread_ideal_processors(
     }
 
     // Collect thread IDs and their CPU times
-    let threads = process.get_threads();
     let mut tid_time_list: List<[(u32, i64); TIDS_FULL]> = List::new();
     for (tid, thread_info) in threads {
         let total_time = unsafe { *thread_info.KernelTime.QuadPart() + *thread_info.UserTime.QuadPart() };
@@ -297,10 +296,10 @@ pub fn reset_thread_ideal_processors(
 
 pub fn apply_process_default_cpuset(
     pid: u32,
-    config: &ProcessConfig,
+    config: &ProcessLevelConfig,
     dry_run: bool,
     process_handle: &ProcessHandle,
-    process: &mut ProcessEntry,
+    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     apply_config_result: &mut ApplyConfigResult,
 ) {
     let (Some(r_handle), Some(w_handle)) = get_handles(process_handle) else {
@@ -366,7 +365,7 @@ pub fn apply_process_default_cpuset(
                 }
                 if toset {
                     if config.cpu_set_reset_ideal {
-                        reset_thread_ideal_processors(pid, config, dry_run, &config.cpu_set_cpus, process, apply_config_result);
+                        reset_thread_ideal_processors(pid, config, dry_run, &config.cpu_set_cpus, threads, apply_config_result);
                     }
                     let set_result = unsafe { SetProcessDefaultCpuSets(w_handle, Some(&target_cpusetids)) }.as_bool();
                     if !set_result {
@@ -402,7 +401,7 @@ pub fn apply_process_default_cpuset(
 
 pub fn apply_io_priority(
     pid: u32,
-    config: &ProcessConfig,
+    config: &ProcessLevelConfig,
     dry_run: bool,
     process_handle: &ProcessHandle,
     apply_config_result: &mut ApplyConfigResult,
@@ -490,7 +489,7 @@ pub fn apply_io_priority(
 
 pub fn apply_memory_priority(
     pid: u32,
-    config: &ProcessConfig,
+    config: &ProcessLevelConfig,
     dry_run: bool,
     process_handle: &ProcessHandle,
     apply_config_result: &mut ApplyConfigResult,
@@ -535,7 +534,7 @@ pub fn apply_memory_priority(
                         config.memory_priority.as_str()
                     );
                     if dry_run {
-                        apply_config_result.add_change(format!("Memory Priority: -> {}", config.io_priority.as_str()));
+                        apply_config_result.add_change(format!("Memory Priority: -> {}", config.memory_priority.as_str()));
                     } else {
                         let mem_prio_info = MemoryPriorityInformation(memory_priority_flag.0);
                         match unsafe {
@@ -584,14 +583,13 @@ pub fn apply_memory_priority(
 /// for the hysteresis-based prime thread promotion/demotion algorithm.
 pub fn prefetch_all_thread_cycles(
     pid: u32,
-    config: &ProcessConfig,
-    process: &mut ProcessEntry,
+    config: &ThreadLevelConfig,
+    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     prime_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) {
     let mut tid_with_delta_times: List<[(u32, i32); TIDS_FULL]> = {
-        process
-            .get_threads()
+        threads
             .iter()
             .map(|(tid, thread)| {
                 let total = unsafe { thread.KernelTime.QuadPart() + thread.UserTime.QuadPart() };
@@ -607,7 +605,9 @@ pub fn prefetch_all_thread_cycles(
 
     tid_with_delta_times.sort_unstable_by_key(|(_, time)| Reverse(*time));
     let mut counter = 0;
-    let counter_limit = (get_cpu_set_information().lock().unwrap().len() * 2).min(tid_with_delta_times.len()) - 1;
+    let counter_limit = (get_cpu_set_information().lock().unwrap().len() * 2)
+        .min(tid_with_delta_times.len())
+        .saturating_sub(1);
     let tid_with_delta_times_caped: List<[(u32, i32); TIDS_CAPED]> = tid_with_delta_times.into_iter().take(counter_limit + 1).collect();
     for &(tid, _) in &tid_with_delta_times_caped {
         let thread_stats = prime_scheduler.get_thread_stats(pid, tid);
@@ -694,12 +694,14 @@ pub fn prefetch_all_thread_cycles(
 /// 4. Demote threads that no longer qualify
 ///
 /// Prime threads are pinned to specific CPUs via CPU Sets for better cache locality.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_prime_threads(
     pid: u32,
-    config: &ProcessConfig,
+    config: &ThreadLevelConfig,
     dry_run: bool,
     current_mask: &mut usize,
-    process: &mut ProcessEntry,
+    process: &ProcessEntry,
+    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) {
@@ -721,7 +723,7 @@ pub fn apply_prime_threads(
 
     let thread_count = process.thread_count() as usize;
     let mut tid_with_time_deltas: List<[(u32, i32); TIDS_CAPED]> = List::new();
-    for (&tid, thread) in process.get_threads().iter() {
+    for (&tid, thread) in threads.iter() {
         let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
         if thread_stats.cached_cycles > 0 {
             tid_with_time_deltas.push((tid, (thread_stats.cached_total_time - thread_stats.last_total_time) as i32));
@@ -767,7 +769,7 @@ pub fn apply_prime_threads(
     apply_prime_threads_demote(
         pid,
         config,
-        process,
+        threads,
         &tid_with_delta_cycles,
         prime_core_scheduler,
         apply_config_result,
@@ -809,7 +811,7 @@ pub fn apply_prime_threads_select(
 /// - Boosts thread priority (either explicitly configured or auto-boosted by one level)
 pub fn apply_prime_threads_promote(
     pid: u32,
-    config: &ProcessConfig,
+    config: &ThreadLevelConfig,
     current_mask: &mut usize,
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
@@ -951,8 +953,8 @@ pub fn apply_prime_threads_promote(
 /// Clears pinned_cpu_set_ids even on failure to prevent infinite retry loops.
 pub fn apply_prime_threads_demote(
     pid: u32,
-    config: &ProcessConfig,
-    process: &mut ProcessEntry,
+    config: &ThreadLevelConfig,
+    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
@@ -962,7 +964,7 @@ pub fn apply_prime_threads_demote(
         .filter_map(|&(tid, _, is_prime)| if is_prime { Some(tid) } else { None })
         .collect();
 
-    let live_tids: List<[u32; TIDS_CAPED]> = process.get_threads().keys().copied().collect();
+    let live_tids: List<[u32; TIDS_CAPED]> = threads.keys().copied().collect();
 
     for tid in live_tids {
         let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
@@ -1046,9 +1048,9 @@ pub fn apply_prime_threads_demote(
 /// processor is restored to the previous value.
 pub fn apply_ideal_processors(
     pid: u32,
-    config: &ProcessConfig,
+    config: &ThreadLevelConfig,
     dry_run: bool,
-    process: &mut ProcessEntry,
+    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     prime_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) {
@@ -1076,7 +1078,7 @@ pub fn apply_ideal_processors(
 
     let mut module_names: Vec<String> = Vec::new();
     let mut all_threads: List<[(u32, u64, usize, usize); TIDS_CAPED]> = List::new();
-    for &tid in process.get_threads().keys() {
+    for &tid in threads.keys() {
         let thread_stats = prime_scheduler.get_thread_stats(pid, tid);
         if thread_stats.cached_cycles == 0 {
             continue;

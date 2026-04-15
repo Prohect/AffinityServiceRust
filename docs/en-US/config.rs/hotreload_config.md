@@ -1,16 +1,16 @@
 # hotreload_config function (config.rs)
 
-Checks the configuration file's last-modified timestamp and, if it has changed since the previous check, re-parses the file via [read_config](read_config.md). When parsing succeeds (no errors), the live rule map, tuning constants, and related scheduler state are replaced atomically. When parsing fails, the previous configuration is preserved and the errors are logged.
+Watches the configuration file for modifications by comparing its filesystem modification timestamp against a cached value, and hot-reloads the configuration when a change is detected. If the newly parsed configuration is valid, it atomically replaces the active configuration, updates the scheduler constants, and resets the per-PID application tracking list. If the new configuration contains errors, the previous configuration is retained and the errors are logged.
 
 ## Syntax
 
-```rust
+```AffinityServiceRust/src/config.rs#L1303-1334
 pub fn hotreload_config(
     cli: &CliArgs,
-    configs: &mut HashMap<u32, HashMap<String, ProcessConfig>>,
+    configs: &mut ConfigResult,
     last_config_mod_time: &mut Option<std::time::SystemTime>,
     prime_core_scheduler: &mut PrimeThreadScheduler,
-    process_level_applied: &mut HashSet<u32>,
+    process_level_applied: &mut List<[u32; PIDS]>,
 )
 ```
 
@@ -18,93 +18,95 @@ pub fn hotreload_config(
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `cli` | `&CliArgs` | Reference to the parsed command-line arguments. The `config_file_name` field provides the path to the configuration file whose modification time is monitored. |
-| `configs` | `&mut HashMap<u32, HashMap<String, ProcessConfig>>` | Mutable reference to the live rule map (keyed by grade, then by lowercased process name). On a successful reload, this map is replaced entirely with the newly parsed rules from [ConfigResult](ConfigResult.md)`.configs`. |
-| `last_config_mod_time` | `&mut Option<std::time::SystemTime>` | Mutable reference to the cached modification timestamp from the previous check. Updated to the file's current `modified()` time after each successful metadata read. When `None`, any readable timestamp triggers a reload. |
-| `prime_core_scheduler` | `&mut PrimeThreadScheduler` | Mutable reference to the live prime-thread scheduler. On a successful reload, the scheduler's `constants` field is replaced with the newly parsed [ConfigConstants](ConfigConstants.md), allowing threshold changes to take effect on the next scheduling cycle without restarting the service. |
-| `process_level_applied` | `&mut HashSet<u32>` | Mutable reference to the set of process IDs that have already had process-level settings applied (priority, affinity, CPU set, I/O priority, memory priority). Cleared on a successful reload so that the new rules are re-applied to all running processes on the next service loop iteration. |
+| `cli` | `&CliArgs` | A reference to the CLI arguments struct. The `config_file_name` field is used to locate the configuration file on disk. |
+| `configs` | `&mut ConfigResult` | A mutable reference to the active configuration result. If the reloaded configuration is valid, this is replaced with the new result; otherwise it is left unchanged. |
+| `last_config_mod_time` | `&mut Option<std::time::SystemTime>` | A mutable reference to the cached modification timestamp of the config file from the last successful check. Updated to the current modification time whenever a change is detected (regardless of whether the new config is valid). On the first call, this should be `None` to force an initial load. |
+| `prime_core_scheduler` | `&mut PrimeThreadScheduler` | A mutable reference to the prime-thread scheduler. When the configuration is successfully reloaded, the scheduler's `constants` field is updated to the new [`ConfigConstants`](ConfigConstants.md) values from the reloaded config. |
+| `process_level_applied` | `&mut List<[u32; PIDS]>` | A mutable reference to the list of process IDs that have already had process-level settings applied. Cleared on successful reload so that all processes are re-evaluated with the new rules on the next polling iteration. |
 
 ## Return value
 
-This function does not return a value. All outcomes are communicated through mutations to the parameters and log output.
+This function does not return a value. All side effects are communicated through mutations to the `configs`, `last_config_mod_time`, `prime_core_scheduler`, and `process_level_applied` parameters.
 
 ## Remarks
 
-### Reload algorithm
+### Change detection algorithm
 
-1. **Metadata check** — `std::fs::metadata` is called on `cli.config_file_name`. If the call fails (e.g., file deleted or inaccessible), the function returns without action, preserving the current configuration.
-2. **Timestamp comparison** — The file's `modified()` time is compared against `*last_config_mod_time`. If the timestamps are equal (or both are `Some` with the same value), no reload is needed and the function returns immediately.
-3. **Timestamp update** — `*last_config_mod_time` is set to `Some(mod_time)` unconditionally once a new modification time is observed. This prevents repeated reload attempts on each loop iteration for the same file version.
-4. **Re-parse** — [read_config](read_config.md) is called with `cli.config_file_name` to produce a fresh [ConfigResult](ConfigResult.md).
-5. **Validation gate** — If `new_config_result.errors` is non-empty, the reload is aborted:
-   - A message is logged indicating the file has errors and the previous configuration is being kept.
-   - Each error is logged individually.
-   - `configs`, `prime_core_scheduler`, and `process_level_applied` are left unchanged.
-6. **Swap on success** — If there are no errors:
-   - `new_config_result.print_report()` is called to log group/rule statistics and any warnings.
-   - The total rule count is captured via `new_config_result.total_rules()`.
-   - `*configs` is replaced with `new_config_result.configs`.
-   - `prime_core_scheduler.constants` is replaced with `new_config_result.constants`.
-   - A completion message with the rule count is logged.
-   - `process_level_applied.clear()` is called to force re-application of process-level settings.
+1. The function calls `std::fs::metadata` on `cli.config_file_name` to obtain the file's metadata.
+2. It extracts the modification timestamp via `metadata.modified()`.
+3. If the modification time differs from `*last_config_mod_time`, a reload is triggered. If the times match (or the metadata/modified calls fail), the function returns immediately with no side effects.
+4. The cached timestamp `*last_config_mod_time` is updated to `Some(mod_time)` **before** parsing begins. This prevents repeated reload attempts if parsing is slow or the file is being rapidly written.
+
+### Reload flow
+
+When a change is detected:
+
+1. A log message is emitted: `"Configuration file '{name}' changed, reloading..."`.
+2. The file is fully parsed via [`read_config`](read_config.md) into a new `ConfigResult`.
+3. **If the new config is valid** (`new_config_result.errors.is_empty()`):
+   - `*configs` is replaced with the new `ConfigResult`.
+   - `configs.print_report()` is called to log the summary.
+   - The scheduler's constants are updated: `prime_core_scheduler.constants = configs.constants.clone()`.
+   - The total rule count is logged.
+   - `process_level_applied` is cleared so all processes are re-evaluated on the next loop.
+4. **If the new config has errors**:
+   - The previous `*configs` is retained unchanged.
+   - A log message is emitted: `"Configuration file '{name}' has errors, keeping previous configuration."`.
+   - Each error is logged individually with a `"  - "` prefix.
+
+### Atomic replacement
+
+The replacement of `*configs` uses a simple assignment (`*configs = new_config_result`). Because the entire old `ConfigResult` is dropped and replaced in a single statement, there is no intermediate state where a partially updated configuration is visible. However, this is **not** thread-safe — the function assumes single-threaded access to the configuration, which is guaranteed by the main polling loop's sequential execution model.
 
 ### Clearing process_level_applied
 
-The `process_level_applied` set tracks which PIDs have already had process-level rules applied. Clearing it after a successful reload ensures that changed priority, affinity, CPU set, I/O priority, and memory priority settings are re-applied to all currently running processes on the next service loop iteration. Without this reset, processes that had already been configured under the old rules would not receive updated settings until they were restarted.
+After a successful reload, `process_level_applied.clear()` is called. This list tracks which PIDs have already had process-level settings (priority, affinity, CPU set, I/O priority, memory priority) applied. Clearing it ensures that the new rules are applied to all running processes on the next polling iteration, not just newly spawned ones.
+
+### Scheduler constant propagation
+
+The scheduler's `constants` field is updated separately from the `ConfigResult` replacement because the `PrimeThreadScheduler` maintains its own copy of the constants for performance reasons (avoiding repeated hash map lookups during per-thread scheduling decisions).
 
 ### Error resilience
 
-The function uses a **fail-safe** strategy: the live configuration is never replaced with an invalid parse result. If the new file contains syntax errors, undefined aliases, or other fatal issues, the previous working configuration continues to be used. This is critical for a long-running Windows service where a transient config-file edit (e.g., user is still typing) should not disrupt active process management.
+The hot-reload design is intentionally conservative: a configuration file that contains **any** errors is entirely rejected. This prevents partial or inconsistent rule sets from being applied. The user must fix all errors before the reload will take effect. Warnings alone do not prevent a reload.
 
-### Interaction with hotreload_blacklist
+### Filesystem access patterns
 
-[hotreload_blacklist](hotreload_blacklist.md) monitors the blacklist file independently and on a separate timestamp. Both functions are called on each iteration of the service main loop, so config and blacklist changes are detected and applied within one loop interval (controlled by the `-interval` CLI argument, defaulting to a few seconds).
+The function calls `std::fs::metadata` on every invocation (typically once per polling loop). This is a lightweight operation on Windows (no file content is read until a change is detected) and is the standard pattern for file-change detection without filesystem watchers.
 
-### Let-chain pattern matching
+### Edge cases
 
-The function uses Rust's `let`-chain syntax (`if let Ok(...) = ... && let Ok(...) = ... && ...`) to combine the metadata read, modification-time extraction, and timestamp comparison into a single conditional block. If any step in the chain fails, the entire block is skipped and the function returns silently — no log output is produced for transient file-system errors during the check phase.
-
-### First invocation behavior
-
-On the first call, `*last_config_mod_time` is `None`. Because `Some(mod_time) != None` is always true, the first successful metadata read always triggers a reload. This is intentional — it allows the service to detect config changes that occurred between startup (when the config was first loaded by [main](../main.rs/main.md)) and the first hot-reload check.
-
-### Thread safety
-
-This function is not designed for concurrent access. It is called from the single-threaded service main loop. The caller is responsible for ensuring exclusive access to the `configs`, `prime_core_scheduler`, and `process_level_applied` parameters.
-
-### Logging
-
-| Condition | Log output |
-|-----------|------------|
-| File modification detected | `"Configuration file '{path}' changed, reloading..."` |
-| Successful reload | Parse report (via `print_report()`), then `"Configuration reload complete: {N} rules loaded."` |
-| Failed reload (errors) | `"Configuration file '{path}' has errors, keeping previous configuration."`, followed by each error prefixed with `"  - "`. |
-| File inaccessible / unchanged | *(no output)* |
+| Scenario | Behavior |
+|----------|----------|
+| Config file deleted while running | `metadata()` fails; function returns with no side effects. Previous config is retained. |
+| Config file replaced with an empty file | Parsed successfully (no errors, no rules); previous config is replaced with an empty rule set. |
+| Config file saved with syntax errors | New config is rejected; previous config retained; errors are logged. |
+| First invocation with `last_config_mod_time = None` | Triggers a reload unconditionally (since `Some(mod_time) != None`). |
+| Rapid successive saves (editor auto-save) | Each distinct modification timestamp triggers a reload attempt. |
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `config` (`src/config.rs`) |
-| **Visibility** | `pub` |
-| **Callers** | [main](../main.rs/main.md) (service loop) |
-| **Callees** | [read_config](read_config.md), [ConfigResult::print_report](ConfigResult.md), [ConfigResult::total_rules](ConfigResult.md) |
-| **API** | `std::fs::metadata`, `std::fs::Metadata::modified` |
-| **Privileges** | Read access to the configuration file path |
+| Requirement | Value |
+|-------------|-------|
+| Module | `config.rs` |
+| Visibility | `pub` |
+| Callers | `main.rs` (main polling loop, called once per iteration) |
+| Callees | [`read_config`](read_config.md), [`ConfigResult::print_report`](ConfigResult.md), [`ConfigResult::total_rules`](ConfigResult.md), `std::fs::metadata`, `log!` |
+| Dependencies | [`CliArgs`](../cli.rs/CliArgs.md), [`ConfigResult`](ConfigResult.md), [`ConfigConstants`](ConfigConstants.md), `PrimeThreadScheduler` from [`scheduler.rs`](../scheduler.rs/README.md), `List` and `PIDS` from [`collections.rs`](../collections.rs/README.md) |
+| I/O | Filesystem metadata read on `cli.config_file_name`; full file read (via `read_config`) only when a change is detected |
+| Privileges | File system read access to the configuration file |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Main config parser | [read_config](read_config.md) |
-| Parsed config aggregate | [ConfigResult](ConfigResult.md) |
-| Hysteresis tuning constants | [ConfigConstants](ConfigConstants.md) |
-| Per-process rule struct | [ProcessConfig](ProcessConfig.md) |
-| Blacklist hot-reload | [hotreload_blacklist](hotreload_blacklist.md) |
-| Prime-thread scheduler | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
-| CLI arguments struct | [CliArgs](../cli.rs/CliArgs.md) |
-| Config module overview | [README](README.md) |
+| Resource | Link |
+|----------|------|
+| hotreload_blacklist | [hotreload_blacklist](hotreload_blacklist.md) |
+| read_config | [read_config](read_config.md) |
+| ConfigResult | [ConfigResult](ConfigResult.md) |
+| ConfigConstants | [ConfigConstants](ConfigConstants.md) |
+| CliArgs | [CliArgs](../cli.rs/CliArgs.md) |
+| scheduler module | [scheduler.rs overview](../scheduler.rs/README.md) |
+| config module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

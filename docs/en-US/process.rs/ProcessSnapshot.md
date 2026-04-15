@@ -1,6 +1,6 @@
 # ProcessSnapshot struct (process.rs)
 
-Provides an RAII wrapper around a system-wide process snapshot obtained via `NtQuerySystemInformation`. When the `ProcessSnapshot` is dropped, the backing buffer and parsed process map are cleared, ensuring no stale pointers to kernel-returned data persist beyond the snapshot's useful lifetime.
+The `ProcessSnapshot` struct captures a point-in-time snapshot of all running processes and their threads on the system by calling `NtQuerySystemInformation` with `SystemProcessInformation`. It holds mutable references to a shared buffer and a PID-to-process lookup map, both of which are automatically cleared when the snapshot is dropped (RAII semantics). This ensures that stale process data does not persist between scheduling cycles.
 
 ## Syntax
 
@@ -13,30 +13,14 @@ pub struct ProcessSnapshot<'a> {
 
 ## Members
 
-| Member | Type | Description |
-|--------|------|-------------|
-| `buffer` | `&'a mut Vec<u8>` | Mutable reference to the raw byte buffer that backs the snapshot. Filled by `NtQuerySystemInformation` with `SystemProcessInformation`. The buffer is grown automatically on `STATUS_INFO_LENGTH_MISMATCH` and truncated to the actual return length on success. Private — callers interact through the public API. |
-| `pid_to_process` | `&'a mut HashMap<u32, ProcessEntry>` | Mutable reference to a PID-keyed map populated during `take`. Each value is a [`ProcessEntry`](ProcessEntry.md) that wraps a `SYSTEM_PROCESS_INFORMATION` structure and provides lazy thread enumeration. Public so that the main loop can iterate, look up, and mutate entries by PID. |
-
-## Lifetime parameter `'a`
-
-Both the buffer and the map are borrowed from caller-owned statics ([`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md) and [`PID_TO_PROCESS_MAP`](PID_TO_PROCESS_MAP.md)). The lifetime `'a` ties the `ProcessSnapshot` to those `MutexGuard` borrows, guaranteeing that the raw pointers stored inside each [`ProcessEntry`](ProcessEntry.md) remain valid for as long as the snapshot exists.
+| Field | Type | Description |
+|-------|------|-------------|
+| `buffer` | `&'a mut Vec<u8>` | Mutable reference to the backing byte buffer that stores the raw `SYSTEM_PROCESS_INFORMATION` structures returned by `NtQuerySystemInformation`. This field is private. |
+| `pid_to_process` | `&'a mut HashMap<u32, ProcessEntry>` | Mutable reference to a PID-keyed map of parsed [`ProcessEntry`](ProcessEntry.md) objects. Public, allowing callers to look up process information by PID after taking a snapshot. |
 
 ## Methods
 
-| Method | Description |
-|--------|-------------|
-| [`take`](#take) | Captures a new process snapshot by calling `NtQuerySystemInformation`. |
-| [`get_by_name`](#get_by_name) | Returns all process entries whose image name matches the given string. |
-| [`drop`](#drop-impl) | Clears the process map and buffer when the snapshot goes out of scope. |
-
----
-
-### take
-
-Captures a snapshot of every running process and its threads.
-
-#### Syntax
+### `ProcessSnapshot::take`
 
 ```rust
 pub fn take(
@@ -45,106 +29,92 @@ pub fn take(
 ) -> Result<Self, i32>
 ```
 
-#### Parameters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `buffer` | `&'a mut Vec<u8>` | Reusable byte buffer. On the first call this is typically 32 bytes; the function grows it as needed. The capacity is preserved across calls so that subsequent snapshots rarely need reallocation. |
-| `pid_to_process` | `&'a mut HashMap<u32, ProcessEntry>` | Map to populate. Cleared before parsing begins. Keyed by PID (`UniqueProcessId` cast to `u32`). |
-
-#### Return value
-
-| Value | Description |
-|-------|-------------|
-| `Ok(ProcessSnapshot)` | A valid snapshot. The caller owns the RAII guard; dropping it clears the data. |
-| `Err(i32)` | The NTSTATUS error code returned by `NtQuerySystemInformation` (any negative value other than `STATUS_INFO_LENGTH_MISMATCH`, which is handled internally). |
-
-#### Remarks
-
-1. **Buffer growth strategy** — When `NtQuerySystemInformation` returns `STATUS_INFO_LENGTH_MISMATCH` (`0xC0000004`), the function retries with a larger buffer. If the kernel provided a `return_len`, the new size is `((return_len / 8) + 1) * 8` (8-byte aligned); otherwise the buffer doubles in size. This loop continues until the call succeeds or returns a different error.
-
-2. **Linked-list traversal** — `SYSTEM_PROCESS_INFORMATION` entries form an in-memory linked list via `NextEntryOffset`. The function walks this list from offset 0, constructing a [`ProcessEntry`](ProcessEntry.md) for each node, until `NextEntryOffset == 0`.
-
-3. **Thread pointers** — Each `SYSTEM_PROCESS_INFORMATION` is immediately followed by its thread array (`Threads` flexible array member). The base pointer to this array is captured by [`ProcessEntry::new`](ProcessEntry.md) so that `get_threads` can lazily parse it later. These pointers are only valid while `buffer` is alive — the `Drop` implementation ensures cleanup.
-
-4. **Safety** — The function body is wrapped in `unsafe` because it dereferences raw pointers returned by the kernel. Correctness depends on `NtQuerySystemInformation` writing valid `SYSTEM_PROCESS_INFORMATION` structures and the buffer remaining pinned for the lifetime of the snapshot.
-
-5. **Typical call pattern**:
-   ```rust
-   let mut buf = SNAPSHOT_BUFFER.lock().unwrap();
-   let mut map = PID_TO_PROCESS_MAP.lock().unwrap();
-   let snapshot = ProcessSnapshot::take(&mut buf, &mut map)?;
-   // Use snapshot.pid_to_process …
-   // snapshot dropped here — buffer and map are cleared
-   ```
-
----
-
-### get_by_name
-
-Returns references to all process entries whose lowercased image name matches the given string.
-
-#### Syntax
-
-```rust
-pub fn get_by_name(&self, name: String) -> Vec<&ProcessEntry>
-```
+Captures a new process snapshot. This is the only way to construct a `ProcessSnapshot`.
 
 #### Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `name` | `String` | The process image name to search for (e.g., `"explorer.exe"`). Compared against the lowercased name stored in each [`ProcessEntry`](ProcessEntry.md). |
+| `buffer` | `&'a mut Vec<u8>` | A mutable reference to the reusable byte buffer. Typically obtained by locking the [`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md) static. The buffer is dynamically resized if `NtQuerySystemInformation` returns `STATUS_INFO_LENGTH_MISMATCH`. |
+| `pid_to_process` | `&'a mut HashMap<u32, ProcessEntry>` | A mutable reference to the reusable PID-to-process map. Typically obtained by locking the [`PID_TO_PROCESS_MAP`](PID_TO_PROCESS_MAP.md) static. Cleared at the start of each call before being repopulated. |
 
 #### Return value
 
-A `Vec<&ProcessEntry>` containing zero or more references to matching entries. Multiple entries can match when several processes share the same image name.
+| Outcome | Description |
+|---------|-------------|
+| `Ok(ProcessSnapshot)` | A successfully constructed snapshot. The `pid_to_process` map is populated with all running processes. |
+| `Err(i32)` | An `NTSTATUS` error code from `NtQuerySystemInformation` (other than `STATUS_INFO_LENGTH_MISMATCH`, which is handled internally by retrying with a larger buffer). |
 
-#### Remarks
+## Remarks
 
-- This method is marked `#[allow(dead_code)]` in the source and is primarily available for diagnostic or interactive use.
-- Comparison uses the pre-lowercased name cached by [`ProcessEntry::new`](ProcessEntry.md), so the `name` argument should also be lowercase for a match.
+### Snapshot algorithm
 
----
+1. **Query with retry loop.** Calls `NtQuerySystemInformation(SystemProcessInformation, ...)` in a loop. If the call returns `STATUS_INFO_LENGTH_MISMATCH` (`-1073741820` / `0xC0000004`), the buffer is reallocated to the size indicated by `return_len` (rounded up to an 8-byte boundary), or doubled if `return_len` is zero. The loop retries until a non-mismatch status is received.
 
-### Drop impl
+2. **Truncate buffer.** On success, the buffer is truncated to the actual number of bytes returned (`return_len`), reclaiming unused capacity.
 
-Clears all snapshot data when the `ProcessSnapshot` goes out of scope.
+3. **Parse linked list.** The raw buffer contains a linked list of `SYSTEM_PROCESS_INFORMATION` structures connected via `NextEntryOffset`. The function walks this list, constructing a [`ProcessEntry`](ProcessEntry.md) for each process and inserting it into `pid_to_process` keyed by `UniqueProcessId`.
 
-#### Syntax
+4. **Return the snapshot.** The populated `ProcessSnapshot` is returned, borrowing both the buffer and the map. The buffer must remain valid for the lifetime of the snapshot because `ProcessEntry` objects contain pointers into the buffer's memory (for thread information arrays and process name strings).
 
-```rust
-impl<'a> Drop for ProcessSnapshot<'a> {
-    fn drop(&mut self);
+### Drop behavior
+
+When the `ProcessSnapshot` is dropped:
+- `pid_to_process.clear()` is called, removing all parsed process entries.
+- `buffer.clear()` is called, zeroing the buffer length (but not deallocating its capacity, so the allocation can be reused on the next snapshot).
+
+This cleanup is critical because [`ProcessEntry`](ProcessEntry.md) objects store raw pointers (`threads_base_ptr`) into the buffer. Clearing both the map and the buffer simultaneously prevents dangling pointer access.
+
+### Buffer sizing strategy
+
+The initial buffer is small (32 bytes, as defined in [`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md)). On the first call, `NtQuerySystemInformation` will almost certainly return `STATUS_INFO_LENGTH_MISMATCH`, causing a resize. The new size is calculated as `((return_len / 8) + 1) * 8` to align to an 8-byte boundary. On subsequent calls, the buffer retains its previous capacity (via `Vec::capacity()`), so resizing is only needed if the system's process count has grown significantly.
+
+### Unsafe code
+
+The entire body of `take` is wrapped in `unsafe` because:
+- `NtQuerySystemInformation` is an FFI call to `ntdll.dll`.
+- The raw buffer is reinterpreted as `SYSTEM_PROCESS_INFORMATION` pointers.
+- Thread information arrays are accessed via raw pointer arithmetic from `SYSTEM_PROCESS_INFORMATION.Threads`.
+
+### Typical usage pattern
+
+```text
+let mut buf = SNAPSHOT_BUFFER.lock().unwrap();
+let mut map = PID_TO_PROCESS_MAP.lock().unwrap();
+let snapshot = ProcessSnapshot::take(&mut buf, &mut map)?;
+
+for (pid, entry) in snapshot.pid_to_process.iter() {
+    // Process each entry...
 }
+// snapshot is dropped here, clearing both buf and map
 ```
 
-#### Remarks
+### Platform notes
 
-The `Drop` implementation calls `self.pid_to_process.clear()` then `self.buffer.clear()`. This is critical because [`ProcessEntry`](ProcessEntry.md) objects hold raw `threads_base_ptr` pointers into the buffer. Clearing the map first ensures no `ProcessEntry` outlives the buffer memory it references.
-
-Note that `Vec::clear` sets the length to zero but retains allocated capacity, so the buffer memory is reused by the next `take` call without reallocation (unless the system has grown).
+- **Windows only.** Relies on the NT-native `NtQuerySystemInformation` API from `ntdll.dll` (imported via the `ntapi` crate).
+- The `SYSTEM_PROCESS_INFORMATION` and `SYSTEM_THREAD_INFORMATION` types come from the `ntapi::ntexapi` module.
 
 ## Requirements
 
-| | |
-|---|---|
+| Requirement | Value |
+|-------------|-------|
 | **Module** | `process.rs` |
-| **Callers** | [`main.rs`](../main.rs/README.md) main loop, [`apply.rs`](../apply.rs/README.md) apply functions |
-| **Callees** | `NtQuerySystemInformation` (ntdll), [`ProcessEntry::new`](ProcessEntry.md) |
-| **API** | `ntapi::ntexapi::NtQuerySystemInformation` with `SystemProcessInformation` information class |
-| **Privileges** | `SeDebugPrivilege` recommended for full system visibility; without it, some process entries may be omitted by the kernel |
+| **Callers** | `scheduler.rs` — main scheduling loop; `apply.rs` — rule application |
+| **Callees** | `NtQuerySystemInformation` (ntdll, via `ntapi`), [`ProcessEntry::new`](ProcessEntry.md) |
+| **Statics** | [`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md), [`PID_TO_PROCESS_MAP`](PID_TO_PROCESS_MAP.md) |
+| **Win32 API** | `NtQuerySystemInformation` with `SystemProcessInformation` |
+| **Privileges** | None explicitly required, but `SeDebugPrivilege` enables enumeration of protected processes. |
 
 ## See Also
 
-| Link | Description |
-|------|-------------|
-| [`ProcessEntry`](ProcessEntry.md) | Individual process wrapper with lazy thread parsing |
-| [`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md) | Global buffer backing the snapshot |
-| [`PID_TO_PROCESS_MAP`](PID_TO_PROCESS_MAP.md) | Global PID-to-ProcessEntry map |
-| [`PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) | Consumes thread data from snapshots for prime-thread scheduling decisions |
-| [NtQuerySystemInformation (MSDN)](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntquerysysteminformation) | Underlying Windows API |
+| Topic | Link |
+|-------|------|
+| ProcessEntry struct | [ProcessEntry](ProcessEntry.md) |
+| SNAPSHOT_BUFFER static | [SNAPSHOT_BUFFER](SNAPSHOT_BUFFER.md) |
+| PID_TO_PROCESS_MAP static | [PID_TO_PROCESS_MAP](PID_TO_PROCESS_MAP.md) |
+| collections module | [collections.rs](../collections.rs/README.md) |
+| winapi module | [winapi.rs](../winapi.rs/README.md) |
+| event_trace module | [event_trace.rs](../event_trace.rs/README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

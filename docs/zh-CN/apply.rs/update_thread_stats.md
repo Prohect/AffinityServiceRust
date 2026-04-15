@@ -1,10 +1,10 @@
 # update_thread_stats 函数 (apply.rs)
 
-将存储在 [ThreadStats](../scheduler.rs/ThreadStats.md) 中的缓存周期计数和时间计数器提交，以便下一次轮询迭代能够计算正确的增量。此函数是每进程线程级应用管线的最后一步——必须在 [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) 和 [apply_prime_threads](apply_prime_threads.md) 完成之后、下一个周期开始之前调用。
+`update_thread_stats` 函数将当前应用周期中收集的缓存周期计数和总时间测量值提交到每个线程统计信息的持久化字段 `last_cycles` 和 `last_total_time` 中，然后将缓存值重置为零。这为下一个应用周期的增量计算建立基准线。该函数应在每个进程的应用管道结束时调用，即在所有主线程选择、提升和降级逻辑消费完缓存值之后。
 
 ## 语法
 
-```AffinityServiceRust/src/apply.rs#L1327-1340
+```AffinityServiceRust/src/apply.rs#L1311-1324
 pub fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler) {
     if let Some(ps) = prime_scheduler.pid_to_process_stats.get_mut(&pid) {
         for ts in ps.tid_to_thread_stats.values_mut() {
@@ -25,68 +25,60 @@ pub fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler)
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `pid` | `u32` | 需要提交线程统计数据的进程标识符。用作 `prime_scheduler.pid_to_process_stats` 的键。如果此 pid 不存在对应条目（例如该进程从未被跟踪），函数将立即返回。 |
-| `prime_scheduler` | `&mut`[PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) | 持有每进程、每线程统计数据的调度器状态。此函数会修改给定进程中每个被跟踪线程的 [ThreadStats](../scheduler.rs/ThreadStats.md) 条目。 |
+| `pid` | `u32` | 需要提交线程统计信息的进程 ID。用于在调度器的 `pid_to_process_stats` 映射中查找对应的 `ProcessStats` 条目。如果该 PID 不存在对应条目，则函数不执行任何操作。 |
+| `prime_scheduler` | `&mut PrimeThreadScheduler` | 可变的主线程调度器状态，包含每个进程、每个线程的统计信息。函数遍历给定 PID 的所有线程统计信息并更新其 `last_*` / `cached_*` 字段。 |
 
 ## 返回值
 
-无 (`()`)。
+此函数没有返回值。
 
 ## 备注
 
-### 双缓冲提交模式
+### 提交语义
 
-主力线程管线对周期计数和 CPU 时间采用双缓冲策略：
+函数使用守卫模式：仅当缓存值严格大于零时才进行提交。这确保在当前周期中未能测量周期数或总时间的线程（例如，因为在 [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md) 中句柄获取失败）保留其先前的 `last_*` 基准值，而不是被重置为零。
 
-| 字段 | 写入者 | 读取者 | 提交者 |
-|------|--------|--------|--------|
-| `cached_cycles` | [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) | [apply_prime_threads](apply_prime_threads.md)（增量 = `cached_cycles - last_cycles`） | `update_thread_stats` → `last_cycles` |
-| `cached_total_time` | [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) | [apply_prime_threads](apply_prime_threads.md)（增量 = `cached_total_time - last_total_time`） | `update_thread_stats` → `last_total_time` |
+提交后，`cached_cycles` 和 `cached_total_time` 字段被设置为 `0`。这确保如果某个线程在*下一个*周期中未被测量，其增量将被正确计算（增量计算使用 `cached_cycles.saturating_sub(last_cycles)`，因此缓存值为 `0` 将产生增量 `0`）。
 
-在一次轮询周期中：
+### 调用顺序
 
-1. [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) 将最新的计数器值写入 `cached_*` 字段。
-2. [apply_prime_threads](apply_prime_threads.md) 通过 `cached_*` 减去 `last_*` 计算增量。
-3. `update_thread_stats` 将 `cached_*` 提升为 `last_*`，并将 `cached_*` 置零。
+此函数必须在以下所有消费缓存测量值的函数**之后**调用：
 
-这种分离确保步骤 2 中的增量计算始终将*当前*快照与*上一次*快照进行比较，即使中间函数读取或修改了缓存值也不受影响。
+1. [`apply_prime_threads`](apply_prime_threads.md) — 使用 `cached_cycles` 和 `cached_total_time` 构建候选列表并计算增量。
+2. [`apply_prime_threads_select`](apply_prime_threads_select.md) — 读取从缓存值计算的周期增量。
+3. [`apply_prime_threads_promote`](apply_prime_threads_promote.md) — 在变更消息中记录 `delta_cycles`。
+4. [`apply_prime_threads_demote`](apply_prime_threads_demote.md) — 对相同的选择结果进行操作。
+5. [`apply_ideal_processors`](apply_ideal_processors.md) — 使用 `cached_cycles - last_cycles` 进行线程排名。
 
-### 零值保护
+如果在这些函数之前调用 `update_thread_stats`，所有增量都将为零，实际上会禁用主线程算法。
 
-只有非零的 `cached_*` 值才会被提交。如果某个线程在当前周期中未被查询其周期计数或总时间（因为超出了 [prefetch 计数器限制](prefetch_all_thread_cycles.md#counter-limit)，或者 `QueryThreadCycleTime` 失败），则保留其先前的 `last_*` 值。这可以防止一次查询遗漏将基线重置为零，否则在下一次成功查询时会产生人为偏大的增量，从而可能错误地将低活跃度线程提升为主力线程。
+### 边界情况
 
-提交后，`cached_*` 字段被设为 `0`，表示尚未为下一周期采集到新数据。
-
-### 幂等性
-
-在同一轮询周期内多次调用此函数是无害的——第二次调用时 `cached_*` 值均为 `0`，因此会跳过所有条目。但是，这样做会导致*下一个*周期对同一 `last_*` 基线计算两次增量，实际上将报告的增量减半。因此调用者必须确保每个进程每个周期恰好调用 `update_thread_stats` 一次。
-
-### 未跟踪进程时的空操作
-
-如果 `pid` 在 `prime_scheduler.pid_to_process_stats` 中不存在，`if let Some(ps)` 守卫会导致立即返回。这是安全且预期的行为，适用于拥有 [ProcessConfig](../config.rs/ProcessConfig.md) 但不使用主力线程或理想处理器功能的进程（即 `track_top_x_threads == 0` 且 `prime_threads_cpus` 为空）。
+- 如果 `pid` 不在 `pid_to_process_stats` 中（例如，该进程从未在调度器中注册或已被清理），`if let Some` 守卫会使函数立即返回，不会产生错误。
+- 如果某个线程的 `cached_cycles` 为 `0`（因为 `QueryThreadCycleTime` 失败或从未对该线程调用），`last_cycles` 保留其先前的值。这意味着下一个周期该线程的增量仍将基于最近一次成功的测量值。
+- 该函数不会移除陈旧的线程条目。线程清理由 [`apply_prime_threads`](apply_prime_threads.md) 单独处理，它会为不再出现在活动线程快照中的线程释放句柄。
 
 ## 要求
 
 | 要求 | 值 |
 |------|-----|
-| 模块 | `apply` |
-| 可见性 | `pub`（crate 公开） |
-| 调用者 | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
-| 被调用者 | 无——仅对 [ThreadStats](../scheduler.rs/ThreadStats.md) 进行纯 Rust 字段赋值 |
-| Win32 API | 无 |
+| 模块 | `apply.rs` |
+| Crate | `AffinityServiceRust` |
+| 可见性 | `pub` |
+| Windows API | 无（纯数据操作；无操作系统调用） |
+| 调用者 | `scheduler.rs` / `main.rs` 中运行每进程应用管道的编排代码 |
+| 被调用者 | 无（直接读写 `PrimeThreadScheduler` 的字段） |
 | 权限 | 无 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 参考 | 链接 |
 |------|------|
-| 周期时间预取（填充缓存值） | [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) |
-| 主力线程编排（消费缓存值） | [apply_prime_threads](apply_prime_threads.md) |
-| 每线程统计模型 | [ThreadStats](../scheduler.rs/ThreadStats.md) |
-| 调度器状态 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
-| 线程级应用编排 | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
-| apply 模块概述 | [apply](README.md) |
+| apply 模块概述 | [`README`](README.md) |
+| prefetch_all_thread_cycles | [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md) |
+| apply_prime_threads | [`apply_prime_threads`](apply_prime_threads.md) |
+| apply_ideal_processors | [`apply_ideal_processors`](apply_ideal_processors.md) |
+| PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

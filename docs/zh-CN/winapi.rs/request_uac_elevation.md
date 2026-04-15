@@ -1,6 +1,6 @@
 # request_uac_elevation 函数 (winapi.rs)
 
-通过 PowerShell `Start-Process -Verb RunAs` 命令以管理员特权重新启动当前进程，请求用户账户控制（UAC）提权。如果提权请求成功发出，当前（未提权的）进程将立即退出。此函数在成功时不会返回。
+通过 PowerShell 的 `Start-Process -Verb RunAs` 启动一个提升权限的进程副本，触发 Windows UAC（用户帐户控制）提示，以管理员权限重新启动当前进程。生成提升权限的子进程后，当前进程随即退出。
 
 ## 语法
 
@@ -12,90 +12,65 @@ pub fn request_uac_elevation(console: bool) -> io::Result<()>
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `console` | `bool` | 指示当前进程是否在可见的控制台窗口中运行。当为 `true` 时，会额外记录一条警告，提醒用户提权后的日志输出不会出现在当前控制台会话中，因为提权后的进程运行在新窗口中。 |
+| `console` | `bool` | 指示进程是否在控制台模式下运行。当为 `true` 时，会记录一条警告，说明提升权限后的输出将不会显示在当前控制台会话中。 |
 
 ## 返回值
 
-| 值 | 描述 |
-|----|------|
-| `Ok(())` | 实际上不可达——函数在成功生成提权子进程后会调用 `std::process::exit(0)`。 |
-| `Err(io::Error)` | `powershell.exe` 子进程无法生成（例如 `powershell.exe` 不在 `PATH` 中，或系统严重资源不足）。错误在返回前也会被记录。 |
+返回 `io::Result<()>`。成功时，此函数**不会返回**——它在生成提升权限的子进程后调用 `std::process::exit(0)`。失败时（例如无法启动 PowerShell），返回一个描述生成失败原因的 `io::Error`。
 
 ## 备注
 
-### 提权机制
+### 提升权限机制
 
-该函数构造如下形式的 PowerShell 命令行：
+该函数构造如下形式的 PowerShell 命令：
 
-```
+```text
 powershell.exe -Command "Start-Process -FilePath '<exe_path>' -Verb RunAs -ArgumentList '<args>'"
 ```
 
-其中：
+其中 `<exe_path>` 是当前运行的可执行文件路径（通过 `std::env::current_exe()` 获取），`<args>` 是从当前调用转发的所有命令行参数。
 
-- `<exe_path>` 是当前可执行文件的完整路径，通过 `std::env::current_exe()` 获取。
-- `<args>` 是原始命令行参数（去除 `argv[0]`），并追加了 `-skip_log_before_elevation`。
+### 跳过日志标志
 
-`-Verb RunAs` 会触发 Windows UAC 同意对话框。如果用户同意，Windows 将以完整管理员令牌启动新进程。如果用户拒绝提权，PowerShell 命令将静默失败（它不会将错误传回当前进程）。
+在生成提升权限的子进程之前，该函数会将 `-skip_log_before_elevation` 追加到参数列表中。此标志防止提升权限的实例重复输出非提升权限实例已经写入的启动日志消息。
 
-### `-skip_log_before_elevation` 标志
+### 控制台模式警告
 
-在提权后的子进程启动主循环之前，通常会输出启动日志消息。`-skip_log_before_elevation` 标志被追加到参数列表中，用于通知 [CLI 解析器](../cli.rs/README.md) 这是一次重新启动，某些提权前的日志条目（如"正在请求提权"消息）不应在日志文件中重复。
+当 `console` 为 `true` 时，该函数会记录一条警告，说明提升权限的进程将在新窗口/会话中运行，因此后续日志输出将不会在原始控制台中可见。这是 UAC 提升的固有限制——新进程会获得一个新的控制台宿主。
 
-### 进程退出行为
+### 进程生命周期
 
-成功时，函数调用 `std::process::exit(0)` 来终止未提权的父进程。这意味着：
+1. 该函数记录 `"Requesting UAC elevation..."`。
+2. 使用构造的命令将 `powershell.exe` 作为子进程生成。
+3. 成功生成后，记录确认消息并调用 `exit(0)`。
+4. 生成失败时，记录错误并返回 `io::Error`。
 
-- 在调用时存活的对象的 **`Drop` 实现不会运行**。
-- 任何尚未刷新的缓冲日志输出可能会丢失。
-- 调用者应确保在调用此函数之前持久化关键状态。
+### 边界情况
 
-### 控制台警告
-
-当 `console` 为 `true` 且进程未以管理员身份运行且未设置 `noUAC` 标志时，会记录一条警告：
-
-> "Warning: process is running as non-administrator without 'noUAC' flag with 'console' flag, the log after elevation will not be shown in current session."
-
-这是因为提权后的进程在新的控制台窗口中生成，用户需要切换到该窗口才能看到后续输出。
-
-### 典型调用流程
-
-在主循环（[`main.rs`](../main.rs/README.md)）中：
-
-1. [is_running_as_admin](is_running_as_admin.md) 返回 `false`。
-2. `noUAC` CLI 标志**未**设置。
-3. 调用 `request_uac_elevation`。
-4. 当前进程退出；提权后的子进程接管。
-
-### 错误情况
-
-| 场景 | 行为 |
-|------|------|
-| `std::env::current_exe()` 失败 | 从 `current_exe()` 返回 `Err(io::Error)`。 |
-| `powershell.exe` 无法找到或生成 | 从 `Command::spawn()` 返回 `Err(io::Error)`。 |
-| 用户拒绝 UAC 提示 | `Start-Process` 命令在 PowerShell 内部失败，但 `Command::spawn()` 已经成功——当前进程已经退出。提权后的子进程不会启动。 |
+- 如果 `std::env::current_exe()` 失败（例如可执行文件在运行时被删除），该函数在尝试生成 PowerShell 之前返回相应的 `io::Error`。
+- 如果用户拒绝了 UAC 提示，PowerShell 的 `Start-Process` 命令会静默失败，而原始进程（已经退出）不会感知到。
+- 该函数**不会**等待提升权限的子进程启动或确认成功后才退出。
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `winapi` (`src/winapi.rs`) |
-| **可见性** | `pub` |
-| **调用者** | [`main`](../main.rs/README.md)（启动流程） |
-| **被调用者** | `std::env::current_exe`、`std::env::args`、`std::process::Command::spawn`、`std::process::exit` |
-| **外部程序** | `powershell.exe`（必须在 `PATH` 中） |
-| **特权** | 调用无需特权；该函数通过 UAC **请求**提权 |
+| 要求 | 值 |
+|------|-----|
+| **模块** | `winapi.rs` |
+| **调用方** | `main.rs` — 需要管理员权限但当前未持有时的启动逻辑 |
+| **被调用方** | `std::env::current_exe`、`std::env::args`、`std::process::Command::spawn`、`std::process::exit`、[`log_message`](../logging.rs/log_message.md)（通过 `log!` 宏） |
+| **外部依赖** | `powershell.exe` 必须在系统 PATH 中可用 |
+| **平台** | 仅限 Windows |
+| **权限** | 调用本身不需要特殊权限；会触发 UAC 提示，由用户授予新进程管理员权限 |
 
 ## 另请参阅
 
 | 主题 | 链接 |
 |------|------|
-| 管理员特权检查 | [is_running_as_admin](is_running_as_admin.md) |
-| 调试特权启用（提权后） | [enable_debug_privilege](enable_debug_privilege.md) |
-| 基础优先级特权启用（提权后） | [enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md) |
-| CLI 参数解析和标志 | [cli 模块](../cli.rs/README.md) |
-| 服务主入口点 | [main 模块](../main.rs/README.md) |
+| is_running_as_admin | [is_running_as_admin](is_running_as_admin.md) |
+| enable_debug_privilege | [enable_debug_privilege](enable_debug_privilege.md) |
+| enable_inc_base_priority_privilege | [enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md) |
+| terminate_child_processes | [terminate_child_processes](terminate_child_processes.md) |
+| logging 模块 | [logging.rs](../logging.rs/README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

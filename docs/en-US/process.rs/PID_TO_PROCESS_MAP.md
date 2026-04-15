@@ -1,58 +1,71 @@
 # PID_TO_PROCESS_MAP static (process.rs)
 
-Global lazily-initialized map from process ID (`u32`) to [`ProcessEntry`](ProcessEntry.md), protected by a `Mutex`. This static stores the parsed results of the most recent process snapshot taken by [`ProcessSnapshot::take`](ProcessSnapshot.md#take). It is an implementation detail of the snapshot infrastructure and **must not be accessed directly**; use [`ProcessSnapshot`](ProcessSnapshot.md) instead.
+Global shared PID-to-process lookup map that is populated by [`ProcessSnapshot::take`](ProcessSnapshot.md) during each snapshot capture. This static holds parsed [`ProcessEntry`](ProcessEntry.md) objects keyed by process ID, enabling efficient O(1) lookups of process information by PID.
 
 ## Syntax
 
 ```rust
 pub static PID_TO_PROCESS_MAP: Lazy<Mutex<HashMap<u32, ProcessEntry>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+    Lazy::new(|| Mutex::new(HashMap::default()));
 ```
 
 ## Type
 
-`once_cell::sync::Lazy<std::sync::Mutex<std::collections::HashMap<u32, ProcessEntry>>>`
+`once_cell::sync::Lazy<std::sync::Mutex<HashMap<u32, ProcessEntry>>>`
+
+## Members
+
+| Component | Type | Description |
+|-----------|------|-------------|
+| Key | `u32` | The process identifier (PID). |
+| Value | [`ProcessEntry`](ProcessEntry.md) | The parsed process information including name, thread count, and raw `SYSTEM_PROCESS_INFORMATION` data. |
 
 ## Remarks
 
-`PID_TO_PROCESS_MAP` is the backing store that [`ProcessSnapshot::take`](ProcessSnapshot.md#take) populates when it parses `SYSTEM_PROCESS_INFORMATION` records returned by `NtQuerySystemInformation`. Each key is a Windows process ID and each value is a [`ProcessEntry`](ProcessEntry.md) containing the corresponding `SYSTEM_PROCESS_INFORMATION` structure and lazily-parsed thread data.
+> **DO NOT DIRECTLY ACCESS** — Use the [`ProcessSnapshot`](ProcessSnapshot.md) struct instead.
 
-### Why direct access is prohibited
+This static is intended to be accessed exclusively through the [`ProcessSnapshot`](ProcessSnapshot.md) RAII wrapper, which manages its lifecycle (population and cleanup). Direct access bypasses the snapshot's safety guarantees and may result in reading stale or partially-populated data.
 
-The map's contents are only valid while the [`ProcessSnapshot`](ProcessSnapshot.md) that populated them is alive. When the snapshot is dropped, both the map and the underlying [`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md) are cleared. Any `ProcessEntry` obtained after the drop contains dangling internal pointers (the `threads_base_ptr` field points into the freed buffer). Accessing the map outside the snapshot lifetime is **undefined behavior**.
+### Lifecycle
 
-Always acquire the data through `ProcessSnapshot`:
-
-```rust
-let mut buf = SNAPSHOT_BUFFER.lock().unwrap();
-let mut map = PID_TO_PROCESS_MAP.lock().unwrap();
-let snapshot = ProcessSnapshot::take(&mut buf, &mut map)?;
-// Use snapshot.pid_to_process safely here
-// snapshot is dropped at end of scope, clearing both statics
-```
+1. **Initialization.** The map is lazily initialized as an empty `HashMap` on first access via `once_cell::sync::Lazy`.
+2. **Population.** [`ProcessSnapshot::take`](ProcessSnapshot.md) clears the map and re-populates it by parsing the raw `SYSTEM_PROCESS_INFORMATION` structures from the [`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md). Each process is inserted with its PID as the key.
+3. **Cleanup.** When the `ProcessSnapshot` is dropped, the map is cleared via `pid_to_process.clear()`, ensuring no stale entries persist between snapshot cycles.
 
 ### Thread safety
 
-The `Mutex` ensures exclusive access. Because [`ProcessSnapshot::take`](ProcessSnapshot.md#take) requires `&mut` references to both the buffer and the map, only one snapshot can exist at a time.
+The map is protected by a `std::sync::Mutex`. Callers must acquire the lock before reading or writing. In practice, the lock is acquired once per scheduling cycle when taking a new snapshot, and the resulting `MutexGuard` is held for the duration of the snapshot's lifetime via the `ProcessSnapshot` struct's borrowed reference.
+
+### Data validity
+
+The [`ProcessEntry`](ProcessEntry.md) values stored in this map contain raw pointers (`threads_base_ptr`) that point into the [`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md). These pointers are only valid for the lifetime of the snapshot buffer's current contents. After the `ProcessSnapshot` is dropped and the buffer is cleared, any retained `ProcessEntry` references would contain dangling pointers. The RAII design of `ProcessSnapshot` prevents this by clearing both the map and the buffer on drop.
+
+### HashMap type
+
+The `HashMap` used here is the project's custom alias for `FxHashMap` from the [`collections`](../collections.rs/README.md) module, which uses a fast non-cryptographic hash function (Fx hash) optimized for integer keys like PIDs.
 
 ## Requirements
 
-| &nbsp; | &nbsp; |
-|---|---|
-| **Module** | `process` (`src/process.rs`) |
-| **Crate dependencies** | `once_cell`, `ntapi` |
-| **Initialized by** | [`ProcessSnapshot::take`](ProcessSnapshot.md#take) |
-| **Cleared by** | [`ProcessSnapshot::drop`](ProcessSnapshot.md) |
-| **Privileges** | None (initialization only; snapshot capture requires `SeDebugPrivilege` indirectly) |
+| Requirement | Value |
+|-------------|-------|
+| **Module** | `process.rs` |
+| **Type** | `Lazy<Mutex<HashMap<u32, ProcessEntry>>>` |
+| **Visibility** | `pub` (but should only be accessed via [`ProcessSnapshot`](ProcessSnapshot.md)) |
+| **Populated by** | [`ProcessSnapshot::take`](ProcessSnapshot.md) |
+| **Cleared by** | `ProcessSnapshot::drop` |
+| **Dependencies** | `once_cell::sync::Lazy`, `std::sync::Mutex`, [`HashMap`](../collections.rs/HashMap.md), [`ProcessEntry`](ProcessEntry.md) |
+| **Platform** | Windows |
 
 ## See Also
 
-| Topic | Description |
-|---|---|
-| [`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md) | Global buffer backing `NtQuerySystemInformation` data |
-| [`ProcessSnapshot`](ProcessSnapshot.md) | RAII wrapper that manages both statics safely |
-| [`ProcessEntry`](ProcessEntry.md) | Per-process record stored as the map value |
+| Topic | Link |
+|-------|------|
+| ProcessSnapshot struct | [ProcessSnapshot](ProcessSnapshot.md) |
+| ProcessEntry struct | [ProcessEntry](ProcessEntry.md) |
+| SNAPSHOT_BUFFER static | [SNAPSHOT_BUFFER](SNAPSHOT_BUFFER.md) |
+| collections module | [collections.rs](../collections.rs/README.md) |
+| HashMap type alias | [HashMap](../collections.rs/HashMap.md) |
+| process module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

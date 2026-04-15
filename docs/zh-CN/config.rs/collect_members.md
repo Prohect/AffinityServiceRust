@@ -1,100 +1,87 @@
 # collect_members 函数 (config.rs)
 
-将以冒号分隔的文本字符串拆分为各个成员名称，对每个条目进行空白裁剪和小写转换，然后将结果追加到现有向量中。此函数是内联规则行和多行组块用于从配置文本中提取进程名称的共享分词器。
+将以冒号分隔的进程名称字符串拆分为单独的小写成员条目，并将它们追加到提供的列表中。这是配置解析器内部使用的辅助函数，用于从内联规则行和 `{ }` 分组块中提取进程名称。
 
 ## 语法
 
-```rust
-fn collect_members(text: &str, members: &mut Vec<String>)
+```AffinityServiceRust/src/config.rs#L242-249
+fn collect_members(text: &str, members: &mut Vec<String>) {
+    for item in text.split(':') {
+        let item = item.trim().to_lowercase();
+        if !item.is_empty() && !item.starts_with('#') {
+            members.push(item);
+        }
+    }
+}
 ```
 
 ## 参数
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `text` | `&str` | 以冒号分隔的成员名称字符串（例如 `"game.exe: helper.exe: launcher.exe"`）。每个片段在添加前会进行裁剪和小写转换。裁剪后为空的片段或以 `#`（注释）开头的片段将被跳过。 |
-| `members` | `&mut Vec<String>` | 用于追加解析出的成员名称的输出向量。向量中已有的条目将被保留；新名称被推入末尾。如果需要去重，由调用方负责处理。 |
+| `text` | `&str` | 包含一个或多个以冒号（`:`）分隔的进程名称的字符串。也可能包含内联注释（以 `#` 开头的标记）和空白字符，两者都会被过滤掉。 |
+| `members` | `&mut Vec<String>` | 可变引用，指向收集到的成员名称将被追加到的向量。调用方负责初始化此向量；`collect_members` 只追加，不会清空它。 |
 
 ## 返回值
 
-此函数没有返回值。结果通过可变引用传递的 `members` 向量进行累积。
+此函数不返回值。结果通过调用方传入的 `members` 向量累积。
 
 ## 备注
 
-### 解析规则
+### 处理步骤
 
-1. 输入 `text` 按 `:` 字符进行拆分。
-2. 每个结果片段会进行前后空白裁剪，然后转换为小写。
-3. 以下情况的片段将被**跳过**：
-   - 裁剪后为空。
-   - 以 `#` 开头（视为内联注释）。
-4. 所有保留下来的片段作为 `String` 值被推入 `members`。
+1. 输入 `text` 按 `:` 分隔符拆分。
+2. 每个生成的标记去除前后空白并转换为小写。
+3. 去除空白后为空或以 `#` 开头（内联注释）的标记将被丢弃。
+4. 所有剩余的标记被推入 `members` 向量。
+
+### 去重
+
+`collect_members` **不**执行去重。如果同一进程名称在 `text` 中多次出现，它将被多次添加到 `members` 中。去重是下游消费者的职责（例如，[`parse_and_insert_rules`](parse_and_insert_rules.md) 会检测并警告重复规则）。
 
 ### 大小写规范化
 
-所有成员名称通过 `to_lowercase()` 转换为小写。这确保了整个服务中的进程名称匹配不区分大小写，因为 Windows 进程名称本身就是不区分大小写的。
+所有成员名称在插入前都被转为小写。这确保了运行时的不区分大小写匹配，因为 Windows 进程名称是不区分大小写的。
 
-### 注释处理
+### 使用上下文
 
-`#` 检查允许在组块内使用内联注释。例如，在多行组块中：
+此函数在以下位置被调用：
 
-```
-my_group {
-    game.exe: helper.exe
-    # 这一行是注释，会被调用方跳过
-    launcher.exe: updater.exe
-}:high:0-7
-```
+- **[`collect_group_block`](collect_group_block.md)**：从多行 `{ }` 分组块中的每一行以及右花括号之前的内容中收集成员。
+- **[`read_config`](read_config.md)**：从单行分组块（左花括号和右花括号出现在同一行）中收集成员。
+- **[`sort_and_group_config`](sort_and_group_config.md)**：在自动分组遍历期间重新解析分组块时收集成员。
 
-单行内以 `#` 开头的片段也会被过滤。例如，`"game.exe: # not a process"` 只会产生 `["game.exe"]`。
+### 边界情况
 
-### 不进行去重
-
-`collect_members` 不检查重复名称。如果同一进程名称在多次调用中出现多次（例如在组块的不同行上），它将在 `members` 中出现多次。如果需要去重，则由下游处理——例如，[sort_and_group_config](sort_and_group_config.md) 在排序后调用 `dedup()` 来对成员列表去重。
-
-### 可见性
-
-此函数具有 **crate 私有**可见性（`fn`，而非 `pub fn`）。它仅在 `config` 模块内由 [read_config](read_config.md)（用于内联组解析）和 [collect_group_block](collect_group_block.md)（用于多行组块）调用。
-
-### 使用场景
-
-`collect_members` 通常在以下两种场景之一中被调用：
-
-1. **内联组** — 当 [read_config](read_config.md) 遇到像 `{ a: b: c }:rule` 这样的单行组时，它提取 `{` 和 `}` 之间的文本并传递给 `collect_members`。
-2. **多行组** — [collect_group_block](collect_group_block.md) 对 `{ ... }` 块内的每个非空、非注释行调用 `collect_members`，在各行之间累积所有成员。
-
-### 示例
-
-| 输入 `text` | 追加的结果条目 |
-|-------------|---------------|
-| `"game.exe: helper.exe"` | `["game.exe", "helper.exe"]` |
-| `"  GAME.EXE : Helper.EXE "` | `["game.exe", "helper.exe"]` |
-| `"single.exe"` | `["single.exe"]` |
-| `""` | *（无）* |
-| `"# comment"` | *（无）* |
-| `"a.exe: # comment: b.exe"` | `["a.exe", "b.exe"]` |
+| 输入 | 结果 |
+|------|------|
+| `""` （空字符串） | 不追加任何内容 |
+| `"  "` （仅空白） | 不追加任何内容 |
+| `"# comment"` | 不追加任何内容（注释被过滤） |
+| `"game.exe"` | 追加 `["game.exe"]` |
+| `"Game.EXE : app.exe"` | 追加 `["game.exe", "app.exe"]` |
+| `"a.exe: : b.exe"` | 追加 `["a.exe", "b.exe"]`（空标记被跳过） |
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `config` (`src/config.rs`) |
-| **可见性** | Crate 私有 |
-| **调用方** | [read_config](read_config.md)、[collect_group_block](collect_group_block.md)、[sort_and_group_config](sort_and_group_config.md) |
-| **被调用方** | 无（仅使用标准库字符串操作） |
-| **API** | 纯函数 — 无 I/O，无 Windows API 调用 |
-| **权限** | 无 |
+| 要求 | 值 |
+|------|-----|
+| 模块 | `config.rs` |
+| 可见性 | 私有（`fn`，非 `pub fn`） |
+| 调用方 | [`collect_group_block`](collect_group_block.md)、[`read_config`](read_config.md)、[`sort_and_group_config`](sort_and_group_config.md) |
+| 被调用方 | `str::split`、`str::trim`、`str::to_lowercase`、`str::starts_with`、`Vec::push` |
+| API | 仅标准库 |
+| 权限 | 无 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 资源 | 链接 |
 |------|------|
-| 多行组块收集器 | [collect_group_block](collect_group_block.md) |
-| 主配置文件解析器 | [read_config](read_config.md) |
-| 规则字段解析（消费成员列表） | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| 自动分组工具 | [sort_and_group_config](sort_and_group_config.md) |
-| 模块概述 | [config 模块](README.md) |
+| collect_group_block | [collect_group_block](collect_group_block.md) |
+| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| read_config | [read_config](read_config.md) |
+| sort_and_group_config | [sort_and_group_config](sort_and_group_config.md) |
+| config 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

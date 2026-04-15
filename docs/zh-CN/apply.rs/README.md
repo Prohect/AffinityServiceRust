@@ -1,47 +1,45 @@
 # apply 模块 (AffinityServiceRust)
 
-`apply` 模块包含所有通过 Windows API 调用直接修改进程和线程属性的函数。它是 AffinityServiceRust 的执行层：一旦配置解析完成并完成进程枚举，所有对进程优先级类、CPU 亲和性掩码、CPU 集合、IO 优先级、内存优先级、理想处理器分配以及主力线程调度的更改，都通过此处定义的函数来执行。
-
-每个公开函数都遵循一个通用模式：接受进程标识符、已解析的 [ProcessConfig](../config.rs/ProcessConfig.md) 引用、`dry_run` 标志、所需的操作系统句柄，以及一个 [ApplyConfigResult](#applyconfigresult) 累加器。函数从操作系统读取当前值，将其与期望值进行比较，并在两者不同且 `dry_run` 为 `false` 时调用相应的 Windows API 来应用更改。成功的操作被记录为*变更*；失败的操作被记录为*错误*（通过 [log_error_if_new](log_error_if_new.md) 辅助函数进行去重，避免对同一操作的重复失败刷屏日志）。
-
-## 结构体
-
-| 名称 | 描述 |
-|------|------|
-| [ApplyConfigResult](ApplyConfigResult.md) | 在单次应用过程中累积人类可读的变更描述和错误消息。 |
+`apply` 模块负责将进程级和线程级配置策略应用到正在运行的 Windows 进程上。它提供了一系列函数，用于读取当前进程/线程的属性（优先级、亲和性、CPU 集合、I/O 优先级、内存优先级），将其与期望的配置进行比较，并调用相应的 Windows API 使进程达到合规状态。该模块还实现了"主力线程"调度算法，该算法识别进程中 CPU 占用最高的线程，并使用 CPU Sets 和理想处理器分配将它们固定到指定的高性能核心上，同时采用基于滞后的提升和降级机制以避免快速振荡。
 
 ## 函数
 
-| 名称 | 描述 |
+| 函数 | 描述 |
 |------|------|
-| [get_handles](get_handles.md) | 从 [ProcessHandle](../winapi.rs/ProcessHandle.md) 中提取最佳可用的读写 `HANDLE`，优先使用完全访问权限的句柄。 |
-| [log_error_if_new](log_error_if_new.md) | 仅在相同的 pid / 操作 / 错误码组合未被记录过时才记录错误消息。 |
-| [apply_priority](apply_priority.md) | 通过 `SetPriorityClass` 设置进程优先级类（从 Idle 到 Realtime）。 |
-| [apply_affinity](apply_affinity.md) | 通过 `SetProcessAffinityMask` 在进程上设置硬 CPU 亲和性掩码。 |
-| [reset_thread_ideal_processors](reset_thread_ideal_processors.md) | 在亲和性或 CPU 集合变更后，重新分配线程的理想处理器。 |
-| [apply_process_default_cpuset](apply_process_default_cpuset.md) | 通过 `SetProcessDefaultCpuSets` 为进程应用软 CPU 集合偏好。 |
-| [apply_io_priority](apply_io_priority.md) | 通过 `NtSetInformationProcess` 设置进程的 IO 优先级。 |
-| [apply_memory_priority](apply_memory_priority.md) | 通过 `SetProcessInformation(ProcessMemoryPriority)` 设置进程的内存优先级。 |
-| [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) | 查询占用 CPU 最多的线程的周期计数，为主力线程选择建立基线。 |
-| [apply_prime_threads](apply_prime_threads.md) | 主力线程调度管线的顶层编排器（选择 → 提升 → 降级）。 |
-| [apply_prime_threads_select](apply_prime_threads_select.md) | 使用滞后阈值按 CPU 周期数选出前 *N* 个线程。 |
-| [apply_prime_threads_promote](apply_prime_threads_promote.md) | 将新选中的主力线程固定到性能核心 CPU 集合，并可选地提升其优先级。 |
-| [apply_prime_threads_demote](apply_prime_threads_demote.md) | 取消失去主力状态的线程的固定，并恢复其原始优先级。 |
-| [apply_ideal_processors](apply_ideal_processors.md) | 根据可配置的前缀规则，为起始模块匹配的线程分配理想处理器。 |
-| [update_thread_stats](update_thread_stats.md) | 提交缓存的周期和时间计数器，以便下一次迭代计算正确的增量。 |
+| [`get_handles`](get_handles.md) | 从 `ProcessHandle` 中提取读取和写入 `HANDLE` 值，优先使用完全访问句柄而非受限句柄。 |
+| [`log_error_if_new`](log_error_if_new.md) | 仅当相同的 pid/操作/错误码组合尚未记录过时，才将错误记录到 `ApplyConfigResult` 中。 |
+| [`apply_priority`](apply_priority.md) | 读取当前进程优先级类，如果与配置值不同则进行设置。 |
+| [`apply_affinity`](apply_affinity.md) | 读取当前进程亲和性掩码并将其设置为配置的 CPU 掩码，在更改时重新分配线程理想处理器。 |
+| [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) | 在亲和性或 CPU 集合更改后，按 CPU 时间排序并以随机偏移进行轮转分配，将线程理想处理器重新分配到一组 CPU 上。 |
+| [`apply_process_default_cpuset`](apply_process_default_cpuset.md) | 查询并设置进程的默认 CPU Set ID，之后可选择性地重置线程理想处理器。 |
+| [`apply_io_priority`](apply_io_priority.md) | 通过 `NtQueryInformationProcess` 读取当前进程 I/O 优先级，并通过 `NtSetInformationProcess` 将其设置为配置值。 |
+| [`apply_memory_priority`](apply_memory_priority.md) | 通过 `GetProcessInformation` 读取当前进程内存优先级，并通过 `SetProcessInformation` 将其设置为配置值。 |
+| [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md) | 打开 CPU 消耗最高的线程句柄并查询其周期计数器，为主力线程选择建立基线测量值。 |
+| [`apply_prime_threads`](apply_prime_threads.md) | 编排主力线程调度管线：按 CPU 增量排序线程、选择候选者、提升获胜者、降级落选者。 |
+| [`apply_prime_threads_select`](apply_prime_threads_select.md) | 使用滞后阈值选择排名靠前的线程作为主力线程，以防止快速翻转。 |
+| [`apply_prime_threads_promote`](apply_prime_threads_promote.md) | 通过 `SetThreadSelectedCpuSets` 将新选定的主力线程固定到指定 CPU，并可选择性地提升其优先级。 |
+| [`apply_prime_threads_demote`](apply_prime_threads_demote.md) | 移除不再符合主力条件的线程的 CPU 集合固定，并恢复其原始线程优先级。 |
+| [`apply_ideal_processors`](apply_ideal_processors.md) | 根据模块前缀匹配规则为线程分配理想处理器，按每条规则的周期计数选择前 N 个线程。 |
+| [`update_thread_stats`](update_thread_stats.md) | 将缓存的周期和时间测量值提交到 `last_cycles`/`last_total_time` 中，并将缓存值重置为零。 |
+
+## 结构体
+
+| 结构体 | 描述 |
+|--------|------|
+| [`ApplyConfigResult`](ApplyConfigResult.md) | 在单次配置应用过程中累积人类可读的变更描述和错误消息。 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 参考 | 链接 |
 |------|------|
-| 进程级应用编排 | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
-| 线程级应用编排 | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
-| 配置模型 | [ProcessConfig](../config.rs/ProcessConfig.md) |
-| 主力线程调度器状态 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
-| 操作系统句柄封装 | [ProcessHandle](../winapi.rs/ProcessHandle.md)、[ThreadHandle](../winapi.rs/ThreadHandle.md) |
-| 优先级枚举 | [ProcessPriority](../priority.rs/ProcessPriority.md)、[IOPriority](../priority.rs/IOPriority.md)、[MemoryPriority](../priority.rs/MemoryPriority.md)、[ThreadPriority](../priority.rs/ThreadPriority.md) |
-| 错误格式化辅助函数 | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md)、[error_from_ntstatus](../error_codes.rs/error_from_ntstatus.md) |
+| config 模块 | [`config.rs`](../config.rs/README.md) |
+| priority 模块 | [`priority.rs`](../priority.rs/README.md) |
+| process 模块 | [`process.rs`](../process.rs/README.md) |
+| scheduler 模块 | [`scheduler.rs`](../scheduler.rs/README.md) |
+| winapi 模块 | [`winapi.rs`](../winapi.rs/README.md) |
+| logging 模块 | [`logging.rs`](../logging.rs/README.md) |
+| error_codes 模块 | [`error_codes.rs`](../error_codes.rs/README.md) |
+| collections 模块 | [`collections.rs`](../collections.rs/README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

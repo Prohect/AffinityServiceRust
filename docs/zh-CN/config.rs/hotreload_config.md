@@ -1,16 +1,16 @@
 # hotreload_config 函数 (config.rs)
 
-检查配置文件的最后修改时间戳，如果自上次检查以来发生了变化，则通过 [read_config](read_config.md) 重新解析该文件。当解析成功（无错误）时，实时规则映射、调优常量和相关调度器状态将被原子性地替换。当解析失败时，保留先前的配置并记录错误。
+监视配置文件的修改，通过将文件系统的修改时间戳与缓存值进行比较来检测变更，并在检测到变更时热重载配置。如果新解析的配置有效，则原子性地替换活跃配置、更新调度器常量并重置每 PID 的应用跟踪列表。如果新配置包含错误，则保留先前的配置并记录错误。
 
 ## 语法
 
-```rust
+```AffinityServiceRust/src/config.rs#L1303-1334
 pub fn hotreload_config(
     cli: &CliArgs,
-    configs: &mut HashMap<u32, HashMap<String, ProcessConfig>>,
+    configs: &mut ConfigResult,
     last_config_mod_time: &mut Option<std::time::SystemTime>,
     prime_core_scheduler: &mut PrimeThreadScheduler,
-    process_level_applied: &mut HashSet<u32>,
+    process_level_applied: &mut List<[u32; PIDS]>,
 )
 ```
 
@@ -18,93 +18,95 @@ pub fn hotreload_config(
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `cli` | `&CliArgs` | 已解析的命令行参数的引用。`config_file_name` 字段提供了被监控修改时间的配置文件路径。 |
-| `configs` | `&mut HashMap<u32, HashMap<String, ProcessConfig>>` | 实时规则映射的可变引用（按等级索引，再按小写进程名索引）。热重载成功时，该映射将被 [ConfigResult](ConfigResult.md)`.configs` 中新解析的规则完全替换。 |
-| `last_config_mod_time` | `&mut Option<std::time::SystemTime>` | 上次检查时缓存的修改时间戳的可变引用。每次成功读取元数据后更新为文件当前的 `modified()` 时间。当为 `None` 时，任何可读的时间戳都会触发重新加载。 |
-| `prime_core_scheduler` | `&mut PrimeThreadScheduler` | 实时主线程调度器的可变引用。热重载成功时，调度器的 `constants` 字段将被新解析的 [ConfigConstants](ConfigConstants.md) 替换，使阈值变更在下一个调度周期生效，无需重启服务。 |
-| `process_level_applied` | `&mut HashSet<u32>` | 已应用进程级别设置（进程优先级、CPU 亲和性、CPU 集合、I/O 优先级、内存优先级）的进程 ID 集合的可变引用。热重载成功时清空该集合，以便在下一次服务循环迭代中将新规则重新应用到所有运行中的进程。 |
+| `cli` | `&CliArgs` | CLI 参数结构体的引用。`config_file_name` 字段用于在磁盘上定位配置文件。 |
+| `configs` | `&mut ConfigResult` | 活跃配置结果的可变引用。如果重载的配置有效，则将其替换为新结果；否则保持不变。 |
+| `last_config_mod_time` | `&mut Option<std::time::SystemTime>` | 上次成功检查时配置文件的缓存修改时间戳的可变引用。每当检测到变更时（无论新配置是否有效），都会更新为当前修改时间。首次调用时应为 `None`，以强制执行初始加载。 |
+| `prime_core_scheduler` | `&mut PrimeThreadScheduler` | 主线程调度器的可变引用。当配置成功重载时，调度器的 `constants` 字段会更新为重载配置中新的 [`ConfigConstants`](ConfigConstants.md) 值。 |
+| `process_level_applied` | `&mut List<[u32; PIDS]>` | 已应用进程级设置的进程 ID 列表的可变引用。成功重载后会被清空，以便在下次轮询迭代中使用新规则重新评估所有进程。 |
 
 ## 返回值
 
-此函数没有返回值。所有结果通过对参数的修改和日志输出来传达。
+此函数不返回值。所有副作用通过对 `configs`、`last_config_mod_time`、`prime_core_scheduler` 和 `process_level_applied` 参数的修改来传达。
 
 ## 备注
 
-### 重新加载算法
+### 变更检测算法
 
-1. **元数据检查** — 对 `cli.config_file_name` 调用 `std::fs::metadata`。如果调用失败（例如文件被删除或不可访问），函数直接返回，不做任何操作，保留当前配置。
-2. **时间戳比较** — 将文件的 `modified()` 时间与 `*last_config_mod_time` 进行比较。如果时间戳相同（或两者都是具有相同值的 `Some`），则无需重新加载，函数立即返回。
-3. **时间戳更新** — 一旦观察到新的修改时间，`*last_config_mod_time` 将无条件设置为 `Some(mod_time)`。这可以防止在同一文件版本的每次循环迭代中重复尝试重新加载。
-4. **重新解析** — 调用 [read_config](read_config.md) 并传入 `cli.config_file_name`，生成新的 [ConfigResult](ConfigResult.md)。
-5. **验证关卡** — 如果 `new_config_result.errors` 非空，则中止重新加载：
-   - 记录一条消息，说明文件存在错误，将保留先前的配置。
-   - 逐条记录每个错误。
-   - `configs`、`prime_core_scheduler` 和 `process_level_applied` 保持不变。
-6. **成功时替换** — 如果没有错误：
-   - 调用 `new_config_result.print_report()` 记录组/规则统计信息和任何警告。
-   - 通过 `new_config_result.total_rules()` 获取总规则数。
-   - 将 `*configs` 替换为 `new_config_result.configs`。
-   - 将 `prime_core_scheduler.constants` 替换为 `new_config_result.constants`。
-   - 记录包含规则数量的完成消息。
-   - 调用 `process_level_applied.clear()` 强制重新应用进程级别设置。
+1. 函数对 `cli.config_file_name` 调用 `std::fs::metadata` 以获取文件的元数据。
+2. 通过 `metadata.modified()` 提取修改时间戳。
+3. 如果修改时间与 `*last_config_mod_time` 不同，则触发重载。如果时间匹配（或 metadata/modified 调用失败），函数立即返回且无副作用。
+4. 在解析开始**之前**，将缓存的时间戳 `*last_config_mod_time` 更新为 `Some(mod_time)`。这可以防止在解析缓慢或文件正在被快速写入时反复重试重载。
+
+### 重载流程
+
+当检测到变更时：
+
+1. 发出日志消息：`"Configuration file '{name}' changed, reloading..."`。
+2. 通过 [`read_config`](read_config.md) 将文件完整解析为新的 `ConfigResult`。
+3. **如果新配置有效**（`new_config_result.errors.is_empty()`）：
+   - `*configs` 被替换为新的 `ConfigResult`。
+   - 调用 `configs.print_report()` 以记录摘要。
+   - 更新调度器常量：`prime_core_scheduler.constants = configs.constants.clone()`。
+   - 记录总规则数。
+   - 清空 `process_level_applied`，以便在下一次循环中重新评估所有进程。
+4. **如果新配置有错误**：
+   - 保留先前的 `*configs` 不变。
+   - 发出日志消息：`"Configuration file '{name}' has errors, keeping previous configuration."`。
+   - 每个错误以 `"  - "` 前缀单独记录。
+
+### 原子替换
+
+`*configs` 的替换使用简单赋值（`*configs = new_config_result`）。因为整个旧的 `ConfigResult` 在单条语句中被丢弃并替换，所以不存在部分更新的配置可见的中间状态。但是，这**不是**线程安全的——该函数假设对配置的单线程访问，这由主轮询循环的顺序执行模型保证。
 
 ### 清空 process_level_applied
 
-`process_level_applied` 集合跟踪哪些 PID 已经应用了进程级别规则。热重载成功后清空该集合，确保变更后的进程优先级、CPU 亲和性、CPU 集合、I/O 优先级和内存优先级设置在下一次服务循环迭代中重新应用到所有当前运行的进程。如果不进行此重置，在旧规则下已经配置过的进程将不会收到更新的设置，直到它们被重新启动。
+成功重载后，会调用 `process_level_applied.clear()`。此列表跟踪哪些 PID 已应用了进程级设置（优先级、亲和性、CPU 集合、I/O 优先级、内存优先级）。清空它可确保新规则在下次轮询迭代中应用于所有运行中的进程，而不仅仅是新生成的进程。
 
-### 错误容错
+### 调度器常量传播
 
-该函数使用 **故障安全** 策略：实时配置永远不会被无效的解析结果替换。如果新文件包含语法错误、未定义的别名或其他致命问题，先前的有效配置将继续使用。这对于长期运行的 Windows 服务至关重要，因为临时的配置文件编辑（例如用户仍在输入中）不应中断正在进行的进程管理。
+调度器的 `constants` 字段与 `ConfigResult` 的替换分开更新，因为 `PrimeThreadScheduler` 出于性能原因（避免在每线程调度决策期间重复进行哈希映射查找）维护了自己的常量副本。
 
-### 与 hotreload_blacklist 的交互
+### 错误弹性
 
-[hotreload_blacklist](hotreload_blacklist.md) 独立监控黑名单文件，使用单独的时间戳。两个函数在服务主循环的每次迭代中都会被调用，因此配置和黑名单的变更会在一个循环间隔内被检测并应用（由 `-interval` CLI 参数控制，默认为几秒）。
+热重载设计是有意保守的：包含**任何**错误的配置文件都会被完全拒绝。这可以防止部分或不一致的规则集被应用。用户必须修复所有错误后重载才会生效。仅有警告不会阻止重载。
 
-### let-chain 模式匹配
+### 文件系统访问模式
 
-该函数使用 Rust 的 `let`-chain 语法（`if let Ok(...) = ... && let Ok(...) = ... && ...`）将元数据读取、修改时间提取和时间戳比较组合成一个条件块。如果链中的任何步骤失败，整个块将被跳过，函数静默返回——在检查阶段不会为临时的文件系统错误产生日志输出。
+该函数在每次调用时（通常每个轮询循环一次）调用 `std::fs::metadata`。这在 Windows 上是一个轻量级操作（在检测到变更之前不会读取文件内容），是不使用文件系统监视器进行文件变更检测的标准模式。
 
-### 首次调用行为
+### 边界情况
 
-首次调用时，`*last_config_mod_time` 为 `None`。由于 `Some(mod_time) != None` 始终为真，首次成功的元数据读取总是会触发重新加载。这是有意设计的——它允许服务检测在启动时（配置最初由 [main](../main.rs/main.md) 加载时）和首次热重载检查之间发生的配置变更。
-
-### 线程安全
-
-此函数不是为并发访问设计的。它从单线程服务主循环中调用。调用者负责确保对 `configs`、`prime_core_scheduler` 和 `process_level_applied` 参数的独占访问。
-
-### 日志记录
-
-| 条件 | 日志输出 |
-|------|----------|
-| 检测到文件修改 | `"Configuration file '{path}' changed, reloading..."` |
-| 重新加载成功 | 解析报告（通过 `print_report()`），然后 `"Configuration reload complete: {N} rules loaded."` |
-| 重新加载失败（有错误） | `"Configuration file '{path}' has errors, keeping previous configuration."`，随后是每条错误前缀 `"  - "`。 |
-| 文件不可访问 / 未变更 | *（无输出）* |
+| 场景 | 行为 |
+|------|------|
+| 运行时配置文件被删除 | `metadata()` 失败；函数返回且无副作用。保留先前的配置。 |
+| 配置文件被替换为空文件 | 成功解析（无错误、无规则）；先前的配置被替换为空规则集。 |
+| 配置文件保存时有语法错误 | 新配置被拒绝；保留先前的配置；错误被记录。 |
+| 首次调用且 `last_config_mod_time = None` | 无条件触发重载（因为 `Some(mod_time) != None`）。 |
+| 快速连续保存（编辑器自动保存） | 每个不同的修改时间戳都会触发一次重载尝试。 |
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `config` (`src/config.rs`) |
-| **可见性** | `pub` |
-| **调用者** | [main](../main.rs/main.md)（服务循环） |
-| **被调用者** | [read_config](read_config.md)、[ConfigResult::print_report](ConfigResult.md)、[ConfigResult::total_rules](ConfigResult.md) |
-| **API** | `std::fs::metadata`、`std::fs::Metadata::modified` |
-| **权限** | 配置文件路径的读取权限 |
+| 要求 | 值 |
+|------|-----|
+| 模块 | `config.rs` |
+| 可见性 | `pub` |
+| 调用方 | `main.rs`（主轮询循环，每次迭代调用一次） |
+| 被调用方 | [`read_config`](read_config.md)、[`ConfigResult::print_report`](ConfigResult.md)、[`ConfigResult::total_rules`](ConfigResult.md)、`std::fs::metadata`、`log!` |
+| 依赖 | [`CliArgs`](../cli.rs/CliArgs.md)、[`ConfigResult`](ConfigResult.md)、[`ConfigConstants`](ConfigConstants.md)、[`scheduler.rs`](../scheduler.rs/README.md) 中的 `PrimeThreadScheduler`、[`collections.rs`](../collections.rs/README.md) 中的 `List` 和 `PIDS` |
+| I/O | 对 `cli.config_file_name` 进行文件系统元数据读取；仅在检测到变更时通过 `read_config` 进行完整文件读取 |
+| 权限 | 配置文件的文件系统读取权限 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 资源 | 链接 |
 |------|------|
-| 主配置解析器 | [read_config](read_config.md) |
-| 解析后的配置聚合结果 | [ConfigResult](ConfigResult.md) |
-| 滞后调优常量 | [ConfigConstants](ConfigConstants.md) |
-| 每进程规则结构体 | [ProcessConfig](ProcessConfig.md) |
-| 黑名单热重载 | [hotreload_blacklist](hotreload_blacklist.md) |
-| 主线程调度器 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
-| CLI 参数结构体 | [CliArgs](../cli.rs/CliArgs.md) |
-| 模块概述 | [config 模块](README.md) |
+| hotreload_blacklist | [hotreload_blacklist](hotreload_blacklist.md) |
+| read_config | [read_config](read_config.md) |
+| ConfigResult | [ConfigResult](ConfigResult.md) |
+| ConfigConstants | [ConfigConstants](ConfigConstants.md) |
+| CliArgs | [CliArgs](../cli.rs/CliArgs.md) |
+| scheduler 模块 | [scheduler.rs 概述](../scheduler.rs/README.md) |
+| config 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

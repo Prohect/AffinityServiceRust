@@ -1,31 +1,30 @@
 # priority module (AffinityServiceRust)
 
-The `priority` module defines the strongly-typed enumerations and helper types that represent Windows process priority classes, I/O priority levels, memory priority levels, and thread priority levels. Each enum carries a lookup table that maps between Rust variants, human-readable string names, and the corresponding Win32 constant values. The module provides uniform `as_str`, `as_win_const`, `from_str`, and `from_win_const` conversion methods on every priority enum, making it straightforward to round-trip between configuration text, Rust logic, and Windows API calls. A `None` variant on each enum acts as a sentinel indicating "no change requested."
+The `priority` module defines strongly-typed Rust enumerations and helper types that map Windows process, thread, I/O, and memory priority levels to their corresponding Win32 API constants. Each type provides bidirectional conversion between human-readable string names, Rust enum variants, and the raw numeric values expected by the Windows API (`PROCESS_CREATION_FLAGS`, `THREAD_PRIORITY`, `MEMORY_PRIORITY`, and undocumented I/O priority integers). The module is consumed by the configuration parser to deserialize user-supplied priority strings and by the apply engine to pass correct constants to `SetPriorityClass`, `SetThreadPriority`, `NtSetInformationProcess`, and related Win32 calls.
 
 ## Enums
 
 | Enum | Description |
 |------|-------------|
-| [ProcessPriority](ProcessPriority.md) | Windows process priority class (`Idle` through `Realtime`), wrapping `PROCESS_CREATION_FLAGS`. |
-| [IOPriority](IOPriority.md) | I/O priority level (`VeryLow` through `High`), used with `NtSetInformationProcess`. |
-| [MemoryPriority](MemoryPriority.md) | Memory priority level (`VeryLow` through `Normal`), wrapping `MEMORY_PRIORITY` constants. |
-| [ThreadPriority](ThreadPriority.md) | Thread priority level (`Idle` through `TimeCritical`), including background-mode sentinels and a `boost_one` helper. |
+| [ProcessPriority](ProcessPriority.md) | Maps the six Windows process priority classes (`Idle` through `Realtime`) plus a `None` sentinel to `PROCESS_CREATION_FLAGS` values. |
+| [IOPriority](IOPriority.md) | Maps Windows I/O priority hints (`VeryLow`, `Low`, `Normal`, `High`) plus a `None` sentinel to the raw `u32` values used by `NtSetInformationProcess`. |
+| [MemoryPriority](MemoryPriority.md) | Maps Windows memory priority levels (`VeryLow` through `Normal`) plus a `None` sentinel to `MEMORY_PRIORITY` constants. |
+| [ThreadPriority](ThreadPriority.md) | Maps the full set of Windows thread priority levels (`Idle` through `TimeCritical`, including background-mode tokens) plus a `None` sentinel to `i32` values used by `SetThreadPriority`. Also provides a `boost_one` method for single-step priority elevation. |
 
 ## Structs
 
 | Struct | Description |
 |--------|-------------|
-| [MemoryPriorityInformation](MemoryPriorityInformation.md) | `#[repr(C)]` newtype wrapper around `u32` used as the buffer for `SetProcessInformation` / `GetProcessInformation` memory-priority calls. |
+| [MemoryPriorityInformation](MemoryPriorityInformation.md) | A `#[repr(C)]` newtype wrapper around `u32` that matches the layout of the `MEMORY_PRIORITY_INFORMATION` structure expected by `NtSetInformationProcess`. |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Configuration parsing (reads priority strings) | [config module](../config.rs/README.md) |
-| Rule application (calls `as_win_const`) | [apply module](../apply.rs/README.md) |
-| Error code translation | [error_codes module](../error_codes.rs/README.md) |
-| Logging and failure tracking | [logging module](../logging.rs/README.md) |
+| Reference | Link |
+|-----------|------|
+| main module | [main.rs](../main.rs/README.md) |
+| scheduler module | [scheduler.rs](../scheduler.rs/README.md) |
+| apply module | [apply.rs](../apply.rs/README.md) |
+| config module | [config.rs](../config.rs/README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+Commit: `7221ea0694670265d4eb4975582d8ed2ae02439d`

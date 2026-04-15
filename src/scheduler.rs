@@ -56,6 +56,14 @@ impl PrimeThreadScheduler {
     /// Streak is reset when cycles drop below the keep threshold.
     pub fn update_active_streaks(&mut self, pid: u32, tid_with_delta_cycles: &[(u32, u64)]) {
         let max_cycles = tid_with_delta_cycles.iter().map(|&(_, c)| c).max().unwrap_or(0);
+        if max_cycles == 0 {
+            self.pid_to_process_stats.values_mut().for_each(|process_stats| {
+                process_stats.tid_to_thread_stats.values_mut().for_each(|thread_stats| {
+                    thread_stats.active_streak = 0;
+                });
+            });
+            return;
+        }
         let entry_min = (max_cycles as f64 * self.constants.entry_threshold) as u64;
         let keep_min = (max_cycles as f64 * self.constants.keep_threshold) as u64;
         for &(tid, delta) in tid_with_delta_cycles {

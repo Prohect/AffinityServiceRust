@@ -1,100 +1,87 @@
 # collect_members function (config.rs)
 
-Splits a colon-delimited text string into individual member names, trimming whitespace and lowercasing each entry, then appends the results to an existing vector. This function is the shared tokenizer used by both inline rule lines and multi-line group blocks to extract process names from configuration text.
+Splits a colon-delimited string of process names into individual lowercase member entries and appends them to the provided list. This is a helper function used internally by the configuration parser to extract process names from both inline rule lines and `{ }` group blocks.
 
 ## Syntax
 
-```rust
-fn collect_members(text: &str, members: &mut Vec<String>)
+```AffinityServiceRust/src/config.rs#L242-249
+fn collect_members(text: &str, members: &mut Vec<String>) {
+    for item in text.split(':') {
+        let item = item.trim().to_lowercase();
+        if !item.is_empty() && !item.starts_with('#') {
+            members.push(item);
+        }
+    }
+}
 ```
 
 ## Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `text` | `&str` | A colon-separated string of member names (e.g., `"game.exe: helper.exe: launcher.exe"`). Each segment is trimmed and lowercased before being added. Segments that are empty after trimming or that begin with `#` (comments) are skipped. |
-| `members` | `&mut Vec<String>` | Output vector to which parsed member names are appended. Existing entries in the vector are preserved; new names are pushed to the end. The caller is responsible for deduplication if needed. |
+| `text` | `&str` | A string containing one or more process names separated by colons (`:`). May also contain inline comments (tokens starting with `#`) and whitespace, both of which are filtered out. |
+| `members` | `&mut Vec<String>` | A mutable reference to a vector that collected member names are appended to. The caller is responsible for initializing this vector; `collect_members` only appends and never clears it. |
 
 ## Return value
 
-This function has no return value. Results are accumulated into the `members` vector passed by mutable reference.
+This function does not return a value. Results are accumulated in the `members` vector passed by the caller.
 
 ## Remarks
 
-### Parsing rules
+### Processing steps
 
-1. The input `text` is split on the `:` character.
-2. Each resulting segment is trimmed of leading and trailing whitespace, then lowercased.
-3. A segment is **skipped** if:
-   - It is empty after trimming.
-   - It starts with `#` (treated as an inline comment).
-4. All surviving segments are pushed onto `members` as `String` values.
+1. The input `text` is split on the `:` delimiter.
+2. Each resulting token is trimmed of leading and trailing whitespace and converted to lowercase.
+3. Tokens that are empty after trimming or that begin with `#` (inline comments) are discarded.
+4. All remaining tokens are pushed onto the `members` vector.
+
+### Deduplication
+
+`collect_members` does **not** perform deduplication. If the same process name appears multiple times in `text`, it will be added to `members` multiple times. Deduplication is the responsibility of downstream consumers (e.g., [`parse_and_insert_rules`](parse_and_insert_rules.md) detects and warns about redundant rules).
 
 ### Case normalization
 
-All member names are converted to lowercase via `to_lowercase()`. This ensures case-insensitive process name matching throughout the service, since Windows process names are case-insensitive.
-
-### Comment handling
-
-The `#` check allows inline comments within group blocks. For example, in a multi-line group block:
-
-```
-my_group {
-    game.exe: helper.exe
-    # this line is a comment and is skipped by the caller
-    launcher.exe: updater.exe
-}:high:0-7
-```
-
-The `#`-prefixed segments within a single line are also filtered. For example, `"game.exe: # not a process"` yields only `["game.exe"]`.
-
-### No deduplication
-
-`collect_members` does not check for duplicate names. If the same process name appears multiple times across calls (e.g., on different lines of a group block), it will appear multiple times in `members`. Deduplication, if needed, is handled downstream — for example, [sort_and_group_config](sort_and_group_config.md) calls `dedup()` on the member list after sorting.
-
-### Visibility
-
-This function has **crate-private** visibility (`fn`, not `pub fn`). It is called only within the `config` module by [read_config](read_config.md) (for inline group parsing) and [collect_group_block](collect_group_block.md) (for multi-line group blocks).
+All member names are lowercased before insertion. This ensures case-insensitive matching at runtime, since Windows process names are case-insensitive.
 
 ### Usage context
 
-`collect_members` is typically called in one of two scenarios:
+This function is called from two sites:
 
-1. **Inline group** — When [read_config](read_config.md) encounters a single-line group like `{ a: b: c }:rule`, it extracts the text between `{` and `}` and passes it to `collect_members`.
-2. **Multi-line group** — [collect_group_block](collect_group_block.md) calls `collect_members` once per non-empty, non-comment line within the `{ ... }` block, accumulating all members across lines.
+- **[`collect_group_block`](collect_group_block.md)**: Collects members from each line inside a multi-line `{ }` group block and from the content before the closing brace.
+- **[`read_config`](read_config.md)**: Collects members from single-line group blocks where both the opening and closing braces appear on the same line.
+- **[`sort_and_group_config`](sort_and_group_config.md)**: Collects members when re-parsing group blocks during the auto-grouping pass.
 
-### Examples
+### Edge cases
 
-| Input `text` | Resulting entries appended |
-|--------------|---------------------------|
-| `"game.exe: helper.exe"` | `["game.exe", "helper.exe"]` |
-| `"  GAME.EXE : Helper.EXE "` | `["game.exe", "helper.exe"]` |
-| `"single.exe"` | `["single.exe"]` |
-| `""` | *(none)* |
-| `"# comment"` | *(none)* |
-| `"a.exe: # comment: b.exe"` | `["a.exe", "b.exe"]` |
+| Input | Result |
+|-------|--------|
+| `""` (empty string) | Nothing appended |
+| `"  "` (whitespace only) | Nothing appended |
+| `"# comment"` | Nothing appended (comment filtered) |
+| `"game.exe"` | `["game.exe"]` appended |
+| `"Game.EXE : app.exe"` | `["game.exe", "app.exe"]` appended |
+| `"a.exe: : b.exe"` | `["a.exe", "b.exe"]` appended (empty token skipped) |
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `config` (`src/config.rs`) |
-| **Visibility** | Crate-private |
-| **Called by** | [read_config](read_config.md), [collect_group_block](collect_group_block.md), [sort_and_group_config](sort_and_group_config.md) |
-| **Callees** | None (standard library string operations only) |
-| **API** | Pure function — no I/O, no Windows API calls |
-| **Privileges** | None |
+| Requirement | Value |
+|-------------|-------|
+| Module | `config.rs` |
+| Visibility | Private (`fn`, not `pub fn`) |
+| Callers | [`collect_group_block`](collect_group_block.md), [`read_config`](read_config.md), [`sort_and_group_config`](sort_and_group_config.md) |
+| Callees | `str::split`, `str::trim`, `str::to_lowercase`, `str::starts_with`, `Vec::push` |
+| API | Standard library only |
+| Privileges | None |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Multi-line group block collector | [collect_group_block](collect_group_block.md) |
-| Main config file parser | [read_config](read_config.md) |
-| Rule field parsing (consumes member list) | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| Auto-grouping utility | [sort_and_group_config](sort_and_group_config.md) |
-| Config module overview | [README](README.md) |
+| Resource | Link |
+|----------|------|
+| collect_group_block | [collect_group_block](collect_group_block.md) |
+| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| read_config | [read_config](read_config.md) |
+| sort_and_group_config | [sort_and_group_config](sort_and_group_config.md) |
+| config module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

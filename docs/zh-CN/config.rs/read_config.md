@@ -1,10 +1,10 @@
 # read_config 函数 (config.rs)
 
-读取并解析配置文件，生成一个完全解析的 [ConfigResult](ConfigResult.md)，其中包含进程规则、CPU 别名、调优常量，以及解析过程中遇到的所有错误和警告。这是加载 AffinityServiceRust 配置的主要入口点，在启动时和热重载期间被调用。
+读取并解析整个 AffinityServiceRust 配置文件，返回完整填充的 [`ConfigResult`](ConfigResult.md)，其中包含所有进程级规则、线程级规则、常量、别名、分组展开，以及解析过程中产生的所有错误和警告。这是从磁盘加载配置的主要入口点。
 
 ## 语法
 
-```rust
+```AffinityServiceRust/src/config.rs#L743-875
 pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult
 ```
 
@@ -12,133 +12,109 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `path` | `P: AsRef<Path>` | 配置文件的文件系统路径。接受任何实现了 `AsRef<Path>` 的类型，包括 `&str`、`String` 和 `PathBuf`。文件通过 `File::open` 打开，并通过缓冲读取器逐行读取。 |
+| `path` | `P: AsRef<Path>` | 要读取的配置文件的文件系统路径（例如 `"config.ini"`）。接受任何实现 `AsRef<Path>` 的类型，包括 `&str`、`String` 和 `PathBuf`。 |
 
 ## 返回值
 
-返回一个 [ConfigResult](ConfigResult.md)，包含：
+类型：[`ConfigResult`](ConfigResult.md)
 
-- **`configs`** — 一个 `HashMap<u32, HashMap<String, ProcessConfig>>`，按等级和小写进程名索引。每个叶节点值是一个完全解析的 [ProcessConfig](ProcessConfig.md)。
-- **`constants`** — 一个 [ConfigConstants](ConfigConstants.md)，初始化为默认值，并被文件中的任何 `@CONSTANT = value` 行覆盖。
-- **统计计数器** — `constants_count`、`aliases_count`、`groups_count`、`group_members_count`、`process_rules_count`、`redundant_rules_count`。
-- **`errors`** — 致命解析错误。当非空时，不应应用该配置。
-- **`warnings`** — 非致命解析警告（未知的优先级字符串、冗余规则等）。
+完整填充的配置结果结构体，包含：
 
-如果文件无法打开，则会立即返回一个 `errors` 向量中包含单个错误的 `ConfigResult`。
+- `process_level_configs` — 按等级组织的所有已解析的进程级规则。
+- `thread_level_configs` — 按等级组织的所有已解析的线程级规则。
+- `constants` — 从 `@NAME = value` 行解析的可调调度器常量（或默认值）。
+- 别名、分组和规则计数，用于诊断报告。
+- `errors` — 致命错误列表。当非空时，配置被视为无效（`is_valid()` 返回 `false`）。
+- `warnings` — 非致命警告列表。
+
+如果文件无法打开，函数返回的 `ConfigResult` 的 `errors` 向量中包含一条错误消息，其他所有字段为默认值。
 
 ## 备注
 
 ### 文件格式概述
 
-配置文件使用类 INI 的、面向行的格式，包含五种顶级行：
+配置文件是面向行的文本格式。每一行是以下之一：
 
-| 行前缀 | 含义 | 处理函数 |
-|--------|------|----------|
-| `#` | 注释 — 完全忽略。 | `read_config`（跳过） |
-| `@NAME = value` | 常量定义 — 设置调度器调优参数。 | [parse_constant](parse_constant.md) |
-| `*name = cpu_spec` | CPU 别名定义 — 创建一个命名的 CPU 集合，供规则字段使用。 | [parse_alias](parse_alias.md) |
-| `name { ... }:rule` | 进程组 — 定义共享同一规则的多个进程。 | [collect_group_block](collect_group_block.md)、[parse_and_insert_rules](parse_and_insert_rules.md) |
-| `name:priority:affinity:...` | 单进程规则 — 为单个进程定义设置。 | [parse_and_insert_rules](parse_and_insert_rules.md) |
-
-空行将被忽略。
+| 行类型 | 前缀 | 处理程序 | 描述 |
+|--------|------|---------|------|
+| 注释 | `#` | 跳过 | 注释和空行被忽略。 |
+| 常量 | `@` | [`parse_constant`](parse_constant.md) | 调度器调优常量（例如 `@MIN_ACTIVE_STREAK = 3`）。 |
+| 别名 | `*` | [`parse_alias`](parse_alias.md) | 命名 CPU 规格（例如 `*pcore = 0-7`）。 |
+| 分组块 | `{` | [`collect_group_block`](collect_group_block.md) + [`parse_and_insert_rules`](parse_and_insert_rules.md) | 用花括号括起来的多进程分组规则。 |
+| 进程规则 | *（其他）* | [`parse_and_insert_rules`](parse_and_insert_rules.md) | 单独的 `name:priority:affinity:...` 规则行。 |
 
 ### 解析算法
 
-1. **打开并缓冲** — 打开文件并将所有行收集到一个 `Vec<String>` 中以便随机访问迭代（多行组块需要此能力）。
-2. **初始化状态** — 创建一个默认的 [ConfigResult](ConfigResult.md) 和一个空的 `cpu_aliases` 映射。
-3. **逐行分派** — 索引 `i` 遍历行向量。每行经过裁剪后，根据第一个非空白字符确定分派路径：
-   - 空行或 `#` → 跳过，推进 `i`。
-   - `@` → 按 `=` 分割，委托给 [parse_constant](parse_constant.md)，推进 `i`。
-   - `*` → 按 `=` 分割，委托给 [parse_alias](parse_alias.md)，推进 `i`。
-   - 包含 `{` → 开始组解析（见下文）。
-   - 其他 → 按 `:` 分割，从 `parts[0]` 提取进程名，将 `parts[1..]` 委托给 [parse_and_insert_rules](parse_and_insert_rules.md)，推进 `i`。
-4. **返回** — 返回完成的 `ConfigResult`。
+1. 打开文件并读入缓冲读取器。所有行被收集到 `Vec<String>` 中。
+2. 初始化一个本地 `cpu_aliases` 哈希映射，用于存储解析过程中遇到的别名定义。
+3. 解析器使用索引变量 `i` 顺序遍历各行：
+   - **空行和注释**（以 `#` 为前缀）被跳过。
+   - **常量**（以 `@` 为前缀）按 `=` 拆分并分派给 [`parse_constant`](parse_constant.md)。
+   - **别名**（以 `*` 为前缀）按 `=` 拆分并分派给 [`parse_alias`](parse_alias.md)。解析后的别名存储在 `cpu_aliases` 中，供后续规则行使用。
+   - **分组块**（包含 `{` 的行）有两种子情况处理：
+     - *单行分组*：`{` 和 `}` 都出现在同一行。成员在行内提取。
+     - *多行分组*：`{` 在本行但 `}` 不在。解析器调用 [`collect_group_block`](collect_group_block.md) 向前扫描后续行直到找到 `}`，将 `i` 推进到右花括号之后。
+     - 在两种情况下，分组名称（`{` 之前的文本）被捕获用于诊断。空名称会生成标签 `"anonymous@L{line_number}"`。
+     - 收集到的成员和规则后缀被传递给 [`parse_and_insert_rules`](parse_and_insert_rules.md)。
+   - **单独规则**：不匹配以上任何模式的行按 `:` 拆分，第一个元素作为进程名称，其余作为规则字段。至少需要 3 个冒号分隔的部分（名称、优先级、亲和性）。名称被转为小写并传递给 [`parse_and_insert_rules`](parse_and_insert_rules.md)。
+4. 处理完所有行后，返回填充好的 `ConfigResult`。
 
-### 组块解析
+### 错误处理策略
 
-当某行包含 `{` 时，解析器进入组模式：
+解析器被设计为**弹性的**——它收集所有错误和警告，而不是在第一个问题时中止。这允许用户在一次验证遍历中看到配置文件中的所有问题。致命错误（例如，未闭合的分组、字段太少、无效的常量语法）追加到 `result.errors`。非致命问题（例如，未知优先级字符串、空分组、重复规则）追加到 `result.warnings`。
 
-1. **组名** — `{` 前的文本用作诊断标签。如果为空，则标签为 `"anonymous@L{line_number}"`。
-2. **单行组** — 如果 `}` 与 `{` 出现在同一行，则通过 [collect_members](collect_members.md) 内联解析大括号之间的文本，`}:` 之后的文本为规则后缀。
-3. **多行组** — 如果同一行没有 `}`，则 [collect_group_block](collect_group_block.md) 扫描后续行直到找到闭合的 `}`，同时累积成员名。索引 `i` 被推进到块之后。
-4. **未闭合的组** — 如果文件结束时未找到 `}`，则记录一个错误并跳过该组。
-5. **空组** — 如果大括号之间没有找到成员，则记录一个警告并跳过该组。
-6. **规则应用** — 如果在闭合大括号之后存在规则后缀（即 `}:priority:affinity:...`），则以收集到的成员列表调用 [parse_and_insert_rules](parse_and_insert_rules.md)。如果未找到规则后缀，则记录一个错误。
+### 关键错误条件
 
-### 单进程规则解析
+| 条件 | 严重性 | 消息格式 |
+|------|--------|---------|
+| 文件无法打开 | 错误 | `"Cannot open config file: {io_error}"` |
+| 常量行缺少 `=` | 错误 | `"Line {n}: Invalid constant - expected '@NAME = value'"` |
+| 别名行缺少 `=` | 错误 | `"Line {n}: Invalid alias - expected '*name = cpu_spec'"` |
+| 未闭合的分组块 | 错误 | `"Line {n}: Unclosed group '{label}' - missing }"` |
+| 没有成员的分组 | 警告 | `"Line {n}: Group '{label}' has no members"` |
+| 分组没有规则后缀 | 错误 | `"Line {n}: Group '{label}' missing rule - use }:priority:affinity,..."` |
+| 单独行的字段少于 3 个 | 错误 | `"Line {n}: Too few fields - expected name:priority:affinity,..."` |
+| 空进程名称 | 错误 | `"Line {n}: Empty process name"` |
 
-对于非组行，按 `:` 分割该行并验证各部分：
+### 行号
 
-- **少于 3 个部分** — 记录一个错误（`"Too few fields — expected name:priority:affinity,..."`）。
-- **空进程名** — 记录一个错误。
-- **有效行** — `parts[0]`（小写化）成为成员名，`parts[1..]` 传递给 [parse_and_insert_rules](parse_and_insert_rules.md)。
+错误和警告消息中的行号从 1 开始（`line_number = i + 1`），与用户在文本编辑器中看到的一致。
 
-### 顺序依赖
+### 顺序约束
 
-- **别名必须在规则之前** — CPU 别名定义（`*name = spec`）按从上到下的顺序处理，并存储在 `cpu_aliases` 映射中。通过 `*name` 引用别名的规则行，如果别名尚未在前面的行中定义，将会因"未定义的别名"错误而失败。
-- **常量可以出现在任何位置** — `@CONSTANT` 行立即更新 `result.constants`，不依赖于相对于规则的解析顺序。
-- **组不能嵌套** — 不支持嵌套的 `{ { } }` 结构；在开放组块内部的 `{` 被视为普通文本。
+- **别名必须在使用前定义。**解析器顺序处理各行，因此如果对应的 `*alias = cpu_spec` 定义出现在文件的更后面位置，规则中的 `*alias` 引用将无法解析。
+- **常量**可以出现在任何位置并立即应用；它们不影响规则解析。
+- **规则**可以以任何顺序出现。重复定义会覆盖先前的定义并发出警告。
 
-### 错误累积
+### 热重载使用
 
-`read_config` 使用**遇错继续**策略。当遇到解析错误时，将描述性消息（包含基于 1 的行号）推送到 `result.errors`，然后继续解析下一行。这允许用户在一次解析中看到所有错误，而不是逐个修复。
-
-### 配置文件示例
-
-```text
-# CPU 别名
-*perf = 0-7
-*eff = 8-15
-
-# 调度器调优
-@MIN_ACTIVE_STREAK = 3
-@KEEP_THRESHOLD = 0.70
-
-# 单进程规则
-game.exe:high:*perf:*perf:?8x*perf@engine.dll:none:none:*perf
-
-# 组规则
-background_apps {
-    updater.exe: telemetry.exe
-    cloud_sync.exe
-}:below normal:*eff:0:0:none:none
-```
-
-### 线程安全
-
-`read_config` 不是为并发访问设计的。它从文件系统读取数据并写入本地 `ConfigResult`。调用者（[main](../main.rs/main.md) 或 [hotreload_config](hotreload_config.md)）在用解析结果替换实时配置时负责同步。
-
-### 性能
-
-在解析开始之前，所有行都被读入内存。这是可以接受的，因为配置文件通常很小（最多几百行）。两阶段架构（收集行，然后解析）是必要的，以支持多行组块（解析器必须从 `{` 向前查找到 `}`）。
+`read_config` 在启动时和 [`hotreload_config`](hotreload_config.md) 进行热重载时都会被调用。在热重载期间，函数将修改后的文件解析为新的 `ConfigResult`。如果 `is_valid()` 为 `true`，则新配置替换活跃配置；否则保留先前的配置并记录错误。
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `config` (`src/config.rs`) |
-| **可见性** | `pub` |
-| **调用者** | [main](../main.rs/main.md)、[hotreload_config](hotreload_config.md) |
-| **被调用函数** | [parse_constant](parse_constant.md)、[parse_alias](parse_alias.md)、[collect_members](collect_members.md)、[collect_group_block](collect_group_block.md)、[parse_and_insert_rules](parse_and_insert_rules.md) |
-| **API** | `std::fs::File::open`、`std::io::BufReader`、`std::io::BufRead::lines` |
-| **权限** | 配置文件路径的读取权限 |
+| 要求 | 值 |
+|------|-----|
+| 模块 | `config.rs` |
+| 可见性 | `pub` |
+| 调用方 | `main.rs`（启动时）、[`hotreload_config`](hotreload_config.md)（运行时重载） |
+| 被调用方 | [`parse_constant`](parse_constant.md)、[`parse_alias`](parse_alias.md)、[`collect_group_block`](collect_group_block.md)、[`collect_members`](collect_members.md)、[`parse_and_insert_rules`](parse_and_insert_rules.md) |
+| 依赖 | [`ConfigResult`](ConfigResult.md)、`HashMap`、`List`、[`collections.rs`](../collections.rs/README.md) 中的 `CONSUMER_CPUS` |
+| I/O | 通过 `std::fs::File` 和 `std::io::BufReader` 读取文件 |
+| 权限 | 配置文件路径的文件系统读取权限 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 资源 | 链接 |
 |------|------|
-| 解析配置输出 | [ConfigResult](ConfigResult.md) |
-| 每进程规则结构体 | [ProcessConfig](ProcessConfig.md) |
-| 调度器调优常量 | [ConfigConstants](ConfigConstants.md) |
-| 规则字段解析器 | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| 常量行解析器 | [parse_constant](parse_constant.md) |
-| 别名行解析器 | [parse_alias](parse_alias.md) |
-| 组块收集器 | [collect_group_block](collect_group_block.md) |
-| 成员名分词器 | [collect_members](collect_members.md) |
-| 配置热重载 | [hotreload_config](hotreload_config.md) |
-| 黑名单文件读取器 | [read_list](read_list.md) |
-| 配置模块概述 | [README](README.md) |
+| ConfigResult | [ConfigResult](ConfigResult.md) |
+| parse_constant | [parse_constant](parse_constant.md) |
+| parse_alias | [parse_alias](parse_alias.md) |
+| collect_group_block | [collect_group_block](collect_group_block.md) |
+| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| hotreload_config | [hotreload_config](hotreload_config.md) |
+| convert | [convert](convert.md) |
+| cli 模块 | [cli.rs 概述](../cli.rs/README.md) |
+| config 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

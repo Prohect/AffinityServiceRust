@@ -1,6 +1,6 @@
 # CpuSetData struct (winapi.rs)
 
-Represents a single entry in the system's CPU set topology, pairing a Windows-assigned opaque CPU Set ID with the logical processor index it corresponds to. This struct is the element type stored in the [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) global cache and is used by all CPU set translation functions in the module.
+Holds a CPU Set ID and its corresponding logical processor index. This is an internal representation of the data extracted from Windows `SYSTEM_CPU_SET_INFORMATION` structures, used to translate between user-facing logical processor indices and the opaque CPU Set IDs required by Windows CPU set APIs.
 
 ## Syntax
 
@@ -14,54 +14,43 @@ pub struct CpuSetData {
 
 ## Members
 
-| Member | Type | Description |
-|--------|------|-------------|
-| `id` | `u32` | The opaque CPU Set ID assigned by Windows. This value is obtained from `SYSTEM_CPU_SET_INFORMATION::Anonymous.CpuSet.Id` and is the identifier required by APIs such as `SetProcessDefaultCpuSets` and `SetThreadSelectedCpuSets`. CPU Set IDs are **not** sequential and do **not** correspond to logical processor numbers. |
-| `logical_processor_index` | `u8` | The zero-based logical processor index that this CPU set entry maps to. Obtained from `SYSTEM_CPU_SET_INFORMATION::Anonymous.CpuSet.LogicalProcessorIndex`. This is the human-friendly CPU number (0, 1, 2, …) used in configuration files and affinity masks. The `u8` type limits support to 256 logical processors. |
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `u32` | The opaque CPU Set ID assigned by Windows. This value is passed to APIs such as `SetProcessDefaultCpuSets` and `SetThreadSelectedCpuSets`. |
+| `logical_processor_index` | `u8` | The zero-based logical processor index that corresponds to this CPU set. This is the user-facing index (0, 1, 2, …) that maps to a physical or logical core. |
 
 ## Remarks
 
-Windows CPU Set APIs operate on opaque 32-bit IDs rather than logical processor indices. AffinityServiceRust configuration files use human-readable CPU indices (e.g., `0;1;4-7`), so a translation layer is needed. `CpuSetData` provides this mapping by caching the `(id, logical_processor_index)` pair for every CPU set entry reported by `GetSystemCpuSetInformation` at process startup.
+- Both fields are **module-private** (no `pub` visibility). External code accesses `CpuSetData` only indirectly through the conversion functions [cpusetids_from_indices](cpusetids_from_indices.md), [cpusetids_from_mask](cpusetids_from_mask.md), [indices_from_cpusetids](indices_from_cpusetids.md), and [mask_from_cpusetids](mask_from_cpusetids.md).
 
-### Initialization
+- The struct derives `Clone` and `Copy`, making it cheap to pass by value and store in `Vec<CpuSetData>` without reference lifetime concerns.
 
-`CpuSetData` entries are constructed by the `extract_cpu_set_data` helper during lazy initialization of the [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) static. The raw `SYSTEM_CPU_SET_INFORMATION` buffer returned by `GetSystemCpuSetInformation` is walked entry-by-entry, and each entry is reduced to this compact two-field struct.
+- Instances are created by the `extract_cpu_set_data` helper function, which reads from the union fields of a raw `SYSTEM_CPU_SET_INFORMATION` structure in an `unsafe` block.
 
-### Visibility
+- The global [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) static stores a `Vec<CpuSetData>` that is populated once at initialization time and reused for all subsequent CPU set lookups.
 
-Both fields are module-private (no `pub` modifier). External code accesses the data indirectly through the translation functions:
-
-- [cpusetids_from_indices](cpusetids_from_indices.md) — looks up `id` by matching `logical_processor_index`
-- [cpusetids_from_mask](cpusetids_from_mask.md) — looks up `id` by testing `logical_processor_index` against a bitmask
-- [indices_from_cpusetids](indices_from_cpusetids.md) — looks up `logical_processor_index` by matching `id`
-- [mask_from_cpusetids](mask_from_cpusetids.md) — looks up `logical_processor_index` by matching `id` and sets the corresponding bit
-
-### Derive traits
-
-`CpuSetData` derives `Clone` and `Copy`, making it cheap to pass by value and store in vectors without indirection.
+- The `logical_processor_index` field is stored as `u8`, supporting up to 256 logical processors. This covers the vast majority of consumer and server systems within a single processor group.
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `winapi` (`src/winapi.rs`) |
-| **Constructed by** | `extract_cpu_set_data` (module-private helper) |
-| **Stored in** | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
-| **Consumed by** | [cpusetids_from_indices](cpusetids_from_indices.md), [cpusetids_from_mask](cpusetids_from_mask.md), [indices_from_cpusetids](indices_from_cpusetids.md), [mask_from_cpusetids](mask_from_cpusetids.md) |
-| **API** | [`GetSystemCpuSetInformation`](https://learn.microsoft.com/en-us/windows/win32/api/systeminformationapi/nf-systeminformationapi-getsystemcpusetinformation) |
+| Requirement | Value |
+|-------------|-------|
+| Module | `winapi.rs` |
+| Populated by | `extract_cpu_set_data` (unsafe, module-private) |
+| Stored in | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) static |
+| Platform | Windows only |
+| Underlying API | `GetSystemCpuSetInformation` via `SYSTEM_CPU_SET_INFORMATION` |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| Global CPU set cache | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
-| CPU indices → CPU Set IDs | [cpusetids_from_indices](cpusetids_from_indices.md) |
-| CPU Set IDs → CPU indices | [indices_from_cpusetids](indices_from_cpusetids.md) |
-| Affinity mask → CPU Set IDs | [cpusetids_from_mask](cpusetids_from_mask.md) |
-| CPU Set IDs → affinity mask | [mask_from_cpusetids](mask_from_cpusetids.md) |
-| CPU set application to processes | [apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md) |
-| GetSystemCpuSetInformation (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/systeminformationapi/nf-systeminformationapi-getsystemcpusetinformation) |
+| CPU_SET_INFORMATION static | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
+| cpusetids_from_indices | [cpusetids_from_indices](cpusetids_from_indices.md) |
+| cpusetids_from_mask | [cpusetids_from_mask](cpusetids_from_mask.md) |
+| indices_from_cpusetids | [indices_from_cpusetids](indices_from_cpusetids.md) |
+| mask_from_cpusetids | [mask_from_cpusetids](mask_from_cpusetids.md) |
+| collections module | [collections.rs](../collections.rs/README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

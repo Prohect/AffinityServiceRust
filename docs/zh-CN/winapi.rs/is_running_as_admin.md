@@ -1,6 +1,6 @@
 # is_running_as_admin 函数 (winapi.rs)
 
-通过查询进程令牌的 `TOKEN_ELEVATION` 信息，检查当前进程是否以管理员（提权）特权运行。此函数在启动时用于确定是否需要在服务循环开始前请求 UAC 提权。
+通过查询进程令牌的提升状态，检查当前进程是否以管理员（提升）权限运行。
 
 ## 语法
 
@@ -10,77 +10,50 @@ pub fn is_running_as_admin() -> bool
 
 ## 参数
 
-无。
+此函数不接受参数。
 
 ## 返回值
 
-| 值 | 描述 |
-|------|------|
-| `true` | 当前进程令牌具有提权状态（`TokenIsElevated != 0`），表示进程正在以完整的管理员特权运行。 |
-| `false` | 进程未提权，或令牌查询链中的任何步骤失败（令牌打开失败、`GetTokenInformation` 失败）。该函数在出错时默认返回 `false` 而非 panic，因此调用方可以安全地使用该结果来决定是否尝试提权。 |
+如果当前进程令牌指示进程正在以提升权限（管理员）运行，则返回 `true`。如果进程未提升，或任何底层 Windows API 调用失败，则返回 `false`。
 
 ## 备注
 
-### 算法
+该函数执行以下步骤：
 
-该函数依次执行三个 Win32 调用：
+1. 通过 `GetCurrentProcess` 获取当前进程的句柄。
+2. 使用 `OpenProcessToken` 以 `TOKEN_QUERY` 访问权限打开进程令牌。
+3. 通过 `GetTokenInformation` 查询令牌的 `TokenElevation` 信息。
+4. 检查 `TOKEN_ELEVATION.TokenIsElevated` 字段——非零值表示进程已提升。
+5. 在返回之前关闭令牌句柄。
 
-1. **`OpenProcessToken`** — 以 `TOKEN_QUERY` 访问权限打开当前进程的令牌。
-2. **`GetTokenInformation`** — 查询 `TokenElevation` 信息类，填充一个 `TOKEN_ELEVATION` 结构体。
-3. **`CloseHandle`** — 无论 `GetTokenInformation` 的结果如何，都关闭令牌句柄。
+如果 `OpenProcessToken` 或 `GetTokenInformation` 失败，函数返回 `false` 作为保守默认值（假定未提升）。
 
-令牌句柄在返回前始终会被关闭，即使在失败路径上也是如此，以防止句柄泄漏。
+此函数通常在启动早期被调用，以确定是否需要 UAC 提升。如果返回 `false` 且服务需要管理员权限，调用方可以调用 [request_uac_elevation](request_uac_elevation.md) 以提升权限重新启动进程。
 
-### 失败行为
+### 平台说明
 
-链中的任何失败都会导致函数返回 `false`：
-
-| 失败点 | 行为 |
-|--------|------|
-| `OpenProcessToken` 失败 | 立即返回 `false`。 |
-| `GetTokenInformation` 失败 | 关闭令牌句柄，返回 `false`。 |
-| 成功但 `TokenIsElevated == 0` | 关闭令牌句柄，返回 `false`（未提权）。 |
-
-不记录任何错误——该函数设计为静默运行，因为它在启动序列的早期阶段被调用，此时日志记录可能尚未完全初始化。
-
-### 在启动流程中的使用
-
-主函数调用 `is_running_as_admin()` 来决定是否调用 [request_uac_elevation](request_uac_elevation.md)。典型流程如下：
-
-1. 解析 CLI 参数。
-2. 调用 `is_running_as_admin()`。
-3. 如果返回 `false` 且未设置 `--no_uac` 标志，则调用 [request_uac_elevation](request_uac_elevation.md) 以管理员权限重新启动进程。
-4. 如果返回 `true`，继续执行 [enable_debug_privilege](enable_debug_privilege.md) 和主服务循环。
-
-### UAC 与令牌提权
-
-在启用了 UAC 的 Windows 上，属于管理员组的用户默认以过滤后的（非提权）令牌运行进程。当授予提权（例如通过"以管理员身份运行"或 UAC 提示）时，进程会收到完整的、未过滤的令牌，其中 `TokenIsElevated` 被设置为非零值。此函数检测的正是这种区别。
-
-### 与特权的关系
-
-提权是成功启用 `SeDebugPrivilege`（[enable_debug_privilege](enable_debug_privilege.md)）和 `SeIncreaseBasePriorityPrivilege`（[enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md)）等特权的前提条件。如果没有提权，这些特权调整调用将静默失败，服务将以降低的能力运行（无法打开受保护进程或设置实时优先级）。
+- **仅限 Windows。** 使用 Win32 安全 API 中的 `TOKEN_ELEVATION` 和 `TokenElevation`。
+- 在禁用 UAC 的系统上，该函数仍然根据令牌返回正确的提升状态。
+- 该函数不缓存其结果。每次调用都会重新查询令牌，但实际上进程的提升状态在启动后不会改变。
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `winapi` (`src/winapi.rs`) |
-| **可见性** | `pub` |
-| **调用方** | [`main`](../main.rs/README.md)（启动序列） |
-| **被调用方** | `GetCurrentProcess`、`OpenProcessToken`、`GetTokenInformation`（`TokenElevation`）、`CloseHandle`（Win32） |
-| **API** | [`OpenProcessToken`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocesstoken)、[`GetTokenInformation`](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-gettokeninformation) |
-| **特权** | 无 — 令牌自查询不需要提权 |
+| 要求 | 值 |
+|------|-----|
+| **模块** | `winapi.rs` |
+| **调用方** | `main.rs` — 启动逻辑，用于决定是否需要 UAC 提升。 |
+| **被调用方** | `GetCurrentProcess`、`OpenProcessToken`、`GetTokenInformation`、`CloseHandle`（Win32 API） |
+| **API** | [GetTokenInformation](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-gettokeninformation)，使用 `TokenElevation` 类 |
+| **权限** | 无需特殊权限——每个进程都可以查询自己的令牌。 |
 
 ## 另请参阅
 
 | 主题 | 链接 |
 |------|------|
-| UAC 提权请求 | [request_uac_elevation](request_uac_elevation.md) |
-| 调试特权启用 | [enable_debug_privilege](enable_debug_privilege.md) |
-| 基本优先级特权启用 | [enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md) |
-| 服务主入口点 | [main 模块](../main.rs/README.md) |
-| TOKEN_ELEVATION (MSDN) | [Microsoft Learn — TOKEN_ELEVATION](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/ns-securitybaseapi-token_elevation) |
+| request_uac_elevation | [request_uac_elevation](request_uac_elevation.md) |
+| enable_debug_privilege | [enable_debug_privilege](enable_debug_privilege.md) |
+| enable_inc_base_priority_privilege | [enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md) |
+| winapi 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

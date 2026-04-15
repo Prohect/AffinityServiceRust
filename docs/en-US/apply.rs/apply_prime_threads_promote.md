@@ -1,13 +1,13 @@
 # apply_prime_threads_promote function (apply.rs)
 
-Promotes newly-selected prime threads by pinning them to dedicated performance-core CPU sets via `SetThreadSelectedCpuSets` and optionally boosting their thread priority. For each thread marked as prime by [apply_prime_threads_select](apply_prime_threads_select.md), this function resolves the thread's start module, matches it against configured prefixes to determine which CPUs and priority to use, applies the CPU set pinning, and then adjusts the thread's priority — either to an explicitly configured level or by boosting one level above the current value.
+The `apply_prime_threads_promote` function pins newly-selected prime threads to designated high-performance CPUs via `SetThreadSelectedCpuSets` and optionally boosts their thread priority. For each thread marked as prime in the selection results, the function resolves the thread's start address to a module name, matches it against configured prefix rules to determine which CPU set and priority to apply, and then issues the appropriate Windows API calls. This is the promotion phase of the prime-thread scheduling algorithm.
 
 ## Syntax
 
-```AffinityServiceRust/src/apply.rs#L824-833
+```AffinityServiceRust/src/apply.rs#L810-822
 pub fn apply_prime_threads_promote(
     pid: u32,
-    config: &ProcessConfig,
+    config: &ThreadLevelConfig,
     current_mask: &mut usize,
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
@@ -19,109 +19,83 @@ pub fn apply_prime_threads_promote(
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `pid` | `u32` | Process identifier of the target process. Used as a key into the scheduler's per-process stats map, for module resolution via [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md), and in formatted error/change messages. |
-| `config` | `&`[ProcessConfig](../config.rs/ProcessConfig.md) | Parsed configuration rule for this process. The `prime_threads_cpus` field provides the default set of CPU indices for pinning; the `prime_threads_prefixes` field provides per-module overrides (each [PrimePrefix](../config.rs/PrimePrefix.md) can specify alternate CPUs and a thread priority). The `name` field is used in log messages. |
-| `current_mask` | `&mut usize` | The process's current affinity mask, populated by [apply_affinity](apply_affinity.md). When non-zero, prime CPU indices are filtered through [filter_indices_by_mask](../winapi.rs/filter_indices_by_mask.md) so that only CPUs within the process's hard affinity are used for pinning. This prevents assigning a thread to a CPU that the process is not allowed to run on. |
-| `tid_with_delta_cycles` | `&[(u32, u64, bool)]` | Slice of `(thread_id, delta_cycles, is_prime)` tuples produced by [apply_prime_threads_select](apply_prime_threads_select.md). Only entries where `is_prime` is `true` are processed by this function. The `delta_cycles` value is included in the change message for observability but does not influence promotion logic. |
-| `prime_core_scheduler` | `&mut`[PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) | Persistent scheduler state. This function reads thread handles and start addresses from [ThreadStats](../scheduler.rs/ThreadStats.md), and writes `pinned_cpu_set_ids` and `original_priority` after successful promotion. |
-| `apply_config_result` | `&mut`[ApplyConfigResult](ApplyConfigResult.md) | Accumulator for change descriptions and error messages produced during promotion. |
+| `pid` | `u32` | The process ID of the target process. Used for thread-stats lookup, error deduplication, and log messages. |
+| `config` | `&ThreadLevelConfig` | The thread-level configuration containing `prime_threads_cpus` (the default set of CPU indices for prime threads), `prime_threads_prefixes` (a list of prefix-matching rules that can override the CPU set and thread priority per module), and `name` (the config rule name used in log messages). |
+| `current_mask` | `&mut usize` | The current process affinity mask. When non-zero, prime CPU indices are filtered through this mask via `filter_indices_by_mask` so that only CPUs within the process's affinity are used. This prevents assigning threads to CPUs the process cannot execute on. |
+| `tid_with_delta_cycles` | `&[(u32, u64, bool)]` | A slice of tuples containing the thread ID, the delta cycle count since the last measurement, and a boolean indicating whether the thread was selected as prime (`true`) or not (`false`). Only entries where `is_prime == true` are processed by this function. |
+| `prime_core_scheduler` | `&mut PrimeThreadScheduler` | The mutable prime-thread scheduler state. The function reads and updates per-thread stats including `handle`, `pinned_cpu_set_ids`, `start_address`, and `original_priority`. |
+| `apply_config_result` | `&mut ApplyConfigResult` | Accumulator for change descriptions and error messages produced during execution. |
 
 ## Return value
 
-None (`()`). Results are communicated through mutations to `prime_core_scheduler` (updated `pinned_cpu_set_ids`, `original_priority`) and entries appended to `apply_config_result`.
+This function does not return a value. All outcomes are communicated through mutations to `prime_core_scheduler` and appended entries in `apply_config_result`.
 
 ## Remarks
 
 ### Algorithm
 
-For each entry in `tid_with_delta_cycles` where `is_prime` is `true`:
+For each `(tid, delta_cycles, is_prime)` tuple in `tid_with_delta_cycles` where `is_prime` is `true`:
 
-1. **Skip already-pinned threads.** If `thread_stats.pinned_cpu_set_ids` is non-empty, the thread was promoted in a previous cycle and is still prime — nothing more to do.
+1. **Skip already-pinned threads**: If `thread_stats.pinned_cpu_set_ids` is non-empty, the thread is already promoted and is skipped. This prevents re-applying the CPU set and priority boost on every apply cycle.
 
-2. **Resolve write handle.** The best available write handle is selected from the thread's cached [ThreadHandle](../winapi.rs/ThreadHandle.md) (`w_handle`, falling back to `w_limited_handle`). If both are invalid, an error is recorded via [log_error_if_new](log_error_if_new.md) with `Operation::OpenThread` and the thread is skipped.
+2. **Handle resolution**: The function retrieves the thread's write handle from `thread_stats.handle`. It prefers `w_handle` over `w_limited_handle`. If both are invalid, an error is logged via [`log_error_if_new`](log_error_if_new.md) with `Operation::OpenThread` and the thread is skipped.
 
-3. **Resolve start module.** The thread's start address (populated earlier by [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md)) is resolved to a module name via [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md). The module name is used for prefix matching and is included in the change message.
+3. **Module prefix matching**: The thread's start address is resolved to a module name via `resolve_address_to_module`. If `config.prime_threads_prefixes` is non-empty, the module name is compared (case-insensitive) against each prefix rule's `prefix` field. The first matching prefix determines:
+   - An alternative CPU set (`prefix.cpus`) to use instead of `config.prime_threads_cpus`.
+   - A specific thread priority (`prefix.thread_priority`) to set instead of the default one-level boost.
+   If no prefix matches and `prime_threads_prefixes` is non-empty, the thread is skipped entirely (only threads matching a prefix rule are promoted).
 
-4. **Prefix matching.** If `config.prime_threads_prefixes` is non-empty, each [PrimePrefix](../config.rs/PrimePrefix.md) is tested against the lowercased start module. The first matching prefix determines:
-   - The CPU set to use (`prefix.cpus` if present, otherwise `config.prime_threads_cpus`).
-   - The thread priority to set (`prefix.thread_priority` if not `None`).
+4. **Affinity filtering**: If `*current_mask` is non-zero, the selected prime CPU indices are filtered through the process affinity mask via `filter_indices_by_mask`. This ensures only CPUs the process is allowed to use are included in the CPU Set.
 
-   If no prefix matches and the prefix list is non-empty, the thread is **skipped** — it does not qualify for promotion under any configured module prefix.
+5. **CPU Set application**: The filtered CPU indices are converted to CPU Set IDs via `cpusetids_from_indices`. If the resulting list is non-empty, `SetThreadSelectedCpuSets` is called. On success, `thread_stats.pinned_cpu_set_ids` is updated and a change message is recorded:
+   `"Thread <tid> -> (promoted, [<cpus>], cycles=<delta>, start=<module>)"`
+   On failure, the error is logged via [`log_error_if_new`](log_error_if_new.md) with `Operation::SetThreadSelectedCpuSets`.
 
-5. **Filter CPUs by affinity mask.** If `*current_mask` is non-zero, the resolved CPU indices are filtered through [filter_indices_by_mask](../winapi.rs/filter_indices_by_mask.md) to remove CPUs outside the process's hard affinity. This prevents `SetThreadSelectedCpuSets` from specifying a CPU that the process is restricted from using.
+6. **Priority boost**: After CPU set pinning (regardless of its success), the function reads the current thread priority via `GetThreadPriority`. If the read succeeds (return value is not `0x7FFFFFFF`):
+   - The current priority is saved in `thread_stats.original_priority` so it can be restored on demotion.
+   - The new priority is determined by: (a) the prefix rule's `thread_priority` if explicitly set and not `ThreadPriority::None`, or (b) `current_priority.boost_one()` which increments the priority by one level.
+   - If the new priority differs from the current, `SetThreadPriority` is called. On success, a change message is recorded:
+     `"Thread <tid> -> (priority set: <old> -> <new>)"` or `"Thread <tid> -> (priority boosted: <old> -> <new>)"`.
+   - On failure, the error is logged via [`log_error_if_new`](log_error_if_new.md) with `Operation::SetThreadPriority`.
 
-6. **Convert to CPU set IDs.** The filtered CPU indices are translated to Windows CPU set IDs via [cpusetids_from_indices](../winapi.rs/cpusetids_from_indices.md). If the result is empty (no valid CPU set IDs resolved), the thread is skipped.
+### Edge cases
 
-7. **Pin thread.** `SetThreadSelectedCpuSets` is called with the resolved CPU set IDs. On success, the IDs are stored in `thread_stats.pinned_cpu_set_ids` (so the thread is recognised as pinned in future cycles) and a change message is recorded. On failure, the Win32 error code is routed through [log_error_if_new](log_error_if_new.md) with `Operation::SetThreadSelectedCpuSets`.
+- If `prime_threads_prefixes` is empty, all prime-selected threads are promoted using `config.prime_threads_cpus` as the CPU set and a one-level priority boost.
+- If `prime_threads_prefixes` is non-empty and no prefix matches a given thread's start module, that thread is **not** promoted even if it was selected as prime. This allows fine-grained control over which modules receive prime treatment.
+- If `current_mask` is `0` (e.g., affinity was never queried), no filtering is applied and the full `prime_threads_cpus` list is used.
+- If `cpusetids_from_indices` returns an empty list (e.g., all prime CPUs were filtered out by the affinity mask), no CPU set is applied and the priority boost is also skipped for that thread.
+- A `GetThreadPriority` return value of `0x7FFFFFFF` (`THREAD_PRIORITY_ERROR_RETURN`) indicates failure; the priority boost is silently skipped without logging an error.
 
-8. **Read current priority.** `GetThreadPriority` is called to read the thread's current priority level. If the call returns `THREAD_PRIORITY_ERROR_RETURN` (`0x7FFFFFFF`), the priority boost step is skipped entirely.
+### Interaction with demotion
 
-9. **Save original priority.** The current priority (as a [ThreadPriority](../priority.rs/ThreadPriority.md) enum) is stored in `thread_stats.original_priority`. This value is later used by [apply_prime_threads_demote](apply_prime_threads_demote.md) to restore the thread's priority when it is demoted.
-
-10. **Boost priority.** The new priority is determined by one of two paths:
-    - If a matching prefix specifies a non-`None` `thread_priority`, that explicit value is used (*priority set*).
-    - Otherwise, the current priority is boosted by one level via `ThreadPriority::boost_one()` (*priority boosted*). For example, `Normal` becomes `AboveNormal`, `AboveNormal` becomes `Highest`.
-
-    If the new priority equals the current priority (e.g. the thread is already at `TimeCritical` and cannot be boosted further), no set call is made. Otherwise, `SetThreadPriority` is called. On success, a change message is recorded; on failure, the error is logged via [log_error_if_new](log_error_if_new.md) with `Operation::SetThreadPriority`.
-
-### Change message format
-
-Two change messages are emitted per successfully promoted thread:
-
-**CPU set pinning:**
-```/dev/null/example.txt#L1
-Thread 1234 -> (promoted, [4,5], cycles=98000, start=ntdll.dll!RtlUserThreadStart)
-```
-
-**Priority adjustment:**
-```/dev/null/example.txt#L1-2
-Thread 1234 -> (priority boosted: Normal -> AboveNormal)
-Thread 1234 -> (priority set: Normal -> Highest)
-```
-
-The word "boosted" is used when the priority was auto-incremented by one level; "set" is used when an explicit priority was configured via a prefix rule.
-
-### Prefix matching details
-
-Prefix matching is case-insensitive (`to_lowercase()` on both the module name and the prefix). The first matching prefix wins — order in the configuration file matters. If a prefix specifies `cpus: None`, the default `config.prime_threads_cpus` is used. If a prefix specifies `thread_priority: None`, the auto-boost-by-one logic applies.
-
-When `config.prime_threads_prefixes` is empty (no prefix rules), all prime-selected threads are promoted using `config.prime_threads_cpus` and the auto-boost priority logic.
-
-### Affinity mask interaction
-
-The `current_mask` filtering step is critical for correctness. If a process has a hard affinity mask set by [apply_affinity](apply_affinity.md) that excludes some of the configured prime CPUs, those CPUs must not appear in the `SetThreadSelectedCpuSets` call. Without this filter, the API would succeed but the thread would not actually run on the specified CPUs, potentially causing confusing behaviour. When `*current_mask` is `0` (no affinity was queried or the process has no affinity constraint), the filter is bypassed and all configured prime CPUs are used.
-
-### Idempotency
-
-The function is idempotent within a single cycle: threads that are already pinned (`pinned_cpu_set_ids` is non-empty) are skipped. Across cycles, a thread that remains prime is not re-promoted because its `pinned_cpu_set_ids` persists in [ThreadStats](../scheduler.rs/ThreadStats.md) until cleared by [apply_prime_threads_demote](apply_prime_threads_demote.md).
+Threads promoted by this function are later subject to demotion by [`apply_prime_threads_demote`](apply_prime_threads_demote.md) if they fall out of the prime selection in a subsequent apply cycle. The `pinned_cpu_set_ids` field acts as the promotion marker: non-empty means promoted. The `original_priority` field is used during demotion to restore the thread's priority to its pre-promotion level.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `apply` |
-| Visibility | `pub` (crate-public) |
-| Callers | [apply_prime_threads](apply_prime_threads.md) |
-| Callees | [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md), [filter_indices_by_mask](../winapi.rs/filter_indices_by_mask.md), [cpusetids_from_indices](../winapi.rs/cpusetids_from_indices.md), [indices_from_cpusetids](../winapi.rs/indices_from_cpusetids.md), [log_error_if_new](log_error_if_new.md) |
-| Win32 API | [`SetThreadSelectedCpuSets`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadselectedcpusets), [`GetThreadPriority`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getthreadpriority), [`SetThreadPriority`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadpriority) |
-| Privileges | `THREAD_SET_LIMITED_INFORMATION` (for `SetThreadSelectedCpuSets`), `THREAD_SET_INFORMATION` (for `SetThreadPriority`), `THREAD_QUERY_LIMITED_INFORMATION` (for `GetThreadPriority`). The service typically holds `SeDebugPrivilege` which grants all of these. |
+| Module | `apply.rs` |
+| Crate | `AffinityServiceRust` |
+| Visibility | `pub` |
+| Windows APIs | `SetThreadSelectedCpuSets`, `GetThreadPriority`, `SetThreadPriority`, `GetLastError` |
+| Callers | [`apply_prime_threads`](apply_prime_threads.md) |
+| Callees | [`log_error_if_new`](log_error_if_new.md), `winapi::resolve_address_to_module`, `winapi::filter_indices_by_mask`, `winapi::cpusetids_from_indices`, `winapi::indices_from_cpusetids`, `config::format_cpu_indices`, `error_codes::error_from_code_win32`, `ThreadPriority::from_win_const`, `ThreadPriority::boost_one`, `ThreadPriority::to_thread_priority_struct` |
+| Privileges | Requires thread handles with `THREAD_SET_INFORMATION` or `THREAD_SET_LIMITED_INFORMATION` (write) and `THREAD_QUERY_INFORMATION` or `THREAD_QUERY_LIMITED_INFORMATION` (read for `GetThreadPriority`). |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Prime thread orchestration | [apply_prime_threads](apply_prime_threads.md) |
-| Hysteresis-based selection | [apply_prime_threads_select](apply_prime_threads_select.md) |
-| Demotion (inverse operation) | [apply_prime_threads_demote](apply_prime_threads_demote.md) |
-| Cycle-time prefetch (populates start addresses and handles) | [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) |
-| Prefix configuration model | [PrimePrefix](../config.rs/PrimePrefix.md) |
-| Thread priority enum and boost logic | [ThreadPriority](../priority.rs/ThreadPriority.md) |
-| CPU set ID translation | [cpusetids_from_indices](../winapi.rs/cpusetids_from_indices.md) |
-| Affinity mask filtering | [filter_indices_by_mask](../winapi.rs/filter_indices_by_mask.md) |
-| Module name resolution | [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md) |
-| Scheduler state model | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md), [ThreadStats](../scheduler.rs/ThreadStats.md) |
-| apply module overview | [apply](README.md) |
+| Reference | Link |
+|-----------|------|
+| apply module overview | [`README`](README.md) |
+| ApplyConfigResult | [`ApplyConfigResult`](ApplyConfigResult.md) |
+| apply_prime_threads | [`apply_prime_threads`](apply_prime_threads.md) |
+| apply_prime_threads_select | [`apply_prime_threads_select`](apply_prime_threads_select.md) |
+| apply_prime_threads_demote | [`apply_prime_threads_demote`](apply_prime_threads_demote.md) |
+| prefetch_all_thread_cycles | [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md) |
+| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
+| ThreadLevelConfig | [`config.rs/ThreadLevelConfig`](../config.rs/ThreadLevelConfig.md) |
+| PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
+| ThreadPriority | [`priority.rs/ThreadPriority`](../priority.rs/ThreadPriority.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

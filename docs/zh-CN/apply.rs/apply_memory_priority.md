@@ -1,13 +1,13 @@
 # apply_memory_priority 函数 (apply.rs)
 
-通过 `SetProcessInformation` 并使用 `ProcessMemoryPriority` 信息类来设置进程的内存优先级。内存优先级影响内存管理器在内存压力下回收和重新分配进程物理页面的积极程度——优先级较低的页面会被优先回收。该函数通过 `GetProcessInformation` 读取当前内存优先级，将其与配置的目标值进行比较，仅在两者不同时才应用更改。
+`apply_memory_priority` 函数通过 `GetProcessInformation` 使用 `ProcessMemoryPriority` 信息类读取当前进程内存优先级，如果与配置的目标值不同，则通过 `SetProcessInformation` 设置新值。在试运行模式下，仅记录预期的更改而不调用任何修改状态的 API。
 
 ## 语法
 
-```AffinityServiceRust/src/apply.rs#L508-515
+```AffinityServiceRust/src/apply.rs#L490-498
 pub fn apply_memory_priority(
     pid: u32,
-    config: &ProcessConfig,
+    config: &ProcessLevelConfig,
     dry_run: bool,
     process_handle: &ProcessHandle,
     apply_config_result: &mut ApplyConfigResult,
@@ -18,96 +18,50 @@ pub fn apply_memory_priority(
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `pid` | `u32` | 目标进程的进程标识符。用于 [log_error_if_new](log_error_if_new.md) 中的错误去重以及格式化日志消息。 |
-| `config` | `&`[ProcessConfig](../config.rs/ProcessConfig.md) | 匹配到此进程的已解析配置规则。`memory_priority` 字段（一个 [MemoryPriority](../priority.rs/MemoryPriority.md) 枚举）指定所需的内存优先级级别。当该值为 `MemoryPriority::None` 时，函数会立即返回，不进行任何查询或修改。 |
-| `dry_run` | `bool` | 当为 `true` 时，函数将预期更改记录到 `apply_config_result` 中，但不调用 `SetProcessInformation`。 |
-| `process_handle` | `&`[ProcessHandle](../winapi.rs/ProcessHandle.md) | 目标进程的 OS 句柄包装器。通过 [get_handles](get_handles.md) 提取最佳可用的读取句柄（用于 `GetProcessInformation`）和写入句柄（用于 `SetProcessInformation`）。 |
-| `apply_config_result` | `&mut`[ApplyConfigResult](ApplyConfigResult.md) | 此调用过程中产生的更改描述和错误消息的累加器。 |
+| `pid` | `u32` | 目标进程的进程标识符。用于错误去重键和日志消息。 |
+| `config` | `&ProcessLevelConfig` | 包含所需 `memory_priority` 值（`MemoryPriority` 枚举）的进程级配置。如果 `config.memory_priority.as_win_const()` 返回 `None`（例如 `MemoryPriority::None`），函数将立即返回，不查询也不修改进程。 |
+| `dry_run` | `bool` | 为 `true` 时，函数在 `apply_config_result` 中记录*将要*进行的更改，但不调用 `SetProcessInformation`。为 `false` 时，调用 Windows API 来应用更改。 |
+| `process_handle` | `&ProcessHandle` | 提供对目标进程读写访问的句柄包装器。函数通过 [`get_handles`](get_handles.md) 提取读取句柄（用于 `GetProcessInformation`）和写入句柄（用于 `SetProcessInformation`）。如果任一句柄不可用，函数将提前返回。 |
+| `apply_config_result` | `&mut ApplyConfigResult` | 执行过程中产生的更改描述和错误消息的累加器。 |
 
 ## 返回值
 
-无 (`()`)。结果通过 `apply_config_result` 传达。
+此函数不返回值。所有结果通过 `apply_config_result` 参数传达。
 
 ## 备注
 
-### 控制流程
-
-1. [get_handles](get_handles.md) 提取最佳可用的读取和写入 `HANDLE`。如果其中任何一个为 `None`，函数立即返回。
-
-2. `config.memory_priority.as_win_const()` 将 [MemoryPriority](../priority.rs/MemoryPriority.md) 枚举转换为其 Win32 [MEMORY_PRIORITY_INFORMATION](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/ns-processthreadsapi-memory_priority_information) 值（包装在 [MemoryPriorityInformation](../priority.rs/MemoryPriorityInformation.md) 中）。如果配置的优先级为 `None`，`as_win_const()` 返回 `None`，函数退出——不查询、不更改。
-
-3. 使用 `ProcessMemoryPriority` 类调用 `GetProcessInformation`，将当前内存优先级读入本地 [MemoryPriorityInformation](../priority.rs/MemoryPriorityInformation.md) 结构。
-   - 失败时，捕获 Win32 错误码并通过 [log_error_if_new](log_error_if_new.md) 以 `Operation::GetProcessInformation2ProcessMemoryPriority` 路由。函数返回，不再尝试设置。
-
-4. 如果当前值已与目标匹配，函数静默退出（幂等）。
-
-5. 在模拟运行模式下，记录摘要更改消息后函数返回。
-
-6. 否则，使用目标值构造新的 `MemoryPriorityInformation` 并传递给 `SetProcessInformation`。成功时记录更改；失败时捕获错误并记录。
-
-### 更改消息格式
-
-成功设置时（非模拟运行）：
-
-```/dev/null/example.txt#L1
-Memory Priority: Normal -> VeryLow
-```
-
-消息显示新旧内存优先级级别的人类可读名称，分别通过 `MemoryPriority::from_win_const()` 和 `MemoryPriority::as_str()` 获取。
-
-### 内存优先级级别
-
-[MemoryPriority](../priority.rs/MemoryPriority.md) 枚举映射到以下 Windows 定义的值：
-
-| 枚举变体 | Win32 值 | 效果 |
-|----------|----------|------|
-| `VeryLow` | 1 | 在内存压力下，页面最先被回收。 |
-| `Low` | 2 | 页面在中优先级页面之前被回收。 |
-| `Medium` | 3 | 后台进程的默认值。 |
-| `BelowNormal` | 4 | 略优于中优先级。 |
-| `Normal` | 5 | 前台进程的默认值。页面最后被回收。 |
-
-### 错误处理
-
-查询和设置阶段的错误都通过 [log_error_if_new](log_error_if_new.md) 路由。常见的失败场景：
-
-| Win32 错误 | 典型原因 |
-|------------|----------|
-| `ERROR_ACCESS_DENIED` (5) | 进程句柄以不足的访问权限打开，或目标是受保护进程。 |
-| `ERROR_INVALID_PARAMETER` (87) | 传递了无效的内存优先级值（使用枚举时不应发生）。 |
-
-### 幂等性
-
-该函数是幂等的：当前内存优先级已与配置目标匹配时，不会进行 Win32 调用，也不会记录更改。这避免了每个轮询周期中不必要的内核转换。
-
-### 与 IO 优先级的关系
-
-内存优先级和 IO 优先级（[apply_io_priority](apply_io_priority.md)）是独立的设置。它们在 [ProcessConfig](../config.rs/ProcessConfig.md) 中分别配置，由不同的函数应用。两者都影响操作系统从进程回收资源的积极程度，但它们针对不同的子系统（内存管理器 vs. IO 调度器）。
+- 函数首先使用 `ProcessMemoryPriority` 信息类和 `MemoryPriorityInformation` 结构体调用 `GetProcessInformation` 来获取当前内存优先级。如果查询失败，通过 `GetLastError` 获取 Win32 错误代码，并通过 [`log_error_if_new`](log_error_if_new.md) 以 `Operation::GetProcessInformation2ProcessMemoryPriority` 记录。查询失败后不会进行进一步操作。
+- 如果当前内存优先级已与目标匹配，则不记录任何更改，函数静默返回。
+- 应用更改时（非试运行），`SetProcessInformation` 使用包含目标值的新 `MemoryPriorityInformation` 结构体调用。失败时，通过 [`log_error_if_new`](log_error_if_new.md) 以 `Operation::SetProcessInformation2ProcessMemoryPriority` 记录错误。
+- 更改消息格式为 `"Memory Priority: <current> -> <target>"`，使用 `MemoryPriority::from_win_const` 和 `config.memory_priority.as_str()` 获取人类可读的字符串表示。
+- `MemoryPriorityInformation` 包装器类型是在 `priority` 模块中定义的 `u32` 新类型。它与 Windows `MEMORY_PRIORITY_INFORMATION` 结构体的布局匹配。
+- Windows 内存优先级值范围从 0（最低/极低）到 5（正常）。`priority` 模块中的 `MemoryPriority` 枚举将用户可见的名称映射到这些数值常量。
+- **注意：** 在试运行路径中，更改消息文本引用了 `config.io_priority.as_str()` 而不是 `config.memory_priority.as_str()`。这是源代码中的一个已知不一致，试运行消息显示的是 I/O 优先级标签而非内存优先级标签。
 
 ## 要求
 
 | 要求 | 值 |
 |------|-----|
-| 模块 | `apply` |
-| 可见性 | `pub`（crate 公开） |
-| 调用者 | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
-| 被调用者 | [get_handles](get_handles.md), [log_error_if_new](log_error_if_new.md) |
-| Win32 API | [`GetProcessInformation`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocessinformation), [`SetProcessInformation`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessinformation)（使用 `ProcessMemoryPriority` 类） |
-| 权限 | `PROCESS_QUERY_LIMITED_INFORMATION`（通过 `GetProcessInformation` 读取），`PROCESS_SET_INFORMATION`（通过 `SetProcessInformation` 写入）。服务通常持有 `SeDebugPrivilege`，可同时满足这两项要求。 |
+| 模块 | `apply.rs` |
+| Crate | `AffinityServiceRust` |
+| Windows API | `GetProcessInformation`（`ProcessMemoryPriority`）、`SetProcessInformation`（`ProcessMemoryPriority`）、`GetLastError` |
+| 调用方 | `scheduler.rs` / `main.rs` 中遍历匹配进程的编排代码 |
+| 被调用方 | [`get_handles`](get_handles.md)、[`log_error_if_new`](log_error_if_new.md)、`MemoryPriority::as_win_const`、`MemoryPriority::from_win_const`、`MemoryPriority::as_str`、`error_from_code_win32` |
+| 权限 | 需要具有 `PROCESS_QUERY_INFORMATION` 或 `PROCESS_QUERY_LIMITED_INFORMATION`（读取）和 `PROCESS_SET_INFORMATION`（写入）的进程句柄。 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 参考 | 链接 |
 |------|------|
-| apply 模块概述 | [apply](README.md) |
-| IO 优先级设置 | [apply_io_priority](apply_io_priority.md) |
-| 进程优先级类设置 | [apply_priority](apply_priority.md) |
-| 内存优先级枚举 | [MemoryPriority](../priority.rs/MemoryPriority.md) |
-| MemoryPriorityInformation 包装器 | [MemoryPriorityInformation](../priority.rs/MemoryPriorityInformation.md) |
-| 配置模型 | [ProcessConfig](../config.rs/ProcessConfig.md) |
-| 句柄提取辅助函数 | [get_handles](get_handles.md) |
-| 错误去重 | [log_error_if_new](log_error_if_new.md) |
+| apply 模块概述 | [`README`](README.md) |
+| ApplyConfigResult | [`ApplyConfigResult`](ApplyConfigResult.md) |
+| get_handles | [`get_handles`](get_handles.md) |
+| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
+| apply_priority | [`apply_priority`](apply_priority.md) |
+| apply_io_priority | [`apply_io_priority`](apply_io_priority.md) |
+| apply_affinity | [`apply_affinity`](apply_affinity.md) |
+| ProcessLevelConfig | [`config.rs/ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
+| MemoryPriority | [`priority.rs/MemoryPriority`](../priority.rs/MemoryPriority.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

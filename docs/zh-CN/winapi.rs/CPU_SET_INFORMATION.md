@@ -1,113 +1,75 @@
 # CPU_SET_INFORMATION 静态变量 (winapi.rs)
 
-延迟初始化、互斥锁保护的全局 [CpuSetData](CpuSetData.md) 条目向量，将系统上每个逻辑处理器映射到其 Windows CPU 集合 ID。此静态变量是 AffinityServiceRust 中 CPU 集合拓扑的唯一数据源，模块中所有 CPU 集合转换函数均会查询它。
+延迟初始化、互斥锁保护的系统 CPU 集合数据缓存。首次访问时，此静态变量通过调用 Windows `GetSystemCpuSetInformation` API 枚举系统上的所有 CPU 集合，并将结果存储为 `Vec<CpuSetData>`。后续访问将返回缓存数据，无需重新查询操作系统。
 
 ## 语法
 
 ```rust
-static CPU_SET_INFORMATION: Lazy<Mutex<Vec<CpuSetData>>> = Lazy::new(|| {
-    Mutex::new({
-        let mut cpu_set_data: Vec<CpuSetData> = Vec::new();
-        let mut required_size: u32 = 0;
-
-        let current_process = unsafe { GetCurrentProcess() };
-
-        let _ = unsafe {
-            GetSystemCpuSetInformation(None, 0, &mut required_size, Some(current_process), Some(0))
-        };
-
-        let mut buffer: Vec<u8> = vec![0u8; required_size as usize];
-
-        let success = unsafe {
-            GetSystemCpuSetInformation(
-                Some(buffer.as_mut_ptr() as *mut SYSTEM_CPU_SET_INFORMATION),
-                required_size,
-                &mut required_size,
-                Some(current_process),
-                Some(0),
-            )
-            .as_bool()
-        };
-
-        if !success {
-            log_to_find("GetSystemCpuSetInformation failed");
-        } else {
-            let mut offset = 0;
-            while offset < required_size as usize {
-                let entry = unsafe {
-                    let entry_ptr = buffer.as_ptr().add(offset) as *const SYSTEM_CPU_SET_INFORMATION;
-                    &*entry_ptr
-                };
-
-                let data = unsafe { extract_cpu_set_data(entry) };
-                cpu_set_data.push(data);
-                offset += entry.Size as usize;
-            }
-        }
-        cpu_set_data
-    })
-});
+static CPU_SET_INFORMATION: Lazy<Mutex<Vec<CpuSetData>>> = Lazy::new(|| { ... });
 ```
 
-## 成员
+## 类型
 
-| 成员 | 类型 | 描述 |
-|--------|------|-------------|
-| 内部值 | `Vec<CpuSetData>` | 一个向量，包含系统上每个逻辑处理器对应的一个 [CpuSetData](CpuSetData.md) 条目。每个条目将处理器的不透明 Windows CPU 集合 ID 与其从零开始的逻辑处理器索引配对。向量长度等于当前进程可见的逻辑处理器数量。 |
+`once_cell::sync::Lazy<std::sync::Mutex<Vec<CpuSetData>>>`
 
 ## 备注
 
 ### 初始化
 
-`CPU_SET_INFORMATION` 包装在 `once_cell::sync::Lazy` 中，因此初始化闭包仅在首次访问时执行一次。初始化过程对 `GetSystemCpuSetInformation` 执行两次调用：
+`Lazy` 初始化器执行以下步骤：
 
-1. **大小查询** — 第一次调用传递零长度缓冲区，以在 `required_size` 中获取所需的字节大小。
-2. **数据获取** — 分配所需大小的缓冲区，第二次调用将其填充为可变长度 `SYSTEM_CPU_SET_INFORMATION` 结构数组。
+1. 使用零长度缓冲区调用 `GetSystemCpuSetInformation`，以确定所需的缓冲区大小（`required_size`）。
+2. 分配一个所需大小的 `Vec<u8>`。
+3. 使用已分配的缓冲区再次调用 `GetSystemCpuSetInformation`，以检索所有 CPU 集合条目。
+4. 遍历缓冲区，通过 unsafe 辅助函数 `extract_cpu_set_data` 解析每个 `SYSTEM_CPU_SET_INFORMATION` 结构体，该函数读取 `CpuSet.Id` 和 `CpuSet.LogicalProcessorIndex` 联合体字段。
+5. 将每个提取的 [`CpuSetData`](CpuSetData.md) 条目推入结果向量。
 
-然后使用每个条目的 `Size` 字段逐条目遍历原始缓冲区以推进偏移量。每个条目被传递给模块私有辅助函数 `extract_cpu_set_data`，该函数从联合体中读取 `CpuSet.Id` 和 `CpuSet.LogicalProcessorIndex` 字段并构造一个 [CpuSetData](CpuSetData.md) 值。
-
-### 失败处理
-
-如果第二次调用 `GetSystemCpuSetInformation` 失败，错误将记录到 find 日志中，结果向量为空。所有下游转换函数将返回空结果，实际上是在不使服务崩溃的情况下禁用了 CPU 集合操作。
+如果第二次调用 `GetSystemCpuSetInformation` 失败，将通过 `log_to_find` 写入诊断消息（`"GetSystemCpuSetInformation failed"`），并返回空向量。
 
 ### 线程安全
 
-该向量受 `std::sync::Mutex` 保护。所有访问器在迭代前都会锁定互斥锁。由于数据在初始化后是只读的，因此争用极小——锁的存在主要是为了满足 Rust 对全局可变静态变量的 `Send`/`Sync` 要求。
+此静态变量包装在 `Mutex` 中，以允许多线程安全并发访问。实际上，初始填充后内部数据不会再改变——CPU 集合拓扑在操作系统启动后的整个生命周期内是固定的——但 `Mutex` 是必需的，因为 `Lazy` 初始化必须同步，且调用者可能从不同线程访问。
 
-### 拓扑假设
+### 生命周期
 
-- CPU 集合数据在首次访问时捕获一次，之后不会刷新。如果系统拓扑在运行时发生变化（例如 CPU 热添加），缓存将变得过时。这是可以接受的，因为在 AffinityServiceRust 运行的桌面 Windows 系统上，CPU 热插拔极为罕见。
-- `LogicalProcessorIndex` 字段存储为 `u8`，最多支持 256 个逻辑处理器。具有跨多个处理器组超过 256 个处理器的系统可能需要进行结构性更改。
+该静态变量具有 `'static` 生命周期，永远不会被释放。其包含的数据在进程的整个运行期间保持有效。运行时 CPU 拓扑的变化（例如热添加处理器）**不会**被反映。
 
-### 访问器
+### 访问模式
 
-公共函数 [get_cpu_set_information](get_cpu_set_information.md) 返回 `&'static Mutex<Vec<CpuSetData>>`，提供对缓存的共享访问而不暴露 `Lazy` 包装器。
+不应在 `winapi` 模块外部直接访问此静态变量。请使用 [`get_cpu_set_information`](get_cpu_set_information.md) 访问器函数，它返回一个 `&'static Mutex<Vec<CpuSetData>>` 引用。以下函数在内部锁定并读取此静态变量：
+
+- [`cpusetids_from_indices`](cpusetids_from_indices.md)
+- [`cpusetids_from_mask`](cpusetids_from_mask.md)
+- [`indices_from_cpusetids`](indices_from_cpusetids.md)
+- [`mask_from_cpusetids`](mask_from_cpusetids.md)
+
+### 缓冲区解析
+
+`GetSystemCpuSetInformation` 返回的原始缓冲区包含可变大小的条目。初始化器使用每个条目的 `Size` 字段来推进偏移量，确保无论操作系统版本或未来结构体扩展如何，都能正确解析。
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `winapi` (`src/winapi.rs`) |
-| **Crate 依赖** | `once_cell::sync::Lazy`, `std::sync::Mutex` |
-| **填充方** | `GetSystemCpuSetInformation` (Win32), `extract_cpu_set_data` (模块私有辅助函数) |
-| **访问方式** | [get_cpu_set_information](get_cpu_set_information.md) |
-| **使用方** | [cpusetids_from_indices](cpusetids_from_indices.md), [cpusetids_from_mask](cpusetids_from_mask.md), [indices_from_cpusetids](indices_from_cpusetids.md), [mask_from_cpusetids](mask_from_cpusetids.md) |
-| **API** | [`GetSystemCpuSetInformation`](https://learn.microsoft.com/en-us/windows/win32/api/systeminformationapi/nf-systeminformationapi-getsystemcpusetinformation) |
-| **特权** | 无 — `GetSystemCpuSetInformation` 不需要提权 |
+| 要求 | 值 |
+|------|-----|
+| **模块** | `winapi.rs` |
+| **可见性** | 私有（模块内部） |
+| **访问器** | [`get_cpu_set_information`](get_cpu_set_information.md) |
+| **Win32 API** | [`GetSystemCpuSetInformation`](https://learn.microsoft.com/en-us/windows/win32/api/systeminfomationapi/nf-systeminfomationapi-getsystemcpusetinformation) |
+| **依赖** | `once_cell::sync::Lazy`、`std::sync::Mutex`、[`CpuSetData`](CpuSetData.md) |
+| **平台** | 仅限 Windows |
+| **权限** | 无需特殊权限 |
 
 ## 另请参阅
 
 | 主题 | 链接 |
-|-------|------|
-| 元素类型 | [CpuSetData](CpuSetData.md) |
-| 公共访问器函数 | [get_cpu_set_information](get_cpu_set_information.md) |
-| CPU 索引 → CPU 集合 ID | [cpusetids_from_indices](cpusetids_from_indices.md) |
-| 亲和性掩码 → CPU 集合 ID | [cpusetids_from_mask](cpusetids_from_mask.md) |
-| CPU 集合 ID → CPU 索引 | [indices_from_cpusetids](indices_from_cpusetids.md) |
-| CPU 集合 ID → 亲和性掩码 | [mask_from_cpusetids](mask_from_cpusetids.md) |
-| 对进程应用 CPU 集合 | [apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md) |
-| GetSystemCpuSetInformation (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/systeminformationapi/nf-systeminformationapi-getsystemcpusetinformation) |
+|------|------|
+| CpuSetData 结构体 | [CpuSetData](CpuSetData.md) |
+| get_cpu_set_information 访问器 | [get_cpu_set_information](get_cpu_set_information.md) |
+| cpusetids_from_indices | [cpusetids_from_indices](cpusetids_from_indices.md) |
+| cpusetids_from_mask | [cpusetids_from_mask](cpusetids_from_mask.md) |
+| indices_from_cpusetids | [indices_from_cpusetids](indices_from_cpusetids.md) |
+| mask_from_cpusetids | [mask_from_cpusetids](mask_from_cpusetids.md) |
+| MODULE_CACHE 静态变量 | [MODULE_CACHE](MODULE_CACHE.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

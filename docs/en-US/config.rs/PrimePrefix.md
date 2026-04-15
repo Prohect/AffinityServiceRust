@@ -1,14 +1,14 @@
-# PrimePrefix struct (config.rs)
+# PrimePrefix type (config.rs)
 
-Represents a module-name prefix filter combined with an optional CPU set override and thread priority boost for prime-thread scheduling. When the prime-thread scheduler identifies a hot thread, it checks the thread's start-address module name against the `prefix` field. If the prefix matches (or is empty, meaning "match all"), the thread is pinned to the CPUs specified in `cpus` and optionally boosted to `thread_priority`.
+The `PrimePrefix` struct associates a thread start-module prefix string with an optional set of CPU indices and a thread priority override. It is used within [`ThreadLevelConfig`](ThreadLevelConfig.md) to control which CPUs are assigned to prime threads whose start module matches the given prefix, and to optionally boost or lower those threads' scheduling priority.
 
 ## Syntax
 
-```rust
+```AffinityServiceRust/src/config.rs#L17-21
 #[derive(Debug, Clone)]
 pub struct PrimePrefix {
     pub prefix: String,
-    pub cpus: Option<Vec<u32>>,
+    pub cpus: Option<List<[u32; CONSUMER_CPUS]>>,
     pub thread_priority: ThreadPriority,
 }
 ```
@@ -17,59 +17,53 @@ pub struct PrimePrefix {
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `prefix` | `String` | Module-name prefix used to filter threads by their start address. An empty string matches all threads. The match is case-insensitive and compared against the resolved module name of the thread's start address (e.g., `"engine.dll"`). |
-| `cpus` | `Option<Vec<u32>>` | Optional per-prefix CPU set override. When `Some`, the matched thread is pinned to these specific CPU indices instead of the parent rule's `prime_threads_cpus`. When `None`, the parent rule's CPU list is used. |
-| `thread_priority` | `ThreadPriority` | Thread priority to apply to matched prime threads. `ThreadPriority::None` means no priority change (the OS auto-boost behavior is preserved). Non-`None` values (e.g., `AboveNormal`, `Highest`) explicitly set the thread's scheduling priority via `SetThreadPriority`. |
+| `prefix` | `String` | A case-insensitive thread start-module name prefix to match against (e.g., `"engine.dll"`, `"render"`). An empty string matches all threads regardless of their start module. |
+| `cpus` | `Option<List<[u32; CONSUMER_CPUS]>>` | An optional list of CPU indices that threads matching this prefix should be scheduled on. When `Some`, overrides the parent rule's base `prime_threads_cpus`. When `None`, the thread inherits the base CPU set from the containing [`ThreadLevelConfig`](ThreadLevelConfig.md). |
+| `thread_priority` | `ThreadPriority` | An optional thread-level priority to apply to matching threads. `ThreadPriority::None` means no priority modification (auto-boost behavior is preserved). Set via the `!priority` suffix in the config syntax (e.g., `engine.dll!above normal`). |
 
 ## Remarks
 
-`PrimePrefix` entries are constructed during rule parsing in [parse_and_insert_rules](parse_and_insert_rules.md) when the prime-threads field contains `@`-delimited prefix specifications.
+### Configuration syntax
 
-### Config syntax
+In the configuration file, `PrimePrefix` values are specified within the prime-threads field (field 4) of a rule line. The general syntax is:
 
-The prime-threads field (field 4 in a rule line) supports prefix-qualified specifications of the form:
-
-```
-*alias@prefix1;prefix2!priority*alias2@prefix3
+```/dev/null/example.ini#L1-3
+process.exe:normal:0:0:*alias@prefix1;prefix2!priority:none:none:0:1
 ```
 
-Where:
+The `@prefix` portion is split on `;` to produce one `PrimePrefix` per entry. The `!priority` suffix is optional and parsed via `ThreadPriority::from_str`.
 
-- `*alias` references a CPU alias defined with `*alias = cpu_spec`.
-- `@prefix1;prefix2` lists semicolon-separated module-name prefixes.
-- `!priority` optionally appends a thread priority to a specific prefix (e.g., `engine.dll!highest`).
+### Multi-segment prefix rules
 
-For example, the spec `*p@engine.dll;render.dll!above normal*e@audio.dll` produces three `PrimePrefix` entries:
+When multiple `*alias@prefix` segments are chained (e.g., `*p@engine.dll*e@helper.dll`), each segment produces its own set of `PrimePrefix` instances with the corresponding alias CPUs stored in `cpus`. This allows different groups of threads to be scheduled on different CPU sets based on their start module.
 
-1. `{ prefix: "engine.dll", cpus: Some(<p cpus>), thread_priority: None }`
-2. `{ prefix: "render.dll", cpus: Some(<p cpus>), thread_priority: AboveNormal }`
-3. `{ prefix: "audio.dll", cpus: Some(<e cpus>), thread_priority: None }`
+### Default behavior
 
-When no `@` is present in the prime-threads field, a single `PrimePrefix` with an empty prefix and `cpus: None` is created, meaning all threads are eligible and the parent rule's CPU list is used.
+When a rule specifies prime CPUs without any `@prefix` filter, a single `PrimePrefix` is created with an empty `prefix` (matches all threads), `cpus` set to `None` (inherits from parent), and `thread_priority` set to `ThreadPriority::None` (no override).
 
-### Thread matching
+### Lifetime
 
-At runtime, the apply module resolves each thread's start address to a module name and compares it against the `prefix` field using a case-insensitive prefix match. An empty `prefix` acts as a wildcard.
+`PrimePrefix` instances are created during configuration parsing by [`parse_and_insert_rules`](parse_and_insert_rules.md) and stored inside [`ThreadLevelConfig`](ThreadLevelConfig.md). They are consumed at runtime by the [`PrimeThreadScheduler`](../scheduler.rs/README.md) when deciding which threads qualify as "prime" and how to schedule them.
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `config` (`src/config.rs`) |
-| **Constructed by** | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| **Consumed by** | [apply_prime_threads](../apply.rs/apply_prime_threads.md), [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) |
-| **Parent struct** | [ProcessConfig](ProcessConfig.md) (field `prime_threads_prefixes`) |
+| Requirement | Value |
+|-------------|-------|
+| Module | `config.rs` |
+| Constructed by | [`parse_and_insert_rules`](parse_and_insert_rules.md) |
+| Contained in | [`ThreadLevelConfig`](ThreadLevelConfig.md) (field `prime_threads_prefixes`) |
+| Consumed by | `PrimeThreadScheduler` (see [scheduler.rs](../scheduler.rs/README.md)) |
+| Derives | `Debug`, `Clone` |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Per-process configuration record | [ProcessConfig](ProcessConfig.md) |
-| Rule parsing and prefix extraction | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| Prime-thread application logic | [apply_prime_threads](../apply.rs/apply_prime_threads.md) |
-| Thread priority enum | [ThreadPriority](../priority.rs/ThreadPriority.md) |
-| CPU alias parsing | [parse_alias](parse_alias.md) |
+| Resource | Link |
+|----------|------|
+| ThreadLevelConfig | [ThreadLevelConfig](ThreadLevelConfig.md) |
+| IdealProcessorRule | [IdealProcessorRule](IdealProcessorRule.md) |
+| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| priority module | [priority.rs overview](../priority.rs/README.md) |
+| config module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

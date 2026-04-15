@@ -1,10 +1,10 @@
-# ApplyConfigResult struct (apply.rs)
+# ApplyConfigResult type (apply.rs)
 
-Accumulates human-readable change descriptions and error messages produced while applying a single configuration pass to a process. Every `apply_*` function in the [apply](README.md) module receives an `&mut ApplyConfigResult` and pushes entries into it rather than logging directly, giving callers in [main.rs](../main.rs/README.md) a consolidated view of what happened.
+The `ApplyConfigResult` struct accumulates human-readable change descriptions and error messages produced during a single configuration-apply pass for one process. Each function in the `apply` module receives a mutable reference to an `ApplyConfigResult` and appends entries to record what was changed or what failed. After all apply functions have run, the caller inspects the result to emit log output or take corrective action.
 
 ## Syntax
 
-```AffinityServiceRust/src/apply.rs#L29-33
+```AffinityServiceRust/src/apply.rs#L32-35
 #[derive(Debug, Default)]
 pub struct ApplyConfigResult {
     pub changes: Vec<String>,
@@ -16,43 +16,47 @@ pub struct ApplyConfigResult {
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `changes` | `Vec<String>` | Successful modifications applied to the process or its threads. Each entry is a short, human-readable description such as `"Priority: Normal -> High"` or `"Thread 1234 -> (promoted, [4,5], cycles=98000, start=ntdll.dll)"`. The caller prefixes the process id and name before writing these to the log. |
-| `errors` | `Vec<String>` | Errors encountered during the apply pass. Entries follow the format `"fn_name: [OPERATION][error_message] details"`. Only *new* errors (those not previously seen for the same pid/operation/error-code triple) are added, because all `apply_*` functions route through [log_error_if_new](log_error_if_new.md) before calling `add_error`. |
+| `changes` | `Vec<String>` | A list of human-readable strings describing each configuration change that was successfully applied (or would be applied in dry-run mode). Each entry follows the format `"$operation details"` and is intended to be prefixed by the caller with the process ID and config name. |
+| `errors` | `Vec<String>` | A list of human-readable strings describing each error that occurred during the apply pass. Each entry follows the format `"$fn_name: [$operation][$error_message] details"`. Errors are deduplicated at the call site via [`log_error_if_new`](log_error_if_new.md) so that repeated failures for the same pid/operation/error-code are not re-added. |
 
 ## Methods
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `new` | `pub fn new() -> Self` | Creates an empty result. Equivalent to `Self::default()`. |
-| `add_change` | `pub fn add_change(&mut self, change: String)` | Pushes a change description onto the `changes` vector. |
-| `add_error` | `pub fn add_error(&mut self, error: String)` | Pushes an error description onto the `errors` vector. |
-| `is_empty` | `pub fn is_empty(&self) -> bool` | Returns `true` when both `changes` and `errors` are empty, allowing callers to skip logging when nothing happened. |
+| `new` | `pub fn new() -> Self` | Creates a new, empty `ApplyConfigResult`. Delegates to `Default::default()`. |
+| `add_change` | `pub fn add_change(&mut self, change: String)` | Appends a change description string to the `changes` vector. Marked `#[inline(always)]`. |
+| `add_error` | `pub fn add_error(&mut self, error: String)` | Appends an error description string to the `errors` vector. Marked `#[inline(always)]`. |
+| `is_empty` | `pub fn is_empty(&self) -> bool` | Returns `true` if both `changes` and `errors` are empty, indicating no work was performed and no failures occurred. |
 
 ## Remarks
 
-`ApplyConfigResult` is created once per process per apply cycle in [apply_config_process_level](../main.rs/apply_config_process_level.md) and [apply_config_thread_level](../main.rs/apply_config_thread_level.md). After all `apply_*` calls return, the caller inspects `is_empty()` to decide whether to emit a log line. Changes and errors are printed together, giving operators a single consolidated summary per process per cycle.
-
-The struct deliberately uses `String` rather than structured error types. This keeps the apply functions simple—they format context (pid, thread id, operation, Win32 error message) at the call site—and avoids coupling the logging layer to specific error enumerations.
-
-The `#[derive(Default)]` implementation produces an instance with two empty `Vec`s, so `new()` is a thin wrapper provided for readability.
+- `ApplyConfigResult` derives `Debug` and `Default`. The `Default` implementation produces an instance with two empty `Vec`s, which is identical to calling `new()`.
+- The struct is not thread-safe on its own; callers pass it as `&mut ApplyConfigResult` through the sequential apply pipeline for a single process.
+- Change strings are designed to be concatenated with a process-identifying prefix (e.g., `"{pid:>5}::{config.name}::"`) by the caller. The `apply` functions themselves do **not** include the prefix.
+- Error strings are self-contained and include the originating function name, the Windows API operation that failed, and the decoded error code for direct logging.
+- The `is_empty` method is used by callers to avoid emitting empty log entries when a process was already in the desired state.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `apply` |
-| Callers | [apply_config_process_level](../main.rs/apply_config_process_level.md), [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
-| Passed to | Every `apply_*` function in [apply](README.md) |
+| Module | `apply.rs` |
+| Crate | `AffinityServiceRust` |
+| Dependencies | Standard library only (`Vec<String>`) |
+| Callers | All `apply_*` functions in the module; orchestrator code in `scheduler.rs` and `main.rs` |
+| Platform | Windows (content is platform-specific, but the struct itself is platform-independent) |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| apply module overview | [apply](README.md) |
-| Error deduplication helper | [log_error_if_new](log_error_if_new.md) |
-| Process-level orchestration | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
-| Thread-level orchestration | [apply_config_thread_level](../main.rs/apply_config_thread_level.md) |
+| Reference | Link |
+|-----------|------|
+| apply module overview | [`README`](README.md) |
+| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
+| apply_priority | [`apply_priority`](apply_priority.md) |
+| apply_affinity | [`apply_affinity`](apply_affinity.md) |
+| apply_io_priority | [`apply_io_priority`](apply_io_priority.md) |
+| apply_memory_priority | [`apply_memory_priority`](apply_memory_priority.md) |
+| ProcessLevelConfig | [`config.rs/ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

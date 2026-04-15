@@ -1,30 +1,34 @@
 # event_trace module (AffinityServiceRust)
 
-The `event_trace` module provides a minimal ETW (Event Tracing for Windows) consumer for real-time process start/stop monitoring. It subscribes to the `Microsoft-Windows-Kernel-Process` provider to receive notifications when processes are created or terminated, enabling the service to reactively apply configuration rules to newly launched processes without waiting for the next polling interval. The module manages the full ETW session lifecycle — starting, consuming, and stopping trace sessions — and dispatches process events through a channel for the main service loop to consume.
+The `event_trace` module provides a minimal ETW (Event Tracing for Windows) consumer for real-time process start/stop monitoring. It uses the `Microsoft-Windows-Kernel-Process` provider (GUID `{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}`) to receive notifications when processes are created or terminated, enabling reactive rule application without polling.
 
-## Statics
+The module manages an ETW real-time trace session on a background thread. A global channel (`ETW_SENDER`) bridges the OS-level `extern "system"` callback with safe Rust code via `mpsc::Sender`. The `EtwProcessMonitor` struct owns the session lifetime and automatically cleans up on drop.
 
-| Static | Description |
-|--------|-------------|
-| [ETW_SENDER](ETW_SENDER.md) | Global mutex-guarded sender half of the MPSC channel used by the ETW callback to dispatch process events. |
-| [ETW_ACTIVE](ETW_ACTIVE.md) | Atomic boolean flag indicating whether the ETW trace session is currently active. |
+## Functions
+
+This module does not expose public functions directly. All functionality is accessed through the `EtwProcessMonitor` struct methods.
 
 ## Structs
 
 | Struct | Description |
 |--------|-------------|
-| [EtwProcessEvent](EtwProcessEvent.md) | Lightweight value type carrying a process ID and a start/stop flag, produced by the ETW callback. |
-| [EtwProcessMonitor](EtwProcessMonitor.md) | Owns the ETW trace session handles and background processing thread; provides `start`, `stop`, and `stop_existing_session` methods. |
+| [EtwProcessEvent](EtwProcessEvent.md) | A process event received from ETW, containing the process ID and whether it was a start or stop event. |
+| [EtwProcessMonitor](EtwProcessMonitor.md) | Manages an ETW real-time trace session for process monitoring, including session setup, background thread lifecycle, and cleanup. |
+
+## Statics
+
+| Static | Description |
+|--------|-------------|
+| [ETW_SENDER](ETW_SENDER.md) | Global `Mutex<Option<Sender<EtwProcessEvent>>>` used by the ETW callback to send events to the consumer. Required because the ETW callback is an `extern "system"` function pointer that cannot capture state. |
+| [ETW_ACTIVE](ETW_ACTIVE.md) | `AtomicBool` flag indicating whether the ETW session is currently active. Used to guard against redundant stop operations. |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Win32 error code translation used in ETW error reporting | [error_codes module](../error_codes.rs/README.md) |
-| Service main loop that consumes ETW events | [main module](../main.rs/README.md) |
-| Logging infrastructure for diagnostics | [logging module](../logging.rs/README.md) |
-| Windows API wrappers (handles, privileges) | [winapi module](../winapi.rs/README.md) |
+| Link | Description |
+|------|-------------|
+| [process.rs module](../process.rs/README.md) | Process snapshot enumeration used alongside ETW for process data lookup. |
+| [logging.rs module](../logging.rs/README.md) | Logging utilities used for diagnostics and error reporting. |
+| [error_codes.rs module](../error_codes.rs/README.md) | Win32 error code translation used when ETW API calls fail. |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+Source commit: `7221ea0694670265d4eb4975582d8ed2ae02439d`

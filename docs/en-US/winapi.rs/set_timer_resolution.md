@@ -1,6 +1,6 @@
 # set_timer_resolution function (winapi.rs)
 
-Sets the system-wide timer resolution to a caller-specified value by invoking the undocumented `NtSetTimerResolution` function from `ntdll.dll`. A lower timer resolution value causes the Windows scheduler to tick more frequently, which can reduce scheduling latency for time-sensitive workloads at the cost of slightly higher power consumption and CPU overhead.
+Sets the system timer resolution to a caller-specified value via the NT-native `NtSetTimerResolution` API. This allows AffinityServiceRust to increase the precision of system-wide timing (e.g., `Sleep`, waitable timers) by requesting a smaller timer interval than the default ~15.6 ms.
 
 ## Syntax
 
@@ -12,82 +12,72 @@ pub fn set_timer_resolution(cli: &CliArgs)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `cli` | `&CliArgs` | Reference to the parsed CLI arguments. The function reads `cli.time_resolution`, which is a `u32` value expressed in 100-nanosecond intervals (e.g., `5000` = 0.5 ms, `10000` = 1.0 ms). A value of `0` is the default and typically means "do not change the timer resolution". |
+| `cli` | `&CliArgs` | Reference to the parsed command-line arguments. The `cli.time_resolution` field (`u32`) specifies the desired timer resolution in 100-nanosecond units (e.g., `5000` = 0.5 ms). |
 
 ## Return value
 
-None. The function logs success or failure internally and does not return a result.
+This function does not return a value. Success or failure is communicated through log messages written via the `log!` macro.
 
 ## Remarks
 
-### Timer resolution units
+### Mechanism
 
-The `time_resolution` value uses the Windows kernel's native time unit of 100-nanosecond intervals (also called "hectonanoseconds"). Common values:
+The function calls `NtSetTimerResolution(desired_resolution, true, &mut current_resolution)` where:
 
-| `time_resolution` | Equivalent period | Description |
-|-------------------|-------------------|-------------|
-| `5000` | 0.5000 ms | Highest resolution supported on most hardware |
-| `10000` | 1.0000 ms | Common high-resolution setting |
-| `156250` | 15.6250 ms | Default Windows timer resolution |
+- `desired_resolution` is `cli.time_resolution` (in 100-ns units).
+- The second parameter (`set_resolution: true`) requests that the resolution be **set** rather than queried.
+- `current_resolution` receives the timer resolution that was in effect **before** the change (the "elder" resolution).
 
-### NtSetTimerResolution API
+### NTSTATUS handling
 
-The function calls the undocumented `NtSetTimerResolution` from `ntdll.dll` with:
+| Condition | Behavior |
+|-----------|----------|
+| `NTSTATUS < 0` (failure) | Logs `"Failed to set timer resolution: 0x{NTSTATUS}"`. |
+| `NTSTATUS >= 0` (success) | Logs the requested resolution in milliseconds (4 decimal places) and the previous ("elder") resolution. |
 
-- `desired_resolution` — the requested resolution in 100 ns units (`cli.time_resolution`).
-- `set_resolution` — `true` to request the new resolution.
-- `p_current_resolution` — pointer to a `u32` that receives the previous (elder) timer resolution.
+The resolution value is converted to milliseconds for display by dividing by `10000.0` (since the unit is 100 ns).
 
-The return value is an `NTSTATUS`:
+### Resolution value examples
 
-| NTSTATUS range | Meaning |
-|----------------|---------|
-| `>= 0` (non-negative) | Success. The timer resolution was changed (or was already at the requested value). |
-| `< 0` (negative) | Failure. The requested resolution may be outside the supported range or the caller lacks permission. |
+| `time_resolution` value | Equivalent interval |
+|-------------------------|---------------------|
+| `156250` | 15.6250 ms (Windows default) |
+| `10000` | 1.0000 ms |
+| `5000` | 0.5000 ms (500 µs) |
 
-### Logging
+### Important side effects
 
-| Outcome | Log message |
-|---------|-------------|
-| Success | `"Succeed to set timer resolution: {value}ms"` (formatted to 4 decimal places) followed by `"elder timer resolution: {previous_value}"` (raw 100 ns ticks) |
-| Failure | `"Failed to set timer resolution: 0x{ntstatus:08X}"` |
+- **System-wide impact.** `NtSetTimerResolution` affects the global timer resolution for the entire operating system, not just the calling process. While the resolution is raised, all processes benefit from higher-precision timing, but power consumption may increase.
+- **Sticky until reverted.** The elevated resolution remains in effect as long as the calling process is running and has not called `NtSetTimerResolution` with `set_resolution: false`. When the process exits, Windows automatically reverts the resolution to the next-highest resolution requested by any remaining process.
+- **Minimum resolution.** The OS enforces a hardware-dependent minimum timer interval (typically 0.5 ms). Requests below this floor succeed but are clamped to the minimum supported value.
 
-### System-wide effect
+### Platform notes
 
-Timer resolution changes via `NtSetTimerResolution` (and the documented `timeBeginPeriod`) are system-global: the Windows kernel uses the smallest (most frequent) resolution requested by any running process. When the calling process exits, its resolution request is automatically removed, and the system reverts to the next-smallest active request.
+- **Windows only.** `NtSetTimerResolution` is an undocumented NT-native API exported by `ntdll.dll`, linked via the `#[link(name = "ntdll")]` extern block at the top of `winapi.rs`.
+- This API is the same mechanism used by `timeBeginPeriod` / `timeEndPeriod` from `winmm.dll`, but without requiring the multimedia library.
 
-### Typical usage
+### Unsafe
 
-AffinityServiceRust calls `set_timer_resolution` once during startup if the user specifies a `--time_resolution` CLI argument. The default `time_resolution` value of `0` (or no flag) means the function is still called but requests a 0-tick resolution, which `NtSetTimerResolution` rejects (negative NTSTATUS), effectively making the call a no-op.
-
-### Safety
-
-The function body is wrapped in an `unsafe` block because `NtSetTimerResolution` is an FFI call into `ntdll.dll` declared in the module's `extern "system"` block. The only mutable state touched is a stack-local `u32` (`current_resolution`) used as an out-parameter.
-
-### Relationship to process scheduling
-
-A higher-frequency timer tick reduces the minimum sleep granularity and scheduling quantum, which can benefit real-time applications (games, audio engines) that the service manages. However, it also slightly increases system-wide interrupt overhead. Users should choose a value that balances latency requirements against efficiency.
+The function body is wrapped in an `unsafe` block because `NtSetTimerResolution` is a foreign function call through the raw `ntdll` FFI binding.
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `winapi` (`src/winapi.rs`) |
-| **Visibility** | `pub` |
-| **Callers** | [`main`](../main.rs/README.md) (during startup) |
-| **Callees** | `NtSetTimerResolution` (ntdll.dll FFI) |
-| **API** | `NtSetTimerResolution` — undocumented ntdll function; documented equivalent: [`timeBeginPeriod`](https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod) |
-| **Privileges** | None required beyond normal process privileges |
+| Requirement | Value |
+|-------------|-------|
+| **Module** | `winapi.rs` |
+| **Callers** | `main.rs` — called during startup when `cli.time_resolution` is configured. |
+| **Callees** | `NtSetTimerResolution` (ntdll), `log!` macro → [`log_message`](../logging.rs/log_message.md) |
+| **API** | NT Native API — `NtSetTimerResolution` |
+| **Privileges** | None explicitly required, but may be limited by group policy on locked-down systems. |
+| **Platform** | Windows |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| CLI argument parsing (time_resolution flag) | [cli module](../cli.rs/README.md) |
-| Service main entry point | [main module](../main.rs/README.md) |
-| timeBeginPeriod (documented alternative) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/timeapi/nf-timeapi-timebeginperiod) |
-| Timer resolution deep dive | [Microsoft Learn — Timer Resolution](https://learn.microsoft.com/en-us/windows/win32/sysinfo/acquiring-high-resolution-time-stamps) |
+| logging module | [logging.rs](../logging.rs/README.md) |
+| enable_debug_privilege | [enable_debug_privilege](enable_debug_privilege.md) |
+| winapi module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

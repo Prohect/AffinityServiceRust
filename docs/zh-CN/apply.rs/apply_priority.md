@@ -1,13 +1,13 @@
 # apply_priority 函数 (apply.rs)
 
-将进程优先级类设置为配置中指定的值。该函数通过 `GetPriorityClass` 读取当前优先级，将其与配置的目标值进行比较，当两者不同时调用 `SetPriorityClass` 应用更改。在模拟运行模式下，更改会被记录但不会执行。
+读取当前进程优先级类别，如果与配置的目标值不同，则将其设置为所需的值。在试运行模式下，变更会被记录但不会调用 Windows API。错误通过 `log_error_if_new` 进行去重，以确保同一进程/操作/错误码组合的重复失败不会生成重复的日志条目。
 
 ## 语法
 
-```AffinityServiceRust/src/apply.rs#L83-129
+```AffinityServiceRust/src/apply.rs#L85-131
 pub fn apply_priority(
     pid: u32,
-    config: &ProcessConfig,
+    config: &ProcessLevelConfig,
     dry_run: bool,
     process_handle: &ProcessHandle,
     apply_config_result: &mut ApplyConfigResult,
@@ -18,76 +18,48 @@ pub fn apply_priority(
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `pid` | `u32` | 目标进程的进程标识符。用于 [log_error_if_new](log_error_if_new.md) 中的错误去重和日志消息。 |
-| `config` | `&ProcessConfig` | 该进程的已解析 [ProcessConfig](../config.rs/ProcessConfig.md)。`priority` 字段（一个 [ProcessPriority](../priority.rs/ProcessPriority.md) 枚举）决定了期望的优先级类。当 `priority` 为 `ProcessPriority::None` 时，函数立即返回，不进行任何查询或修改。 |
-| `dry_run` | `bool` | 当为 `true` 时，函数将预期更改记录到 `apply_config_result` 中，但不调用 `SetPriorityClass`。 |
-| `process_handle` | `&ProcessHandle` | 为目标进程打开的 [ProcessHandle](../winapi.rs/ProcessHandle.md)。通过 [get_handles](get_handles.md) 提取用于读取（`GetPriorityClass`）和写入（`SetPriorityClass`）的句柄。 |
-| `apply_config_result` | `&mut ApplyConfigResult` | 更改和错误的累加器。参见 [ApplyConfigResult](ApplyConfigResult.md)。 |
+| `pid` | `u32` | 目标进程的进程标识符。用于错误去重和日志消息。 |
+| `config` | `&ProcessLevelConfig` | 包含所需 `priority` 值（`ProcessPriority` 枚举）的进程级配置。如果 `config.priority` 未映射到 Windows 常量（即 `as_win_const()` 返回 `None`），则函数立即返回不执行任何操作。 |
+| `dry_run` | `bool` | 当为 `true` 时，函数在 `apply_config_result` 中记录*将要*进行的变更，而不调用 `SetPriorityClass`。当为 `false` 时，调用 Windows API 应用变更。 |
+| `process_handle` | `&ProcessHandle` | 提供目标进程读写访问权限的句柄包装器。函数通过 [`get_handles`](get_handles.md) 提取读取句柄（用于 `GetPriorityClass`）和写入句柄（用于 `SetPriorityClass`）。如果任一句柄不可用，函数立即返回。 |
+| `apply_config_result` | `&mut ApplyConfigResult` | 变更描述和错误消息的累加器。成功（或试运行）时，会追加格式为 `"Priority: <旧值> -> <新值>"` 的变更字符串。失败时，会追加错误字符串（受去重机制控制）。 |
 
 ## 返回值
 
-无（`()`）。结果通过 `apply_config_result` 传递。
+此函数不返回值。所有结果通过 `apply_config_result` 参数传递。
 
 ## 备注
 
-### 控制流
-
-1. [get_handles](get_handles.md) 提取最佳可用的读写 `HANDLE`。如果其中任一为 `None`（对于有效的 `ProcessHandle` 不应发生），函数立即返回。
-2. `config.priority.as_win_const()` 将 [ProcessPriority](../priority.rs/ProcessPriority.md) 枚举转换为其 Win32 `PROCESS_CREATION_FLAGS` 常量。如果配置的优先级为 `None`，`as_win_const()` 返回 `None`，函数退出——不查询，不更改。
-3. `GetPriorityClass` 从操作系统读取当前优先级。
-4. 如果当前优先级已与目标一致，函数静默退出。
-5. 如果 `dry_run` 为 `true`，记录更改消息后函数退出。
-6. 否则，调用 `SetPriorityClass`。成功时记录更改；失败时通过 `GetLastError` 捕获 Win32 错误码并传递给 [log_error_if_new](log_error_if_new.md)。
-
-### 更改消息格式
-
-```/dev/null/example.txt#L1
-Priority: Normal -> High
-```
-
-消息显示新旧优先级类的可读名称，分别通过 `ProcessPriority::from_win_const()` 和 `ProcessPriority::as_str()` 获取。
-
-### 错误处理
-
-`SetPriorityClass` 的错误通过 [log_error_if_new](log_error_if_new.md) 以 `Operation::SetPriorityClass` 路由。常见的失败原因包括：
-
-| Win32 错误 | 典型原因 |
-|------------|----------|
-| `ERROR_ACCESS_DENIED` (5) | 服务对目标进程缺少 `PROCESS_SET_INFORMATION` 访问权限（例如受保护的进程）。 |
-| `ERROR_INVALID_PARAMETER` (87) | 请求的优先级类对目标进程无效（例如在没有 `SeIncreaseBasePriorityPrivilege` 的情况下设置 `Realtime`）。 |
-
-由于错误会被去重，持续拒绝访问的进程在所有轮询周期中只会生成一条日志条目，直到去重映射被清除（参见 [purge_fail_map](../logging.rs/purge_fail_map.md)）。
-
-### 幂等性
-
-该函数是幂等的：当当前优先级已与目标一致时，不会进行 Win32 调用，也不会记录更改。这避免了每个轮询周期中不必要的内核态切换。
-
-### 调用上下文
-
-`apply_priority` 在进程级应用阶段由 [apply_config_process_level](../main.rs/apply_config_process_level.md) 调用，每个配置周期每个进程运行一次。它有意与线程级操作（[apply_prime_threads](apply_prime_threads.md)、[apply_ideal_processors](apply_ideal_processors.md)）分离，后者以不同的节奏运行。
+- 函数首先使用读取句柄调用 `GetPriorityClass` 获取当前优先级类别。如果当前值已与配置目标匹配，则不执行任何操作且不记录任何内容。
+- 当前优先级类别通过 `ProcessPriority::from_win_const` 解码回可读字符串，用于变更消息。
+- 当 `SetPriorityClass` 失败时，通过 `GetLastError` 获取 Win32 错误码并传递给 [`log_error_if_new`](log_error_if_new.md)，该函数仅在此特定 `pid`/`Operation::SetPriorityClass`/错误码三元组之前未出现过时才记录错误。
+- Windows 优先级类别常量是标准值，如 `IDLE_PRIORITY_CLASS`、`BELOW_NORMAL_PRIORITY_CLASS`、`NORMAL_PRIORITY_CLASS`、`ABOVE_NORMAL_PRIORITY_CLASS`、`HIGH_PRIORITY_CLASS` 和 `REALTIME_PRIORITY_CLASS`。
+- 如果 `config.priority` 为 `ProcessPriority::None`（或任何 `as_win_const()` 返回 `None` 的变体），函数将直接退出，不查询或修改进程。
 
 ## 要求
 
 | 要求 | 值 |
 |------|-----|
-| 模块 | `apply` |
-| 可见性 | `pub`（crate 公开） |
-| 调用者 | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
-| 被调用者 | [get_handles](get_handles.md)、[log_error_if_new](log_error_if_new.md) |
-| Win32 API | [`GetPriorityClass`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getpriorityclass)、[`SetPriorityClass`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setpriorityclass)、[`GetLastError`](https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror) |
-| 权限 | `PROCESS_QUERY_LIMITED_INFORMATION`（读取）、`PROCESS_SET_INFORMATION` 或 `PROCESS_SET_LIMITED_INFORMATION`（写入）。在其他用户拥有的进程上设置 `Realtime` 或 `High` 优先级需要 `SeIncreaseBasePriorityPrivilege`。 |
+| 模块 | `apply.rs` |
+| Crate | `AffinityServiceRust` |
+| Windows API | `GetPriorityClass`、`SetPriorityClass`、`GetLastError` |
+| 调用者 | `scheduler.rs` / `main.rs` 中迭代匹配进程的编排代码 |
+| 被调用者 | [`get_handles`](get_handles.md)、[`log_error_if_new`](log_error_if_new.md)、`ProcessPriority::as_win_const`、`ProcessPriority::from_win_const`、`error_from_code_win32` |
+| 权限 | 需要具有 `PROCESS_QUERY_INFORMATION` 或 `PROCESS_QUERY_LIMITED_INFORMATION`（读取）和 `PROCESS_SET_INFORMATION`（写入）的进程句柄。 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 参考 | 链接 |
 |------|------|
-| 优先级枚举和 Win32 常量映射 | [ProcessPriority](../priority.rs/ProcessPriority.md) |
-| 进程级应用编排 | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
-| 配置模型 | [ProcessConfig](../config.rs/ProcessConfig.md) |
-| 句柄提取辅助函数 | [get_handles](get_handles.md) |
-| 错误去重 | [log_error_if_new](log_error_if_new.md) |
-| apply 模块概览 | [apply](README.md) |
+| apply 模块概述 | [`README`](README.md) |
+| ApplyConfigResult | [`ApplyConfigResult`](ApplyConfigResult.md) |
+| get_handles | [`get_handles`](get_handles.md) |
+| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
+| apply_affinity | [`apply_affinity`](apply_affinity.md) |
+| apply_io_priority | [`apply_io_priority`](apply_io_priority.md) |
+| apply_memory_priority | [`apply_memory_priority`](apply_memory_priority.md) |
+| ProcessLevelConfig | [`config.rs/ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
+| ProcessPriority | [`priority.rs/ProcessPriority`](../priority.rs/ProcessPriority.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

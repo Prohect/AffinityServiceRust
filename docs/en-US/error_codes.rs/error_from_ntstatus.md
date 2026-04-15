@@ -1,10 +1,10 @@
 # error_from_ntstatus function (error_codes.rs)
 
-Maps an NTSTATUS code to a human-readable symbolic name string. NTSTATUS values are returned by NT native API functions such as `NtSetInformationProcess` and `NtQueryInformationProcess`, which AffinityServiceRust uses for I/O priority management. This function translates the most commonly encountered status codes into their well-known constant names for diagnostic logging.
+Converts an `i32` NTSTATUS value to its well-known symbolic name string. This function provides human-readable translations for common NT-native API status codes encountered during process and thread management operations, such as `STATUS_ACCESS_DENIED`, `STATUS_INVALID_HANDLE`, and `STATUS_PROCESS_IS_TERMINATING`. Unknown status codes are formatted as hexadecimal strings.
 
 ## Syntax
 
-```error_codes.rs
+```rust
 pub fn error_from_ntstatus(status: i32) -> String
 ```
 
@@ -12,68 +12,76 @@ pub fn error_from_ntstatus(status: i32) -> String
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `status` | `i32` | The NTSTATUS code returned by an NT native API call. NTSTATUS values are signed 32-bit integers where negative values (high bit set) indicate errors, zero indicates success, and positive values indicate informational or warning statuses. |
+| `status` | `i32` | The NTSTATUS value returned by an NT-native API call (e.g., `NtQueryInformationProcess`, `NtSetInformationProcess`, `NtQueryInformationThread`, `NtQuerySystemInformation`). NTSTATUS values are signed 32-bit integers where negative values indicate errors, zero indicates success, and positive values indicate informational or warning statuses. |
 
 ## Return value
 
-A `String` containing the symbolic name for the given NTSTATUS code. If the code is not recognized, a hexadecimal fallback string in the format `"NTSTATUS_0x{code:08X}"` is returned.
+Returns a `String` containing the symbolic name of the status code. If the status code is not recognized, the function returns a hexadecimal string in the format `"NTSTATUS_0x{code:08X}"`.
+
+### Recognized status codes
+
+| NTSTATUS Value | Unsigned Hex | Returned String |
+|----------------|-------------|-----------------|
+| `0` | `0x00000000` | `STATUS_SUCCESS` |
+| `1` | `0x00000001` | `STATUS_WAIT_1` |
+| `-1073741823` | `0xC0000001` | `STATUS_UNSUCCESSFUL` |
+| `-1073741822` | `0xC0000002` | `STATUS_NOT_IMPLEMENTED` |
+| `-1073741821` | `0xC0000003` | `STATUS_INVALID_INFO_CLASS` |
+| `-1073741820` | `0xC0000004` | `STATUS_INFO_LENGTH_MISMATCH` |
+| `-1073741816` | `0xC0000008` | `STATUS_INVALID_HANDLE` |
+| `-1073741811` | `0xC000000D` | `STATUS_INVALID_PARAMETER` |
+| `-1073741801` | `0xC0000017` | `STATUS_NO_MEMORY` |
+| `-1073741800` | `0xC0000018` | `STATUS_CONFLICTING_ADDRESSES` |
+| `-1073741790` | `0xC0000022` | `STATUS_ACCESS_DENIED` |
+| `-1073741789` | `0xC0000023` | `STATUS_BUFFER_TOO_SMALL` |
+| `-1073741772` | `0xC0000034` | `STATUS_OBJECT_NAME_NOT_FOUND` |
+| `-1073741749` | `0xC000004B` | `STATUS_THREAD_IS_TERMINATING` |
+| `-1073741727` | `0xC0000061` | `STATUS_PRIVILEGE_NOT_HELD` |
+| `-1073741637` | `0xC00000BB` | `STATUS_NOT_SUPPORTED` |
+| `-1073741558` | `0xC000010A` | `STATUS_PROCESS_IS_TERMINATING` |
+
+### Fallback format
+
+Unrecognized status codes are formatted as:
+
+```text
+NTSTATUS_0xC0000XXX
+```
+
+The raw `i32` value is cast to `u32` for hexadecimal formatting to produce the conventional unsigned NTSTATUS representation.
 
 ## Remarks
 
-The function uses a `match` expression against the unsigned representation of the status code (via `i32::cast_unsigned`) to handle the common pattern where NTSTATUS error codes like `0xC0000022` are naturally expressed as unsigned hex literals.
+- The function uses `i32::cast_unsigned(status)` to convert the signed `i32` to its unsigned `u32` bit-equivalent before matching. This is necessary because NTSTATUS error codes (severity bits `11` in the high two bits) are conventionally written as unsigned hex values (e.g., `0xC0000022`) but are stored as negative `i32` values in Rust bindings.
 
-The following NTSTATUS codes are recognized:
+- The set of recognized codes covers the most common statuses encountered during AffinityServiceRust's operation — particularly those returned by `NtQuerySystemInformation`, `NtQueryInformationProcess`, `NtQueryInformationThread`, `NtSetInformationProcess`, and `NtSetTimerResolution`.
 
-| Code | Symbolic name | Description |
-|------|---------------|-------------|
-| `0x00000000` | `STATUS_SUCCESS` | The operation completed successfully. |
-| `0x00000001` | `STATUS_WAIT_1` | The caller-specified wait completed on object index 1. |
-| `0xC0000001` | `STATUS_UNSUCCESSFUL` | An unsuccessful generic status. |
-| `0xC0000002` | `STATUS_NOT_IMPLEMENTED` | The requested operation is not implemented. |
-| `0xC0000003` | `STATUS_INVALID_INFO_CLASS` | The information class specified is not valid for the operation. |
-| `0xC0000004` | `STATUS_INFO_LENGTH_MISMATCH` | The supplied buffer length is incorrect for the information class. |
-| `0xC0000008` | `STATUS_INVALID_HANDLE` | An invalid HANDLE was specified. |
-| `0xC000000D` | `STATUS_INVALID_PARAMETER` | An invalid parameter was passed to a service or function. |
-| `0xC0000017` | `STATUS_NO_MEMORY` | Insufficient virtual memory or paging file quota. |
-| `0xC0000018` | `STATUS_CONFLICTING_ADDRESSES` | The specified address range conflicts with an existing allocation. |
-| `0xC0000022` | `STATUS_ACCESS_DENIED` | The caller does not have the required access rights. |
-| `0xC0000023` | `STATUS_BUFFER_TOO_SMALL` | The supplied buffer is too small to receive the requested data. |
-| `0xC0000034` | `STATUS_OBJECT_NAME_NOT_FOUND` | The named object does not exist. |
-| `0xC000004B` | `STATUS_THREAD_IS_TERMINATING` | The target thread is in the process of terminating. |
-| `0xC0000061` | `STATUS_PRIVILEGE_NOT_HELD` | A required privilege is not held by the caller. |
-| `0xC00000BB` | `STATUS_NOT_SUPPORTED` | The request is not supported. |
-| `0xC000010A` | `STATUS_PROCESS_IS_TERMINATING` | The target process is in the process of terminating. |
+- `STATUS_INFO_LENGTH_MISMATCH` (`0xC0000004`) is especially significant in this project: it is the retry signal used by [`ProcessSnapshot::take`](../process.rs/ProcessSnapshot.md) when the buffer passed to `NtQuerySystemInformation` is too small.
 
-### Common scenarios in AffinityServiceRust
+- `STATUS_PROCESS_IS_TERMINATING` (`0xC000010A`) and `STATUS_THREAD_IS_TERMINATING` (`0xC000004B`) are commonly seen when attempting to query or set properties on processes/threads that are in the process of exiting — a normal occurrence in a system-wide process manager.
 
-- **`STATUS_ACCESS_DENIED` (0xC0000022):** Returned when attempting to set I/O priority on a protected process without sufficient privileges.
-- **`STATUS_PROCESS_IS_TERMINATING` (0xC000010A):** Returned when the target process exits between handle acquisition and the API call — a benign race condition in the polling loop.
-- **`STATUS_THREAD_IS_TERMINATING` (0xC000004B):** Similar race condition at the thread level.
-- **`STATUS_PRIVILEGE_NOT_HELD` (0xC0000061):** Returned when trying to set `High` I/O priority without `SeIncreaseBasePriorityPrivilege`.
+- Unlike [`error_from_code_win32`](error_from_code_win32.md), which handles Win32 error codes (`u32` values from `GetLastError`), this function handles NTSTATUS values (`i32` values returned directly by NT-native APIs). The two code spaces are distinct and should not be mixed.
 
-### Difference from Win32 error codes
-
-NTSTATUS codes use a different numbering scheme than Win32 error codes. While both can represent the same conceptual errors (e.g., access denied), they are numerically distinct and must not be interchanged. Use [error_from_code_win32](error_from_code_win32.md) for Win32 `GetLastError`-style codes and this function for NTSTATUS values from NT native API calls.
+- The function allocates a new `String` on each call. For hot paths where the same status code is translated repeatedly, callers should consider caching the result or logging conditionally (as done by [`is_new_error`](../logging.rs/is_new_error.md)).
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `error_codes` |
-| Callers | [apply_io_priority](../apply.rs/apply_io_priority.md), [apply_memory_priority](../apply.rs/apply_memory_priority.md) |
-| Callees | *(none — pure data mapping)* |
-| NT API | `NtSetInformationProcess`, `NtQueryInformationProcess` (callers produce the status codes translated here) |
+| **Module** | `error_codes.rs` |
+| **Callers** | `winapi.rs`, `process.rs` — anywhere an NT-native API returns an NTSTATUS value that needs to be logged or displayed. |
+| **Callees** | None (pure function, no side effects) |
+| **API** | None — this is a lookup table, not an API wrapper |
+| **Platform** | Platform-independent logic; the status codes it translates are Windows NT-specific. |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| Win32 error code translation | [error_from_code_win32](error_from_code_win32.md) |
-| I/O priority enum (primary use case) | [IOPriority](../priority.rs/IOPriority.md) |
-| Memory priority enum | [MemoryPriority](../priority.rs/MemoryPriority.md) |
-| Logging and error deduplication | [logging module](../logging.rs/README.md) |
-| Module overview | [error_codes module](README.md) |
+| error_from_code_win32 function | [error_from_code_win32](error_from_code_win32.md) |
+| ProcessSnapshot::take | [ProcessSnapshot](../process.rs/ProcessSnapshot.md) |
+| error_codes module overview | [README](README.md) |
+| winapi module | [winapi.rs](../winapi.rs/README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

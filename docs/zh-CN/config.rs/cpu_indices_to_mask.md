@@ -1,76 +1,75 @@
 # cpu_indices_to_mask 函数 (config.rs)
 
-将一组 CPU 索引切片转换为 `usize` 位掩码，其中每个置位的比特对应输入中存在的一个 CPU 索引。大于或等于 64 的索引将被静默忽略，因为它们无法用单个 64 位掩码表示。
+将 CPU 索引切片转换为适用于 Windows 亲和性 API（如 `SetProcessAffinityMask`）的 `usize` 位掩码。输入中的每个 CPU 索引会设置输出掩码中对应的位位置。
 
 ## 语法
 
-```rust
-pub fn cpu_indices_to_mask(cpus: &[u32]) -> usize
+```AffinityServiceRust/src/config.rs#L119-127
+pub fn cpu_indices_to_mask(cpus: &[u32]) -> usize {
+    let mut mask: usize = 0;
+    for &cpu in cpus {
+        if cpu < 64 {
+            mask |= 1usize << cpu;
+        }
+    }
+    mask
+}
 ```
 
 ## 参数
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `cpus` | `&[u32]` | 要编码的逻辑 CPU 索引切片。重复值是无害的（比特位设置是幂等操作）。切片不需要排序。 |
+| `cpus` | `&[u32]` | CPU 索引值切片。每个值表示一个从零开始的逻辑处理器编号。大于等于 64 的值会被静默忽略，因为 64 位 Windows 上的 `usize` 位掩码只能表示处理器 0–63。 |
 
 ## 返回值
 
-返回一个 `usize` 位掩码。如果值 *N* 出现在 `cpus` 中且 *N* < 64，则第 *N* 位被置位。如果 `cpus` 为空或所有索引 ≥ 64，则返回 `0`。
+类型：`usize`
 
-## 备注
-
-### 比特布局
-
-最低有效位（第 0 位）代表 CPU 0。例如，输入 `[0, 2, 4]` 产生掩码 `0b10101`（`0x15`）。
-
-### 64 核限制
-
-由于返回类型为 `usize`（在 x86-64 Windows 上为 64 位），索引 ≥ 64 的值会被静默丢弃。这与 Windows 的 `DWORD_PTR` 亲和性掩码一致，后者每个处理器组也最多支持 64 个处理器。对于拥有超过 64 个逻辑处理器的系统，应使用 CPU 集合 API（[cpu_set_cpus](ProcessConfig.md) 字段）而非亲和性掩码。
-
-### 逆操作
-
-[mask_to_cpu_indices](mask_to_cpu_indices.md) 执行反向转换，将位掩码展开为排序后的 CPU 索引向量。
-
-### 在代码库中的使用
-
-此函数被以下调用方使用：
-
-- [parse_mask](parse_mask.md)，它将 [parse_cpu_spec](parse_cpu_spec.md) → `cpu_indices_to_mask` 串联为一个便捷包装。
-- apply 模块，在根据 [ProcessConfig](ProcessConfig.md)`.affinity_cpus` 构建亲和性掩码以供 `SetProcessAffinityMask` 使用时调用。
-- winapi 模块，用于 CPU 集合和掩码转换。
+一个位掩码，如果值 `N` 出现在 `cpus` 切片中，则位 *N* 被设置为 `1`，否则为 `0`。如果 `cpus` 为空或所有索引都 ≥ 64，则返回 `0`。
 
 ### 示例
 
-| 输入 | 输出 | 备注 |
+| 输入 | 输出 | 说明 |
 |------|------|------|
-| `&[]` | `0` | 空输入产生零掩码。 |
-| `&[0]` | `1` | 单个 CPU 0。 |
-| `&[0, 1, 2, 3]` | `0xF` | 连续范围。 |
-| `&[0, 2, 4, 63]` | `0x8000000000000015` | 稀疏索引，包含最后一个可表示的比特位。 |
-| `&[64, 128]` | `0` | 所有索引超出范围，被静默忽略。 |
-| `&[0, 0, 0]` | `1` | 重复值是无害的。 |
+| `&[0, 1, 2, 3]` | `0x0F` | 位 0–3 被设置 |
+| `&[0, 2, 4]` | `0x15` | 位 0、2、4 被设置 |
+| `&[]` | `0` | 无位被设置 |
+| `&[64, 65]` | `0` | 所有索引 ≥ 64，静默跳过 |
+| `&[0, 63]` | `0x8000000000000001` | 第一个和最后一个可表示的位 |
+
+## 备注
+
+- **64 核限制**：此函数仅限于表示前 64 个逻辑处理器。在拥有超过 64 个逻辑处理器（多处理器组）的系统上，≥ 64 的索引会被静默丢弃。对于超过 64 核的系统，应优先使用 CPU 集合 API 而非基于位掩码的亲和性。
+
+- **`mask_to_cpu_indices` 的逆操作**：此函数是 [`mask_to_cpu_indices`](mask_to_cpu_indices.md) 的逻辑逆操作。将掩码转换为索引再转换回来会产生原始掩码：对于任何 `u64` 值 `m`（当转换为 `usize` 时），`cpu_indices_to_mask(&mask_to_cpu_indices(m)) == m`。
+
+- **重复值处理**：输入切片中的重复值是无害的——通过按位 OR 两次设置同一位是幂等的。
+
+- **无需排序**：输入不需要排序。函数无论顺序如何都会遍历所有元素。
+
+- **平台说明**：在 64 位 Windows 上，`usize` 为 64 位宽，因此所有索引 0–63 都是可表示的。在假设的 32 位构建中，索引 32–63 也会由于 `usize` 的宽度而被静默忽略，但 AffinityServiceRust 仅面向 64 位 Windows。
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `config` (`src/config.rs`) |
-| **调用方** | [parse_mask](parse_mask.md)、apply 模块（`apply_affinity`、`apply_prime_threads_promote`）、winapi 模块（`cpusetids_from_mask`） |
-| **被调用方** | 无 |
-| **逆操作** | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
+| 要求 | 值 |
+|------|-----|
+| 模块 | `config.rs` |
+| 可见性 | `pub` |
+| 调用方 | [`parse_mask`](parse_mask.md)、`apply.rs`（亲和性应用逻辑） |
+| 被调用方 | 无 |
+| API | 无（纯计算） |
+| 权限 | 无 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 资源 | 链接 |
 |------|------|
-| 位掩码转索引列表 | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
-| CPU 规格字符串解析器 | [parse_cpu_spec](parse_cpu_spec.md) |
-| 便捷规格转掩码 | [parse_mask](parse_mask.md) |
-| 紧凑范围格式化器 | [format_cpu_indices](format_cpu_indices.md) |
-| 进程级配置（affinity_cpus 字段） | [ProcessConfig](ProcessConfig.md) |
-| 模块概述 | [config 模块](README.md) |
+| mask_to_cpu_indices | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
+| parse_cpu_spec | [parse_cpu_spec](parse_cpu_spec.md) |
+| format_cpu_indices | [format_cpu_indices](format_cpu_indices.md) |
+| parse_mask | [parse_mask](parse_mask.md) |
+| config 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

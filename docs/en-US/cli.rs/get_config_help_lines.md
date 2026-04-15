@@ -1,103 +1,58 @@
 # get_config_help_lines function (cli.rs)
 
-Returns a vector of static string slices containing a configuration file help template. These lines describe the format and syntax of the AffinityServiceRust configuration file in a comment block suitable for embedding at the top of converted or auto-grouped configuration files. The template provides a quick-reference for the colon-delimited rule format, field meanings, CPU alias syntax, and group syntax.
+Returns a vector of static string slices containing the complete configuration file reference template. This template documents the INI-style configuration format including terminology, field descriptions, CPU specification formats, priority levels, ideal processor syntax, and process group syntax. The returned lines are suitable for embedding at the top of converted configuration files or printing to the console.
 
 ## Syntax
 
-```rust
-pub fn get_config_help_lines() -> Vec<&'static str>
+```AffinityServiceRust/src/cli.rs#L168-170
+pub fn get_config_help_lines() -> Vec<&'static str> {
+    vec![
+        r#"
 ```
 
 ## Parameters
 
-This function takes no parameters.
+None.
 
 ## Return value
 
-Returns a `Vec<&'static str>` containing the help template lines. Each element is a single line of text, prefixed with `##` to form a comment block when written to a configuration file. The vector contains 24 lines covering:
+Type: `Vec<&'static str>`
 
-- A header banner (`## ===...===`).
-- A title line (`## AffinityServiceRust Configuration File`).
-- A documentation pointer (`## Full documentation: docs/cli.md and docs/config.md`).
-- The colon-delimited rule format synopsis (`## Format: process:priority:affinity:cpuset:prime:io:memory:ideal:grade`).
-- Per-field descriptions (process, priority, affinity, cpuset, prime, io, memory, ideal, grade) with example values.
-- CPU alias examples (`*a`, `*p`, `*e`).
-- Group syntax synopsis (`{ proc1: proc2 }:priority:affinity...`).
-- A closing banner.
+A vector containing one or more static string slices. Each slice is a multi-line block of comment-prefixed documentation text (lines begin with `##`). The content covers:
+
+| Section | Description |
+|---------|-------------|
+| **Terminology** | Definitions of P-core, E-core, `p`, `pp`, `e` shorthand for Intel hybrid CPUs. |
+| **Config Format** | The full field order: `process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority:ideal_processor:grade`. |
+| **CPU Specification Formats** | All supported formats including ranges (`0-7`), individual CPUs (`0;4;8`), hex bitmasks (`0xFF`), and alias references (`*alias`). |
+| **Priority Levels** | Valid values for process priority, I/O priority, and memory priority fields. |
+| **Ideal Processor Syntax** | Format for `*alias[@prefix1;prefix2;...]` with multi-segment chaining examples. |
+| **Process Groups** | Named and anonymous `{ }` group syntax for applying a single rule to multiple processes. |
 
 ## Remarks
 
-### Purpose
-
-This function exists to provide a reusable help template that can be:
-
-1. **Printed to the console** — via [print_config_help](print_config_help.md), which iterates over the returned lines and logs each one.
-2. **Embedded in generated files** — the [convert](../config.rs/convert.md) and [sort_and_group_config](../config.rs/sort_and_group_config.md) functions can prepend these lines to their output files so that users have an in-file reference for the configuration syntax.
-
-By returning a `Vec<&'static str>` rather than printing directly, the function gives callers full control over how and where the lines are rendered.
-
-### Static lifetime
-
-All strings in the returned vector have `'static` lifetime because they are string literals embedded in the binary. This means the vector can be stored, iterated multiple times, or passed across function boundaries without lifetime concerns.
-
-### Comment prefix convention
-
-Each line begins with `##` (double hash). In the AffinityServiceRust configuration file format, lines starting with `#` or `##` are treated as comments. The double-hash convention distinguishes auto-generated help comments from user-written single-hash comments, making it easy to strip or update the template without disturbing user annotations.
-
-### Content summary
-
-The template documents the nine colon-delimited fields of a process rule:
-
-| Field | Position | Example values |
-|-------|----------|----------------|
-| process | 1 | `game.exe` |
-| priority | 2 | `none`, `idle`, `below normal`, `normal`, `above normal`, `high`, `real time` |
-| affinity | 3 | `0-7`, `0;4;8`, `0xFF`, `*alias` |
-| cpuset | 4 | `*p`, `*e`, `*alias` |
-| prime | 5 | `?10*pN01`, `*p@module.dll` |
-| io | 6 | `none`, `very low`, `low`, `normal`, `high` |
-| memory | 7 | `none`, `very low`, `low`, `medium`, `below normal`, `normal` |
-| ideal | 8 | `*alias[@prefix]`, `0` |
-| grade | 9 | `1` (every loop), `5` (every 5th loop) |
-
-### Typical usage
-
-```rust
-// Print to console
-for line in get_config_help_lines() {
-    log!("{}", line);
-}
-
-// Embed in output file
-let mut output = String::new();
-for line in get_config_help_lines() {
-    output.push_str(line);
-    output.push('\n');
-}
-```
+- The returned strings use `##` as the comment prefix (double hash), which is the comment syntax recognized by the AffinityServiceRust configuration parser (lines starting with `#` are comments).
+- This function is called by [convert](../config.rs/convert.md) to prepend a help header to converted Process Lasso configuration files, and by [print_config_help](print_config_help.md) to display the reference on the console.
+- The content is compiled into the binary as `&'static str` literals, so there is no file I/O or allocation beyond the `Vec` itself.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
 | Module | `cli` |
-| Callers | [print_config_help](print_config_help.md), [print_help_all](print_help_all.md) (indirectly via `print_config_help`), [convert](../config.rs/convert.md), [sort_and_group_config](../config.rs/sort_and_group_config.md) |
-| Callees | None (pure function) |
+| Callers | [print_config_help](print_config_help.md), [print_help_all](print_help_all.md), [convert](../config.rs/convert.md) |
+| Callees | None |
 | API | None |
-| Privileges | N/A |
+| Privileges | None |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Prints config help lines to log output | [print_config_help](print_config_help.md) |
-| Combined CLI + config help | [print_help_all](print_help_all.md) |
-| Configuration file parser | [read_config](../config.rs/read_config.md) |
-| Process Lasso config converter | [convert](../config.rs/convert.md) |
-| Auto-grouping utility | [sort_and_group_config](../config.rs/sort_and_group_config.md) |
-| Process rule structure | [ProcessConfig](../config.rs/ProcessConfig.md) |
-| CLI arguments structure | [CliArgs](CliArgs.md) |
+| Resource | Link |
+|----------|------|
+| print_config_help | [print_config_help](print_config_help.md) |
+| print_help_all | [print_help_all](print_help_all.md) |
+| convert | [convert](../config.rs/convert.md) |
+| read_config | [read_config](../config.rs/read_config.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

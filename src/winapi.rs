@@ -262,7 +262,7 @@ pub fn get_thread_handle(tid: u32, pid: u32, process_name: &str) -> Option<Threa
         return None;
     }
     let r_handle = try_open_thread(pid, tid, process_name, THREAD_QUERY_INFORMATION, 1);
-    let w_limited_handle = try_open_thread(tid, pid, process_name, THREAD_SET_LIMITED_INFORMATION, 2);
+    let w_limited_handle = try_open_thread(pid, tid, process_name, THREAD_SET_LIMITED_INFORMATION, 2);
     let w_handle = try_open_thread(pid, tid, process_name, THREAD_SET_INFORMATION, 3);
     Some(ThreadHandle {
         r_limited_handle,

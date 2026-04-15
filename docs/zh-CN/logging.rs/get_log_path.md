@@ -1,10 +1,10 @@
 # get_log_path 函数 (logging.rs)
 
-在 `logs/` 目录下构建一个带日期前缀的日志文件路径。该函数从 [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) 读取缓存的本地时间以派生 `YYYYMMDD` 日期组件，并在 `.log` 扩展名之前附加一个可选的后缀。如果 `logs/` 目录不存在，将自动创建。
+在 `logs/` 目录下构建带日期戳的日志文件路径。该函数从 [`LOCAL_TIME_BUFFER`](statics.md#local_time_buffer) 静态变量读取当前本地时间，以 `YYYYMMDD<suffix>.log` 的格式构造文件名，并在返回路径之前确保 `logs/` 目录存在。
 
 ## 语法
 
-```logging.rs
+```rust
 fn get_log_path(suffix: &str) -> PathBuf
 ```
 
@@ -12,55 +12,68 @@ fn get_log_path(suffix: &str) -> PathBuf
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `suffix` | `&str` | 附加在日期前缀和 `.log` 扩展名之间的字符串。对于主日志文件传递 `""`，对于查找模式日志文件传递 `".find"`。后缀按原样插入——如果需要点分隔符，必须包含在字符串中（例如 `".find"` 而非 `"find"`）。 |
+| `suffix` | `&str` | 附加在文件名日期部分之后、`.log` 扩展名之前的字符串。主日志文件传入 `""`，find 模式日志文件传入 `".find"`。 |
 
 ## 返回值
 
-一个 `PathBuf`，表示日志文件的完全限定相对路径，例如 `logs/20250114.log` 或 `logs/20250114.find.log`。
+返回一个指向日志文件的 `PathBuf`。路径相对于工作目录，格式为 `logs/YYYYMMDD<suffix>.log`。
+
+### 示例
+
+| `suffix` | 日期 | 生成的路径 |
+|----------|------|------------|
+| `""` | 2025-01-15 | `logs/20250115.log` |
+| `".find"` | 2025-01-15 | `logs/20250115.find.log` |
 
 ## 备注
 
-- 该函数通过 [get_local_time!](get_local_time.md) 宏获取 [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) 互斥锁，使用 `chrono::Datelike` 提取 `year`、`month` 和 `day` 组件，然后在执行任何文件系统操作之前显式释放守卫。这一点很重要，因为 `create_dir_all` 可能会阻塞在 I/O 上，在 I/O 期间持有时间缓冲区锁会不必要地延迟其他线程。
-- `logs/` 目录通过 `std::fs::create_dir_all` 创建（如果尚不存在）。`create_dir_all` 的结果被静默丢弃（`let _ = …`），因此此时创建目录的失败不会产生错误——它将在调用者尝试打开文件时才浮现。
-- 此函数**不是** `pub` 的——它是模块私有的（`fn`，而非 `pub fn`）。它仅在 [LOG_FILE](LOG_FILE.md) 和 [FIND_LOG_FILE](FIND_LOG_FILE.md) 的延迟初始化期间被调用，不打算在 `logging` 模块外部使用。
-- 文件名的日期部分由函数被调用时 [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) 中的值决定。由于 `LOG_FILE` 和 `FIND_LOG_FILE` 是 `Lazy` 静态变量，路径只计算一次——在首次访问时——生成的文件句柄在整个进程生命周期中被重用。日志文件不会在午夜自动轮换；需要新进程（或服务重启）才能开始新的日期日志文件。
+- 此函数为**模块私有**（`fn` 不带 `pub`）。它在 [`LOG_FILE`](statics.md#log_file) 和 [`FIND_LOG_FILE`](statics.md#find_log_file) 静态变量的 `Lazy` 初始化期间被调用，在 `logging` 模块外部无法访问。
 
-### 路径格式
+- 该函数锁定 [`LOCAL_TIME_BUFFER`](statics.md#local_time_buffer) 互斥量以读取缓存的本地时间。锁在继续创建目录之前被显式释放（通过 `drop(time)`），以最小化锁的持有时间。
 
-生成的路径遵循以下模式：
+- `logs/` 目录通过 `std::fs::create_dir_all` 创建（如果不存在）。如果目录创建失败，错误会被静默忽略（`let _ = create_dir_all(...)`），返回的路径可能指向一个不存在的目录。后续使用此路径的文件打开操作将在那时失败。
 
-```/dev/null/example.txt#L1-1
-logs/{YYYY}{MM}{DD}{suffix}.log
-```
+- 日期组件使用 `chrono::Datelike` trait 方法（`year()`、`month()`、`day()`）提取，并进行零填充格式化以确保一致的 8 位日期字符串。
 
-示例：
+### 算法
 
-| 后缀 | 生成的路径 |
-|------|-----------|
-| `""` | `logs/20250114.log` |
-| `".find"` | `logs/20250114.find.log` |
+1. 锁定 `LOCAL_TIME_BUFFER` 互斥量并提取 `(year, month, day)`。
+2. 释放锁。
+3. 构造 `logs/` 目录的 `PathBuf`。
+4. 如果目录不存在，尝试创建它（包括父目录）。
+5. 将格式化后的文件名 `YYYYMMDD<suffix>.log` 与目录路径拼接。
+6. 返回生成的 `PathBuf`。
+
+### 调用位置
+
+此函数在程序初始化期间恰好被调用两次：
+
+- [`LOG_FILE`](statics.md#log_file) 的 `Lazy` 初始化器：`get_log_path("")`
+- [`FIND_LOG_FILE`](statics.md#find_log_file) 的 `Lazy` 初始化器：`get_log_path(".find")`
+
+由于这些静态变量是延迟初始化的，`get_log_path` 直到第一条日志消息被写入或第一条 find 日志条目被记录时才会被调用。
 
 ## 要求
 
 | 要求 | 值 |
 |------|-----|
-| 模块 | `logging` |
-| 可见性 | 模块私有（`fn`，而非 `pub fn`） |
-| 调用方 | [LOG_FILE](LOG_FILE.md) 初始化器、[FIND_LOG_FILE](FIND_LOG_FILE.md) 初始化器 |
-| 被调用方 | [get_local_time!](get_local_time.md)、`std::fs::create_dir_all` |
-| Crate 依赖 | `chrono` (`Datelike`)、`std::path::PathBuf`、`std::fs::create_dir_all` |
+| **模块** | `logging.rs` |
+| **可见性** | 私有（模块内部） |
+| **调用方** | `LOG_FILE` 和 `FIND_LOG_FILE` 的 `Lazy` 初始化器 |
+| **被调用方** | `LOCAL_TIME_BUFFER.lock()`、`chrono::Datelike` 方法、`std::fs::create_dir_all`、`PathBuf::join` |
+| **依赖** | `chrono`、`std::fs`、`std::path::PathBuf` |
+| **平台** | 跨平台（无 Windows 特定 API 调用） |
 
 ## 另请参阅
 
 | 主题 | 链接 |
 |------|------|
-| 由此函数初始化的主日志文件句柄 | [LOG_FILE](LOG_FILE.md) |
-| 由此函数初始化的查找模式日志文件句柄 | [FIND_LOG_FILE](FIND_LOG_FILE.md) |
-| 用于日期派生的缓存本地时间 | [LOCAL_TIME_BUFFER](LOCAL_TIME_BUFFER.md) |
-| 带时间戳的日志写入 | [log_message](log_message.md) |
-| 查找模式日志写入 | [log_to_find](log_to_find.md) |
-| logging 模块概述 | [logging 模块](README.md) |
+| log_message 函数 | [log_message](log_message.md) |
+| log_to_find 函数 | [log_to_find](log_to_find.md) |
+| LOG_FILE 静态变量 | [statics](statics.md#log_file) |
+| FIND_LOG_FILE 静态变量 | [statics](statics.md#find_log_file) |
+| LOCAL_TIME_BUFFER 静态变量 | [statics](statics.md#local_time_buffer) |
+| logging 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

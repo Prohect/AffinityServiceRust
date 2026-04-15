@@ -1,56 +1,65 @@
 # ETW_ACTIVE static (event_trace.rs)
 
-An atomic boolean flag that indicates whether the ETW (Event Tracing for Windows) trace session is currently active. This flag is shared across threads without mutex overhead, using `SeqCst` ordering for both loads and stores to ensure consistent visibility. It guards the [EtwProcessMonitor::stop](EtwProcessMonitor.md) method against redundant teardown and signals the overall session lifecycle state.
+An `AtomicBool` flag indicating whether the ETW (Event Tracing for Windows) session is currently active. This flag is used to guard against redundant stop operations and to coordinate the lifecycle of the ETW trace session managed by [`EtwProcessMonitor`](EtwProcessMonitor.md).
 
 ## Syntax
 
-```event_trace.rs
+```rust
 static ETW_ACTIVE: AtomicBool = AtomicBool::new(false);
 ```
 
+## Type
+
+`std::sync::atomic::AtomicBool`
+
 ## Remarks
 
-`ETW_ACTIVE` is initialized to `false` and transitions through the following states during the ETW session lifecycle:
+### State transitions
 
-| State | Set by | Meaning |
-|-------|--------|---------|
-| `false` → `true` | [EtwProcessMonitor::start](EtwProcessMonitor.md) | The trace session was started successfully and the background processing thread has been spawned. |
-| `true` → `false` | [EtwProcessMonitor::stop](EtwProcessMonitor.md) | The trace session is being torn down. `CloseTrace` and `ControlTraceW` with `EVENT_TRACE_CONTROL_STOP` are called, and the background thread is joined. |
+| Transition | Trigger | Ordering |
+|------------|---------|----------|
+| `false` → `true` | [`EtwProcessMonitor::start`](EtwProcessMonitor.md) successfully spawns the background processing thread. | `SeqCst` (store) |
+| `true` → `false` | [`EtwProcessMonitor::stop`](EtwProcessMonitor.md) is called (either explicitly or via `Drop`). | `SeqCst` (store) |
+
+### Usage pattern
+
+- **In `start()`**: After the ETW session has been fully initialized (trace started, provider enabled, trace opened, and processing thread spawned), `ETW_ACTIVE` is set to `true` via `store(true, Ordering::SeqCst)`.
+
+- **In `stop()`**: The method first checks `ETW_ACTIVE` via `load(Ordering::SeqCst)`. If the flag is already `false`, the stop operation returns immediately — this prevents double-close of trace handles and redundant cleanup. If `true`, the flag is set to `false` before proceeding with cleanup (closing the trace, stopping the session, joining the thread, and clearing the global sender).
 
 ### Thread safety
 
-`ETW_ACTIVE` uses `Ordering::SeqCst` for all loads and stores, which is the strongest memory ordering guarantee. This ensures that:
+`ETW_ACTIVE` uses `AtomicBool` with `SeqCst` ordering for all operations, providing the strongest memory ordering guarantee. This ensures that:
 
-- The `stop` method on one thread sees the `true` value set by `start` on another thread.
-- A second call to `stop` (including the implicit call from `Drop`) observes the `false` value set by the first call and short-circuits immediately.
+- The flag update in `stop()` is visible to any concurrent reader immediately.
+- The guard check at the top of `stop()` correctly prevents concurrent or repeated stop calls from racing.
 
-### Guard against double-stop
+### Visibility
 
-The `stop` method checks `ETW_ACTIVE` at entry and returns immediately if it is already `false`. This prevents double-invocation issues when `stop` is called explicitly and then again via the `Drop` implementation on [EtwProcessMonitor](EtwProcessMonitor.md).
+This static is **module-private** (no `pub` modifier). It is only accessed internally by the `EtwProcessMonitor::start` and `EtwProcessMonitor::stop` methods.
 
-### Module-private visibility
+### Initialization
 
-This static is **not** marked `pub` — it is internal to the `event_trace` module. External code interacts with the ETW session exclusively through the [EtwProcessMonitor](EtwProcessMonitor.md) API.
+Unlike the other statics in this module (which use `once_cell::sync::Lazy`), `ETW_ACTIVE` is a plain `AtomicBool` initialized to `false` at compile time. No lazy initialization is needed because `AtomicBool::new` is a `const fn`.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `event_trace` |
-| Type | `AtomicBool` (from `std::sync::atomic`) |
-| Callers | [EtwProcessMonitor::start](EtwProcessMonitor.md), [EtwProcessMonitor::stop](EtwProcessMonitor.md) |
-| Callees | *(none — atomic primitive)* |
-| Privileges | None |
+| **Module** | `event_trace.rs` |
+| **Visibility** | Private (module-internal) |
+| **Accessed by** | [`EtwProcessMonitor::start`](EtwProcessMonitor.md), [`EtwProcessMonitor::stop`](EtwProcessMonitor.md) |
+| **Dependencies** | `std::sync::atomic::{AtomicBool, Ordering}` |
+| **Platform** | Windows |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| Global ETW event sender channel | [ETW_SENDER](ETW_SENDER.md) |
-| ETW session manager struct | [EtwProcessMonitor](EtwProcessMonitor.md) |
-| Process event payload | [EtwProcessEvent](EtwProcessEvent.md) |
-| Module overview | [event_trace module](README.md) |
+| EtwProcessMonitor struct | [EtwProcessMonitor](EtwProcessMonitor.md) |
+| ETW_SENDER static | [ETW_SENDER](ETW_SENDER.md) |
+| EtwProcessEvent struct | [EtwProcessEvent](EtwProcessEvent.md) |
+| event_trace module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

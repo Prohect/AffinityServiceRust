@@ -1,151 +1,120 @@
 # sort_and_group_config 函数 (config.rs)
 
-读取现有的配置文件，识别共享相同规则设置的进程，并写入一个新的配置文件，将这些进程合并为命名的 `{ ... }` 组块。这减少了重复内容，提高了包含大量相同优先级、亲和性和调度设置的进程的大型配置文件的可维护性。
+自动将共享相同规则设置的进程分组为命名的组块，以减少配置文件中的重复内容。该函数读取现有配置文件，识别规则字段（优先级、亲和性、cpuset 等）完全相同的进程，将它们合并为 `{ }` 组块并生成组名，然后输出一个紧凑、去重的配置文件。
 
 ## 语法
 
-```rust
+```AffinityServiceRust/src/config.rs#L1065-1066
 pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>)
 ```
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
+| 参数 | 类型 | 说明 |
 |------|------|------|
-| `in_file` | `Option<String>` | 要读取和分析的输入配置文件路径。如果为 `None`，则记录错误并立即返回。 |
-| `out_file` | `Option<String>` | 要写入的输出配置文件路径。如果为 `None`，则记录错误并立即返回。输出文件将被创建或覆盖。 |
+| `in_file` | `Option<String>` | 要读取和分析的输入配置文件路径。文件必须是 UTF-8 编码的有效 AffinityServiceRust 配置。如果为 `None`，函数记录错误并立即返回。对应 `-in <file>` CLI 参数。 |
+| `out_file` | `Option<String>` | 分组后的配置将写入的输出文件路径。如果为 `None`，函数记录错误并立即返回。对应 `-out <file>` CLI 参数。 |
 
 ## 返回值
 
-此函数没有返回值。结果写入输出文件，摘要统计信息通过日志输出。
+此函数不返回值。输出写入 `out_file` 指定的文件。诊断消息和汇总统计通过 `log!` 宏发出。
 
 ## 备注
 
-### 用途
+### 算法概述
 
-随着时间推移，配置文件会积累许多共享相同设置的独立进程规则。例如，十个后台工具可能都共享 `below normal:8-15:0:0:none:none`。`sort_and_group_config` 检测这些重复项并使用紧凑的组表示法重写文件，减少视觉混乱并使批量更改更加容易。
+1. **读取并划分行** — 逐行读取输入文件并划分为两个部分：
+   - **前言区**：注释行（`#` 前缀）、空行、常量定义（`@` 前缀）和别名定义（`*` 前缀）。这些内容在输出中原样保留。
+   - **规则区**：其余所有内容 — 单独的进程规则行和 `{ }` 组块。
 
-### 算法
+2. **提取规则键** — 对于每条进程规则（无论是独立的还是位于组块内），将进程名称与规则字符串（第一个 `:` 之后的全部内容）分离。规则字符串成为分组键。
 
-1. **读取并分类行** — 将输入文件读入内存。行被分为两类：
-   - **前言行** — 注释 (`#`)、空行、常量 (`@`) 和别名 (`*`) 按原样收集，并逐字保留到输出中。
-   - **规则行** — 单独的进程规则 (`name:rule`) 和组块 (`{ ... }:rule`) 被分解为成员名称和规则字符串。对于单独规则，规则字符串是第一个 `:` 之后的所有内容；对于组，是 `}:` 之后的后缀。
+3. **按规则分组** — 使用 `HashMap<String, Vec<String>>` 将每个唯一规则字符串映射到共享该规则的进程名称列表。另有一个 `rule_order` 向量保留插入顺序，确保输出按首次出现的顺序保持稳定排列。
 
-2. **组块解析** — 当遇到 `{` 时，解析器使用 [collect_group_block](collect_group_block.md)（多行块）或内联解析（单行块）收集成员名称，然后将所有成员与规则后缀字符串关联。
+4. **生成分组输出** — 对于每个唯一规则字符串（按插入顺序）：
+   - 如果只有**一个**进程使用该规则，则输出为单行规则：`name:rule_string`。
+   - 如果**多个**进程共享该规则，则输出为命名组块。组名自动生成为 `grp_0`、`grp_1` 等。
 
-3. **构建规则到成员的映射** — 一个 `HashMap<String, Vec<String>>` 将每个唯一的规则字符串映射到共享该规则的进程名称列表。一个单独的 `Vec<String>` (`rule_order`) 保留不同规则首次遇到的顺序，确保输出顺序稳定。
+5. **格式化组** — 对于多进程组：
+   - 如果单行表示（`grp_N { a: b: c }:rule`）短于 128 个字符，则在一行内输出。
+   - 否则使用多行格式，4 空格缩进，128 字符处换行：
+     ```/dev/null/example.ini#L1-4
+     grp_0 {
+         process1.exe: process2.exe: process3.exe
+         process4.exe: process5.exe
+     }:priority:affinity:cpuset:prime:io:mem:ideal:grade
+     ```
 
-4. **排序和去重** — 对于每个唯一的规则字符串，成员列表按字母顺序排序并去重。
+6. **去重** — 在每个组内，成员名称在输出前通过 `sort()` 和 `dedup()` 进行字母排序和去重。
 
-5. **生成输出** — 首先写入前言行（到最后一个非空前言行为止）。然后，对于每个唯一规则：
-   - **单个成员** — 写为普通的单独规则：`name:rule`。
-   - **多个成员** — 写为命名组。组名自动生成为 `grp_0`、`grp_1` 等。输出格式取决于行长度：
-     - **短组**（总计 < 128 个字符）— 写为单行组：`grp_N { member1: member2: member3 }:rule`。
-     - **长组**（≥ 128 个字符）— 写为多行组，使用 4 空格缩进，每行在 128 个字符处换行：
+### 前言区保留
 
-       ```text
-       grp_N {
-           member1: member2: member3
-           member4: member5
-       }:rule
-       ```
+所有非规则行（注释、空行、常量、别名）被收集到前言区中，在所有规则之前写入输出。前言区末尾的多余空行被修剪为单个分隔行。这确保别名定义对规则区中的 `*alias` 引用仍然可用。
 
-6. **写入并记录日志** — 输出写入 `out_file`。记录摘要：`"Auto-grouped: {total} total process rules → {singles} individual + {grouped} processes merged into {groups} groups"`。
+### 组块重新解析
 
-### 前言保留
+当输入文件已包含 `{ }` 组块时，函数使用 [`collect_group_block`](collect_group_block.md) 和 [`collect_members`](collect_members.md) 重新解析它们，提取成员名称和规则后缀。现有组名被丢弃 — 输出中所有组均接收全新自动生成的名称（`grp_0`、`grp_1`、…）。
 
-第一个规则行之前的所有内容（注释、空行、常量定义、别名定义）都以原始形式保留，并在任何规则之前写入输出文件。这确保了 `@CONSTANT` 和 `*alias` 定义保持完整，可供后续分组规则使用。
+### 行长度阈值
 
-### 行长度启发式
+常量 `128` 用作单行组输出的最大行长度。超过此阈值的组将格式化为多行块，使用 `const INDENT: &str = "    "`（4 个空格）以提高可读性。
 
-单行与多行组格式的 128 字符阈值由 `INDENT` 常量（`"    "`，4 个空格）定义。当组的单行表示超过 128 个字符时，函数切换为多行格式。在多行格式中，每个缩进行上的成员名称也在 128 个字符处换行。
+### 输出统计
 
-### 规则字符串一致性
+完成后，函数记录一条汇总消息：
 
-如果两个进程的完整规则字符串（原始行中第一个 `:` 之后的所有内容）在修剪后完全相同，则认为它们具有"相同的规则"。这是字符串比较，而非语义比较——即使 `high:0-7` 和 `high:0-7:0` 可能产生等效的 [ProcessConfig](ProcessConfig.md) 条目，它们也被视为不同的规则。
+```/dev/null/example.txt#L1-2
+Auto-grouped: {total} total process rules → {single} individual + {grouped} processes merged into {groups} groups
+Written to {out_path}
+```
 
-### 组命名
-
-自动生成的组名遵循 `grp_0`、`grp_1`、`grp_2` 等模式，每个包含两个或更多成员的组递增。这些名称仅用于文档/可读性——[read_config](read_config.md) 中的配置解析器不使用组名进行匹配。单成员规则不分配组名。
+其中：
+- `total` = `single_count + grouped_member_count`
+- `single` = 具有唯一规则（无需分组）的进程数
+- `grouped` = 被合并到组中的进程总数
+- `groups` = 创建的组块数量
 
 ### 错误处理
 
-- 如果 `in_file` 为 `None`，记录 `"Error: -in <file> is required for -autogroup"` 并返回。
-- 如果 `out_file` 为 `None`，记录 `"Error: -out <file> is required for -autogroup"` 并返回。
-- 如果无法读取输入文件，记录错误并返回。
-- 如果无法创建或写入输出文件，记录错误并返回。
+| 条件 | 行为 |
+|------|------|
+| `in_file` 为 `None` | 记录 `"Error: -in <file> is required for -autogroup"` 并返回。 |
+| `out_file` 为 `None` | 记录 `"Error: -out <file> is required for -autogroup"` 并返回。 |
+| 无法读取输入文件 | 记录 `"Failed to read {path}: {error}"` 并返回。 |
+| 无法创建输出文件 | 记录 `"Failed to create {path}: {error}"` 并返回。 |
+| 写入过程中失败 | 记录 `"Failed to write to {path}"` 并返回。 |
 
-不返回 `Result` 或错误类型——所有错误都通过日志记录，函数优雅退出。
+### CLI 用法
 
-### CLI 集成
-
-当用户传递 `-autogroup` CLI 标志以及 `-in <input_config>` 和 `-out <output_config>` 时，会调用此函数。这是一个独立的离线工具，不需要服务处于运行状态。
-
-### 示例
-
-**输入 (`config.txt`)：**
-
-```text
-# CPU 别名
-*perf = 0-7
-
-game1.exe:high:*perf
-game2.exe:high:*perf
-game3.exe:high:*perf
-helper.exe:normal:0
-updater.exe:below normal:8-15
-telemetry.exe:below normal:8-15
+```/dev/null/example.sh#L1
+AffinityServiceRust.exe -autogroup -in config.ini -out config_grouped.ini
 ```
 
-**输出 (`config_grouped.txt`)：**
+### 幂等性
 
-```text
-# CPU 别名
-*perf = 0-7
-
-grp_0 { game1.exe: game2.exe: game3.exe }:high:*perf
-
-helper.exe:normal:0
-
-grp_1 { telemetry.exe: updater.exe }:below normal:8-15
-```
-
-**日志输出：**
-
-```text
-Auto-grouped: 6 total process rules → 1 individual + 5 processes merged into 2 groups
-Written to config_grouped.txt
-```
-
-### 局限性
-
-- 该函数不会重新解析规则语义——它纯粹基于规则字符串相等性进行分组。文本表示不同但语义等效的规则不会被合并。
-- 前言中的别名定义会被保留但不会展开。如果两个规则引用相同的别名但一个使用别名而另一个使用解析后的值，它们会被视为不同的规则。
-- 输出文件始终使用组表示法，即使输入使用了不同的格式风格。在输入中穿插在规则行之间的注释不会保留在输出的规则部分中（仅保留前言注释）。
+对自身输出再次运行 `sort_and_group_config` 会产生等效文件（组名和格式可能不同），因为函数会重新解析所有现有组。但每次运行时组名都会从 `grp_0` 重新编号。
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `config` (`src/config.rs`) |
-| **可见性** | `pub` |
-| **调用者** | [main](../main.rs/main.md)（通过 `-autogroup` CLI 标志） |
-| **被调用者** | [collect_members](collect_members.md)、[collect_group_block](collect_group_block.md)、`std::fs::read_to_string`、`std::fs::File::create`、`std::io::Write::writeln` |
-| **API** | 仅标准库文件 I/O——无 Windows API 调用 |
-| **权限** | 输入文件的读取权限，输出文件的写入权限 |
+| 要求 | 值 |
+|------|-----|
+| 模块 | `config.rs` |
+| 可见性 | `pub` |
+| 调用者 | `main.rs`（当 `cli.autogroup_mode` 为 `true` 时） |
+| 被调用者 | [`collect_group_block`](collect_group_block.md)、[`collect_members`](collect_members.md)、`std::fs::read_to_string`、`File::create`、`writeln!`、`log!` |
+| 依赖 | [`collections.rs`](../collections.rs/README.md) 中的 `HashMap`；`std::fs::File`、`std::io::Write` |
+| 权限 | 对指定路径的文件系统读写访问权限 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 资源 | 链接 |
 |------|------|
-| Process Lasso 配置转换器 | [convert](convert.md) |
-| 主配置文件读取器 | [read_config](read_config.md) |
-| 成员名称分词器 | [collect_members](collect_members.md) |
-| 多行组块收集器 | [collect_group_block](collect_group_block.md) |
-| 每进程配置记录 | [ProcessConfig](ProcessConfig.md) |
-| CLI 参数解析 | [cli 模块](../cli.rs/README.md) |
-| 模块概述 | [config 模块](README.md) |
+| convert | [convert](convert.md) |
+| read_config | [read_config](read_config.md) |
+| collect_group_block | [collect_group_block](collect_group_block.md) |
+| collect_members | [collect_members](collect_members.md) |
+| CliArgs | [CliArgs](../cli.rs/CliArgs.md) |
+| config 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

@@ -1,10 +1,10 @@
 # EtwProcessEvent struct (event_trace.rs)
 
-Represents a process lifecycle event received from the ETW (Event Tracing for Windows) real-time trace session. Each instance carries the process ID of the affected process and a flag indicating whether the event represents a process start or a process stop. Instances are produced by the internal `etw_event_callback` function and delivered to the main service loop through an MPSC channel.
+A process event received from ETW (Event Tracing for Windows), representing either a process start or process stop notification. Instances of this struct are produced by the ETW callback function and delivered to consumers through an `mpsc::Receiver<EtwProcessEvent>` channel returned by [`EtwProcessMonitor::start`](EtwProcessMonitor.md).
 
 ## Syntax
 
-```event_trace.rs
+```rust
 #[derive(Debug, Clone)]
 pub struct EtwProcessEvent {
     pub pid: u32,
@@ -16,35 +16,49 @@ pub struct EtwProcessEvent {
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `pid` | `u32` | The process identifier of the process that was created or terminated. Extracted from the first 4 bytes of the ETW event record's `UserData` payload. |
-| `is_start` | `bool` | `true` if the event represents a process creation (ETW event ID 1), `false` if it represents a process termination (ETW event ID 2). |
+| `pid` | `u32` | The process identifier extracted from the ETW event's `UserData` payload (first 4 bytes). This is the PID of the process that was created or terminated. |
+| `is_start` | `bool` | `true` if the event represents a process creation (ETW Event ID `1` — `ProcessStart`). `false` if the event represents a process termination (ETW Event ID `2` — `ProcessStop`). |
 
 ## Remarks
 
-- The struct derives `Debug` and `Clone`, making it suitable for diagnostic logging and for passing copies across thread boundaries. It is intentionally lightweight — two scalar fields with no heap allocation — to minimize overhead in the high-frequency ETW callback path.
-- Instances are created inside the `extern "system"` callback `etw_event_callback`, which runs on the ETW processing thread spawned by [EtwProcessMonitor::start](EtwProcessMonitor.md). The callback sends each event through the global [ETW_SENDER](ETW_SENDER.md) channel. The receiving end is held by the main service loop, which uses `is_start` to decide whether to apply configuration rules to a newly launched process or to clean up state for a terminated one.
-- The `pid` value comes directly from the `Microsoft-Windows-Kernel-Process` provider's event payload. For `ProcessStart` events (ID 1), this is the PID of the newly created process. For `ProcessStop` events (ID 2), this is the PID of the process that has exited.
-- Because the ETW callback extracts the PID from raw `UserData` bytes, the callback performs a bounds check (`UserDataLength >= 4`) before reading. If the check fails, no `EtwProcessEvent` is produced.
+- The struct derives `Debug` and `Clone`, allowing it to be printed for diagnostics and copied freely across channel boundaries and collection operations.
+
+- Instances are constructed inside the `extern "system"` ETW callback function (`etw_event_callback`), which extracts the PID from the raw `EVENT_RECORD.UserData` pointer and determines the event type from `EVENT_RECORD.EventHeader.EventDescriptor.Id`. Only Event IDs `1` (start) and `2` (stop) produce `EtwProcessEvent` values; all other event IDs are silently discarded by the callback.
+
+- Events are sent through the global [`ETW_SENDER`](ETW_SENDER.md) channel. If the sender has been dropped or the channel is full, the event is silently lost (the callback uses `let _ = sender.send(...)` to ignore send errors).
+
+- The consumer (typically the main scheduling loop) receives these events via the `mpsc::Receiver<EtwProcessEvent>` returned by [`EtwProcessMonitor::start`](EtwProcessMonitor.md) and uses them to reactively apply affinity/priority rules when new processes appear, rather than relying solely on polling-based snapshots from the [process module](../process.rs/README.md).
+
+### ETW event ID mapping
+
+| ETW Event ID | `is_start` value | Meaning |
+|---------------|-------------------|---------|
+| `1` | `true` | `ProcessStart` — a new process was created. |
+| `2` | `false` | `ProcessStop` — an existing process was terminated. |
+
+### ETW provider details
+
+Events are sourced from the `Microsoft-Windows-Kernel-Process` provider (GUID `{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}`) with keyword filter `WINEVENT_KEYWORD_PROCESS` (`0x10`), which ensures only process-related events are delivered to the callback.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `event_trace` |
-| Producers | `etw_event_callback` (internal `extern "system"` function) |
-| Consumers | Service main loop in [main module](../main.rs/README.md) |
-| Channel | Sent via [ETW_SENDER](ETW_SENDER.md), received from the `Receiver<EtwProcessEvent>` returned by [EtwProcessMonitor::start](EtwProcessMonitor.md) |
-| ETW provider | `Microsoft-Windows-Kernel-Process` (`{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}`) |
+| **Module** | `event_trace.rs` |
+| **Produced by** | `etw_event_callback` (module-private `extern "system"` function) |
+| **Consumed by** | Main scheduling loop via `mpsc::Receiver<EtwProcessEvent>` |
+| **Delivered through** | [`ETW_SENDER`](ETW_SENDER.md) global channel |
+| **Platform** | Windows only — requires ETW infrastructure |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| ETW session manager that produces these events | [EtwProcessMonitor](EtwProcessMonitor.md) |
-| Global channel sender used by the callback | [ETW_SENDER](ETW_SENDER.md) |
-| Active session flag | [ETW_ACTIVE](ETW_ACTIVE.md) |
-| event_trace module overview | [event_trace module](README.md) |
+| EtwProcessMonitor struct | [EtwProcessMonitor](EtwProcessMonitor.md) |
+| ETW_SENDER static | [ETW_SENDER](ETW_SENDER.md) |
+| ETW_ACTIVE static | [ETW_ACTIVE](ETW_ACTIVE.md) |
+| process module | [process.rs](../process.rs/README.md) |
+| event_trace module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

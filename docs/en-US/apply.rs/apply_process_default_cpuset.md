@@ -1,16 +1,16 @@
 # apply_process_default_cpuset function (apply.rs)
 
-Applies a soft CPU set preference to a process via the Windows `SetProcessDefaultCpuSets` API. Unlike a hard affinity mask (which restricts *all* threads unconditionally), a default CPU set establishes a preferred set of logical processors that threads will schedule on unless overridden at the thread level by `SetThreadSelectedCpuSets`. This makes CPU sets the preferred mechanism for steering work without preventing individual threads (such as prime threads) from being pinned elsewhere.
+The `apply_process_default_cpuset` function queries the current default CPU Set IDs assigned to a process via `GetProcessDefaultCpuSets` and, if they differ from the configured target, applies the new set via `SetProcessDefaultCpuSets`. When the `cpu_set_reset_ideal` configuration flag is enabled, the function also calls [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) to redistribute thread ideal processors across the new CPU set before applying the change. This function operates on CPU Set IDs (not affinity masks), which is the modern Windows mechanism for controlling process-to-CPU assignment without the limitations of legacy affinity masks.
 
 ## Syntax
 
-```AffinityServiceRust/src/apply.rs#L315-323
+```AffinityServiceRust/src/apply.rs#L297-307
 pub fn apply_process_default_cpuset(
     pid: u32,
-    config: &ProcessConfig,
+    config: &ProcessLevelConfig,
     dry_run: bool,
     process_handle: &ProcessHandle,
-    process: &mut ProcessEntry,
+    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     apply_config_result: &mut ApplyConfigResult,
 )
 ```
@@ -19,78 +19,54 @@ pub fn apply_process_default_cpuset(
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `pid` | `u32` | Process identifier of the target process. Used for logging and as a key in the error-deduplication map. |
-| `config` | `&`[ProcessConfig](../config.rs/ProcessConfig.md) | The parsed configuration rule matched to this process. The `cpu_set_cpus` field supplies the desired CPU indices; the `cpu_set_reset_ideal` flag controls whether thread ideal processors are redistributed after the CPU set changes. |
-| `dry_run` | `bool` | When `true`, the function records the intended change in `apply_config_result` but does not call any Windows API. |
-| `process_handle` | `&`[ProcessHandle](../winapi.rs/ProcessHandle.md) | OS handles opened for the target process. Passed through [get_handles](get_handles.md) to obtain the best available read and write `HANDLE`s. |
-| `process` | `&mut`[ProcessEntry](../process.rs/ProcessEntry.md) | Mutable reference to the cached process/thread snapshot. Forwarded to [reset_thread_ideal_processors](reset_thread_ideal_processors.md) when `cpu_set_reset_ideal` is set. |
-| `apply_config_result` | `&mut`[ApplyConfigResult](ApplyConfigResult.md) | Accumulator for change descriptions and error messages produced during this call. |
+| `pid` | `u32` | The process ID of the target process. Used for error deduplication and log messages. |
+| `config` | `&ProcessLevelConfig` | The process-level configuration containing `cpu_set_cpus` (a list of CPU indices to convert into CPU Set IDs), `cpu_set_reset_ideal` (a boolean controlling whether thread ideal processors are redistributed on change), and `name` (the human-readable config rule name used in log messages). If `cpu_set_cpus` is empty, the function returns immediately without making any changes. |
+| `dry_run` | `bool` | When `true`, the function records what *would* change in `apply_config_result` without calling any Windows APIs to modify state. When `false`, the Windows APIs are called to apply the change. |
+| `process_handle` | `&ProcessHandle` | A handle wrapper providing read and write access to the process. The function extracts `r_handle` (for `GetProcessDefaultCpuSets`) and `w_handle` (for `SetProcessDefaultCpuSets`) via [`get_handles`](get_handles.md). If either handle is unavailable, the function returns early. |
+| `threads` | `&HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots. Passed through to [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) when `cpu_set_reset_ideal` is enabled. |
+| `apply_config_result` | `&mut ApplyConfigResult` | Accumulator for change descriptions and error messages produced during execution. |
 
 ## Return value
 
-None (`()`).
+This function does not return a value. All outcomes are communicated through the `apply_config_result` parameter.
 
 ## Remarks
 
-### CPU set identifiers
-
-Windows CPU sets are identified by opaque 32-bit IDs (not the same as logical processor indices). The function uses [cpusetids_from_indices](../winapi.rs/cpusetids_from_indices.md) to translate the user-facing CPU indices in `config.cpu_set_cpus` into the system CPU set IDs that the API expects. If the system-wide CPU set information is empty (e.g. on older Windows builds that do not support CPU sets), the function returns immediately without making any changes.
-
-### Query-then-set strategy
-
-The function performs a two-phase query before deciding to set:
-
-1. **First query** — calls `GetProcessDefaultCpuSets` with `None` for the buffer. If this succeeds, the process currently has *no* default CPU set, so `toset` is set to `true`.
-2. **Second query** — if the first query fails with `ERROR_INSUFFICIENT_BUFFER` (Win32 error 122), the function allocates a buffer of the reported size and queries again to retrieve the current CPU set IDs. If the current set already matches the target, no write is performed.
-
-Any error code other than 122 on the first query is treated as a real failure and logged through [log_error_if_new](log_error_if_new.md).
-
-### Ideal processor reset
-
-When `config.cpu_set_reset_ideal` is `true` and a change is about to be written, the function calls [reset_thread_ideal_processors](reset_thread_ideal_processors.md) with `config.cpu_set_cpus` *before* applying the new CPU set. This redistributes thread ideal processors across the new CPU set so that the OS scheduler spreads threads evenly rather than clustering them on whatever processors happened to be ideal before the change.
-
-### Change message format
-
-On success the change message follows the pattern:
-
-`"CPU Set: [0,1,2] -> [4,5,6]"`
-
-where the left side shows CPU indices decoded from the previously active CPU set IDs (via [indices_from_cpusetids](../winapi.rs/indices_from_cpusetids.md)), and the right side shows the indices from the configuration. When the process had no previous CPU set, the left side is an empty list `[]`.
-
-### Dry-run behaviour
-
-In dry-run mode the function unconditionally records the target CPU set as a change without querying the current state, producing a message like:
-
-`"CPU Set: -> [4,5,6]"`
-
-### Edge cases
-
-- If `config.cpu_set_cpus` is empty, the function returns immediately — it never *clears* an existing CPU set.
-- If `cpusetids_from_indices` returns an empty vector (no matching CPU set IDs found for the given indices), the write is skipped.
-- The function does not modify the process affinity mask; CPU sets and affinity masks are independent constraints applied by [apply_affinity](apply_affinity.md) and this function respectively.
+- The function exits early without action if `config.cpu_set_cpus` is empty **or** if the global CPU set information (from `get_cpu_set_information()`) is empty. The latter condition ensures the function does not attempt to convert CPU indices to CPU Set IDs when no system CPU set information is available.
+- The configured CPU indices are converted to Windows CPU Set IDs using `cpusetids_from_indices`. If the resulting ID list is empty after conversion, no change is applied.
+- The query uses a two-call pattern for `GetProcessDefaultCpuSets`:
+  1. **First call** with `None` buffer: If it succeeds, the process has no default CPU set assigned yet, and `toset` is set to `true`.
+  2. If the first call fails with Win32 error code `122` (`ERROR_INSUFFICIENT_BUFFER`), a **second call** is made with a properly sized buffer to retrieve the current CPU Set IDs. The retrieved IDs are then compared against the target; `toset` is `true` only if they differ.
+  3. If the first call fails with any other error code, the error is logged via [`log_error_if_new`](log_error_if_new.md) and the function does not attempt to set the CPU set.
+- When `config.cpu_set_reset_ideal` is `true` and a change is needed, [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) is invoked **before** the CPU set is applied, using `config.cpu_set_cpus` as the target CPU list. This redistributes thread ideal processors in anticipation of the new CPU set assignment.
+- On success, the change message is formatted as `"CPU Set: [<old>] -> [<new>]"` where `<old>` and `<new>` are formatted CPU index lists. When the process had no previous default CPU set, `<old>` is an empty list.
+- On failure of `SetProcessDefaultCpuSets`, the error is logged via [`log_error_if_new`](log_error_if_new.md) with `Operation::SetProcessDefaultCpuSets`.
+- Current CPU Set IDs are decoded back to CPU indices using `indices_from_cpusetids` for the change message's "old" value.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `apply` |
-| Visibility | `pub` (crate-public) |
-| Callers | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
-| Callees | [get_handles](get_handles.md), [cpusetids_from_indices](../winapi.rs/cpusetids_from_indices.md), [indices_from_cpusetids](../winapi.rs/indices_from_cpusetids.md), [get_cpu_set_information](../winapi.rs/get_cpu_set_information.md), [format_cpu_indices](../config.rs/format_cpu_indices.md), [reset_thread_ideal_processors](reset_thread_ideal_processors.md), [log_error_if_new](log_error_if_new.md) |
-| Win32 API | `GetProcessDefaultCpuSets`, `SetProcessDefaultCpuSets` |
-| Privileges | `PROCESS_QUERY_LIMITED_INFORMATION` (read), `PROCESS_SET_LIMITED_INFORMATION` (write) |
+| Module | `apply.rs` |
+| Crate | `AffinityServiceRust` |
+| Windows APIs | `GetProcessDefaultCpuSets`, `SetProcessDefaultCpuSets`, `GetLastError` |
+| Callers | Orchestrator code in `scheduler.rs` / `main.rs` that iterates matched processes |
+| Callees | [`get_handles`](get_handles.md), [`log_error_if_new`](log_error_if_new.md), [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md), `cpusetids_from_indices`, `indices_from_cpusetids`, `get_cpu_set_information`, `format_cpu_indices`, `error_from_code_win32` |
+| Privileges | Requires a process handle with `PROCESS_QUERY_LIMITED_INFORMATION` (read) and `PROCESS_SET_LIMITED_INFORMATION` (write). |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Hard affinity mask | [apply_affinity](apply_affinity.md) |
-| Ideal processor redistribution | [reset_thread_ideal_processors](reset_thread_ideal_processors.md) |
-| Thread-level CPU set pinning (prime threads) | [apply_prime_threads_promote](apply_prime_threads_promote.md) |
-| CPU set ID translation | [cpusetids_from_indices](../winapi.rs/cpusetids_from_indices.md), [indices_from_cpusetids](../winapi.rs/indices_from_cpusetids.md) |
-| Configuration model | [ProcessConfig](../config.rs/ProcessConfig.md) |
-| apply module overview | [apply](README.md) |
+| Reference | Link |
+|-----------|------|
+| apply module overview | [`README`](README.md) |
+| ApplyConfigResult | [`ApplyConfigResult`](ApplyConfigResult.md) |
+| get_handles | [`get_handles`](get_handles.md) |
+| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
+| reset_thread_ideal_processors | [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) |
+| apply_affinity | [`apply_affinity`](apply_affinity.md) |
+| apply_priority | [`apply_priority`](apply_priority.md) |
+| ProcessLevelConfig | [`config.rs/ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
+| winapi module | [`winapi.rs`](../winapi.rs/README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

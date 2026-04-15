@@ -16,9 +16,12 @@ use apply::{
 };
 use cli::{CliArgs, parse_args, print_help, print_help_all};
 use collections::{HashMap, HashSet, List, PENDING, PIDS};
-use config::{ProcessConfig, convert, hotreload_blacklist, hotreload_config, read_config, read_list, sort_and_group_config};
+use config::{
+    ProcessLevelConfig, ThreadLevelConfig, convert, hotreload_blacklist, hotreload_config, read_config, read_list, sort_and_group_config,
+};
 use event_trace::EtwProcessMonitor;
 use logging::{log_message, log_process_find, log_pure_message, log_to_find, purge_fail_map};
+use ntapi::ntexapi::SYSTEM_THREAD_INFORMATION;
 use process::{PID_TO_PROCESS_MAP, ProcessEntry, ProcessSnapshot, SNAPSHOT_BUFFER};
 use scheduler::PrimeThreadScheduler;
 use winapi::{
@@ -26,7 +29,7 @@ use winapi::{
     request_uac_elevation, set_timer_resolution, terminate_child_processes,
 };
 
-use chrono::Local;
+use chrono::{Local, TimeDelta};
 use encoding_rs::Encoding;
 use std::{
     env,
@@ -46,43 +49,38 @@ use windows::Win32::{
     },
 };
 
+use crate::config::ConfigResult;
+
 /// Applies process-level settings (one-shot per process).
 /// Includes: priority, affinity (with thread ideal processor reset), CPU set, IO priority, memory priority.
-fn apply_config_process_level(
+fn apply_process_level(
     pid: u32,
-    config: &ProcessConfig,
-    process: &mut ProcessEntry,
+    config: &ProcessLevelConfig,
+    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     dry_run: bool,
-    apply_config_result: &mut ApplyConfigResult,
+    apply_configs: &mut ApplyConfigResult,
 ) {
     let Some(process_handle) = get_process_handle(pid, &config.name) else {
         return;
     };
     let mut current_mask: usize = 0;
-    apply_priority(pid, config, dry_run, &process_handle, apply_config_result);
-    apply_affinity(
-        pid,
-        config,
-        dry_run,
-        &mut current_mask,
-        &process_handle,
-        process,
-        apply_config_result,
-    );
-    apply_process_default_cpuset(pid, config, dry_run, &process_handle, process, apply_config_result);
-    apply_io_priority(pid, config, dry_run, &process_handle, apply_config_result);
-    apply_memory_priority(pid, config, dry_run, &process_handle, apply_config_result);
+    apply_priority(pid, config, dry_run, &process_handle, apply_configs);
+    apply_affinity(pid, config, dry_run, &mut current_mask, &process_handle, threads, apply_configs);
+    apply_process_default_cpuset(pid, config, dry_run, &process_handle, threads, apply_configs);
+    apply_io_priority(pid, config, dry_run, &process_handle, apply_configs);
+    apply_memory_priority(pid, config, dry_run, &process_handle, apply_configs);
 }
 
 /// Applies thread-level settings (every polling iteration).
 /// Includes: prime thread scheduling, ideal processor assignment, cycle time tracking.
-fn apply_config_thread_level(
+fn apply_thread_level(
     pid: u32,
-    config: &ProcessConfig,
+    config: &ThreadLevelConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
-    process: &mut ProcessEntry,
+    process: &ProcessEntry,
+    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     dry_run: bool,
-    apply_config_result: &mut ApplyConfigResult,
+    apply_configs: &mut ApplyConfigResult,
 ) {
     if !config.prime_threads_cpus.is_empty()
         || !config.prime_threads_prefixes.is_empty()
@@ -91,7 +89,7 @@ fn apply_config_thread_level(
     {
         // Query current affinity mask for prime thread CPU filtering
         let mut current_mask: usize = 0;
-        if (!config.prime_threads_cpus.is_empty() || !config.affinity_cpus.is_empty())
+        if (!config.prime_threads_cpus.is_empty())
             && let Some(process_handle) = get_process_handle(pid, &config.name)
         {
             let mut system_mask: usize = 0;
@@ -100,18 +98,71 @@ fn apply_config_thread_level(
         }
         drop_module_cache(pid);
         prime_core_scheduler.set_alive(pid);
-        prefetch_all_thread_cycles(pid, config, process, prime_core_scheduler, apply_config_result);
+        prefetch_all_thread_cycles(pid, config, threads, prime_core_scheduler, apply_configs);
         apply_prime_threads(
             pid,
             config,
             dry_run,
             &mut current_mask,
             process,
+            threads,
             prime_core_scheduler,
-            apply_config_result,
+            apply_configs,
         );
-        apply_ideal_processors(pid, config, dry_run, process, prime_core_scheduler, apply_config_result);
+        apply_ideal_processors(pid, config, dry_run, threads, prime_core_scheduler, apply_configs);
         update_thread_stats(pid, prime_core_scheduler);
+    }
+}
+
+/// assert(grade for process_level_config == grade for thread_level_config)
+#[allow(clippy::too_many_arguments)]
+fn apply_config(
+    cli: &CliArgs,
+    configs: &ConfigResult,
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    process_level_applied: &mut smallvec::SmallVec<[u32; PIDS]>,
+    thread_level_applied: &mut smallvec::SmallVec<[u32; PENDING]>,
+    grade: &u32,
+    pid: &u32,
+    name: &&str,
+    process_level_config: &ProcessLevelConfig,
+    process: &ProcessEntry,
+) {
+    let mut result = ApplyConfigResult::new();
+    let threads = process.get_threads();
+    apply_process_level(*pid, process_level_config, &threads, cli.dry_run, &mut result);
+    if let Some(thread_level_config) = match configs.thread_level_configs.get(grade) {
+        Some(thread_level_configs) => thread_level_configs.get(*name),
+        None => None,
+    } {
+        apply_thread_level(
+            *pid,
+            thread_level_config,
+            prime_core_scheduler,
+            process,
+            &threads,
+            cli.dry_run,
+            &mut result,
+        );
+        thread_level_applied.push(*pid);
+    }
+    process_level_applied.push(*pid);
+    log_apply_results(pid, &process_level_config.name, result);
+}
+
+fn log_apply_results(pid: &u32, name: &String, result: ApplyConfigResult) {
+    if !result.is_empty() {
+        for error in &result.errors {
+            log_to_find(error);
+        }
+        if !result.changes.is_empty() {
+            let first = format!("{:>5}::{}::{}", pid, name, result.changes[0]);
+            log_message(&first);
+            let padding = " ".repeat(first.len() - result.changes[0].len() + 10); //10 for time prefix, eg."[04:55:16]"
+            for change in &result.changes[1..] {
+                log_pure_message(&format!("{}{}", padding, change));
+            }
+        }
     }
 }
 
@@ -120,12 +171,7 @@ fn apply_config_thread_level(
 /// Scans .find.log files for discovered processes, filters out known ones,
 /// and uses Everything search (es.exe) to locate executable paths.
 /// Results are written to a text file for manual review.
-fn process_logs(
-    configs: &HashMap<u32, HashMap<String, ProcessConfig>>,
-    blacklist: &[String],
-    logs_path: Option<&str>,
-    output_file: Option<&str>,
-) {
+fn process_logs(configs: &ConfigResult, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) {
     *get_use_console!() = true;
     let logs_path = logs_path.unwrap_or("logs");
     let output_file = output_file.unwrap_or("new_processes_results.txt");
@@ -154,7 +200,16 @@ fn process_logs(
         }
     }
 
-    let in_any_grade = |p: &String| configs.values().any(|grade_configs| grade_configs.contains_key(p));
+    let in_any_grade = |p: &String| {
+        configs
+            .process_level_configs
+            .values()
+            .any(|grade_configs| grade_configs.contains_key(p))
+            || configs
+                .thread_level_configs
+                .values()
+                .any(|grade_configs| grade_configs.contains_key(p))
+    };
     let new_processes: Vec<String> = all_processes
         .into_iter()
         .filter(|p| !in_any_grade(p) && !blacklist.contains(p))
@@ -205,11 +260,7 @@ fn process_logs(
     }
 }
 
-fn process_find(
-    cli: &CliArgs,
-    configs: &HashMap<u32, HashMap<String, ProcessConfig>>,
-    blacklist: &[String],
-) -> Result<(), windows::core::Error> {
+fn process_find(cli: &CliArgs, configs: &ConfigResult, blacklist: &[String]) -> Result<(), windows::core::Error> {
     let _: () = if cli.find_mode {
         unsafe {
             let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)?;
@@ -222,7 +273,14 @@ fn process_find(
                     let process_name =
                         String::from_utf16_lossy(&pe32.szExeFile[..pe32.szExeFile.iter().position(|&c| c == 0).unwrap_or(0)]).to_lowercase();
 
-                    let in_configs = configs.values().any(|grade_configs| grade_configs.contains_key(&process_name));
+                    let in_configs = configs
+                        .process_level_configs
+                        .values()
+                        .any(|grade_configs| grade_configs.contains_key(&process_name))
+                        || configs
+                            .thread_level_configs
+                            .values()
+                            .any(|grade_configs| grade_configs.contains_key(&process_name));
                     if !get_fail_find_set!().contains(&process_name)
                         && !in_configs
                         && !blacklist.contains(&process_name)
@@ -261,18 +319,17 @@ fn main() -> windows::core::Result<()> {
         sort_and_group_config(cli.in_file_name, cli.out_file_name);
         return Ok(());
     }
-    let config_result = read_config(&cli.config_file_name);
+    let mut configs = read_config(&cli.config_file_name);
 
     *get_dust_bin_mod!() = cli.skip_log_before_elevation;
-    config_result.print_report();
-    if !config_result.errors.is_empty() {
+    configs.print_report();
+    if !configs.errors.is_empty() {
         log!("Configuration file has errors, please fix them before running the service.");
         return Ok(());
     }
     if cli.validate_mode {
         return Ok(());
     }
-    let mut configs = config_result.configs;
     let mut blacklist = if let Some(ref bf) = cli.blacklist_file_name {
         read_list(bf).unwrap_or_default()
     } else {
@@ -288,7 +345,7 @@ fn main() -> windows::core::Result<()> {
         .blacklist_file_name
         .as_ref()
         .and_then(|bf| metadata(bf).and_then(|m| m.modified()).ok());
-    let is_config_empty = configs.is_empty();
+    let is_config_empty = configs.process_level_configs.is_empty() && configs.thread_level_configs.is_empty();
     let is_blacklist_empty = blacklist.is_empty();
     if is_config_empty && is_blacklist_empty {
         if !cli.find_mode {
@@ -333,7 +390,7 @@ fn main() -> windows::core::Result<()> {
     }
     terminate_child_processes();
     *get_dust_bin_mod!() = false;
-    let mut prime_core_scheduler = PrimeThreadScheduler::new(config_result.constants);
+    let mut prime_core_scheduler = PrimeThreadScheduler::new(configs.constants.clone());
     let mut current_loop = 0u32;
     let mut should_continue = true;
 
@@ -354,6 +411,9 @@ fn main() -> windows::core::Result<()> {
     };
 
     let mut process_level_applied: List<[u32; PIDS]> = List::new();
+    // avoid re-applying thread-level configs after both-level apply in a single iteration
+    // both-level apply exists to reduce get_threads calls and merge logs for a same process
+    let mut thread_level_applied: List<[u32; PENDING]> = List::new();
     let mut process_level_pending: List<[u32; PENDING]> = List::new();
 
     while should_continue {
@@ -365,41 +425,29 @@ fn main() -> windows::core::Result<()> {
                 log!("Failed to take process snapshot: {}", err);
             }
             Ok(processes) => {
-                let mut total_changes = 0;
-                let pids_and_names: Vec<(u32, String)> = processes
-                    .pid_to_process
-                    .values()
-                    .map(|p| (p.pid(), p.get_name().to_string()))
-                    .collect();
+                let pids_and_names: List<[(u32, &str); PIDS]> = processes.pid_to_process.values().map(|p| (p.pid(), p.get_name())).collect();
                 prime_core_scheduler.reset_alive();
-
-                // Grade-based scheduling: rules with higher grade values run less frequently
-                // e.g., grade=1 runs every loop, grade=5 runs every 5th loop;
-                for (grade, grade_configs) in &configs {
+                for (grade, graded_process_level_configs) in &configs.process_level_configs {
                     // process_level_pending dont respect grade being applied just in time
+                    // since it's retain call here, it do not hit performance in next loop iterations
                     process_level_pending.retain(|pid_pending| {
                         pids_and_names.iter().any(|(pid, name)| -> bool {
                             if pid == pid_pending {
-                                if let Some(config) = grade_configs.get(name)
-                                    && let Some(process) = processes.pid_to_process.get_mut(pid)
+                                if let Some(process_level_config) = graded_process_level_configs.get(*name)
+                                    && let Some(process) = processes.pid_to_process.get(pid)
                                 {
-                                    let mut result = ApplyConfigResult::new();
-                                    apply_config_process_level(*pid, config, process, cli.dry_run, &mut result);
-                                    if !result.is_empty() {
-                                        for error in &result.errors {
-                                            log_to_find(error);
-                                        }
-                                        if !result.changes.is_empty() {
-                                            let first = format!("{:>5}::{}::{}", pid, config.name, result.changes[0]);
-                                            log_message(&first);
-                                            let padding = " ".repeat(first.len() - result.changes[0].len() + 10); //10 for time prefix, eg."[04:55:16]"
-                                            for change in &result.changes[1..] {
-                                                log_pure_message(&format!("{}{}", padding, change));
-                                            }
-                                        }
-                                        total_changes += result.changes.len();
-                                    }
-                                    process_level_applied.push(*pid);
+                                    apply_config(
+                                        &cli,
+                                        &configs,
+                                        &mut prime_core_scheduler,
+                                        &mut process_level_applied,
+                                        &mut thread_level_applied,
+                                        grade,
+                                        pid,
+                                        name,
+                                        process_level_config,
+                                        process,
+                                    );
                                     false
                                 } else {
                                     true
@@ -409,42 +457,68 @@ fn main() -> windows::core::Result<()> {
                             }
                         })
                     });
-
+                    // fallback of cli flag -no_etw, and processes launched before this project's process's running
                     if !current_loop.is_multiple_of(*grade) {
-                        continue; // Skip this grade this loop
+                        continue;
                     }
-
                     for (pid, name) in &pids_and_names {
-                        if let Some(config) = grade_configs.get(name) {
-                            let Some(process) = processes.pid_to_process.get_mut(pid) else {
+                        let Some(process_level_config) = graded_process_level_configs.get(*name) else {
+                            continue;
+                        };
+                        let Some(process) = processes.pid_to_process.get(pid) else {
+                            continue;
+                        };
+                        if cli.continuous_process_level_apply || !process_level_applied.contains(pid) {
+                            apply_config(
+                                &cli,
+                                &configs,
+                                &mut prime_core_scheduler,
+                                &mut process_level_applied,
+                                &mut thread_level_applied,
+                                grade,
+                                pid,
+                                name,
+                                process_level_config,
+                                process,
+                            );
+                        }
+                    }
+                }
+
+                // the scheduler should be populated before thread-level config applying in its previous both-level apply
+                if !prime_core_scheduler.pid_to_process_stats.is_empty() {
+                    for (grade, graded_thread_level_configs) in &configs.thread_level_configs {
+                        if !current_loop.is_multiple_of(*grade) {
+                            continue;
+                        }
+                        for (pid, name) in &pids_and_names {
+                            if thread_level_applied.contains(pid) {
+                                continue;
+                            }
+                            let Some(thread_level_config) = graded_thread_level_configs.get(*name) else {
                                 continue;
                             };
-
+                            let Some(process) = processes.pid_to_process.get(pid) else {
+                                continue;
+                            };
                             let mut result = ApplyConfigResult::new();
-                            if cli.continuous_process_level_apply || !process_level_applied.contains(pid) {
-                                apply_config_process_level(*pid, config, process, cli.dry_run, &mut result);
-                                process_level_applied.push(*pid);
-                            }
-                            apply_config_thread_level(*pid, config, &mut prime_core_scheduler, process, cli.dry_run, &mut result);
-                            if !result.is_empty() {
-                                for error in &result.errors {
-                                    log_to_find(error);
-                                }
-                                if !result.changes.is_empty() {
-                                    let first = format!("{:>5}::{}::{}", pid, config.name, result.changes[0]);
-                                    log_message(&first);
-                                    let padding = " ".repeat(first.len() - result.changes[0].len() + 10); //10 for time prefix, eg."[04:55:16]"
-                                    for change in &result.changes[1..] {
-                                        log_pure_message(&format!("{}{}", padding, change));
-                                    }
-                                }
-                                total_changes += result.changes.len();
-                            }
+                            let threads = process.get_threads();
+                            apply_thread_level(
+                                *pid,
+                                thread_level_config,
+                                &mut prime_core_scheduler,
+                                process,
+                                &threads,
+                                cli.dry_run,
+                                &mut result,
+                            );
+                            log_apply_results(pid, &thread_level_config.name, result);
                         }
                     }
                 }
 
                 if event_trace_receiver.is_none() {
+                    // fallback of cli flag -no_etw, resource cleanup and state update,
                     let dead_pids: List<[u32; PENDING]> = prime_core_scheduler
                         .pid_to_process_stats
                         .iter()
@@ -456,11 +530,11 @@ fn main() -> windows::core::Result<()> {
                     purge_fail_map(&pids_and_names);
                     process_level_applied.retain(|pid| pids_and_names.iter().any(|(p, _)| p == pid));
                 }
-                process_level_pending.clear();
+                process_level_pending.clear(); // SAFETY: avoid short-lived process not found in retain's pid grows
                 if cli.dry_run {
-                    log!("[DRY RUN] {} change(s) would be made. Run without -dryrun to apply.", total_changes);
                     should_continue = false;
                 }
+                drop(pids_and_names);
                 drop(processes);
             }
         };
@@ -478,7 +552,28 @@ fn main() -> windows::core::Result<()> {
             should_continue = false;
         }
         if should_continue {
-            thread::sleep(Duration::from_millis(cli.interval_ms as u64));
+            let mut etw_sleep = false;
+            if prime_core_scheduler.pid_to_process_stats.is_empty()
+                && let Some(ref event_trace_receiver) = event_trace_receiver
+            {
+                etw_sleep = true;
+                loop {
+                    match event_trace_receiver.try_recv() {
+                        Ok(_) => {
+                            if Local::now() - *get_local_time!() > TimeDelta::milliseconds(cli.interval_ms as i64) {
+                                break;
+                            }
+                        }
+                        Err(_) => {
+                            should_continue = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            if !etw_sleep {
+                thread::sleep(Duration::from_millis(cli.interval_ms as u64));
+            }
 
             *get_local_time!() = Local::now();
             if let Some(ref event_trace_receiver) = event_trace_receiver {
@@ -494,7 +589,9 @@ fn main() -> windows::core::Result<()> {
                     }
                 }
             }
-            process_level_applied.dedup();
+            process_level_applied.dedup(); // cli flag and this controls process-level apply, to reduce api calls
+            // thread-level config needs to be re-applied each iteration to track threading performance
+            thread_level_applied.clear();
             process_level_pending.dedup();
             hotreload_config(
                 &cli,

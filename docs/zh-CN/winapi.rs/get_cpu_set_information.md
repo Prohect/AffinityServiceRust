@@ -1,6 +1,6 @@
 # get_cpu_set_information 函数 (winapi.rs)
 
-返回对延迟初始化的、受互斥锁保护的全局 [CpuSetData](CpuSetData.md) 条目向量的引用，该向量描述了系统的 CPU 集合拓扑。首次调用时，底层的 [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) 静态变量通过查询 `GetSystemCpuSetInformation` 完成初始化；后续调用返回相同的缓存引用。
+返回对延迟初始化、互斥锁保护的系统 CPU 集合信息缓存的引用。首次访问时，缓存通过调用 `GetSystemCpuSetInformation` 枚举系统上的所有 CPU 集合来填充。
 
 ## 语法
 
@@ -10,63 +10,43 @@ pub fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>>
 
 ## 参数
 
-无。
+此函数不接受参数。
 
 ## 返回值
 
-一个 `&'static Mutex<Vec<CpuSetData>>` 引用，指向全局 [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) 静态变量。调用方必须通过 `.lock().unwrap()` 获取互斥锁才能访问内部向量。返回的引用在进程的整个生命周期内有效。
+返回 `&'static Mutex<Vec<CpuSetData>>` —— 一个指向全局延迟初始化互斥锁的引用，该互斥锁包含一个 [CpuSetData](CpuSetData.md) 条目的向量。每个条目将一个 CPU Set ID 映射到其逻辑处理器索引。
+
+返回的引用具有 `'static` 生命周期，因为它指向 [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) 全局静态变量，该变量通过 `Lazy` 初始化一次，并在程序运行期间一直存在。
 
 ## 备注
 
-此函数是一个简单的访问器，用于解引用 `Lazy<Mutex<Vec<CpuSetData>>>` 静态变量。它的存在是为了封装全局变量并提供简洁的公共 API——调用方无需直接引用 `CPU_SET_INFORMATION`。
-
-### 线程安全
-
-`Mutex` 保证了对内部 `Vec<CpuSetData>` 的互斥访问。由于数据在初始化时一次性填充，之后不再修改，因此竞争仅限于简短的加锁/解锁序列。所有 CPU 集合转换函数（[cpusetids_from_indices](cpusetids_from_indices.md)、[cpusetids_from_mask](cpusetids_from_mask.md)、[indices_from_cpusetids](indices_from_cpusetids.md)、[mask_from_cpusetids](mask_from_cpusetids.md)）在遍历向量期间均持有互斥锁。
-
-### 初始化触发
-
-首次调用 `get_cpu_set_information`（或首次解引用 `CPU_SET_INFORMATION`）时会触发 `Lazy` 初始化器，其过程如下：
-
-1. 使用零长度缓冲区调用 `GetSystemCpuSetInformation` 以确定所需的大小。
-2. 分配所需大小的字节缓冲区。
-3. 再次调用 `GetSystemCpuSetInformation` 填充缓冲区。
-4. 遍历变长的 `SYSTEM_CPU_SET_INFORMATION` 条目，将每个 `(id, logical_processor_index)` 对提取为 [CpuSetData](CpuSetData.md)。
-
-如果 `GetSystemCpuSetInformation` 失败，向量为空，并通过 `log_to_find` 记录一条消息。
-
-### 典型用法
-
-```rust
-let guard = get_cpu_set_information().lock().unwrap();
-for entry in guard.iter() {
-    // 访问 entry.id 和 entry.logical_processor_index
-}
-```
+- 此函数是 [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) 静态变量的薄访问器。在首次访问之后，它不会执行任何分配或系统调用。
+- 底层 `Lazy` 初始化器调用 `GetSystemCpuSetInformation` 两次：第一次确定所需的缓冲区大小，第二次检索数据。结果被解析为 `Vec<CpuSetData>`，其中包含 `(id, logical_processor_index)` 对。
+- 如果初始的 `GetSystemCpuSetInformation` 调用失败，将通过 `log_to_find` 写入诊断消息，且返回的向量将为空。
+- 调用者在读取数据之前必须锁定互斥锁。由于 CPU 集合拓扑在操作系统启动后的整个生命周期内是固定的，初始化后内部数据不会再改变。
+- 此函数由 [cpusetids_from_indices](cpusetids_from_indices.md)、[cpusetids_from_mask](cpusetids_from_mask.md)、[indices_from_cpusetids](indices_from_cpusetids.md) 和 [mask_from_cpusetids](mask_from_cpusetids.md) 在内部调用。
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `winapi` (`src/winapi.rs`) |
-| **可见性** | `pub` |
-| **调用方** | [cpusetids_from_indices](cpusetids_from_indices.md)、[cpusetids_from_mask](cpusetids_from_mask.md)、[indices_from_cpusetids](indices_from_cpusetids.md)、[mask_from_cpusetids](mask_from_cpusetids.md) |
-| **底层静态变量** | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
-| **API** | [`GetSystemCpuSetInformation`](https://learn.microsoft.com/en-us/windows/win32/api/systeminformationapi/nf-systeminformationapi-getsystemcpusetinformation)（仅在初始化期间） |
-| **特权** | 无 |
+| 要求 | 值 |
+|------|-----|
+| **模块** | `winapi.rs` |
+| **调用者** | [cpusetids_from_indices](cpusetids_from_indices.md)、[cpusetids_from_mask](cpusetids_from_mask.md)、[indices_from_cpusetids](indices_from_cpusetids.md)、[mask_from_cpusetids](mask_from_cpusetids.md) |
+| **被调用者** | 无（仅为访问器；初始化时调用 Windows API 的 `GetSystemCpuSetInformation`） |
+| **Win32 API** | [GetSystemCpuSetInformation](https://learn.microsoft.com/en-us/windows/win32/api/systeminfomationapi/nf-systeminfomationapi-getsystemcpusetinformation)（在 `Lazy` 初始化期间） |
+| **权限** | 无需特殊权限 |
 
 ## 另请参阅
 
 | 主题 | 链接 |
-|-------|------|
-| 全局 CPU 集合缓存 | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
-| CPU 集合条目类型 | [CpuSetData](CpuSetData.md) |
-| CPU 索引 → CPU 集合 ID | [cpusetids_from_indices](cpusetids_from_indices.md) |
-| 亲和性掩码 → CPU 集合 ID | [cpusetids_from_mask](cpusetids_from_mask.md) |
-| CPU 集合 ID → CPU 索引 | [indices_from_cpusetids](indices_from_cpusetids.md) |
-| CPU 集合 ID → 亲和性掩码 | [mask_from_cpusetids](mask_from_cpusetids.md) |
-| GetSystemCpuSetInformation (MSDN) | [Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/systeminformationapi/nf-systeminformationapi-getsystemcpusetinformation) |
+|------|------|
+| CpuSetData 结构体 | [CpuSetData](CpuSetData.md) |
+| CPU_SET_INFORMATION 静态变量 | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
+| cpusetids_from_indices | [cpusetids_from_indices](cpusetids_from_indices.md) |
+| cpusetids_from_mask | [cpusetids_from_mask](cpusetids_from_mask.md) |
+| indices_from_cpusetids | [indices_from_cpusetids](indices_from_cpusetids.md) |
+| mask_from_cpusetids | [mask_from_cpusetids](mask_from_cpusetids.md) |
 
-## Documentation on Commit SHA
+---
 
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

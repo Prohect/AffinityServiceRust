@@ -1,10 +1,10 @@
 # log_process_find 函数 (logging.rs)
 
-在 `-find` 模式下记录已发现的进程名称，按会话去重。对于给定的进程名称，首次调用时，该函数会通过 [log_to_find](log_to_find.md) 写入一条 `find <process_name>` 条目到查找模式日志中；后续使用相同名称的调用将被静默忽略。这确保查找日志包含一个干净的、唯一的在会话期间观察到的所有进程列表，而不会因轮询循环而产生重复。
+记录从 `-find` 模式中发现的进程名称，每个会话内进行去重。使用 `FINDS_SET` 静态变量确保每个唯一的进程名称在当前应用程序运行期间只记录一次，防止在调度循环迭代中重复发现的进程造成日志泛滥。
 
 ## 语法
 
-```logging.rs
+```rust
 #[inline]
 pub fn log_process_find(process_name: &str)
 ```
@@ -13,51 +13,66 @@ pub fn log_process_find(process_name: &str)
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `process_name` | `&str` | 要记录的已发现进程的名称。此值会被插入到 [FINDS_SET](FINDS_SET.md) 中用于去重，并以 `"find <process_name>"` 的形式格式化到日志行中。 |
+| `process_name` | `&str` | 要记录的已发现进程的名称。此值既用作去重键（插入 `FINDS_SET`），也用作日志消息载荷。 |
 
 ## 返回值
 
-*(无)*
+此函数不返回值。
 
 ## 备注
 
-- 该函数锁定 [FINDS_SET](FINDS_SET.md) 并调用 `HashSet::insert`。如果 `insert` 返回 `true`（名称之前不存在），函数会委托 [log_to_find](log_to_find.md) 输出格式为 `"find <process_name>"` 的消息。如果 `insert` 返回 `false`（名称已被记录），函数直接返回，不产生任何输出。
-- 去重是按会话（按进程生命周期）进行的，而非按天。如果服务在同一个日历日内重新启动，新进程将以空的 [FINDS_SET](FINDS_SET.md) 开始，并会重新记录所有发现的进程。这是设计上的选择：每次运行都应产生一份独立的发现报告。
-- 该函数标注了 `#[inline]`，提示编译器在调用点内联展开。由于函数体较小（一次锁获取、一次条件日志调用），内联可以避免在热轮询路径中的函数调用开销。
-- 进程名称按原样存储在 `FINDS_SET` 中，不进行小写转换或规范化。调用方（通常是 [process_find](../main.rs/README.md)）负责以预期格式提供名称。
-- 由于 [log_to_find](log_to_find.md) 内部会检查 [USE_CONSOLE](USE_CONSOLE.md)，输出目标（控制台或 `logs/YYYYMMDD.find.log`）由该标志决定。时间戳前缀 `[HH:MM:SS]` 由 `log_to_find` 添加。
+### 去重机制
 
-### 输出示例
+该函数锁定全局 [FINDS_SET](statics.md#finds_set)（`Mutex<HashSet<String>>`）并尝试插入给定的 `process_name`。由于 `HashSet::insert` 仅在值之前不存在时返回 `true`，因此通过 [`log_to_find`](log_to_find.md) 执行的日志写入仅在每个会话中每个进程名称的首次出现时执行。
 
-对于首次发现 `notepad.exe`，查找日志会收到如下一行：
+### 算法
 
-```/dev/null/example.log#L1-1
-[09:15:42]find notepad.exe
+1. 锁定 `FINDS_SET`。
+2. 对集合调用 `insert(process_name.to_string())`。
+3. 如果 `insert` 返回 `true`（名称是新的），则调用 [`log_to_find`](log_to_find.md) 写入消息 `"find <process_name>"`。
+4. 如果 `insert` 返回 `false`（名称已在集合中），则不执行任何操作。
+
+### 日志输出格式
+
+当记录新的进程名称时，输出行的格式为：
+
+```text
+[HH:MM:SS]find <process_name>
 ```
 
-在同一会话中使用 `"notepad.exe"` 再次调用不会产生任何输出。
+时间戳前缀由 [`log_to_find`](log_to_find.md) 添加。消息根据 [USE_CONSOLE](statics.md#use_console) 的值写入 `.find` 日志文件或 stdout。
+
+### 性能
+
+该函数标记为 `#[inline]`，允许编译器在调用点内联。去重检查为摊销 O(1)（哈希集查找），使其在每个调度周期中对每个已发现的进程调用时开销很低。
+
+### 会话作用域
+
+`FINDS_SET` 在正常运行期间永远不会被清除——它在应用程序的整个生命周期中累积进程名称。这意味着如果一个进程退出并重新启动，它在同一会话中**不会**被重新记录。新的会话（应用程序重启）从空集合开始。
+
+### 与 `-find` 模式的关系
+
+`-find` CLI 模式扫描 CPU 亲和性尚未被显式配置（即其亲和性与系统默认值匹配）的进程。对于每个这样的进程，会调用 `log_process_find`，以便用户可以看到哪些进程是"未配置的"，同时不会在每个轮询周期被重复条目淹没。
 
 ## 要求
 
 | 要求 | 值 |
 |------|-----|
-| 模块 | `logging` |
-| 调用方 | [process_find](../main.rs/README.md) |
-| 被调用方 | [log_to_find](log_to_find.md) |
-| 读取 | [FINDS_SET](FINDS_SET.md)（锁定并插入） |
-| 遵循 | [USE_CONSOLE](USE_CONSOLE.md)（间接，通过 `log_to_find`） |
+| **模块** | `logging.rs` |
+| **调用方** | `apply.rs`、`scheduler.rs` — find 模式扫描逻辑 |
+| **被调用方** | [`log_to_find`](log_to_find.md) |
+| **静态变量** | [FINDS_SET](statics.md#finds_set) |
+| **平台** | 跨平台（无直接 Windows API 调用） |
 
 ## 另请参阅
 
 | 主题 | 链接 |
 |------|------|
-| 成功查找的去重集合 | [FINDS_SET](FINDS_SET.md) |
-| 带时间戳的查找模式日志写入器 | [log_to_find](log_to_find.md) |
-| 查找模式日志文件句柄 | [FIND_LOG_FILE](FIND_LOG_FILE.md) |
-| 失败查找的去重集合 | [FINDS_FAIL_SET](FINDS_FAIL_SET.md) |
-| main 中的查找模式入口点 | [process_find](../main.rs/README.md) |
-| logging 模块概述 | [logging 模块](README.md) |
+| log_to_find 函数 | [log_to_find](log_to_find.md) |
+| log_message 函数 | [log_message](log_message.md) |
+| FINDS_SET 静态变量 | [statics](statics.md#finds_set) |
+| is_affinity_unset 函数 | [is_affinity_unset](../winapi.rs/is_affinity_unset.md) |
+| logging 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

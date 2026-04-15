@@ -151,7 +151,7 @@ pub fn is_new_error(pid: u32, tid: u32, process_name: &str, operation: Operation
 /// Marks all entries as dead, then re-marks currently running processes as alive.
 /// Dead entries are removed to prevent unbounded growth.
 #[inline]
-pub fn purge_fail_map(pids_and_names: &[(u32, String)]) {
+pub fn purge_fail_map(pids_and_names: &[(u32, &str)]) {
     let mut map = get_pid_map_fail_entry_set!();
     for fail_entry_set in map.values_mut() {
         fail_entry_set.values_mut().for_each(|alive| *alive = false);

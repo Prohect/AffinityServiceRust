@@ -1,108 +1,80 @@
 # parse_args function (cli.rs)
 
-Parses a raw command-line argument slice into a [CliArgs](CliArgs.md) structure. The parser performs a single linear scan over the argument vector, matching each element against known flag strings and consuming an additional element for value-bearing flags. Unknown flags are silently ignored, making the parser forward-compatible with future additions.
+Parses a slice of command-line argument strings into a mutable `CliArgs` instance, setting flags, modes, and values according to recognized argument tokens. Unrecognized arguments are silently ignored.
 
 ## Syntax
 
-```rust
+```AffinityServiceRust/src/cli.rs#L42-43
 pub fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()>
 ```
 
 ## Parameters
 
-`args`
-
-A slice of command-line argument strings, typically obtained from `std::env::args().collect()`. The first element (`args[0]`) is the executable path and is skipped — parsing begins at index 1.
-
-`cli`
-
-A mutable reference to a [CliArgs](CliArgs.md) structure that has already been initialized with defaults via `CliArgs::new()`. The parser overwrites individual fields as it encounters matching flags. Fields for which no flag is present retain their default values.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `args` | `&[String]` | The full command-line argument list. Element `[0]` (the executable path) is skipped; parsing begins at index 1. |
+| `cli` | `&mut CliArgs` | A mutable reference to the `CliArgs` struct that will be populated with the parsed values. Should be initialized via `CliArgs::new()` before calling. |
 
 ## Return value
 
-Returns `Ok(())` unconditionally. The `Result<()>` return type (where `Result` is `windows::core::Result`) exists to allow future error reporting for malformed arguments, but the current implementation never returns an error. Unrecognized flags and missing values for value-bearing flags (when the flag is the last argument) are silently ignored.
+Returns `windows::core::Result<()>`. Currently always returns `Ok(())` — argument parsing errors are handled by falling back to default values (e.g., `unwrap_or`) rather than propagating errors.
 
 ## Remarks
 
-### Flag format
+### Recognized arguments
 
-All flags use a single-dash prefix (e.g., `-help`, `-config`). A small number of flags also accept a double-dash variant (e.g., `--help`, `--helpall`, `--dry-run`), and the legacy `?` and `/?` forms are accepted for help. Flag matching is case-sensitive, with explicit case-variant aliases provided where needed:
+| Argument | Effect | Notes |
+|----------|--------|-------|
+| `-help`, `--help`, `-?`, `/?`, `?` | Sets `help_mode = true` | |
+| `-helpall`, `--helpall` | Sets `help_all_mode = true` | |
+| `-console` | Enables console output via `get_use_console!()` | Overrides log-file output |
+| `-noUAC`, `-nouac` | Sets `no_uac = true` | Case-insensitive variant |
+| `-convert` | Sets `convert_mode = true` | Requires `-in` and `-out` |
+| `-autogroup` | Sets `autogroup_mode = true` | Requires `-in` and `-out` |
+| `-find` | Sets `find_mode = true` | |
+| `-validate` | Sets `validate_mode = true` | Also forces console output |
+| `-processlogs` | Sets `process_logs_mode = true` | |
+| `-dryrun`, `-dry-run`, `--dry-run` | Sets `dry_run = true` | |
+| `-interval <ms>` | Sets `interval_ms` | Clamped to `[16, 86400000]`; defaults to `5000` on parse failure |
+| `-loop <count>` | Sets `loop_count = Some(n)` | Minimum value is `1` |
+| `-resolution <t>` | Sets `time_resolution` | `0` means do not change system timer resolution |
+| `-logloop` | Sets `log_loop = true` | |
+| `-config <file>` | Sets `config_file_name` | |
+| `-blacklist <file>` | Sets `blacklist_file_name = Some(...)` | |
+| `-in <file>` | Sets `in_file_name = Some(...)` | |
+| `-out <file>` | Sets `out_file_name = Some(...)` | |
+| `-skip_log_before_elevation` | Sets `skip_log_before_elevation = true` | |
+| `-noDebugPriv`, `-nodebugpriv` | Sets `no_debug_priv = true` | |
+| `-noIncBasePriority`, `-noincbasepriority` | Sets `no_inc_base_priority = true` | |
+| `-no_etw`, `-noetw` | Sets `no_etw = true` | |
+| `-continuous_process_level_apply` | Sets `continuous_process_level_apply = true` | |
 
-| Canonical flag | Aliases |
-|----------------|---------|
-| `-help` | `--help`, `-?`, `/?`, `?` |
-| `-helpall` | `--helpall` |
-| `-noUAC` | `-nouac` |
-| `-dryrun` | `-dry-run`, `--dry-run` |
-| `-noDebugPriv` | `-nodebugpriv` |
-| `-noIncBasePriority` | `-noincbasepriority` |
-| `-no_etw` | `-noetw` |
-| `continuous_process_level_apply` | — |
+### Argument consumption
 
-### Value-bearing flags
+Arguments that require a value (e.g., `-interval`, `-config`) consume the *next* element in `args`. A bounds check (`i + 1 < args.len()`) prevents out-of-bounds access; if the value argument is missing, the flag is silently skipped.
 
-Flags that require a value consume the next element in the argument vector (`args[i + 1]`). The parser guards against out-of-bounds access with an `if i + 1 < args.len()` condition on each match arm. If the flag appears as the last argument without a following value, the match arm does not fire and the flag is treated as an unknown token (silently ignored).
+### Unrecognized arguments
 
-| Flag | Value type | Default | Constraints |
-|------|-----------|---------|-------------|
-| `-interval` | `u64` (milliseconds) | 5000 | Clamped to minimum of 16 via `.max(16)` |
-| `-loop` | `u32` (iteration count) | `None` (infinite) | Clamped to minimum of 1 via `.max(1)` |
-| `-resolution` | `u32` (100-ns units) | 0 | No clamping; 0 means do not set |
-| `-config` | `String` (file path) | `"config.ini"` | No validation |
-| `-blacklist` | `String` (file path) | `None` | Wrapped in `Some` |
-| `-in` | `String` (file path) | `None` | Wrapped in `Some` |
-| `-out` | `String` (file path) | `None` | Wrapped in `Some` |
-
-For numeric flags (`-interval`, `-loop`, `-resolution`), the value is parsed with `str::parse()`. If parsing fails, `.unwrap_or()` supplies the default (5000 for interval, 1 for loop, 0 for resolution).
-
-### Side effects
-
-Two flags modify global state directly rather than (or in addition to) setting a field on `CliArgs`:
-
-- **`-console`** — Sets the global `USE_CONSOLE` static to `true` via the `get_use_console!()` macro. There is no corresponding field in `CliArgs` because console mode is consumed by the logging infrastructure, not the main loop.
-- **`-validate`** — Sets `cli.validate_mode = true` **and** sets `USE_CONSOLE` to `true`, because validation output is always intended for interactive review.
-
-### Unknown flag handling
-
-Any argument that does not match a known flag is silently skipped. This means:
-
-- Typoed flags (e.g., `-consle`) are ignored without warning.
-- Positional arguments or bare values without a preceding flag are ignored.
-- Future flags added to the parser will not break existing scripts that pass unknown flags.
-
-### Parsing order
-
-The parser processes arguments left to right. If a flag appears multiple times, the last occurrence wins for value-bearing flags (because each occurrence overwrites the field). For boolean flags, they can only be set to `true` — there is no mechanism to unset a flag once it has been set.
-
-### Typical usage
-
-```rust
-let args: Vec<String> = env::args().collect();
-let mut cli = CliArgs::new();
-parse_args(&args, &mut cli)?;
-```
+Any argument string that does not match a known token is ignored without emitting a warning or error.
 
 ## Requirements
 
 | Requirement | Value |
 |-------------|-------|
-| Module | `cli` |
-| Callers | [main](../main.rs/main.md) |
-| Callees | `get_use_console!()` macro (global logging state) |
-| API | None (pure argument parsing with one global side effect) |
-| Privileges | N/A |
+| Module | `cli.rs` |
+| Callers | `main` (entry point) |
+| Callees | `CliArgs` fields, `get_use_console!()` macro |
+| API | `windows::core::Result` |
+| Privileges | None |
 
 ## See Also
 
-| Topic | Link |
-|-------|------|
-| Argument container structure | [CliArgs](CliArgs.md) |
-| Basic help output | [print_help](print_help.md) |
-| Detailed help output | [print_cli_help](print_cli_help.md) |
-| Combined help output | [print_help_all](print_help_all.md) |
-| Entry point that calls parse_args | [main](../main.rs/main.md) |
+| Resource | Link |
+|----------|------|
+| CliArgs struct | [CliArgs](CliArgs.md) |
+| print_help | [print_help](print_help.md) |
+| print_help_all | [print_help_all](print_help_all.md) |
+| config module | [config.rs overview](../config.rs/README.md) |
 
-
-## Documentation on Commit SHA
-
-920d8fafb3d9e22e6078f62bbb7d8d97e7d21c4b
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

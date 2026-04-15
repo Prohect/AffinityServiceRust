@@ -1,6 +1,6 @@
-# IdealProcessorState struct (scheduler.rs)
+# IdealProcessorState type (scheduler.rs)
 
-Tracks the ideal processor assignment state for a single thread, recording both the current and previous processor group and number to support reassignment decisions.
+Tracks the current and previous ideal-processor assignment for a single thread. The ideal processor is a Windows scheduling hint that tells the kernel which logical processor a thread should preferentially run on. This struct records both the current assignment and the previous one so that the apply engine can detect changes and avoid redundant `SetThreadIdealProcessorEx` calls.
 
 ## Syntax
 
@@ -17,46 +17,40 @@ pub struct IdealProcessorState {
 
 ## Members
 
-| Member | Type | Description |
-|--------|------|-------------|
-| `current_group` | `u16` | The processor group index where the thread is currently ideally scheduled. Corresponds to the `Group` field of a `PROCESSOR_NUMBER` structure. |
-| `current_number` | `u8` | The logical processor number within `current_group` where the thread is currently ideally scheduled. Corresponds to the `Number` field of a `PROCESSOR_NUMBER` structure. |
-| `previous_group` | `u16` | The processor group index where the thread was ideally scheduled before the most recent reassignment. Used to detect whether a thread's ideal processor actually changed. |
-| `previous_number` | `u8` | The logical processor number within `previous_group` where the thread was ideally scheduled before the most recent reassignment. |
-| `is_assigned` | `bool` | Indicates whether this thread has been explicitly assigned an ideal processor by the scheduler. When `false`, the `current_*` and `previous_*` fields are at their default zero values and do not represent a deliberate assignment. |
+| Field | Type | Description |
+|-------|------|-------------|
+| `current_group` | `u16` | The processor group number of the currently assigned ideal processor. On systems with 64 or fewer logical processors there is only group 0. |
+| `current_number` | `u8` | The zero-based processor number within `current_group` that is the thread's current ideal processor. |
+| `previous_group` | `u16` | The processor group of the previously assigned ideal processor. Used to detect whether a reassignment has occurred since the last iteration. |
+| `previous_number` | `u8` | The processor number within `previous_group` that was the thread's ideal processor before the most recent change. |
+| `is_assigned` | `bool` | Indicates whether this thread has ever been assigned an ideal processor by the service. When `false`, the `current_*` and `previous_*` fields contain default values (all zero) and do not represent a real assignment. |
 
 ## Remarks
 
-`IdealProcessorState` is embedded in each [ThreadStats](ThreadStats.md) instance as the `ideal_processor` field. It enables the [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) function to track whether a thread's ideal processor has been set, and to compare the current assignment against the previous one when deciding whether to call `SetThreadIdealProcessorEx`.
-
-The `previous_*` fields are updated before writing new values to `current_*`, allowing the caller to detect and log processor reassignment transitions. This is particularly useful for diagnosing scheduling instability — if a thread's ideal processor changes every tick, it may indicate the hysteresis thresholds in [PrimeThreadScheduler](PrimeThreadScheduler.md) need tuning.
-
-### Default state
-
-Calling `IdealProcessorState::new()` or `IdealProcessorState::default()` returns a state with all numeric fields set to `0` and `is_assigned` set to `false`. Group 0, processor 0 as default values do **not** imply an assignment to that processor — the `is_assigned` flag must be checked first.
-
-### Platform notes
-
-Processor group and number values correspond to the Windows `PROCESSOR_NUMBER` structure used by `SetThreadIdealProcessorEx` and `GetThreadIdealProcessorEx`. On systems with a single processor group, `current_group` and `previous_group` will always be `0`.
+- All fields are initialized to zero/`false` by `IdealProcessorState::new()` and the `Default` implementation.
+- The struct derives `Clone` and `Copy`, making it cheap to snapshot and compare across iterations.
+- The previous/current pair enables the apply engine to implement change detection: if `(current_group, current_number)` equals `(previous_group, previous_number)` and `is_assigned` is `true`, no Win32 call is needed because the assignment has not changed.
+- Processor groups are relevant on systems with more than 64 logical processors (e.g. dual-socket server hardware or heavily multi-core workstations). On typical consumer hardware, `current_group` and `previous_group` will always be `0`.
+- This struct is embedded inside [`ThreadStats`](ThreadStats.md) as the `ideal_processor` field.
 
 ## Requirements
 
-| | |
-|---|---|
-| **Module** | `scheduler.rs` |
-| **Embedded in** | [ThreadStats](ThreadStats.md) |
-| **Consumed by** | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
-| **Platform API** | `SetThreadIdealProcessorEx`, `GetThreadIdealProcessorEx` (`windows` crate) |
+| Requirement | Value |
+|-------------|-------|
+| Module | `scheduler.rs` |
+| Used by | [`ThreadStats`](ThreadStats.md), `apply::apply_ideal_processors` |
+| Win32 API | Corresponds to the `PROCESSOR_NUMBER` structure used by `SetThreadIdealProcessorEx` / `GetThreadIdealProcessorEx` |
+| Privileges | None (data-only struct) |
 
 ## See Also
 
-| Topic | Description |
-|-------|-------------|
-| [ThreadStats](ThreadStats.md) | Per-thread statistics struct that contains an `IdealProcessorState` instance. |
-| [PrimeThreadScheduler](PrimeThreadScheduler.md) | Central scheduler that manages thread-to-processor assignments. |
-| [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) | Function that reads and writes `IdealProcessorState` when applying ideal processor rules. |
-| [set_thread_ideal_processor_ex](../winapi.rs/set_thread_ideal_processor_ex.md) | Low-level wrapper around the Windows `SetThreadIdealProcessorEx` API. |
+| Reference | Link |
+|-----------|------|
+| ThreadStats | [ThreadStats](ThreadStats.md) |
+| PrimeThreadScheduler | [PrimeThreadScheduler](PrimeThreadScheduler.md) |
+| ProcessStats | [ProcessStats](ProcessStats.md) |
+| apply_thread_level | [apply_thread_level](../main.rs/apply_thread_level.md) |
+| scheduler module overview | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

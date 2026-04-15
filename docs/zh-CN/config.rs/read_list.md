@@ -1,94 +1,104 @@
 # read_list 函数 (config.rs)
 
-读取一个简单的逐行列表文件，返回经过修剪、小写化且非空、非注释的字符串向量。此函数用于加载黑名单文件，该文件包含服务在应用规则时应跳过的进程名称。
+读取文本文件，将其中非空、非注释的行作为小写字符串向量返回。此实用函数用于加载简单的面向行的列表文件，例如查找模式中使用的黑名单文件。
 
 ## 语法
 
-```rust
-pub fn read_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>>
+```AffinityServiceRust/src/config.rs#L877-886
+pub fn read_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    Ok(reader
+        .lines()
+        .map_while(Result::ok)
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty() && !s.starts_with('#'))
+        .collect())
+}
 ```
 
 ## 参数
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `path` | `P: AsRef<Path>` | 列表文件的文件系统路径。接受任何实现了 `AsRef<Path>` 的类型，包括 `&str`、`String` 和 `PathBuf`。文件通过 `File::open` 打开，并通过缓冲读取器逐行读取。 |
+| `path` | `P: AsRef<Path>` | 要读取的文本文件的文件系统路径。接受任何可以转换为 `Path` 引用的类型，包括 `&str`、`String` 和 `PathBuf`。 |
 
 ## 返回值
 
-返回 `Result<Vec<String>>`：
+类型：`std::io::Result<Vec<String>>`
 
-- **`Ok(Vec<String>)`** — 从文件中提取的小写化、修剪后的进程名称向量。向量按文件中条目出现的顺序排列，空行和注释行已被移除。
-- **`Err(io::Error)`** — 当文件无法打开时（例如文件未找到、权限被拒绝），从 `File::open` 传播的错误。
+成功时返回 `Ok`，其中包含一个字符串向量，每个元素是文件中已修剪、已转为小写、非空且不以 `#` 开头的行。失败时返回来自 `File::open` 的 `std::io::Error`（例如，文件未找到、权限被拒绝）。
+
+### 示例
+
+给定包含以下内容的文件：
+
+```/dev/null/example_blacklist.txt#L1-6
+# Processes to ignore during find mode
+svchost.exe
+System
+  Explorer.EXE
+
+# End of list
+```
+
+返回的向量为：
+
+```/dev/null/example_result.txt#L1-3
+["svchost.exe", "system", "explorer.exe"]
+```
 
 ## 备注
 
-### 解析规则
+### 处理管道
 
-对于文件中的每一行：
-
-1. 去除行首尾的空白字符。
-2. 将修剪后的行通过 `to_lowercase()` 转换为小写。
-3. 如果满足以下条件则**跳过**该行：
-   - 修剪后为空。
-   - 以 `#` 开头（视为注释）。
-4. 所有剩余的行被收集到返回的向量中。
-
-### 文件格式
-
-列表文件是一个纯文本文件，每行一个条目。支持注释和空行以提高可读性：
-
-```text
-# 要跳过的进程
-system
-svchost.exe
-csrss.exe
-
-# 开发工具
-devenv.exe
-code.exe
-```
+1. 文件通过 `File::open` 打开，并包装在 `BufReader` 中进行行缓冲读取。
+2. 通过 `lines()` 迭代器惰性读取行。`map_while(Result::ok)` 组合子在成功打开后遇到第一个 I/O 错误时停止读取（在这种情况下不会返回部分结果——迭代器只是提前终止并返回已收集的内容）。
+3. 每一行去除前后空白并转换为小写，以便在运行时进行不区分大小写的匹配。
+4. 修剪后为空的行以及以 `#` 开头的行（注释）被过滤掉。
+5. 剩余的行被收集到 `Vec<String>` 中。
 
 ### 大小写规范化
 
-所有条目都被转换为小写，以确保服务在将运行中的进程名称与黑名单进行比较时执行大小写不敏感的匹配。Windows 进程名称不区分大小写，因此此规范化与配置系统的其余部分保持一致。
+所有条目都被转为小写，以便与 Windows 进程名称进行不区分大小写的比较，因为 Windows 进程名称本身就是不区分大小写的。
 
-### 编码
+### 注释语法
 
-文件使用 Rust 默认的 UTF-8 文件 I/O 进行读取。包含无效 UTF-8 的行会被 `map_while(Result::ok)` 迭代器适配器静默丢弃——不会为单个格式错误的行引发错误。
-
-### 与 read_config 的区别
-
-与处理复杂多格式配置语言的 [read_config](read_config.md) 不同，`read_list` 执行简单的逐行提取，不涉及别名、常量、组或规则字段的特殊语法。每一行要么是进程名称，要么是注释。
-
-### 黑名单用法
-
-`read_list` 的主要使用者是服务主循环，它在启动时以及通过 [hotreload_blacklist](hotreload_blacklist.md) 加载黑名单。在应用阶段，小写化后的进程名称出现在黑名单向量中的进程将被跳过，无论配置中是否存在匹配的规则。
+修剪后以 `#` 开头的行被视为注释并从结果中排除。不支持行内注释（例如 `svchost.exe # system process`）——整行会按原样被包含（已转为小写并修剪），因为它不以 `#` 开头。
 
 ### 错误传播
 
-`File::open` 上的 `?` 运算符意味着文件未找到或权限错误会作为 `io::Error` 传播给调用者。调用者负责处理此错误——例如，[hotreload_blacklist](hotreload_blacklist.md) 使用 `unwrap_or_default()` 在出错时回退到空黑名单。
+只有 `File::open` 调用可以产生通过 `?` 操作符传播给调用方的错误。后续的行读取错误被 `map_while(Result::ok)` 静默吸收，它在第一个失败的行读取时终止迭代，而不是传播错误。
+
+### 编码
+
+该函数以 UTF-8 格式读取文件（`BufReader::lines` 的默认编码）。对于以其他格式编码的文件（例如 UTF-16 LE），请改用 [`read_utf16le_file`](read_utf16le_file.md)。
+
+### 用途
+
+`read_list` 主要用于：
+- 主循环加载黑名单文件（`-blacklist <file>`），用于查找模式。
+- [`hotreload_blacklist`](hotreload_blacklist.md) 在黑名单文件在磁盘上发生变更时重新加载。
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `config` (`src/config.rs`) |
-| **可见性** | `pub` |
-| **调用者** | [main](../main.rs/main.md)、[hotreload_blacklist](hotreload_blacklist.md) |
-| **被调用者** | `std::fs::File::open`、`std::io::BufReader`、`std::io::BufRead::lines` |
-| **API** | 仅使用标准库文件 I/O——无 Windows API 调用 |
-| **权限** | 对列表文件路径的读取权限 |
+| 要求 | 值 |
+|------|-----|
+| 模块 | `config.rs` |
+| 可见性 | `pub` |
+| 调用方 | `main.rs`（黑名单加载）、[`hotreload_blacklist`](hotreload_blacklist.md) |
+| 被调用方 | `File::open`、`BufReader::new`、`BufRead::lines` |
+| API | `std::io::Result`、`std::fs::File`、`std::io::BufReader`、`std::path::Path` |
+| 权限 | 对指定路径的文件系统读取权限 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 资源 | 链接 |
 |------|------|
-| 主配置文件读取器 | [read_config](read_config.md) |
-| 黑名单热重载 | [hotreload_blacklist](hotreload_blacklist.md) |
-| UTF-16 LE 文件读取器 | [read_utf16le_file](read_utf16le_file.md) |
-| 模块概述 | [config 模块](README.md) |
+| read_utf16le_file | [read_utf16le_file](read_utf16le_file.md) |
+| read_config | [read_config](read_config.md) |
+| hotreload_blacklist | [hotreload_blacklist](hotreload_blacklist.md) |
+| config 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

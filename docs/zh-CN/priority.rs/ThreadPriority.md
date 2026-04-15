@@ -1,16 +1,16 @@
 # ThreadPriority 枚举 (priority.rs)
 
-表示 Windows 线程的优先级。此枚举封装了 `SetThreadPriority` 和 `GetThreadPriority` 使用的有符号整数常量，包括从 `Idle` (−15) 到 `TimeCritical` (15) 的标准调度级别，以及用于后台处理模式转换和错误返回的特殊哨兵值。`None` 变体表示未请求线程优先级更改。该枚举提供 Rust 变体、显示字符串和 Win32 整数值之间的往返转换，以及一个 `boost_one` 方法，用于主线程调度器的增量优先级提升。
+将完整的 Windows 线程优先级级别映射为强类型的 Rust 枚举变体，提供人类可读的字符串名称、枚举变体和 Win32 `SetThreadPriority` API 所需的原始 `i32` 值之间的双向转换。该枚举涵盖从 `Idle`（−15）到 `TimeCritical`（15）的标准调度级别、特殊的后台模式令牌 `ModeBackgroundBegin` / `ModeBackgroundEnd`、`ErrorReturn` 哨兵值，以及表示不请求优先级更改的 `None` 变体。`boost_one` 方法支持主线程提升时的单步优先级提升。
 
 ## 语法
 
-```rust
+```AffinityServiceRust/src/priority.rs#L159-L172
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadPriority {
     None,
     ErrorReturn,         // 0x7FFFFFFF
-    ModeBackgroundBegin, // 0x00010000
-    ModeBackgroundEnd,   // 0x00020000
+    ModeBackgroundBegin, // 0x00010000 (use only for current thread)
+    ModeBackgroundEnd,   // 0x00020000 (use only for current thread)
     Idle,                // -15
     Lowest,              // -2
     BelowNormal,         // -1
@@ -23,102 +23,115 @@ pub enum ThreadPriority {
 
 ## 成员
 
-| 变体 | Win32 值 | 描述 |
-|---------|-------------|-------------|
-| `None` | *(无)* | 哨兵值 — 未请求线程优先级更改。 |
-| `ErrorReturn` | `0x7FFFFFFF` | `GetThreadPriority` 失败时返回的值 (`THREAD_PRIORITY_ERROR_RETURN`)。 |
-| `ModeBackgroundBegin` | `0x00010000` | 将线程降低到后台处理模式。只能用于调用线程本身。 |
-| `ModeBackgroundEnd` | `0x00020000` | 结束调用线程的后台处理模式。只能用于调用线程本身。 |
-| `Idle` | `−15` | `THREAD_PRIORITY_IDLE` — 最低调度优先级。 |
-| `Lowest` | `−2` | `THREAD_PRIORITY_LOWEST` — 比正常低两个级别。 |
-| `BelowNormal` | `−1` | `THREAD_PRIORITY_BELOW_NORMAL` — 比正常低一个级别。 |
-| `Normal` | `0` | `THREAD_PRIORITY_NORMAL` — 默认调度优先级。 |
-| `AboveNormal` | `1` | `THREAD_PRIORITY_ABOVE_NORMAL` — 比正常高一个级别。 |
-| `Highest` | `2` | `THREAD_PRIORITY_HIGHEST` — 比正常高两个级别。 |
-| `TimeCritical` | `15` | `THREAD_PRIORITY_TIME_CRITICAL` — 最高调度优先级。 |
+| 变体 | Win32 值 | 字符串键 | 描述 |
+|------|----------|---------|------|
+| `None` | *（不调用 API）* | `"none"` | 哨兵值，表示不应进行优先级更改。`as_win_const` 方法对此变体返回 `None`。 |
+| `ErrorReturn` | `0x7FFFFFFF` | `"error"` | 表示 `GetThreadPriority` 失败时返回的 `THREAD_PRIORITY_ERROR_RETURN` 值。通常不用作 `SetThreadPriority` 的输入。 |
+| `ModeBackgroundBegin` | `0x00010000` | `"background begin"` | 将线程降至后台处理模式，降低其调度优先级、I/O 优先级和内存优先级。**必须仅对调用线程自身设置。** |
+| `ModeBackgroundEnd` | `0x00020000` | `"background end"` | 恢复先前进入后台模式的线程的正常处理模式。**必须仅对调用线程自身设置。** |
+| `Idle` | `-15` | `"idle"` | `THREAD_PRIORITY_IDLE`。最低的常规调度优先级。线程仅在没有其他线程就绪时运行。 |
+| `Lowest` | `-2` | `"lowest"` | `THREAD_PRIORITY_LOWEST`。比正常低两个级别。 |
+| `BelowNormal` | `-1` | `"below normal"` | `THREAD_PRIORITY_BELOW_NORMAL`。比正常低一个级别。 |
+| `Normal` | `0` | `"normal"` | `THREAD_PRIORITY_NORMAL`。大多数线程的默认优先级。 |
+| `AboveNormal` | `1` | `"above normal"` | `THREAD_PRIORITY_ABOVE_NORMAL`。比正常高一个级别。 |
+| `Highest` | `2` | `"highest"` | `THREAD_PRIORITY_HIGHEST`。比正常高两个级别。 |
+| `TimeCritical` | `15` | `"time critical"` | `THREAD_PRIORITY_TIME_CRITICAL`。最高的常规调度优先级。使用时需极度谨慎，因为它可能会饿死其他线程。 |
 
 ## 方法
 
-### as_str
+### `as_str`
 
-```rust
+```AffinityServiceRust/src/priority.rs#L186-L191
 pub fn as_str(&self) -> &'static str
 ```
 
-返回该变体的可读字符串表示（例如 `"below normal"`、`"time critical"`）。如果变体未在内部查找表中找到，则返回 `"unknown"`（对于有效变体不应出现此情况）。
+返回此变体的人类可读字符串名称（例如 `"normal"`、`"above normal"`）。如果变体在内部查找表中找不到（对于有效的枚举值不应发生），则返回 `"unknown"`。
 
-### as_win_const
+### `as_win_const`
 
-```rust
+```AffinityServiceRust/src/priority.rs#L193-L195
 pub fn as_win_const(&self) -> Option<i32>
 ```
 
-返回该变体对应的 Win32 整数常量，对于 `None` 哨兵变体返回 `None`。
+返回此变体对应的 Win32 `i32` 常量，对于 `ThreadPriority::None` 哨兵则返回 `None`。返回值适合传递给 `SetThreadPriority`（包装在 `THREAD_PRIORITY` 中之后）。
 
-### from_str
+### `from_str`
 
-```rust
+```AffinityServiceRust/src/priority.rs#L197-L204
 pub fn from_str(s: &str) -> Self
 ```
 
-将大小写不敏感的字符串解析为 `ThreadPriority` 变体。如果字符串不匹配任何已知的优先级名称，则返回 `ThreadPriority::None`。此方法通过将输入转为小写后与内部查找表进行比较。
+将不区分大小写的字符串（例如 `"Above Normal"`、`"idle"`）解析为相应的 `ThreadPriority` 变体。如果字符串与任何已知优先级名称都不匹配，则返回 `ThreadPriority::None`。
 
-### from_win_const
+### `from_win_const`
 
-```rust
+```AffinityServiceRust/src/priority.rs#L206-L212
 pub fn from_win_const(val: i32) -> Self
 ```
 
-通过 Win32 整数值查找 `ThreadPriority` 变体。如果值不匹配任何已知常量，则返回 `ThreadPriority::None`。
+将原始的 `i32` Win32 线程优先级值（例如 `GetThreadPriority` 返回的值）转换回对应的 `ThreadPriority` 变体。如果值与任何已知常量都不匹配，则返回 `ThreadPriority::None`。
 
-### boost_one
+### `boost_one`
 
-```rust
+```AffinityServiceRust/src/priority.rs#L215-L228
 pub fn boost_one(&self) -> Self
 ```
 
-返回下一个更高的标准优先级，上限为 `Highest`。此方法由主线程调度器使用，用于递增提升持续高 CPU 利用率的线程。
+返回标准调度阶梯中的下一个更高优先级级别。当主线程被提升为 prime 状态时，主线程引擎使用此方法将线程优先级提升一级。映射关系如下：
 
-**提升链：** `Idle` → `Lowest` → `BelowNormal` → `Normal` → `AboveNormal` → `Highest` → `Highest`（封顶）。
+| 输入 | 输出 |
+|------|------|
+| `Idle` | `Lowest` |
+| `Lowest` | `BelowNormal` |
+| `BelowNormal` | `Normal` |
+| `Normal` | `AboveNormal` |
+| `AboveNormal` | `Highest` |
+| `Highest` | `Highest` *（封顶）* |
+| `TimeCritical` | `TimeCritical` *（封顶）* |
+| `None` | `None` |
+| `ErrorReturn` | `ErrorReturn` |
+| `ModeBackgroundBegin` | `ModeBackgroundBegin` |
+| `ModeBackgroundEnd` | `ModeBackgroundEnd` |
 
-以下变体为恒等映射（返回自身不变）：`None`、`ErrorReturn`、`ModeBackgroundBegin`、`ModeBackgroundEnd`、`TimeCritical`。
+该函数将提升封顶在 `Highest` — 永远不会将线程提升到 `TimeCritical`。特殊变体（`None`、`ErrorReturn`、`ModeBackgroundBegin`、`ModeBackgroundEnd`）原样返回。
 
-### to_thread_priority_struct
+### `to_thread_priority_struct`
 
-```rust
+```AffinityServiceRust/src/priority.rs#L230-L232
 pub fn to_thread_priority_struct(self) -> THREAD_PRIORITY
 ```
 
-将变体转换为 `windows::Win32::System::Threading::THREAD_PRIORITY` 结构体，以便直接用于 Win32 API。如果 `as_win_const` 返回 `None`，则回退为 `THREAD_PRIORITY(0)`（正常）。
+将此枚举变体转换为 `windows` crate API 所需的 `windows::Win32::System::Threading::THREAD_PRIORITY` 新类型结构。调用 `as_win_const()` 并将结果包装在 `THREAD_PRIORITY(...)` 中，如果变体为 `None` 则默认使用 `0`。
 
 ## 备注
 
-- 内部查找表 (`TABLE`) 将所有变体到字符串到常量的映射存储在单个 `&'static` 切片中，确保所有四个转换方法共享同一权威数据源。
-- `ModeBackgroundBegin` 和 `ModeBackgroundEnd` 不是标准调度级别；它们是改变线程调度和 I/O 行为的控制码。Win32 文档规定这些只能应用于当前线程 — 将其应用于远程线程是未定义行为。AffinityServiceRust 不会将这些变体用于远程线程操作。
-- `boost_one` 永远不会提升超过 `Highest`。故意排除了向 `TimeCritical` 的提升，因为 `TimeCritical` 会抢占大多数系统线程，如果广泛应用可能导致系统不稳定。
-- 与 `ProcessPriority::from_win_const` 和 `IOPriority::from_win_const` 返回 `&'static str` 不同，`ThreadPriority::from_win_const` 返回 `Self`。这允许调用者进一步操作变体（例如调用 `boost_one`）。
+- 内部查找表 `TABLE` 是一个 `&'static` 的 `(Self, &'static str, Option<i32>)` 元组切片，确保所有转换都是零分配的，在一个小的固定大小数组（11 个条目）上进行常量时间线性扫描。
+- `from_str` 方法在匹配前将输入转为小写进行不区分大小写的比较。所有表条目使用小写字符串键。
+- `ModeBackgroundBegin` 和 `ModeBackgroundEnd` 是特殊的 Win32 值，只能应用于**当前**线程。尝试通过 `SetThreadPriority` 使用任意线程句柄对远程线程设置这些值将会因 `ERROR_ACCESS_DENIED` 而失败。AffinityServiceRust 服务不对远程线程使用这些变体。
+- [`ThreadStats`](../scheduler.rs/ThreadStats.md) 中的 `original_priority` 字段存储一个 `Option<ThreadPriority>`，以便服务可以在线程失去 prime 状态或进程退出时快照并随后恢复线程的调度优先级。
+- `boost_one` 被设计为默认安全——它永远不会提升到 `TimeCritical`，如果广泛应用可能导致系统不稳定。
 
 ## 要求
 
 | 要求 | 值 |
-|-------------|-------|
-| 模块 | `priority` |
-| 调用者 | [apply_prime_threads](../apply.rs/apply_prime_threads.md)、[apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md)、[apply_prime_threads_demote](../apply.rs/apply_prime_threads_demote.md)、[parse_and_insert_rules](../config.rs/parse_and_insert_rules.md) |
-| 被调用者 | *(无 — 纯数据映射)* |
-| Win32 API | `SetThreadPriority`、`GetThreadPriority`（通过 [apply 模块](../apply.rs/README.md) 间接使用） |
-| 权限 | 为其他会话中的进程设置高于 `Normal` 的线程优先级可能需要 `SeDebugPrivilege`。 |
+|------|-----|
+| 模块 | `priority.rs` |
+| 调用者 | 配置解析器（`config.rs`）、应用引擎（`apply.rs`）、[`ThreadStats`](../scheduler.rs/ThreadStats.md) |
+| 被调用者 | 无（具有转换方法的纯数据类型） |
+| Win32 API | 对应 `SetThreadPriority` 接受的和 `GetThreadPriority` 返回的值 |
+| 依赖 | `windows::Win32::System::Threading::THREAD_PRIORITY` |
+| 权限 | 根据进程优先级类别，设置 `TimeCritical` 或提升到 `Normal` 以上可能需要 `SeIncreaseBasePriorityPrivilege` |
 
 ## 另请参阅
 
-| 主题 | 链接 |
-|-------|------|
-| 进程级优先级类 | [ProcessPriority](ProcessPriority.md) |
-| I/O 优先级 | [IOPriority](IOPriority.md) |
-| 内存优先级 | [MemoryPriority](MemoryPriority.md) |
-| 主线程调度逻辑 | [scheduler 模块](../scheduler.rs/README.md) |
-| 线程句柄获取 | [get_thread_handle](../winapi.rs/get_thread_handle.md) |
-| 配置解析 | [config 模块](../config.rs/README.md) |
+| 参考 | 链接 |
+|------|------|
+| ProcessPriority | [ProcessPriority](ProcessPriority.md) |
+| IOPriority | [IOPriority](IOPriority.md) |
+| MemoryPriority | [MemoryPriority](MemoryPriority.md) |
+| MemoryPriorityInformation | [MemoryPriorityInformation](MemoryPriorityInformation.md) |
+| ThreadStats | [ThreadStats](../scheduler.rs/ThreadStats.md) |
+| priority 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

@@ -1,10 +1,10 @@
 # hotreload_blacklist 函数 (config.rs)
 
-检查黑名单文件的最后修改时间戳，如果文件自上次检查后已被修改，则将其重新加载到内存中。如果文件变得不可访问（例如被删除或锁定），则清空内存中的黑名单。此函数在每次服务循环迭代中调用一次，以支持在不重启服务的情况下实时更新黑名单。
+通过将黑名单文件的文件系统修改时间戳与缓存值进行比较来监视文件修改，并在检测到更改时重新加载文件内容。此函数在每次轮询迭代中被调用，以支持在不重启服务的情况下实时更新黑名单。
 
 ## 语法
 
-```rust
+```AffinityServiceRust/src/config.rs#L1279-1301
 pub fn hotreload_blacklist(
     cli: &CliArgs,
     blacklist: &mut Vec<String>,
@@ -16,83 +16,72 @@ pub fn hotreload_blacklist(
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `cli` | `&CliArgs` | 已解析的命令行参数的引用。`blacklist_file_name` 字段（`Option<String>`）提供要监控的文件路径。如果为 `None`，函数立即返回而不执行任何操作。 |
-| `blacklist` | `&mut Vec<String>` | 服务循环维护的活动黑名单向量的可变引用。重新加载时，此向量将替换为由 [read_list](read_list.md) 新解析的条目。当文件不可访问时，向量将被清空。 |
-| `last_blacklist_mod_time` | `&mut Option<std::time::SystemTime>` | 上次检查时缓存的修改时间戳的可变引用。成功重新加载后更新为 `Some(mod_time)`，当文件变得不可访问时重置为 `None`。用于检测文件自上次轮询以来是否已更改。 |
+| `cli` | `&CliArgs` | 已解析的命令行参数的引用。函数读取 `cli.blacklist_file_name` 来确定黑名单文件的路径。如果 `blacklist_file_name` 为 `None`，函数立即返回且不执行任何操作。 |
+| `blacklist` | `&mut Vec<String>` | 内存中黑名单向量的可变引用。当黑名单文件被重新加载时，此向量将被替换为新内容。当黑名单文件变得不可访问时，此向量将被清空。 |
+| `last_blacklist_mod_time` | `&mut Option<std::time::SystemTime>` | 上次成功检查时黑名单文件的缓存修改时间戳的可变引用。用于检测更改。初始时以及文件变得不可访问时设为 `None`；成功重新加载后设为 `Some(mod_time)`。 |
 
 ## 返回值
 
-此函数没有返回值。所有输出通过对 `blacklist` 和 `last_blacklist_mod_time` 的修改来传递。
+此函数不返回值。所有结果通过对 `blacklist` 和 `last_blacklist_mod_time` 的修改来传递。
 
 ## 备注
 
-### 重新加载算法
+### 变更检测算法
 
-1. **未配置黑名单** — 如果 `cli.blacklist_file_name` 为 `None`，函数立即返回。不进行文件监控。
-2. **文件元数据检查** — 对黑名单文件路径调用 `std::fs::metadata`。
-   - **元数据错误（文件不可访问）：** 如果 `last_blacklist_mod_time` 之前为 `Some(...)`，则清空黑名单，将 `last_blacklist_mod_time` 设置为 `None`，并输出日志消息：`"Blacklist file '{path}' no longer accessible, clearing blacklist."`。如果 `last_blacklist_mod_time` 已经是 `None`，则不采取任何操作（避免在每次循环迭代中重复输出日志消息）。
-   - **元数据成功：** 将文件的修改时间与 `*last_blacklist_mod_time` 进行比较。
-3. **修改时间比较** — 如果 `Some(mod_time) != *last_blacklist_mod_time`（即文件是新创建的或已被修改），则触发重新加载：
-   a. 将 `last_blacklist_mod_time` 更新为 `Some(mod_time)`。
-   b. 输出日志消息：`"Blacklist file '{path}' changed, reloading..."`。
-   c. 调用 [read_list](read_list.md) 解析文件。出错时，`unwrap_or_default()` 产生一个空向量。
-   d. 结果替换 `*blacklist` 的内容。
-   e. 输出完成日志消息：`"Blacklist reload complete: {N} items loaded."`。
-4. **无变更** — 如果修改时间与缓存值匹配，函数直接返回而不执行任何操作。
+1. 如果 `cli.blacklist_file_name` 为 `None`，函数立即返回——未配置黑名单文件。
+2. 函数对黑名单文件路径调用 `std::fs::metadata`：
+   - **元数据调用失败**（文件被删除、权限变更等）：如果 `last_blacklist_mod_time` 之前为 `Some`（表示文件至少被加载过一次），则清空黑名单，将 `last_blacklist_mod_time` 重置为 `None`，并发出日志消息：`"Blacklist file '{path}' no longer accessible, clearing blacklist."`。如果它已经是 `None`，则不执行任何操作（避免重复的日志输出）。
+   - **元数据调用成功**：将文件的修改时间与 `last_blacklist_mod_time` 进行比较。如果时间戳不同（或 `last_blacklist_mod_time` 为 `None`，表示首次加载），则重新加载文件。
 
-### 首次调用行为
+3. 重新加载时，函数调用 [`read_list`](read_list.md) 将文件内容解析为小写、非空、非注释字符串的向量。如果 `read_list` 返回错误，则通过 `unwrap_or_default()` 使用空向量作为后备。
+4. 缓存的时间戳更新为文件的当前修改时间。
+5. 发出日志消息：
+   - `"Blacklist file '{path}' changed, reloading..."` — 重新加载之前。
+   - `"Blacklist reload complete: {n} items loaded."` — 重新加载之后。
 
-首次调用时，`last_blacklist_mod_time` 通常为 `None`（由调用方初始化）。只要文件存在，`Some(mod_time) != None` 求值为 `true`，从而触发初始加载。这意味着该函数通过同一代码路径处理初始加载和后续重新加载。
+### 文件消失处理
 
-### 文件删除和重新创建
+当先前可访问的黑名单文件被删除或变得不可访问时：
 
-如果黑名单文件被删除，下一次调用将清空黑名单并将 `last_blacklist_mod_time` 重置为 `None`。如果文件后来被重新创建，后续调用将检测到新的修改时间（`Some(mod_time) != None`）并重新加载它。这允许用户通过删除文件临时禁用黑名单，并通过重新创建文件重新启用它。
+- 内存中的黑名单被**清空**（移除所有条目）。
+- `last_blacklist_mod_time` 被设为 `None`。
+- 发出一条日志消息。只要文件保持不可访问状态，后续轮询迭代不会再次记录日志（因为 `last_blacklist_mod_time` 已经是 `None`）。
 
-### 错误容忍
+如果文件稍后重新出现，下一次元数据检查将成功，检测到时间戳不匹配（因为缓存时间为 `None`），并触发全新的重新加载。
 
-如果 [read_list](read_list.md) 失败（例如由于瞬态 I/O 错误或编码问题），`unwrap_or_default()` 将静默产生一个空黑名单。修改时间仍会被更新，因此在文件再次修改之前不会重试该错误。随后的文件修改（即使是无操作的保存）将触发另一次重新加载尝试。
+### 首次加载行为
+
+在 `last_blacklist_mod_time` 设为 `None` 且存在有效黑名单文件的首次调用时，函数检测到时间戳不匹配（`Some(mod_time) != None`）并加载文件。这统一处理了初始启动加载和消失后恢复的情况。
 
 ### 轮询频率
 
-此函数不管理自己的计时器。它由服务主循环在每次迭代中调用（由 `--interval` 命令行参数控制，默认为几秒钟）。因此，文件系统元数据检查的频率由服务循环间隔决定。
-
-### 日志记录
-
-所有日志输出使用 `log!` 宏，该宏写入服务的日志文件并可选地输出到控制台。函数输出：
-
-- 当文件变得不可访问时输出一条消息。
-- 成功重新加载时输出两条消息（开始和完成，包含条目数量）。
-- 当文件未更改时不输出任何消息。
+此函数设计为在每次轮询循环迭代中调用一次。当文件存在且未更改时，每次调用的开销仅为一次 `std::fs::metadata` 系统调用，使其适合频繁调用。
 
 ### 线程安全性
 
-此函数不是线程安全的。它通过独占可变引用修改 `blacklist` 和 `last_blacklist_mod_time`。调用方（[main](../main.rs/main.md) 中的服务主循环）以单线程运行并独占这些值的所有权。
-
-### 与 hotreload_config 的比较
-
-[hotreload_config](hotreload_config.md) 对主配置文件执行类似的热重载，但包含额外的验证：仅在新的解析结果没有错误时才替换活动配置。`hotreload_blacklist` 更简单 — 它始终用 [read_list](read_list.md) 返回的内容替换黑名单，因为黑名单文件格式没有复杂的验证要求。
+此函数不是线程安全的，必须从单个线程（主轮询循环）调用。对 `blacklist` 和 `last_blacklist_mod_time` 的可变引用通过 Rust 的借用检查器在语言层面强制了这一点。
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `config` (`src/config.rs`) |
-| **可见性** | `pub` |
-| **调用方** | [main](../main.rs/main.md)（服务循环） |
-| **被调用方** | [read_list](read_list.md)、`std::fs::metadata`、`log!` 宏 |
-| **API** | `std::fs::metadata` 用于文件系统轮询 |
-| **权限** | 对黑名单文件路径的读取权限 |
+| 要求 | 值 |
+|------|-----|
+| 模块 | `config.rs` |
+| 可见性 | `pub` |
+| 调用方 | `main.rs`（主轮询循环） |
+| 被调用方 | [`read_list`](read_list.md)、`std::fs::metadata`、`log!` 宏 |
+| 依赖 | [`CliArgs`](../cli.rs/CliArgs.md)（用于 `blacklist_file_name`）、`std::time::SystemTime` |
+| I/O | 文件系统元数据查询 + 通过 [`read_list`](read_list.md) 的可选文件读取 |
+| 权限 | 对黑名单文件路径的文件系统读取权限 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 资源 | 链接 |
 |------|------|
-| 黑名单文件读取器 | [read_list](read_list.md) |
-| 配置文件热重载（类似功能） | [hotreload_config](hotreload_config.md) |
-| 命令行参数（blacklist_file_name） | [CliArgs](../cli.rs/CliArgs.md) |
-| 服务主循环 | [main](../main.rs/main.md) |
-| 配置模块概述 | [README](README.md) |
+| hotreload_config | [hotreload_config](hotreload_config.md) |
+| read_list | [read_list](read_list.md) |
+| CliArgs | [CliArgs](../cli.rs/CliArgs.md) |
+| read_config | [read_config](read_config.md) |
+| config 模块概述 | [README](README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

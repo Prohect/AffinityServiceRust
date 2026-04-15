@@ -1,14 +1,14 @@
 # apply_prime_threads_demote 函数 (apply.rs)
 
-对不再符合主力线程资格的线程进行降级，移除其每线程 CPU 集合绑定并恢复其原始线程优先级。这是主力线程调度管线的最后阶段，由 [apply_prime_threads](apply_prime_threads.md) 在 [apply_prime_threads_select](apply_prime_threads_select.md) 和 [apply_prime_threads_promote](apply_prime_threads_promote.md) 完成后调用。
+`apply_prime_threads_demote` 函数为不再具备主线程资格的线程移除 CPU 集合固定并恢复其原始线程优先级。该函数遍历所有之前被固定（即 `pinned_cpu_set_ids` 非空）但不在当前主线程选择集合中的存活线程，通过使用空切片调用 `SetThreadSelectedCpuSets` 清除其 CPU 集合分配，并将线程优先级恢复为提升阶段保存在 `original_priority` 中的值。这是主线程调度算法的降级阶段。
 
 ## 语法
 
-```AffinityServiceRust/src/apply.rs#L966-977
+```AffinityServiceRust/src/apply.rs#L952-964
 pub fn apply_prime_threads_demote(
     pid: u32,
-    config: &ProcessConfig,
-    process: &mut ProcessEntry,
+    config: &ThreadLevelConfig,
+    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
@@ -19,104 +19,76 @@ pub fn apply_prime_threads_demote(
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `pid` | `u32` | 目标进程的进程标识符。用作 [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) 状态映射的键以及错误日志记录。 |
-| `config` | `&`[ProcessConfig](../config.rs/ProcessConfig.md) | 此进程的已解析配置规则。`name` 字段用于错误消息。 |
-| `process` | `&mut`[ProcessEntry](../process.rs/ProcessEntry.md) | 目标进程的快照条目。提供活跃线程列表——只有在快照中仍然存在的线程才是降级候选。 |
-| `tid_with_delta_cycles` | `&[(u32, u64, bool)]` | 由 [apply_prime_threads_select](apply_prime_threads_select.md) 生成的 `(thread_id, delta_cycles, is_prime)` 元组切片。`is_prime` 标志指示该线程在本周期是否被选为主力线程。`is_prime == true` 的线程将被跳过；`is_prime == false` 且其 [ThreadStats](../scheduler.rs/ThreadStats.md) 中 `pinned_cpu_set_ids` 非空的线程将被降级。 |
-| `prime_core_scheduler` | `&mut`[PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) | 持久化的调度器状态。此函数读取并修改 [ThreadStats](../scheduler.rs/ThreadStats.md) 中每个线程的 `pinned_cpu_set_ids`、`original_priority` 和 `handle` 字段。 |
-| `apply_config_result` | `&mut`[ApplyConfigResult](ApplyConfigResult.md) | 降级过程中产生的变更描述和错误消息的累加器。 |
+| `pid` | `u32` | 目标进程的进程 ID。用于线程统计查找、错误去重和日志消息。 |
+| `config` | `&ThreadLevelConfig` | 线程级配置。`name` 字段用于传递给 `log_error_if_new` 和 `get_thread_handle` 的错误日志消息。 |
+| `threads` | `&HashMap<u32, SYSTEM_THREAD_INFORMATION>` | 线程 ID 到其最近系统进程信息查询所得 `SYSTEM_THREAD_INFORMATION` 快照的映射。此映射的键定义了要遍历的存活线程集合。 |
+| `tid_with_delta_cycles` | `&[(u32, u64, bool)]` | 包含线程 ID、增量周期计数和布尔值（指示线程是否被选为主线程，`true` 为是，`false` 为否）的元组切片。函数从 `is_prime == true` 的条目构建主线程 ID 的 `HashSet`，用于确定哪些线程**不应**被降级。 |
+| `prime_core_scheduler` | `&mut PrimeThreadScheduler` | 可变的主线程调度器状态。函数读取和更新每线程统计信息，包括 `handle`、`pinned_cpu_set_ids` 和 `original_priority`。 |
+| `apply_config_result` | `&mut ApplyConfigResult` | 执行期间产生的变更描述和错误消息的累加器。 |
 
 ## 返回值
 
-无 (`()`)。结果通过 `apply_config_result` 和对 `prime_core_scheduler` 的副作用传达。
+此函数不返回值。所有结果通过对 `prime_core_scheduler` 的修改和 `apply_config_result` 中追加的条目来传达。
 
 ## 备注
 
 ### 算法
 
-1. **构建主力线程集合** — 从 `tid_with_delta_cycles` 切片中构建一个包含被选为主力线程（`is_prime == true`）的线程 ID 的 `HashSet<u32>`，用于 O(1) 查找。
+1. **构建主线程集合**：从 `tid_with_delta_cycles` 中 `is_prime == true` 的条目构建 `HashSet<u32>` 线程 ID 集合。这些线程当前被选为主线程，不应被降级。
 
-2. **枚举活跃线程** — 从 `process.get_threads()` 收集活跃线程 ID。只迭代当前快照中存在的线程，防止函数操作过期的线程 ID。
+2. **收集存活线程 ID**：将 `threads` 映射的键收集到 `List<[u32; TIDS_CAPED]>` 中，表示进程中所有存活线程。
 
-3. **识别降级候选** — 对于每个活跃线程，函数检查两个条件：
-   - 线程**不在**主力线程集合中（本周期未被选中）。
-   - 线程在 [ThreadStats](../scheduler.rs/ThreadStats.md) 中的 `pinned_cpu_set_ids` **非空**（之前已被提升并绑定）。
+3. **遍历存活线程**：对于每个存活线程 ID，函数从调度器获取其 `thread_stats`。在以下情况下跳过（不降级）线程：
+   - 在 `prime_set` 中（仍被选为主线程），或
+   - 其 `pinned_cpu_set_ids` 为空（从未被提升过）。
 
-   如果两个条件都满足，则该线程为降级候选。
+4. **句柄解析**：函数从 `thread_stats.handle` 获取线程的写句柄。优先使用 `w_handle`，其次使用 `w_limited_handle`。如果两者都无效，则通过 [`log_error_if_new`](log_error_if_new.md) 以 `Operation::OpenThread` 记录错误并跳过该线程。如果完全没有句柄，则静默跳过该线程。
 
-4. **取消 CPU 集合绑定** — 使用空切片 (`&[]`) 调用 `SetThreadSelectedCpuSets` 以清除每线程的 CPU 集合分配，使线程恢复到进程默认的调度行为。需要一个有效的写句柄（`w_handle`，回退到 `w_limited_handle`）。
+5. **移除 CPU 集合固定**：使用空切片（`&[]`）调用 `SetThreadSelectedCpuSets` 以清除线程的 CPU 集合分配，使其恢复到进程的默认调度行为。成功时记录变更消息：
+   `"Thread <tid> -> (demoted, start=<module>)"`
+   其中 `<module>` 是通过 `resolve_address_to_module` 从线程的起始地址解析得到的。失败时通过 [`log_error_if_new`](log_error_if_new.md) 以 `Operation::SetThreadSelectedCpuSets` 记录错误。
 
-5. **清除绑定状态** — **无论取消绑定是否成功**，都会调用 `thread_stats.pinned_cpu_set_ids.clear()`。这是一个有意的设计选择，用于防止无限重试循环：如果取消绑定调用失败（例如线程在枚举和 API 调用之间退出），否则该线程将在每个后续周期被重试，产生重复的错误日志条目。清除状态确保函数继续前进。
+6. **无条件清除固定状态**：无论 `SetThreadSelectedCpuSets` 是否成功，`thread_stats.pinned_cpu_set_ids` 都会被清除。这是一个有意的设计决策，旨在防止无限重试循环——如果线程的 CPU 集合无法清除（例如由于访问权限不足或线程已退出），每个应用周期都会重试并向错误日志发送垃圾信息。
 
-6. **恢复原始优先级** — 如果 [ThreadStats](../scheduler.rs/ThreadStats.md) 中线程的 `original_priority` 字段为 `Some`，则通过 `SetThreadPriority` 恢复原始 [ThreadPriority](../priority.rs/ThreadPriority.md)。该字段通过 `Option::take()` 消费，防止在后续周期重复恢复。如果优先级恢复失败，错误会被记录，但该线程仍被视为已降级。
-
-7. **日志记录** — 成功取消绑定后，记录一条变更消息：
-
-   `"Thread 5678 -> (demoted, start=ntdll.dll)"`
-
-   启动模块名称通过 [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md) 从线程的 `start_address` 解析。
-
-### 错误处理
-
-CPU 集合清除和优先级恢复调用的失败都通过 [log_error_if_new](log_error_if_new.md) 路由：
-
-| 操作 | `Operation` 变体 | 常见失败原因 |
-|------|-------------------|------------|
-| `SetThreadSelectedCpuSets`（清除） | `Operation::SetThreadSelectedCpuSets` | 线程已退出或句柄无效 |
-| `SetThreadPriority`（恢复） | `Operation::SetThreadPriority` | 线程已退出或访问被拒绝 |
-
-优先级恢复失败的错误以函数名 `apply_prime_threads_promote` 和操作标签 `[RESTORE_SET_THREAD_PRIORITY]` 记录。尽管消息中的函数名如此，此代码路径实际位于 `apply_prime_threads_demote` 中。这是有意为之——提升函数最初拥有优先级控制权，因此"恢复"对应部分保留此命名以便在日志中追踪。
-
-### 与 apply_prime_threads_promote 的关系
-
-提升和降级互为逆操作：
-
-| 操作 | [apply_prime_threads_promote](apply_prime_threads_promote.md) | apply_prime_threads_demote |
-|------|---------------------------------------------------------------|----------------------------|
-| CPU 集合 | 将线程绑定到主力 CPU 集合 ID | 清除线程 CPU 集合（空切片） |
-| 优先级 | 提升线程优先级（配置的值或自动 +1 级） | 恢复提升期间保存的 `original_priority` |
-| 状态跟踪 | 设置 `pinned_cpu_set_ids`，存储 `original_priority` | 清除 `pinned_cpu_set_ids`，取走 `original_priority` |
-
-### 线程句柄选择
-
-函数按照与其他 apply 函数相同的顺序遍历句柄层级：
-
-1. 优先使用 `w_handle`（完整 `THREAD_SET_INFORMATION` 访问权限）。
-2. 回退到 `w_limited_handle`（`THREAD_SET_LIMITED_INFORMATION`）。
-3. 如果两者都无效，通过 [log_error_if_new](log_error_if_new.md) 记录错误并跳过该线程。
-4. 如果根本不存在句柄（`thread_stats.handle` 为 `None`），则静默跳过该线程。
+7. **恢复原始优先级**：如果 `thread_stats.original_priority` 包含保存的优先级值（在 [`apply_prime_threads_promote`](apply_prime_threads_promote.md) 提升期间设置），则调用 `SetThreadPriority` 恢复该值。`original_priority` 字段通过 `.take()` 消耗，因此只会恢复一次。失败时通过 [`log_error_if_new`](log_error_if_new.md) 以 `Operation::SetThreadPriority` 记录错误。错误消息引用 `"RESTORE_SET_THREAD_PRIORITY"` 以区分提升期间的优先级设置错误。
 
 ### 边界情况
 
-- **线程在选择与降级之间退出** — 函数仅迭代快照中的活跃线程，因此在周期中途退出的线程自然会被排除。但如果快照过期，且线程在快照时间和 `SetThreadSelectedCpuSets` 调用之间退出，API 调用可能失败；这由无条件的 `pinned_cpu_set_ids.clear()` 处理。
-- **未记录原始优先级** — 如果 `original_priority` 为 `None`（例如线程在优先级跟踪功能添加之前被提升，或者提升期间 `GetThreadPriority` 失败），则不尝试优先级恢复。
-- **线程已降级** — `pinned_cpu_set_ids` 为空的线程会立即被跳过，因此对同一线程多次调用此函数是无害的。
+- 如果 `SetThreadSelectedCpuSets` 失败（例如线程在快照和 API 调用之间退出），`pinned_cpu_set_ids` 仍会被清除，以避免在每个后续应用周期重试失败的调用。优先级恢复仍会尝试。
+- 如果 `original_priority` 为 `None`（例如提升期间 `GetThreadPriority` 失败且未保存优先级），则不尝试优先级恢复，线程仅清除其 CPU 集合。
+- 存在于调度器状态中但不在 `threads` 映射中的线程（即已退出的线程）不会被此函数遍历，因为遍历基于 `threads.keys()`。过时条目由 [`apply_prime_threads`](apply_prime_threads.md) 中的句柄清理逻辑单独清理。
+- 被降级但 `SetThreadPriority` 调用失败的线程，其 `original_priority` 已被消耗（通过 `.take()` 设为 `None`），因此恢复不会在下一个周期重新尝试。
+
+### 与提升的交互
+
+此函数撤销 [`apply_prime_threads_promote`](apply_prime_threads_promote.md) 的工作。`pinned_cpu_set_ids` 字段作为标志：非空表示已提升，空表示未提升。`original_priority` 字段桥接两个阶段：在提升期间设置，在降级期间消耗。
 
 ## 要求
 
 | 要求 | 值 |
 |------|-----|
-| 模块 | `apply` |
-| 可见性 | `pub`（crate 公开） |
-| 调用方 | [apply_prime_threads](apply_prime_threads.md) |
-| 被调用方 | [log_error_if_new](log_error_if_new.md), [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md) |
-| Win32 API | [`SetThreadSelectedCpuSets`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadselectedcpusets), [`SetThreadPriority`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadpriority) |
-| 权限 | `THREAD_SET_LIMITED_INFORMATION`（`SetThreadSelectedCpuSets` 的最低要求）、`THREAD_SET_INFORMATION`（`SetThreadPriority` 所需）。服务通常持有 `SeDebugPrivilege`，可授予这两种权限。 |
+| 模块 | `apply.rs` |
+| Crate | `AffinityServiceRust` |
+| 可见性 | `pub` |
+| Windows API | `SetThreadSelectedCpuSets`、`SetThreadPriority`、`GetLastError` |
+| 调用者 | [`apply_prime_threads`](apply_prime_threads.md) |
+| 被调用者 | [`log_error_if_new`](log_error_if_new.md)、`winapi::resolve_address_to_module`、`error_codes::error_from_code_win32`、`ThreadPriority::to_thread_priority_struct` |
+| 权限 | 需要具有 `THREAD_SET_INFORMATION` 或 `THREAD_SET_LIMITED_INFORMATION`（写入）的线程句柄。 |
 
 ## 另请参阅
 
-| 主题 | 链接 |
+| 参考 | 链接 |
 |------|------|
-| 主力线程编排器 | [apply_prime_threads](apply_prime_threads.md) |
-| 主力线程选择（滞后算法） | [apply_prime_threads_select](apply_prime_threads_select.md) |
-| 主力线程提升（逆操作） | [apply_prime_threads_promote](apply_prime_threads_promote.md) |
-| 周期时间预取 | [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) |
-| 调度器状态模型 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
-| 每线程统计 | [ThreadStats](../scheduler.rs/ThreadStats.md) |
-| 线程优先级枚举 | [ThreadPriority](../priority.rs/ThreadPriority.md) |
-| 错误去重 | [log_error_if_new](log_error_if_new.md) |
-| apply 模块概览 | [apply](README.md) |
+| apply 模块概述 | [`README`](README.md) |
+| ApplyConfigResult | [`ApplyConfigResult`](ApplyConfigResult.md) |
+| apply_prime_threads | [`apply_prime_threads`](apply_prime_threads.md) |
+| apply_prime_threads_select | [`apply_prime_threads_select`](apply_prime_threads_select.md) |
+| apply_prime_threads_promote | [`apply_prime_threads_promote`](apply_prime_threads_promote.md) |
+| prefetch_all_thread_cycles | [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md) |
+| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
+| ThreadLevelConfig | [`config.rs/ThreadLevelConfig`](../config.rs/ThreadLevelConfig.md) |
+| PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
+| ThreadPriority | [`priority.rs/ThreadPriority`](../priority.rs/ThreadPriority.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*

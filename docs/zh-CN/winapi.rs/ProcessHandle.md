@@ -1,6 +1,6 @@
 # ProcessHandle 结构体 (winapi.rs)
 
-RAII 容器，最多持有四个以不同访问级别打开的 Windows 进程句柄。当 `ProcessHandle` 被丢弃（drop）时，所有有效句柄会通过 `CloseHandle` 自动关闭。两个受限句柄（`r_limited_handle` 和 `w_limited_handle`）在结构体存在时始终有效；完全访问句柄（`r_handle` 和 `w_handle`）使用 `Option` 包装，如果调用方缺少足够的特权来以该访问级别打开进程，则可能为 `None`。
+`ProcessHandle` 结构体是一个 RAII 包装器，持有一组具有不同访问级别的 Windows 进程句柄。它保证在结构体被丢弃（drop）时自动关闭所有包含的句柄。该结构体为每个进程维护最多四个句柄——用于读取（查询）和写入（设置）操作的受限版本和完整版本——允许调用者为每个操作使用适当的访问级别。
 
 ## 语法
 
@@ -17,61 +17,40 @@ pub struct ProcessHandle {
 
 | 成员 | 类型 | 描述 |
 |------|------|------|
-| `r_limited_handle` | `HANDLE` | 以 `PROCESS_QUERY_LIMITED_INFORMATION` 打开的句柄。在结构体存在时始终有效。用于轻量级查询，如读取 CPU 集合和进程时间。 |
-| `r_handle` | `Option<HANDLE>` | 以 `PROCESS_QUERY_INFORMATION` 打开的句柄。当调用方有足够的访问权限时为 `Some`；否则为 `None`。用于 `GetProcessAffinityMask` 和较高信息类的 `NtQueryInformationProcess` 等操作。 |
-| `w_limited_handle` | `HANDLE` | 以 `PROCESS_SET_LIMITED_INFORMATION` 打开的句柄。在结构体存在时始终有效。用于通过 `SetProcessDefaultCpuSets` 设置 CPU 集合。 |
-| `w_handle` | `Option<HANDLE>` | 以 `PROCESS_SET_INFORMATION` 打开的句柄。当调用方有足够的访问权限时为 `Some`；否则为 `None`。用于 `SetPriorityClass`、`SetProcessAffinityMask` 和 `NtSetInformationProcess` 等操作。 |
+| `r_limited_handle` | `HANDLE` | 以 `PROCESS_QUERY_LIMITED_INFORMATION` 权限打开的进程句柄。在结构体构造时始终有效。 |
+| `r_handle` | `Option<HANDLE>` | 以 `PROCESS_QUERY_INFORMATION` 权限打开的进程句柄。如果更高权限的打开操作失败（例如受保护进程），则可能为 `None`。 |
+| `w_limited_handle` | `HANDLE` | 以 `PROCESS_SET_LIMITED_INFORMATION` 权限打开的进程句柄。在结构体构造时始终有效。 |
+| `w_handle` | `Option<HANDLE>` | 以 `PROCESS_SET_INFORMATION` 权限打开的进程句柄。如果更高权限的打开操作失败，则可能为 `None`。 |
 
 ## 备注
 
-### 构造
+- **RAII 句柄生命周期。** `Drop` 实现会自动关闭所有有效句柄。`Option<HANDLE>` 变体仅在为 `Some` 时才被关闭。受限句柄（`r_limited_handle`、`w_limited_handle`）始终会被关闭，因为它们在构造时保证有效。
 
-`ProcessHandle` 实例仅由 [get_process_handle](get_process_handle.md) 创建。该函数按顺序打开所有四个访问级别；两个受限句柄是必需的（失败时函数返回 `None`），而两个完全访问句柄会优雅降级为 `None`。这种设计使 AffinityServiceRust 能够在当前特权级别允许的范围内尽可能多地应用设置，而不会因为访问受限而完全失败。
+- **访问级别回退模式。** 该结构体支持两级访问模型。受限句柄（`PROCESS_QUERY_LIMITED_INFORMATION`、`PROCESS_SET_LIMITED_INFORMATION`）对大多数进程都能成功获取，而完整句柄（`PROCESS_QUERY_INFORMATION`、`PROCESS_SET_INFORMATION`）对于受保护或系统进程可能会失败。调用者应在使用 `r_handle` 或 `w_handle` 之前检查其是否为 `Some`，并在失败时回退到受限变体。
 
-### Drop 行为
+- **构造。** 实例仅通过 [get_process_handle](get_process_handle.md) 创建，该函数打开所有四个句柄，如果任一必需的受限句柄无法获取则返回 `None`。完整句柄是尽力而为的。
 
-`Drop` 实现按以下顺序关闭句柄：
+- **线程安全性。** 该结构体未实现 `Send` 或 `Sync`。句柄不应在线程间共享；需要访问的每个线程应获取新的 `ProcessHandle`。
 
-1. `r_handle`（如果为 `Some`）
-2. `w_handle`（如果为 `Some`）
-3. `r_limited_handle`（始终关闭）
-4. `w_limited_handle`（始终关闭）
-
-每个 `CloseHandle` 调用都包装在 `unsafe` 中，其返回值被有意忽略——如果关闭句柄失败，没有有意义的恢复操作。
-
-### 句柄访问级别映射
-
-| 句柄 | Win32 访问标志 | 典型操作 |
-|------|----------------|----------|
-| `r_limited_handle` | `PROCESS_QUERY_LIMITED_INFORMATION` | `GetProcessDefaultCpuSets`、`GetProcessInformation`（内存优先级） |
-| `r_handle` | `PROCESS_QUERY_INFORMATION` | `GetProcessAffinityMask`、`NtQueryInformationProcess`（IO 优先级） |
-| `w_limited_handle` | `PROCESS_SET_LIMITED_INFORMATION` | `SetProcessDefaultCpuSets` |
-| `w_handle` | `PROCESS_SET_INFORMATION` | `SetPriorityClass`、`SetProcessAffinityMask`、`NtSetInformationProcess`（IO / 内存优先级） |
-
-### 在 apply 模块中的使用
-
-[apply 模块](../apply.rs/README.md)接收 `&ProcessHandle` 引用，并通过辅助函数 `get_handles` 为每个操作选择适当的句柄，该函数返回最佳可用的读写句柄（优先选择完全访问而非受限访问）。
+- **平台。** 仅限 Windows。依赖 `windows::Win32::Foundation::HANDLE` 和 `CloseHandle`。
 
 ## 要求
 
-| | |
-|---|---|
-| **模块** | `winapi`（`src/winapi.rs`） |
-| **构造方** | [get_process_handle](get_process_handle.md) |
-| **使用方** | [apply_priority](../apply.rs/apply_priority.md)、[apply_affinity](../apply.rs/apply_affinity.md)、[apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md)、[apply_io_priority](../apply.rs/apply_io_priority.md)、[apply_memory_priority](../apply.rs/apply_memory_priority.md) |
-| **Win32 API** | `OpenProcess`、`CloseHandle` |
-| **特权** | 建议对受保护进程持有 `SeDebugPrivilege` 以获取完全访问句柄 |
+| 要求 | 值 |
+|------|------|
+| 模块 | `winapi.rs` |
+| 创建者 | [get_process_handle](get_process_handle.md) |
+| 依赖 | `windows::Win32::Foundation::{CloseHandle, HANDLE}` |
+| 权限 | 建议使用 `SeDebugPrivilege` 以获取受保护进程的完整访问句柄 |
+| 平台 | Windows |
 
 ## 另请参阅
 
 | 主题 | 链接 |
 |------|------|
-| 打开并返回 ProcessHandle | [get_process_handle](get_process_handle.md) |
-| 线程句柄 RAII 容器 | [ThreadHandle](ThreadHandle.md) |
-| 规则应用入口点（进程级别） | [apply_config_process_level](../main.rs/apply_config_process_level.md) |
-| 句柄失败的日志操作 | [Operation 枚举](../logging.rs/README.md) |
-| 错误码格式化 | [error_codes 模块](../error_codes.rs/README.md) |
+| get_process_handle | [get_process_handle](get_process_handle.md) |
+| ThreadHandle 结构体 | [ThreadHandle](ThreadHandle.md) |
+| process 模块 | [process.rs](../process.rs/README.md) |
 
-## Documentation on Commit SHA
-
-678734d5df2c1188fb1bd6e448aae0884fb174fd
+---
+> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`

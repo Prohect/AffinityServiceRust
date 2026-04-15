@@ -1,8 +1,7 @@
 use crate::collections::HashMap;
 use ntapi::ntexapi::{NtQuerySystemInformation, SYSTEM_PROCESS_INFORMATION, SYSTEM_THREAD_INFORMATION, SystemProcessInformation};
 use once_cell::sync::Lazy;
-use std::slice;
-use std::sync::Mutex;
+use std::{slice, sync::Mutex};
 
 /// DO NOT DIRECTLY ACCESS: Use struct `ProcessSnapshot` instead.
 pub static SNAPSHOT_BUFFER: Lazy<Mutex<Vec<u8>>> = Lazy::new(|| Mutex::new(vec![0u8; 32]));
@@ -71,17 +70,11 @@ impl<'a> ProcessSnapshot<'a> {
             Ok(ProcessSnapshot { buffer, pid_to_process })
         }
     }
-
-    #[allow(dead_code)]
-    pub fn get_by_name(&self, name: String) -> Vec<&ProcessEntry> {
-        self.pid_to_process.values().filter(|entry| (**entry).get_name() == name).collect()
-    }
 }
 
 #[derive(Clone)]
 pub struct ProcessEntry {
     pub process: SYSTEM_PROCESS_INFORMATION,
-    threads: HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     threads_base_ptr: usize,
     name: String,
 }
@@ -104,7 +97,6 @@ impl ProcessEntry {
         };
         ProcessEntry {
             process,
-            threads: HashMap::default(),
             threads_base_ptr: threads_base_ptr as usize,
             name,
         }
@@ -114,28 +106,19 @@ impl ProcessEntry {
     ///
     /// The raw thread array from SYSTEM_PROCESS_INFORMATION is parsed into a HashMap
     /// for efficient TID-based lookup. Cached on first access per process entry.
-    #[inline]
-    pub fn get_threads(&mut self) -> &HashMap<u32, SYSTEM_THREAD_INFORMATION> {
-        if self.process.NumberOfThreads as usize != self.threads.len() {
-            let _ = &self.threads.clear();
-            unsafe {
-                let threads_ptr = self.threads_base_ptr as *const SYSTEM_THREAD_INFORMATION;
-                if threads_ptr.is_null() {
-                    return &self.threads;
-                }
-                for i in 0..self.process.NumberOfThreads as usize {
-                    let thread = *threads_ptr.add(i);
-                    self.threads.insert(thread.ClientId.UniqueThread as u32, thread);
-                }
+    pub fn get_threads(&self) -> HashMap<u32, SYSTEM_THREAD_INFORMATION> {
+        let mut result: HashMap<u32, SYSTEM_THREAD_INFORMATION> = HashMap::default();
+        unsafe {
+            let threads_ptr = self.threads_base_ptr as *const SYSTEM_THREAD_INFORMATION;
+            if threads_ptr.is_null() {
+                return result;
+            }
+            for i in 0..self.process.NumberOfThreads as usize {
+                let thread = *threads_ptr.add(i);
+                result.insert(thread.ClientId.UniqueThread as u32, thread);
             }
         }
-        &self.threads
-    }
-
-    #[inline]
-    #[allow(dead_code)]
-    pub fn get_thread(&mut self, tid: u32) -> Option<&SYSTEM_THREAD_INFORMATION> {
-        self.get_threads().get(&tid)
+        result
     }
 
     #[inline]

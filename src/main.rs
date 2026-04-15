@@ -558,7 +558,7 @@ fn main() -> windows::core::Result<()> {
             {
                 etw_sleep = true;
                 loop {
-                    match event_trace_receiver.try_recv() {
+                    match event_trace_receiver.recv() {
                         Ok(_) => {
                             if Local::now() - *get_local_time!() > TimeDelta::milliseconds(cli.interval_ms as i64) {
                                 break;

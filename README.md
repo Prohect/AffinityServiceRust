@@ -362,7 +362,7 @@ See [`is_new_error()`](docs/en-US/logging.rs/is_new_error.md) for error deduplic
 
 Issues and pull requests are welcome.
 
-Please update the commit SHA here when you try to update this README: **920d8fafb3d9e22e6078f62bbb7d8d97e7d21c4b**. This give the developer a way to compare source code from the newest to understand changes.
+Please update the commit SHA here when you try to update this README: **678734d5df2c1188fb1bd6e448aae0884fb174fd**. This give the developer a way to compare source code from the newest to understand changes.
 
 ## License
 

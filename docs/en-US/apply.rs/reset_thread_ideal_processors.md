@@ -5,12 +5,12 @@ Redistributes thread ideal processors across a specified set of CPUs after an af
 ## Syntax
 
 ```AffinityServiceRust/src/apply.rs#L219-231
-pub fn reset_thread_ideal_processors(
+pub fn reset_thread_ideal_processors<'a>(
     pid: u32,
     config: &ProcessLevelConfig,
     dry_run: bool,
     cpus: &[u32],
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     apply_config_result: &mut ApplyConfigResult,
 )
 ```
@@ -23,7 +23,7 @@ pub fn reset_thread_ideal_processors(
 | `config` | `&ProcessLevelConfig` | The process-level configuration. The `name` field is used in error log messages and passed to `get_thread_handle` for handle acquisition. |
 | `dry_run` | `bool` | When `true`, a synthetic change message is recorded describing how many threads would be redistributed, without opening any thread handles or calling `SetThreadIdealProcessorEx`. When `false`, the actual reassignment is performed. |
 | `cpus` | `&[u32]` | The set of CPU indices to distribute thread ideal processors across. Callers pass `&config.affinity_cpus` after an affinity mask change, or `&config.cpu_set_cpus` after a CPU-set change (when `cpu_set_reset_ideal` is enabled). If empty, the function returns immediately. |
-| `threads` | `&HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots from the most recent system process information query. The `KernelTime` and `UserTime` fields are summed to determine each thread's total CPU time for sorting. |
+| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A lazy closure that returns a reference to a map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots from the most recent system process information query. The closure is invoked only when the function proceeds past early-exit checks. The `KernelTime` and `UserTime` fields are summed to determine each thread's total CPU time for sorting. |
 | `apply_config_result` | `&mut ApplyConfigResult` | Accumulator for change descriptions and error messages produced during execution. |
 
 ## Return value
@@ -35,11 +35,11 @@ This function does not return a value. All outcomes are communicated through the
 ### Algorithm
 
 1. **Early exit**: If `cpus` is empty, the function returns immediately. If `dry_run` is `true`, a change message is recorded and the function returns without performing any API calls.
-2. **Collect CPU times**: For each thread in the `threads` map, the total CPU time is computed as `KernelTime + UserTime` (both in 100-nanosecond units). The results are collected into a fixed-capacity list (`List<[(u32, i64); TIDS_FULL]>`).
+2. **Collect CPU times**: The `threads` closure is invoked to obtain the thread map. For each thread in the returned map, the total CPU time is computed as `KernelTime + UserTime` (both in 100-nanosecond units). The results are collected into a fixed-capacity list (`List<[(u32, i64); TIDS_FULL]>`).
 3. **Sort**: The thread list is sorted in descending order of total CPU time using `sort_unstable_by_key` with `Reverse`. This ensures the most CPU-active threads are assigned ideal processors first.
 4. **Random offset**: A random `u8` value is generated via `rand::random::<u8>()` and used as a starting offset into the CPU array. This avoids always assigning the first thread to the first CPU in the list, providing a degree of load balancing across apply cycles.
 5. **Round-robin assignment**: Each thread is assigned an ideal processor by cycling through the `cpus` array: `target_cpu = cpus[(success_count + random_shift) % cpus.len()]`. The function calls `set_thread_ideal_processor_ex` with group `0` and the computed CPU index.
-6. **Handle resolution**: For each thread, a handle is obtained via `get_thread_handle`. The function prefers the `w_limited_handle` over `w_handle` (using whichever is not invalid). Threads for which a handle cannot be obtained are silently skipped.
+6. **Handle resolution**: For each thread, a handle is obtained via `get_thread_handle`. The function prefers `w_handle` over `w_limited_handle` (falling back to `w_limited_handle` only when `w_handle` is invalid). Threads for which a handle cannot be obtained are silently skipped.
 7. **Result recording**: On completion, a change message of the form `"reset ideal processor for N threads"` is appended, where N is the count of threads that were successfully reassigned.
 
 ### Edge cases
@@ -79,4 +79,4 @@ This function is called from two sites:
 | ProcessLevelConfig | [`config.rs/ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
 
 ---
-*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*
+*Commit: b0df9da35213b050501fab02c3020ad4dbd6c4e0*

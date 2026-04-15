@@ -36,7 +36,7 @@ This function does not return a value. All outcomes are communicated through the
 - The change message is formatted as `"Memory Priority: <current> -> <target>"` using the human-readable string representations from `MemoryPriority::from_win_const` and `config.memory_priority.as_str()`.
 - The `MemoryPriorityInformation` wrapper type is a newtype around `u32` defined in the `priority` module. It matches the layout of the Windows `MEMORY_PRIORITY_INFORMATION` structure.
 - Windows memory priority values range from 0 (lowest/very low) through 5 (normal). The `MemoryPriority` enum in the `priority` module maps user-facing names to these numeric constants.
-- **Note:** In the dry-run path, the change message text references `config.io_priority.as_str()` rather than `config.memory_priority.as_str()`. This is a known inconsistency in the source code where the dry-run message displays the I/O priority label instead of the memory priority label.
+
 
 ## Requirements
 
@@ -64,4 +64,4 @@ This function does not return a value. All outcomes are communicated through the
 | MemoryPriority | [`priority.rs/MemoryPriority`](../priority.rs/MemoryPriority.md) |
 
 ---
-*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*
+*Commit: b0df9da35213b050501fab02c3020ad4dbd6c4e0*

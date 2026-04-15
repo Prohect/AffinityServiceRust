@@ -5,13 +5,13 @@ The `apply_affinity` function reads the current process affinity mask via `GetPr
 ## Syntax
 
 ```AffinityServiceRust/src/apply.rs#L134-145
-pub fn apply_affinity(
+pub fn apply_affinity<'a>(
     pid: u32,
     config: &ProcessLevelConfig,
     dry_run: bool,
     current_mask: &mut usize,
     process_handle: &ProcessHandle,
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     apply_config_result: &mut ApplyConfigResult,
 )
 ```
@@ -25,7 +25,7 @@ pub fn apply_affinity(
 | `dry_run` | `bool` | When `true`, the function records what *would* change in `apply_config_result` without calling any Windows APIs to modify state. Read operations are also skipped in dry-run mode (errors from `GetProcessAffinityMask` are suppressed). |
 | `current_mask` | `&mut usize` | An output parameter. On successful query or set, `*current_mask` is updated to reflect the process's affinity mask. This value is consumed by downstream functions such as [`apply_prime_threads_promote`](apply_prime_threads_promote.md) to filter prime CPU indices against the current affinity. |
 | `process_handle` | `&ProcessHandle` | A handle wrapper providing read and write access to the process. The function extracts `r_handle` (for `GetProcessAffinityMask`) and `w_handle` (for `SetProcessAffinityMask`) via [`get_handles`](get_handles.md). If either handle is unavailable, the function returns early. |
-| `threads` | `&HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots. Passed through to `reset_thread_ideal_processors` so that ideal processors can be redistributed across all threads after an affinity change. |
+| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A lazy closure that returns a map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots. The closure is only invoked when `reset_thread_ideal_processors` needs to redistribute ideal processors after a successful affinity change. This deferred evaluation avoids the cost of building the thread map when no affinity change occurs. |
 | `apply_config_result` | `&mut ApplyConfigResult` | Accumulator for change descriptions and error messages produced during execution. |
 
 ## Return value
@@ -66,4 +66,4 @@ This function does not return a value. All results are communicated through the 
 | ProcessLevelConfig | [`config.rs/ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
 
 ---
-*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*
+*Commit: b0df9da35213b050501fab02c3020ad4dbd6c4e0*

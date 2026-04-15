@@ -63,24 +63,25 @@ Returns a mutable reference to the [`ThreadStats`](ThreadStats.md) for the given
 
 ### `update_active_streaks`
 
-```AffinityServiceRust/src/scheduler.rs#L57-71
+```AffinityServiceRust/src/scheduler.rs#L57-79
 pub fn update_active_streaks(&mut self, pid: u32, tid_with_delta_cycles: &[(u32, u64)])
 ```
 
 Updates hysteresis streak counters for all threads provided in `tid_with_delta_cycles`. The algorithm works as follows:
 
 1. Determines the **max delta cycles** across all threads in the slice.
-2. Computes `entry_min = max_cycles × entry_threshold` and `keep_min = max_cycles × keep_threshold`.
-3. For each thread:
+2. **Early exit on zero activity.** If `max_cycles` is 0 (i.e., no thread reported any delta cycles), the method resets `active_streak` to 0 for **every** thread in **every** tracked process and returns immediately. This prevents stale streaks from persisting during idle periods when no meaningful CPU work is occurring.
+3. Computes `entry_min = max_cycles × entry_threshold` and `keep_min = max_cycles × keep_threshold`.
+4. For each thread:
    - If the thread already has a nonzero streak and its delta drops below `keep_min`, the streak is **reset to 0**.
    - If the thread has a nonzero streak and meets `keep_min`, the streak is **incremented** (capped at 254).
    - If the thread has zero streak and its delta meets or exceeds `entry_min`, the streak is **set to 1**.
 
-This asymmetric entry/keep threshold prevents threads from flickering between prime and non-prime status when their CPU usage is near the boundary.
+This asymmetric entry/keep threshold prevents threads from flickering between prime and non-prime status when their CPU usage is near the boundary. The global streak reset at zero activity ensures that when the system goes idle, all threads lose their accumulated streaks and must re-qualify from scratch when activity resumes.
 
 ### `select_top_threads_with_hysteresis`
 
-```AffinityServiceRust/src/scheduler.rs#L80-118
+```AffinityServiceRust/src/scheduler.rs#L88-126
 pub fn select_top_threads_with_hysteresis(
     &mut self,
     pid: u32,
@@ -99,7 +100,7 @@ The `is_prime` (third element) boolean in each tuple is set to `true` for select
 
 ### `drop_process_by_pid`
 
-```AffinityServiceRust/src/scheduler.rs#L122-164
+```AffinityServiceRust/src/scheduler.rs#L130-172
 pub fn drop_process_by_pid(&mut self, pid: &u32)
 ```
 
@@ -137,4 +138,4 @@ After logging, the method calls `drop_module_cache` to release the per-process m
 | apply_thread_level | [apply_thread_level](../main.rs/apply_thread_level.md) |
 
 ---
-> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`
+> Commit SHA: `b0df9da35213b050501fab02c3020ad4dbd6c4e0`

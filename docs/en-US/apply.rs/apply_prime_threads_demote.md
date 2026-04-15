@@ -4,11 +4,11 @@ The `apply_prime_threads_demote` function removes CPU-set pinning and restores o
 
 ## Syntax
 
-```AffinityServiceRust/src/apply.rs#L952-964
-pub fn apply_prime_threads_demote(
+```AffinityServiceRust/src/apply.rs#L952-965
+pub fn apply_prime_threads_demote<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
@@ -21,7 +21,7 @@ pub fn apply_prime_threads_demote(
 |-----------|------|-------------|
 | `pid` | `u32` | The process ID of the target process. Used for thread-stats lookup, error deduplication, and log messages. |
 | `config` | `&ThreadLevelConfig` | The thread-level configuration. The `name` field is used in error log messages passed to `log_error_if_new` and `get_thread_handle`. |
-| `threads` | `&HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots from the most recent system process information query. The keys of this map define the set of live threads to iterate over. |
+| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A lazy closure that returns a reference to a map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots from the most recent system process information query. The closure is invoked once to obtain the thread map, whose keys define the set of live threads to iterate over. |
 | `tid_with_delta_cycles` | `&[(u32, u64, bool)]` | A slice of tuples containing the thread ID, the delta cycle count, and a boolean indicating whether the thread was selected as prime (`true`) or not (`false`). The function builds a `HashSet` of prime thread IDs from entries where `is_prime == true` and uses it to determine which threads should **not** be demoted. |
 | `prime_core_scheduler` | `&mut PrimeThreadScheduler` | The mutable prime-thread scheduler state. The function reads and updates per-thread stats including `handle`, `pinned_cpu_set_ids`, and `original_priority`. |
 | `apply_config_result` | `&mut ApplyConfigResult` | Accumulator for change descriptions and error messages produced during execution. |
@@ -36,7 +36,7 @@ This function does not return a value. All outcomes are communicated through mut
 
 1. **Build prime set**: A `HashSet<u32>` of thread IDs is constructed from `tid_with_delta_cycles` entries where `is_prime == true`. These threads are currently selected as prime and should not be demoted.
 
-2. **Collect live thread IDs**: The keys of the `threads` map are collected into a `List<[u32; TIDS_CAPED]>` representing all live threads in the process.
+2. **Collect live thread IDs**: The closure `threads()` is invoked to obtain the thread map, and its keys are collected into a `List<[u32; TIDS_CAPED]>` representing all live threads in the process.
 
 3. **Iterate live threads**: For each live thread ID, the function retrieves its `thread_stats` from the scheduler. A thread is skipped (not demoted) if:
    - It is in the `prime_set` (still selected as prime), or
@@ -56,7 +56,7 @@ This function does not return a value. All outcomes are communicated through mut
 
 - If `SetThreadSelectedCpuSets` fails (e.g., the thread has exited between the snapshot and the API call), the `pinned_cpu_set_ids` are still cleared to avoid retrying the failed call on every subsequent apply cycle. The priority restore is still attempted.
 - If `original_priority` is `None` (e.g., `GetThreadPriority` failed during promotion and no priority was saved), no priority restoration is attempted and the thread simply has its CPU set cleared.
-- Threads that exist in the scheduler's state but are not present in the `threads` map (i.e., threads that have exited) are not iterated by this function because the iteration is over `threads.keys()`. Stale entries are cleaned up separately by the handle-cleanup logic in [`apply_prime_threads`](apply_prime_threads.md).
+- Threads that exist in the scheduler's state but are not present in the map returned by `threads()` (i.e., threads that have exited) are not iterated by this function because the iteration is over the map's keys. Stale entries are cleaned up separately by the handle-cleanup logic in [`apply_prime_threads`](apply_prime_threads.md).
 - A thread that was demoted but whose `SetThreadPriority` call fails will have its `original_priority` consumed (set to `None` by `.take()`), so the restore will not be re-attempted on the next cycle.
 
 ### Interaction with promotion
@@ -91,4 +91,4 @@ This function undoes the work of [`apply_prime_threads_promote`](apply_prime_thr
 | ThreadPriority | [`priority.rs/ThreadPriority`](../priority.rs/ThreadPriority.md) |
 
 ---
-*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*
+*Commit: b0df9da35213b050501fab02c3020ad4dbd6c4e0*

@@ -5,11 +5,11 @@ The `apply_ideal_processors` function assigns ideal processors to threads based 
 ## Syntax
 
 ```AffinityServiceRust/src/apply.rs#L1047-1058
-pub fn apply_ideal_processors(
+pub fn apply_ideal_processors<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
     dry_run: bool,
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     prime_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 )
@@ -22,7 +22,7 @@ pub fn apply_ideal_processors(
 | `pid` | `u32` | The process ID of the target process. Used for scheduler lookups, error deduplication, and log messages. |
 | `config` | `&ThreadLevelConfig` | The thread-level configuration containing `ideal_processor_rules`, a list of rules each specifying a set of CPU indices (`cpus`) and optional module prefixes (`prefixes`). If `ideal_processor_rules` is empty, the function returns immediately. |
 | `dry_run` | `bool` | When `true`, synthetic change messages are recorded describing what ideal processor assignments would be made, without calling any Windows APIs. When `false`, the actual assignments and restorations are performed. |
-| `threads` | `&HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots from the most recent system process information query. Used to enumerate candidate threads. |
+| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A lazy closure that returns a reference to a map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots from the most recent system process information query. The closure is invoked on demand to enumerate candidate threads, deferring the cost of thread enumeration until it is actually needed. |
 | `prime_scheduler` | `&mut PrimeThreadScheduler` | The mutable prime-thread scheduler state that tracks per-thread statistics including cached cycles, start addresses, thread handles, and ideal processor assignment state across apply cycles. |
 | `apply_config_result` | `&mut ApplyConfigResult` | Accumulator for change descriptions and error messages produced during execution. |
 
@@ -105,4 +105,4 @@ The `ideal_processor` field in `ThreadStats` tracks three pieces of information:
 | PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
 
 ---
-*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*
+*Commit: b0df9da35213b050501fab02c3020ad4dbd6c4e0*

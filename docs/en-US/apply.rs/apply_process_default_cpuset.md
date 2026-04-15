@@ -4,13 +4,13 @@ The `apply_process_default_cpuset` function queries the current default CPU Set 
 
 ## Syntax
 
-```AffinityServiceRust/src/apply.rs#L297-307
-pub fn apply_process_default_cpuset(
+```AffinityServiceRust/src/apply.rs#L297-308
+pub fn apply_process_default_cpuset<'a>(
     pid: u32,
     config: &ProcessLevelConfig,
     dry_run: bool,
     process_handle: &ProcessHandle,
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     apply_config_result: &mut ApplyConfigResult,
 )
 ```
@@ -23,7 +23,7 @@ pub fn apply_process_default_cpuset(
 | `config` | `&ProcessLevelConfig` | The process-level configuration containing `cpu_set_cpus` (a list of CPU indices to convert into CPU Set IDs), `cpu_set_reset_ideal` (a boolean controlling whether thread ideal processors are redistributed on change), and `name` (the human-readable config rule name used in log messages). If `cpu_set_cpus` is empty, the function returns immediately without making any changes. |
 | `dry_run` | `bool` | When `true`, the function records what *would* change in `apply_config_result` without calling any Windows APIs to modify state. When `false`, the Windows APIs are called to apply the change. |
 | `process_handle` | `&ProcessHandle` | A handle wrapper providing read and write access to the process. The function extracts `r_handle` (for `GetProcessDefaultCpuSets`) and `w_handle` (for `SetProcessDefaultCpuSets`) via [`get_handles`](get_handles.md). If either handle is unavailable, the function returns early. |
-| `threads` | `&HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots. Passed through to [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) when `cpu_set_reset_ideal` is enabled. |
+| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A lazy closure that returns a map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots. The closure is only evaluated when [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) needs the thread data (i.e., when `cpu_set_reset_ideal` is enabled and a change is being applied). This deferred evaluation avoids the cost of building the thread map when it is not needed. |
 | `apply_config_result` | `&mut ApplyConfigResult` | Accumulator for change descriptions and error messages produced during execution. |
 
 ## Return value
@@ -69,4 +69,4 @@ This function does not return a value. All outcomes are communicated through the
 | winapi module | [`winapi.rs`](../winapi.rs/README.md) |
 
 ---
-*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*
+*Commit: b0df9da35213b050501fab02c3020ad4dbd6c4e0*

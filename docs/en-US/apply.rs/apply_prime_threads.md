@@ -6,13 +6,13 @@ The `apply_prime_threads` function orchestrates the prime-thread scheduling pipe
 
 ```AffinityServiceRust/src/apply.rs#L696-712
 #[allow(clippy::too_many_arguments)]
-pub fn apply_prime_threads(
+pub fn apply_prime_threads<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
     dry_run: bool,
     current_mask: &mut usize,
-    process: &ProcessEntry,
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    process: &'a ProcessEntry,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 )
@@ -26,8 +26,8 @@ pub fn apply_prime_threads(
 | `config` | `&ThreadLevelConfig` | The thread-level configuration containing `prime_threads_cpus` (CPU indices designated for prime threads), `prime_threads_prefixes` (module-prefix matching rules with optional per-prefix CPU overrides), `track_top_x_threads` (the tracking count; negative values disable prime scheduling), and `name` (the human-readable config rule name). |
 | `dry_run` | `bool` | When `true`, the function records what *would* change in `apply_config_result` without calling any Windows APIs to modify state. Only a synthetic change message listing the prime CPU set is emitted. When `false`, the full select/promote/demote pipeline is executed. |
 | `current_mask` | `&mut usize` | The current process affinity mask, as determined by a prior call to [`apply_affinity`](apply_affinity.md). Passed through to [`apply_prime_threads_promote`](apply_prime_threads_promote.md) to filter prime CPU indices against the live affinity mask. A value of `0` means no affinity mask is active and no filtering is applied. |
-| `process` | `&ProcessEntry` | The process snapshot entry, used to obtain the thread count via `process.thread_count()` for sizing the candidate pool. |
-| `threads` | `&HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots from the most recent system process information query. Used for building the candidate list and identifying live threads. |
+| `process` | `&'a ProcessEntry` | The process snapshot entry (immutable borrow tied to lifetime `'a`), used to obtain the thread count via `process.thread_count()` for sizing the candidate pool. |
+| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A lazy closure that returns a reference to the thread-information map on demand. The closure is invoked only when the function actually needs to enumerate threads, avoiding the cost of building the map when early-exit conditions are met (e.g., dry-run mode or disabled prime scheduling). The returned map keys are thread IDs and values are `SYSTEM_THREAD_INFORMATION` snapshots from the most recent system process information query. |
 | `prime_core_scheduler` | `&mut PrimeThreadScheduler` | The mutable prime-thread scheduler state that tracks per-thread statistics (cached cycles, last cycles, active streaks, pinned CPU set IDs, handles, etc.) across apply cycles. |
 | `apply_config_result` | `&mut ApplyConfigResult` | Accumulator for change descriptions and error messages produced during the select/promote/demote phases. |
 
@@ -48,7 +48,7 @@ If both `do_prime` and `has_tracking` are `false`, the function returns immediat
 
 ### Algorithm
 
-1. **Build candidate list**: For each thread in `threads`, the function looks up the thread's cached cycle count in the scheduler. Only threads with `cached_cycles > 0` (i.e., threads whose cycles were successfully prefetched by [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md)) are included. If `has_tracking` is enabled, the thread's `last_system_thread_info` is also updated. The list is sorted by time delta (cached total time minus last total time) in descending order.
+1. **Build candidate list**: For each thread in `threads()` (invoking the lazy closure), the function looks up the thread's cached cycle count in the scheduler. Only threads with `cached_cycles > 0` (i.e., threads whose cycles were successfully prefetched by [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md)) are included. If `has_tracking` is enabled, the thread's `last_system_thread_info` is also updated. The list is sorted by time delta (cached total time minus last total time) in descending order.
 
 2. **Size the candidate pool**: The pool size is `max(prime_count * 4, cpu_count)` capped at the process thread count. This ensures enough candidates are considered to account for threads that may briefly spike in activity. Previously-pinned threads that have dropped out of the top candidates are also re-added to ensure they can be properly demoted.
 
@@ -98,4 +98,4 @@ If both `do_prime` and `has_tracking` are `false`, the function returns immediat
 | ProcessEntry | [`process.rs/ProcessEntry`](../process.rs/ProcessEntry.md) |
 
 ---
-*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*
+*Commit: b0df9da35213b050501fab02c3020ad4dbd6c4e0*

@@ -4,11 +4,11 @@ The `prefetch_all_thread_cycles` function opens handles to the top CPU-consuming
 
 ## Syntax
 
-```AffinityServiceRust/src/apply.rs#L584-594
-pub fn prefetch_all_thread_cycles(
+```AffinityServiceRust/src/apply.rs#L584-595
+pub fn prefetch_all_thread_cycles<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     prime_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 )
@@ -20,7 +20,7 @@ pub fn prefetch_all_thread_cycles(
 |-----------|------|-------------|
 | `pid` | `u32` | The process ID of the target process. Used for thread-stats lookup in the scheduler and for error deduplication in log messages. |
 | `config` | `&ThreadLevelConfig` | The thread-level configuration. The `name` field is used in error log messages and passed to `get_thread_handle` for handle acquisition. |
-| `threads` | `&HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots from the most recent system process information query. The `KernelTime` and `UserTime` fields are summed to compute each thread's total CPU time for initial sorting and delta computation. |
+| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A lazy closure that returns a reference to a map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots from the most recent system process information query. The closure is invoked once when thread data is needed. The `KernelTime` and `UserTime` fields are summed to compute each thread's total CPU time for initial sorting and delta computation. |
 | `prime_scheduler` | `&mut PrimeThreadScheduler` | The mutable prime-thread scheduler state that stores per-thread statistics including cached cycles, last cycles, total time values, active streaks, thread handles, and start addresses. This function reads and updates multiple fields in the scheduler's per-thread stats. |
 | `apply_config_result` | `&mut ApplyConfigResult` | Accumulator for error messages. Only `QueryThreadCycleTime` failures are logged here; no change messages are produced by this function. |
 
@@ -36,7 +36,7 @@ This function does not return a value. All outcomes are communicated through mut
 
 2. **Sort by time delta**: The list is sorted in descending order of time delta using `sort_unstable_by_key` with `Reverse`, so the most CPU-active threads appear first.
 
-3. **Cap the candidate count**: Only the top `min(cpu_count * 2, thread_count) - 1 + 1` threads are retained for cycle querying. This limits the number of thread handles opened to approximately twice the CPU count, which is sufficient to cover prime candidates and a margin of alternates without opening handles to every thread in a process that may have hundreds or thousands.
+3. **Cap the candidate count**: Only the top `min(cpu_count * 2, thread_count).saturating_sub(1) + 1` threads are retained for cycle querying. The `saturating_sub(1)` prevents arithmetic underflow when the thread count is zero. This limits the number of thread handles opened to approximately twice the CPU count, which is sufficient to cover prime candidates and a margin of alternates without opening handles to every thread in a process that may have hundreds or thousands.
 
 4. **Open handles and query cycles**: For each candidate thread:
    - If the thread does not already have a cached handle in the scheduler, `get_thread_handle` is called to open one. The handle is stored in `thread_stats.handle` for reuse across apply cycles.
@@ -59,7 +59,7 @@ This function does not return a value. All outcomes are communicated through mut
 
 - If `threads` is empty or all time deltas are zero, the function returns early after the initial collection step.
 - Threads for which `get_thread_handle` returns `None` (e.g., the thread has exited or access is denied) are silently skipped. The handle acquisition function logs its own errors internally.
-- The candidate cap uses `(cpu_count * 2).min(thread_count) - 1` which could underflow if `thread_count` is 0, but the empty check earlier prevents this path.
+- The candidate cap uses `(cpu_count * 2).min(thread_count).saturating_sub(1)` which safely handles the case where `thread_count` is 0 without arithmetic underflow.
 - The `TIDS_CAPED` and `TIDS_FULL` constants from the `collections` module control the maximum capacity of the fixed-size lists used internally.
 
 ### When this function is called
@@ -92,4 +92,4 @@ This function is called **before** [`apply_prime_threads`](apply_prime_threads.m
 | PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
 
 ---
-*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*
+*Commit: b0df9da35213b050501fab02c3020ad4dbd6c4e0*

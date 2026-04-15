@@ -1,4 +1,5 @@
 use crate::{
+    collections::{CONSUMER_CPUS, HashSet, List, TIDS_CAPED, TIDS_FULL, list},
     config::{ProcessConfig, cpu_indices_to_mask, format_cpu_indices},
     error_codes::{error_from_code_win32, error_from_ntstatus},
     logging::{Operation, is_new_error},
@@ -6,14 +7,14 @@ use crate::{
     process::ProcessEntry,
     scheduler::PrimeThreadScheduler,
     winapi::{
-        NtQueryInformationProcess, NtSetInformationProcess, ProcessHandle, ThreadHandle, cpusetids_from_indices, filter_indices_by_mask,
+        NtQueryInformationProcess, NtSetInformationProcess, ProcessHandle, cpusetids_from_indices, filter_indices_by_mask,
         get_cpu_set_information, get_thread_handle, get_thread_ideal_processor_ex, get_thread_start_address, indices_from_cpusetids,
         resolve_address_to_module, set_thread_ideal_processor_ex,
     },
 };
 
 use rand::random;
-use std::{collections::HashSet, ffi::c_void, mem::size_of};
+use std::{cmp::Reverse, ffi::c_void, mem::size_of};
 use windows::Win32::{
     Foundation::{GetLastError, HANDLE},
     System::{
@@ -213,9 +214,8 @@ pub fn apply_affinity(
 /// This redistributes threads across the new affinity CPUs with a random shift
 /// to avoid always assigning too much threads to the same CPUs.
 /// # Arguments
-/// * `cpus` - The set of CPU indices to distribute thread ideal processors across.
-///   Callers pass `&config.affinity_cpus` after an affinity change, or
-///   `&config.cpu_set_cpus` after a CPU-set change (when `cpu_set_reset_ideal` is set).
+/// * `cpus` - The set of CPU indices to distribute thread ideal processors across. Callers pass `&config.affinity_cpus` after an affinity
+///   change, or `&config.cpu_set_cpus` after a CPU-set change (when `cpu_set_reset_ideal` is set).
 pub fn reset_thread_ideal_processors(
     pid: u32,
     config: &ProcessConfig,
@@ -234,8 +234,9 @@ pub fn reset_thread_ideal_processors(
     }
 
     // Collect thread IDs and their CPU times
-    let mut tid_time_list: Vec<(u32, i64)> = Vec::new();
-    for (tid, thread_info) in process.get_threads() {
+    let threads = process.get_threads();
+    let mut tid_time_list: List<[(u32, i64); TIDS_FULL]> = List::new();
+    for (tid, thread_info) in threads {
         let total_time = unsafe { *thread_info.KernelTime.QuadPart() + *thread_info.UserTime.QuadPart() };
         tid_time_list.push((*tid, total_time));
     }
@@ -245,71 +246,53 @@ pub fn reset_thread_ideal_processors(
     }
 
     // Sort by CPU time descending
-    tid_time_list.sort_by(|a, b| b.1.cmp(&a.1));
-
-    // Extract just the TIDs for batch handle opening
-    let tids: Vec<u32> = tid_time_list.iter().map(|(tid, _)| *tid).collect();
-
-    // Open handles for all threads
-    let tid_handles: Vec<(u32, Option<ThreadHandle>)> = tids.iter().map(|&tid| (tid, get_thread_handle(tid, pid, &config.name))).collect();
+    tid_time_list.sort_unstable_by_key(|(_, time)| Reverse(*time));
 
     let target_cpu_count = cpus.len();
     let random_shift = random::<u8>();
     let mut counter_set_success = 0;
-
-    for (i, (tid, thread_handle_option)) in tid_handles.iter().enumerate() {
-        let handle: &HANDLE = match thread_handle_option {
-            Some(thread_handle) => match thread_handle.w_handle.is_invalid() {
-                true => match thread_handle.w_limited_handle.is_invalid() {
-                    true => {
-                        log_error_if_new(pid, *tid, &config.name, Operation::OpenThread, 0, apply_config_result, || {
-                            format!(
-                                "reset_thread_ideal_processors: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}",
-                                pid, tid, &config.name
-                            )
-                        });
-                        continue;
+    let _: () = tid_time_list
+        .iter()
+        .map(|&(tid, _)| {
+            if let Some(thread_handle) = get_thread_handle(tid, pid, &config.name) {
+                let handle = if thread_handle.w_limited_handle.is_invalid() {
+                    thread_handle.w_handle
+                } else {
+                    thread_handle.w_limited_handle
+                };
+                if !handle.is_invalid() {
+                    let target_cpu_index = (counter_set_success + random_shift as usize) % target_cpu_count;
+                    let target_cpu = cpus[target_cpu_index];
+                    match set_thread_ideal_processor_ex(handle, 0, target_cpu as u8) {
+                        Err(_) => {
+                            let error_code = unsafe { GetLastError().0 };
+                            log_error_if_new(
+                                pid,
+                                tid,
+                                &config.name,
+                                Operation::SetThreadIdealProcessorEx,
+                                error_code,
+                                apply_config_result,
+                                || {
+                                    format!(
+                                        "reset_ideal_processor: [SET_IDEAL][{}] {:>5}-{}-{} - SetThreadIdealProcessorEx failed",
+                                        error_from_code_win32(error_code),
+                                        pid,
+                                        tid,
+                                        config.name
+                                    )
+                                },
+                            );
+                        }
+                        Ok(_) => {
+                            counter_set_success += 1;
+                        }
                     }
-                    false => &thread_handle.w_limited_handle,
-                },
-                false => &thread_handle.w_handle,
-            },
-            _ => continue,
-        };
-
-        let target_cpu_index = (i + random_shift as usize) % target_cpu_count;
-        let target_cpu = cpus[target_cpu_index];
-
-        match set_thread_ideal_processor_ex(*handle, 0, target_cpu as u8) {
-            Err(_) => {
-                let error_code = unsafe { GetLastError().0 };
-                log_error_if_new(
-                    pid,
-                    *tid,
-                    &config.name,
-                    Operation::SetThreadIdealProcessorEx,
-                    error_code,
-                    apply_config_result,
-                    || {
-                        format!(
-                            "reset_ideal_processor: [SET_IDEAL][{}] {:>5}-{}-{} - SetThreadIdealProcessorEx failed",
-                            error_from_code_win32(error_code),
-                            pid,
-                            tid,
-                            config.name
-                        )
-                    },
-                );
+                }
             }
-            Ok(_) => {
-                counter_set_success += 1;
-            }
-        }
-    }
-
+        })
+        .collect();
     apply_config_result.add_change(format!("reset ideal processor for {} threads", counter_set_success));
-
-    // ThreadHandle's Drop will automatically close handles when tid_handles goes out of scope
 }
 
 pub fn apply_process_default_cpuset(
@@ -328,7 +311,7 @@ pub fn apply_process_default_cpuset(
             apply_config_result.add_change(format!("CPU Set: -> [{}]", format_cpu_indices(&config.cpu_set_cpus)));
         } else {
             let target_cpusetids = cpusetids_from_indices(&config.cpu_set_cpus);
-            let mut current_cpusetids: Vec<u32> = vec![];
+            let mut current_cpusetids: List<[u32; CONSUMER_CPUS]> = List::new();
             if !target_cpusetids.is_empty() {
                 let mut toset: bool = false;
                 let mut requiredidcount: u32 = 0;
@@ -355,7 +338,7 @@ pub fn apply_process_default_cpuset(
                             },
                         );
                     } else {
-                        current_cpusetids = vec![0u32; requiredidcount as usize];
+                        current_cpusetids = list![0u32; requiredidcount as usize];
                         let second_query =
                             unsafe { GetProcessDefaultCpuSets(r_handle, Some(&mut current_cpusetids[..]), &mut requiredidcount) }.as_bool();
                         if !second_query {
@@ -606,7 +589,7 @@ pub fn prefetch_all_thread_cycles(
     prime_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) {
-    let mut tid_with_delta_times: Vec<(u32, i64)> = {
+    let mut tid_with_delta_times: List<[(u32, i32); TIDS_FULL]> = {
         process
             .get_threads()
             .iter()
@@ -614,7 +597,7 @@ pub fn prefetch_all_thread_cycles(
                 let total = unsafe { thread.KernelTime.QuadPart() + thread.UserTime.QuadPart() };
                 let thread_stats = prime_scheduler.get_thread_stats(pid, *tid);
                 thread_stats.cached_total_time = total;
-                (*tid, total - prime_scheduler.get_thread_stats(pid, *tid).last_total_time)
+                (*tid, (total - prime_scheduler.get_thread_stats(pid, *tid).last_total_time) as i32)
             })
             .collect()
     };
@@ -622,10 +605,11 @@ pub fn prefetch_all_thread_cycles(
         return;
     }
 
-    tid_with_delta_times.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    tid_with_delta_times.sort_unstable_by_key(|(_, time)| Reverse(*time));
     let mut counter = 0;
     let counter_limit = (get_cpu_set_information().lock().unwrap().len() * 2).min(tid_with_delta_times.len()) - 1;
-    for &(tid, _) in &tid_with_delta_times {
+    let tid_with_delta_times_caped: List<[(u32, i32); TIDS_CAPED]> = tid_with_delta_times.into_iter().take(counter_limit + 1).collect();
+    for &(tid, _) in &tid_with_delta_times_caped {
         let thread_stats = prime_scheduler.get_thread_stats(pid, tid);
         if counter > counter_limit {
             break;
@@ -680,7 +664,7 @@ pub fn prefetch_all_thread_cycles(
         counter += 1;
     }
 
-    let tid_with_delta_cycles: Vec<(u32, u64)> = prime_scheduler
+    let tid_with_delta_cycles: List<[(u32, u64); TIDS_CAPED]> = prime_scheduler
         .pid_to_process_stats
         .get_mut(&pid)
         .map(|process_stats| {
@@ -736,21 +720,23 @@ pub fn apply_prime_threads(
     }
 
     let thread_count = process.thread_count() as usize;
-    let mut tid_with_time_deltas: Vec<(u32, i64)> = Vec::with_capacity(thread_count);
+    let mut tid_with_time_deltas: List<[(u32, i32); TIDS_CAPED]> = List::new();
     for (&tid, thread) in process.get_threads().iter() {
         let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
-        tid_with_time_deltas.push((tid, thread_stats.cached_total_time - thread_stats.last_total_time));
+        if thread_stats.cached_cycles > 0 {
+            tid_with_time_deltas.push((tid, (thread_stats.cached_total_time - thread_stats.last_total_time) as i32));
+        }
         if has_tracking {
             thread_stats.last_system_thread_info = Some(*thread);
         }
     }
-    tid_with_time_deltas.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    tid_with_time_deltas.sort_unstable_by_key(|(_, time)| Reverse(*time));
     let prime_count = config.prime_threads_cpus.len();
     // Candidate pool: 4x prime slots or CPU count, whichever is larger, capped at thread count
     let candidate_count = (prime_count * 4)
         .max(get_cpu_set_information().lock().unwrap().len())
         .min(thread_count);
-    let mut candidate_tids: Vec<u32> = tid_with_time_deltas.iter().take(candidate_count).map(|&(tid, _)| tid).collect();
+    let mut candidate_tids: List<[u32; TIDS_CAPED]> = tid_with_time_deltas.iter().take(candidate_count).map(|&(tid, _)| tid).collect();
     // Include previously-pinned threads that may have dropped out of top candidates
     // This ensures they can be properly demoted if they no longer qualify
     if let Some(process_stats) = prime_core_scheduler.pid_to_process_stats.get(&pid) {
@@ -761,7 +747,7 @@ pub fn apply_prime_threads(
         });
     }
 
-    let mut tid_with_delta_cycles: Vec<(u32, u64, bool)> = candidate_tids
+    let mut tid_with_delta_cycles: List<[(u32, u64, bool); TIDS_CAPED]> = candidate_tids
         .iter()
         .map(|&tid| {
             let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
@@ -976,7 +962,7 @@ pub fn apply_prime_threads_demote(
         .filter_map(|&(tid, _, is_prime)| if is_prime { Some(tid) } else { None })
         .collect();
 
-    let live_tids: Vec<u32> = process.get_threads().keys().copied().collect();
+    let live_tids: List<[u32; TIDS_CAPED]> = process.get_threads().keys().copied().collect();
 
     for tid in live_tids {
         let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
@@ -1088,21 +1074,17 @@ pub fn apply_ideal_processors(
         return;
     }
 
-    let tids: Vec<u32> = process.get_threads().keys().copied().collect();
-    let mut all_threads: Vec<(u32, u64, usize, String)> = Vec::new();
-    for &tid in &tids {
+    let mut module_names: Vec<String> = Vec::new();
+    let mut all_threads: List<[(u32, u64, usize, usize); TIDS_CAPED]> = List::new();
+    for &tid in process.get_threads().keys() {
         let thread_stats = prime_scheduler.get_thread_stats(pid, tid);
-        let cycles = thread_stats.cached_cycles;
-        if cycles == 0 {
+        if thread_stats.cached_cycles == 0 {
             continue;
         }
         let start_addr = thread_stats.start_address;
-        all_threads.push((
-            tid,
-            cycles - thread_stats.last_cycles,
-            start_addr,
-            resolve_address_to_module(pid, start_addr),
-        ));
+        let name_idx = module_names.len();
+        module_names.push(resolve_address_to_module(pid, start_addr));
+        all_threads.push((tid, thread_stats.cached_cycles - thread_stats.last_cycles, start_addr, name_idx));
     }
 
     for rule in &config.ideal_processor_rules {
@@ -1110,8 +1092,9 @@ pub fn apply_ideal_processors(
             continue;
         }
 
-        let mut thread_infos: Vec<(u32, u64, usize, String)> = Vec::new();
-        for &(tid, delta_cycles, start_addr, ref start_module) in &all_threads {
+        let mut thread_infos: List<[(u32, u64, usize, usize); TIDS_CAPED]> = List::new();
+        for &(tid, delta_cycles, start_addr, name_idx) in &all_threads {
+            let start_module = &module_names[name_idx];
             let matches = if rule.prefixes.is_empty() {
                 true
             } else {
@@ -1119,15 +1102,15 @@ pub fn apply_ideal_processors(
                 rule.prefixes.iter().any(|prefix| lower.starts_with(prefix))
             };
             if matches {
-                thread_infos.push((tid, delta_cycles, start_addr, start_module.clone()));
+                thread_infos.push((tid, delta_cycles, start_addr, name_idx));
             }
         }
 
-        let mut selection: Vec<(u32, u64, bool)> = thread_infos.iter().map(|&(tid, delta, _, _)| (tid, delta, false)).collect();
+        let mut selection: List<[(u32, u64, bool); TIDS_CAPED]> = thread_infos.iter().map(|&(tid, delta, _, _)| (tid, delta, false)).collect();
         prime_scheduler.select_top_threads_with_hysteresis(pid, &mut selection, rule.cpus.len(), |ts| ts.ideal_processor.is_assigned);
         let selected_set: HashSet<u32> = selection.iter().filter(|(_, _, p)| *p).map(|(t, _, _)| *t).collect();
 
-        let mut claimed: HashSet<u32> = HashSet::new();
+        let mut claimed: HashSet<u32> = HashSet::default();
         for &(tid, _, is_prime) in &selection {
             if is_prime {
                 let thread_stats = prime_scheduler.get_thread_stats(pid, tid);
@@ -1188,7 +1171,7 @@ pub fn apply_ideal_processors(
             }
         }
 
-        let free_pool: Vec<u32> = rule.cpus.iter().copied().filter(|c| !claimed.contains(c)).collect();
+        let free_pool: List<[u32; CONSUMER_CPUS]> = rule.cpus.iter().copied().filter(|c| !claimed.contains(c)).collect();
         let mut counter_free_pool = 0;
         for tid in &selected_set {
             let thread_stats = prime_scheduler.get_thread_stats(pid, *tid);
@@ -1249,7 +1232,7 @@ pub fn apply_ideal_processors(
                     let start_module = all_threads
                         .iter()
                         .find(|(t, _, _, _)| *t == *tid)
-                        .map(|(_, _, _, m)| m.as_str())
+                        .map(|(_, _, _, idx)| module_names[*idx].as_str())
                         .unwrap_or("?");
                     apply_config_result.add_change(format!(
                         "Thread {} -> ideal CPU {} (group 0) start={}",
@@ -1259,7 +1242,8 @@ pub fn apply_ideal_processors(
             };
         }
 
-        for &(tid, _, _, ref start_module) in &thread_infos {
+        for &(tid, _, _, name_idx) in &thread_infos {
+            let start_module = &module_names[name_idx];
             let thread_stats = prime_scheduler.get_thread_stats(pid, tid);
             if !thread_stats.ideal_processor.is_assigned || selected_set.contains(&tid) {
                 continue;

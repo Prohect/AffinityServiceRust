@@ -1,12 +1,13 @@
 use crate::{
     cli::CliArgs,
+    collections::{CONSUMER_CPUS, HashMap, List},
     error_codes::error_from_code_win32,
     get_fail_find_set, log,
     logging::{Operation, is_new_error, log_to_find},
 };
 
 use once_cell::sync::Lazy;
-use std::{collections::HashMap, env, ffi::c_void, io, mem::size_of, process::Command, process::exit, sync::Mutex};
+use std::{env, ffi::c_void, io, mem::size_of, process::Command, process::exit, sync::Mutex};
 use windows::{
     Win32::{
         Foundation::{CloseHandle, GetLastError, HANDLE, HMODULE, LUID, NTSTATUS},
@@ -359,11 +360,11 @@ pub fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>> {
 ///
 /// Windows CPU Sets use opaque IDs that don't match logical processor numbers.
 /// This maps user-friendly indices (0, 1, 2...) to the system's CPU Set IDs.
-pub fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32> {
+pub fn cpusetids_from_indices(cpu_indices: &[u32]) -> List<[u32; CONSUMER_CPUS]> {
     if cpu_indices.is_empty() {
-        return Vec::new();
+        return List::new();
     }
-    let mut cpuids: Vec<u32> = Vec::new();
+    let mut cpuids: List<[u32; CONSUMER_CPUS]> = List::new();
     let guard = get_cpu_set_information().lock().unwrap();
     for entry in guard.iter() {
         let logical_index = entry.logical_processor_index as u32;
@@ -375,11 +376,11 @@ pub fn cpusetids_from_indices(cpu_indices: &[u32]) -> Vec<u32> {
 }
 
 #[allow(dead_code)]
-pub fn cpusetids_from_mask(mask: usize) -> Vec<u32> {
+pub fn cpusetids_from_mask(mask: usize) -> List<[u32; CONSUMER_CPUS]> {
     if mask == 0 {
-        return Vec::new();
+        return List::new();
     }
-    let mut cpuids: Vec<u32> = Vec::new();
+    let mut cpuids: List<[u32; CONSUMER_CPUS]> = List::new();
     let guard = get_cpu_set_information().lock().unwrap();
     for entry in guard.iter() {
         let logical_index = entry.logical_processor_index;
@@ -393,11 +394,11 @@ pub fn cpusetids_from_mask(mask: usize) -> Vec<u32> {
 /// Converts CPU Set IDs back to logical CPU indices.
 ///
 /// Used when reading back CPU Set assignments.
-pub fn indices_from_cpusetids(cpuids: &[u32]) -> Vec<u32> {
+pub fn indices_from_cpusetids(cpuids: &[u32]) -> List<[u32; CONSUMER_CPUS]> {
     if cpuids.is_empty() {
-        return Vec::new();
+        return List::new();
     }
-    let mut indices: Vec<u32> = Vec::new();
+    let mut indices: List<[u32; CONSUMER_CPUS]> = List::new();
     let guard = get_cpu_set_information().lock().unwrap();
     for entry in guard.iter() {
         if cpuids.contains(&entry.id) {
@@ -427,7 +428,7 @@ pub fn mask_from_cpusetids(cpuids: &[u32]) -> usize {
 }
 
 /// Filters CPU indices to only those allowed by the affinity mask.
-pub fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> Vec<u32> {
+pub fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> List<[u32; CONSUMER_CPUS]> {
     cpu_indices
         .iter()
         .filter(|&&idx| idx < 64 && ((1usize << idx) & affinity_mask) != 0)
@@ -678,7 +679,7 @@ pub fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_
 }
 
 #[allow(clippy::type_complexity)]
-static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::default()));
 
 /// Resolves a memory address to a module name with offset.
 ///

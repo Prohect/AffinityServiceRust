@@ -1,14 +1,14 @@
+use crate::collections::{HashMap, HashSet};
 use chrono::{DateTime, Datelike, Local};
 use once_cell::sync::Lazy;
 use std::{
-    collections::{HashMap, HashSet},
     fs::{File, OpenOptions, create_dir_all},
     io::{Write, stdout},
     path::PathBuf,
     sync::Mutex,
 };
 
-pub static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+pub static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::default()));
 
 #[macro_export]
 macro_rules! log {
@@ -66,8 +66,8 @@ pub static LOG_FILE: Lazy<Mutex<File>> =
     Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path("")).unwrap()));
 pub static FIND_LOG_FILE: Lazy<Mutex<File>> =
     Lazy::new(|| Mutex::new(OpenOptions::new().append(true).create(true).open(get_log_path(".find")).unwrap()));
-pub static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
-pub static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+pub static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::default()));
+pub static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>> = Lazy::new(|| Mutex::new(HashMap::default()));
 
 #[derive(PartialEq, Eq, Hash)]
 #[allow(dead_code)]
@@ -140,7 +140,7 @@ pub fn is_new_error(pid: u32, tid: u32, process_name: &str, operation: Operation
             }
         }
         _ => {
-            map.insert(pid, HashMap::from([(entry, true)]));
+            map.insert(pid, [(entry, true)].into_iter().collect());
             true
         }
     }

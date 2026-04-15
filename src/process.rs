@@ -1,12 +1,13 @@
+use crate::collections::HashMap;
 use ntapi::ntexapi::{NtQuerySystemInformation, SYSTEM_PROCESS_INFORMATION, SYSTEM_THREAD_INFORMATION, SystemProcessInformation};
 use once_cell::sync::Lazy;
+use std::slice;
 use std::sync::Mutex;
-use std::{collections::HashMap, slice};
 
 /// DO NOT DIRECTLY ACCESS: Use struct `ProcessSnapshot` instead.
 pub static SNAPSHOT_BUFFER: Lazy<Mutex<Vec<u8>>> = Lazy::new(|| Mutex::new(vec![0u8; 32]));
 /// DO NOT DIRECTLY ACCESS: Use struct `ProcessSnapshot` instead.
-pub static PID_TO_PROCESS_MAP: Lazy<Mutex<HashMap<u32, ProcessEntry>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+pub static PID_TO_PROCESS_MAP: Lazy<Mutex<HashMap<u32, ProcessEntry>>> = Lazy::new(|| Mutex::new(HashMap::default()));
 
 pub struct ProcessSnapshot<'a> {
     buffer: &'a mut Vec<u8>,
@@ -103,7 +104,7 @@ impl ProcessEntry {
         };
         ProcessEntry {
             process,
-            threads: HashMap::new(),
+            threads: HashMap::default(),
             threads_base_ptr: threads_base_ptr as usize,
             name,
         }

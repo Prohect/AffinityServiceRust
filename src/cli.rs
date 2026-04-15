@@ -3,7 +3,7 @@ use windows::core::Result;
 
 #[derive(Debug, Default)]
 pub struct CliArgs {
-    pub interval_ms: u64,
+    pub interval_ms: u32,
     pub help_mode: bool,
     pub help_all_mode: bool,
     pub convert_mode: bool,
@@ -73,7 +73,7 @@ pub fn parse_args(args: &[String], cli: &mut CliArgs) -> Result<()> {
                 cli.dry_run = true;
             }
             "-interval" if i + 1 < args.len() => {
-                cli.interval_ms = args[i + 1].parse().unwrap_or(5000).max(16);
+                cli.interval_ms = args[i + 1].parse().unwrap_or(5000).clamp(16, 86400000);
                 i += 1;
             }
             "-loop" if i + 1 < args.len() => {

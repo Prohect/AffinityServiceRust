@@ -1,5 +1,6 @@
 mod apply;
 mod cli;
+mod collections;
 mod config;
 mod error_codes;
 mod event_trace;
@@ -14,6 +15,7 @@ use apply::{
     apply_process_default_cpuset, prefetch_all_thread_cycles, update_thread_stats,
 };
 use cli::{CliArgs, parse_args, print_help, print_help_all};
+use collections::{HashMap, HashSet, List, PENDING, PIDS};
 use config::{ProcessConfig, convert, hotreload_blacklist, hotreload_config, read_config, read_list, sort_and_group_config};
 use event_trace::EtwProcessMonitor;
 use logging::{log_message, log_process_find, log_pure_message, log_to_find, purge_fail_map};
@@ -27,7 +29,6 @@ use winapi::{
 use chrono::Local;
 use encoding_rs::Encoding;
 use std::{
-    collections::{HashMap, HashSet},
     env,
     fs::{metadata, read_dir, read_to_string, write},
     io::Write,
@@ -129,7 +130,7 @@ fn process_logs(
     let logs_path = logs_path.unwrap_or("logs");
     let output_file = output_file.unwrap_or("new_processes_results.txt");
 
-    let mut all_processes = HashSet::new();
+    let mut all_processes = HashSet::default();
     if let Ok(entries) = read_dir(logs_path) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -352,8 +353,8 @@ fn main() -> windows::core::Result<()> {
         (None, None)
     };
 
-    let mut process_level_applied: HashSet<u32> = HashSet::new();
-    let mut process_level_pending: HashSet<u32> = HashSet::new();
+    let mut process_level_applied: List<[u32; PIDS]> = List::new();
+    let mut process_level_pending: List<[u32; PENDING]> = List::new();
 
     while should_continue {
         if cli.log_loop {
@@ -398,7 +399,7 @@ fn main() -> windows::core::Result<()> {
                                         }
                                         total_changes += result.changes.len();
                                     }
-                                    process_level_applied.insert(*pid);
+                                    process_level_applied.push(*pid);
                                     false
                                 } else {
                                     true
@@ -422,7 +423,7 @@ fn main() -> windows::core::Result<()> {
                             let mut result = ApplyConfigResult::new();
                             if cli.continuous_process_level_apply || !process_level_applied.contains(pid) {
                                 apply_config_process_level(*pid, config, process, cli.dry_run, &mut result);
-                                process_level_applied.insert(*pid);
+                                process_level_applied.push(*pid);
                             }
                             apply_config_thread_level(*pid, config, &mut prime_core_scheduler, process, cli.dry_run, &mut result);
                             if !result.is_empty() {
@@ -444,7 +445,7 @@ fn main() -> windows::core::Result<()> {
                 }
 
                 if event_trace_receiver.is_none() {
-                    let dead_pids: Vec<u32> = prime_core_scheduler
+                    let dead_pids: List<[u32; PENDING]> = prime_core_scheduler
                         .pid_to_process_stats
                         .iter()
                         .filter_map(|(pid, process_stats)| if !process_stats.alive { Some(*pid) } else { None })
@@ -477,22 +478,24 @@ fn main() -> windows::core::Result<()> {
             should_continue = false;
         }
         if should_continue {
-            thread::sleep(Duration::from_millis(cli.interval_ms));
+            thread::sleep(Duration::from_millis(cli.interval_ms as u64));
 
             *get_local_time!() = Local::now();
             if let Some(ref event_trace_receiver) = event_trace_receiver {
                 let mut pid_map_fail_entry_set = get_pid_map_fail_entry_set!();
                 while let Ok(event) = event_trace_receiver.try_recv() {
                     if event.is_start {
-                        process_level_pending.insert(event.pid);
+                        process_level_pending.push(event.pid);
                     } else {
-                        process_level_pending.remove(&event.pid);
-                        process_level_applied.remove(&event.pid);
+                        process_level_pending.retain(|&mut pid| pid != event.pid);
+                        process_level_applied.retain(|&mut pid| pid != event.pid);
                         pid_map_fail_entry_set.remove(&event.pid);
                         prime_core_scheduler.drop_process_by_pid(&event.pid);
                     }
                 }
             }
+            process_level_applied.dedup();
+            process_level_pending.dedup();
             hotreload_config(
                 &cli,
                 &mut configs,

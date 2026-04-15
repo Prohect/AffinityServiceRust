@@ -1,5 +1,6 @@
 use crate::{
     cli::{CliArgs, get_config_help_lines},
+    collections::{CONSUMER_CPUS, HashMap, HashSet, List, PIDS},
     log,
     logging::{log_message, log_to_find},
     priority::{IOPriority, MemoryPriority, ProcessPriority, ThreadPriority},
@@ -7,7 +8,6 @@ use crate::{
 };
 
 use std::{
-    collections::{HashMap, HashSet},
     fs::{File, metadata, read, read_to_string},
     io::{BufRead, BufReader, Result, Write},
     path::Path,
@@ -16,13 +16,13 @@ use std::{
 #[derive(Debug, Clone)]
 pub struct PrimePrefix {
     pub prefix: String,
-    pub cpus: Option<Vec<u32>>,
+    pub cpus: Option<List<[u32; CONSUMER_CPUS]>>,
     pub thread_priority: ThreadPriority,
 }
 
 #[derive(Debug, Clone)]
 pub struct IdealProcessorRule {
-    pub cpus: Vec<u32>,
+    pub cpus: List<[u32; CONSUMER_CPUS]>,
     pub prefixes: Vec<String>,
 }
 
@@ -30,13 +30,13 @@ pub struct IdealProcessorRule {
 pub struct ProcessConfig {
     pub name: String,
     pub priority: ProcessPriority,
-    pub affinity_cpus: Vec<u32>,
-    pub cpu_set_cpus: Vec<u32>,
+    pub affinity_cpus: List<[u32; CONSUMER_CPUS]>,
+    pub cpu_set_cpus: List<[u32; CONSUMER_CPUS]>,
     /// When true, `reset_thread_ideal_processors` will be called after applying the CPU set,
     /// distributing thread ideal processors across `cpu_set_cpus`.
     /// Enabled by prefixing the cpuset field value with `@` in the config rule.
     pub cpu_set_reset_ideal: bool,
-    pub prime_threads_cpus: Vec<u32>,
+    pub prime_threads_cpus: List<[u32; CONSUMER_CPUS]>,
     pub prime_threads_prefixes: Vec<PrimePrefix>,
     pub track_top_x_threads: i32,
     pub io_priority: IOPriority,
@@ -74,20 +74,20 @@ impl Default for ConfigConstants {
 /// * "0-3" → [0, 1, 2, 3]
 /// * "0;2;4" → [0, 2, 4]
 /// * "0x0F" → [0, 1, 2, 3]
-pub fn parse_cpu_spec(s: &str) -> Vec<u32> {
+pub fn parse_cpu_spec(s: &str) -> List<[u32; CONSUMER_CPUS]> {
     let s = s.trim();
     if s.is_empty() || s == "0" {
-        return Vec::new();
+        return List::new();
     }
 
     if s.starts_with("0x") || s.starts_with("0X") {
         if let Ok(mask) = u64::from_str_radix(&s[2..], 16) {
             return mask_to_cpu_indices(mask);
         }
-        return Vec::new();
+        return List::new();
     }
 
-    let mut cpus = Vec::new();
+    let mut cpus = List::new();
     for part in s.split(';') {
         let part = part.trim();
         if part.is_empty() {
@@ -111,7 +111,7 @@ pub fn parse_cpu_spec(s: &str) -> Vec<u32> {
     cpus
 }
 
-fn mask_to_cpu_indices(mask: u64) -> Vec<u32> {
+fn mask_to_cpu_indices(mask: u64) -> List<[u32; CONSUMER_CPUS]> {
     (0..64).filter(|i| (mask >> i) & 1 == 1).collect()
 }
 
@@ -130,7 +130,7 @@ pub fn format_cpu_indices(cpus: &[u32]) -> String {
         return String::from("0");
     }
 
-    let mut sorted: Vec<u32> = cpus.to_vec();
+    let mut sorted: List<[u32; CONSUMER_CPUS]> = cpus.iter().copied().collect();
     sorted.sort();
 
     let mut result = String::new();
@@ -216,9 +216,9 @@ fn resolve_cpu_spec(
     spec: &str,
     field_name: &str,
     line_number: usize,
-    cpu_aliases: &HashMap<String, Vec<u32>>,
+    cpu_aliases: &HashMap<String, List<[u32; CONSUMER_CPUS]>>,
     errors: &mut Vec<String>,
-) -> Vec<u32> {
+) -> List<[u32; CONSUMER_CPUS]> {
     let spec = spec.trim();
     if spec.starts_with('*') {
         let alias = spec.trim_start_matches('*').to_lowercase();
@@ -285,7 +285,13 @@ fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut Conf
     }
 }
 
-fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut HashMap<String, Vec<u32>>, result: &mut ConfigResult) {
+fn parse_alias(
+    name: &str,
+    value: &str,
+    line_number: usize,
+    cpu_aliases: &mut HashMap<String, List<[u32; CONSUMER_CPUS]>>,
+    result: &mut ConfigResult,
+) {
     if name.is_empty() {
         result.errors.push(format!("Line {}: Empty alias name", line_number));
     } else {
@@ -312,7 +318,7 @@ fn parse_alias(name: &str, value: &str, line_number: usize, cpu_aliases: &mut Ha
 fn parse_ideal_processor_spec(
     spec: &str,
     line_number: usize,
-    cpu_aliases: &HashMap<String, Vec<u32>>,
+    cpu_aliases: &HashMap<String, List<[u32; CONSUMER_CPUS]>>,
     errors: &mut Vec<String>,
 ) -> Vec<IdealProcessorRule> {
     let spec = spec.trim();
@@ -353,7 +359,7 @@ fn parse_ideal_processor_spec(
                 "Line {}: Unknown CPU alias '*{}' in ideal processor specification",
                 line_number, alias
             ));
-            Vec::new()
+            List::new()
         };
 
         if cpus.is_empty() {
@@ -414,7 +420,7 @@ fn parse_and_insert_rules(
     members: &[String],
     rule_parts: &[&str],
     line_number: usize,
-    cpu_aliases: &HashMap<String, Vec<u32>>,
+    cpu_aliases: &HashMap<String, List<[u32; CONSUMER_CPUS]>>,
     result: &mut ConfigResult,
 ) {
     if rule_parts.len() < 2 {
@@ -451,14 +457,14 @@ fn parse_and_insert_rules(
             )
         }
     } else {
-        (Vec::new(), false)
+        (List::new(), false)
     };
 
     let (prime_threads_cpus, prime_threads_prefixes, track_top_x_threads) = if rule_parts.len() >= 4 {
         let mut prime_spec = rule_parts[3].trim();
         let mut track_top_x_threads = 0;
         if prime_spec == "0" {
-            (Vec::<u32>::new(), Vec::new(), 0)
+            (List::new(), Vec::new(), 0)
         } else {
             // Parse tracking prefix: ?N means track top N threads, ??N means track without prime
             // e.g., ?8x*p means track and prime top 8 threads to alias p
@@ -487,7 +493,7 @@ fn parse_and_insert_rules(
 
             if prime_spec.find('@').is_some() {
                 let mut all_prefixes: Vec<PrimePrefix> = Vec::new();
-                let mut base_cpus: Vec<u32> = Vec::new();
+                let mut base_cpus: List<[u32; CONSUMER_CPUS]> = List::new();
 
                 let mut segments: Vec<&str> = Vec::new();
 
@@ -512,7 +518,7 @@ fn parse_and_insert_rules(
                         let remaining = &segment[at_pos + 1..];
 
                         let segment_cpus = if alias.is_empty() {
-                            Vec::new()
+                            List::new()
                         } else {
                             let alias_lower = alias.to_lowercase();
                             if let Some(alias_cpus) = cpu_aliases.get(alias_lower.as_str()) {
@@ -522,7 +528,7 @@ fn parse_and_insert_rules(
                                     "Line {}: Unknown CPU alias '*{}' in prime specification",
                                     line_number, alias
                                 ));
-                                Vec::new()
+                                List::new()
                             }
                         };
 
@@ -588,7 +594,7 @@ fn parse_and_insert_rules(
         }
     } else {
         (
-            Vec::new(),
+            List::new(),
             vec![PrimePrefix {
                 prefix: "".to_string(),
                 cpus: None,
@@ -710,7 +716,7 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
     };
 
     let reader = BufReader::new(file);
-    let mut cpu_aliases: HashMap<String, Vec<u32>> = HashMap::new();
+    let mut cpu_aliases: HashMap<String, List<[u32; CONSUMER_CPUS]>> = HashMap::default();
     let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
     let mut i = 0;
 
@@ -897,8 +903,8 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
     output_lines.push("# Converted from Process Lasso config".to_string());
     output_lines.push(String::new());
 
-    let mut priorities: HashMap<String, String> = HashMap::new();
-    let mut affinities: HashMap<String, String> = HashMap::new();
+    let mut priorities: HashMap<String, String> = HashMap::default();
+    let mut affinities: HashMap<String, String> = HashMap::default();
     let mut named_affinities: Vec<(String, String)> = Vec::new();
 
     for line in content.lines() {
@@ -951,7 +957,7 @@ pub fn convert(in_file: Option<String>, out_file: Option<String>) {
         }
     }
 
-    let mut spec_to_alias: HashMap<String, String> = HashMap::new();
+    let mut spec_to_alias: HashMap<String, String> = HashMap::default();
     for (alias_name, cpu_spec) in &named_affinities {
         spec_to_alias.insert(cpu_spec.clone(), format!("*{}", alias_name));
     }
@@ -1057,7 +1063,7 @@ pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
 
     let mut rule_order: Vec<String> = Vec::new();
 
-    let mut rule_to_members: HashMap<String, Vec<String>> = HashMap::new();
+    let mut rule_to_members: HashMap<String, Vec<String>> = HashMap::default();
 
     let mut i = 0;
     while i < lines.len() {
@@ -1264,7 +1270,7 @@ pub fn hotreload_config(
     configs: &mut HashMap<u32, HashMap<String, ProcessConfig>>,
     last_config_mod_time: &mut Option<std::time::SystemTime>,
     prime_core_scheduler: &mut PrimeThreadScheduler,
-    process_level_applied: &mut HashSet<u32>,
+    process_level_applied: &mut List<[u32; PIDS]>,
 ) {
     if let Ok(metadata) = metadata(&cli.config_file_name)
         && let Ok(mod_time) = metadata.modified()

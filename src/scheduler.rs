@@ -1,13 +1,15 @@
 use crate::{
+    collections::{CONSUMER_CPUS, TIDS_CAPED},
     config::ConfigConstants,
     logging::log_message,
     priority::ThreadPriority,
     winapi::{ThreadHandle, drop_module_cache, resolve_address_to_module},
 };
 
+use crate::collections::{HashMap, List};
 use chrono::{DateTime, Local};
 use ntapi::ntexapi::SYSTEM_THREAD_INFORMATION;
-use std::{cmp::Reverse, collections::HashMap, fmt};
+use std::{cmp::Reverse, fmt};
 
 #[derive(Debug)]
 pub struct PrimeThreadScheduler {
@@ -18,7 +20,7 @@ pub struct PrimeThreadScheduler {
 impl PrimeThreadScheduler {
     pub fn new(constants: ConfigConstants) -> Self {
         Self {
-            pid_to_process_stats: HashMap::new(),
+            pid_to_process_stats: HashMap::default(),
             constants,
         }
     }
@@ -127,9 +129,8 @@ impl PrimeThreadScheduler {
         };
         if process_stats.track_top_x_threads != 0 {
             let x = process_stats.track_top_x_threads.unsigned_abs() as usize;
-            let mut threads: Vec<(&u32, &ThreadStats)> = process_stats.tid_to_thread_stats.iter().collect();
-            threads.sort_by(|a, b| b.1.last_cycles.cmp(&a.1.last_cycles));
-
+            let mut threads: List<[(&u32, &ThreadStats); TIDS_CAPED]> = process_stats.tid_to_thread_stats.iter().collect();
+            threads.sort_unstable_by_key(|(_, stats)| Reverse(stats.last_cycles));
             let top_x = threads.into_iter().take(x);
             let mut report = format!(
                 "Process {} ({}) exited. Top {} threads by CPU cycles:\n",
@@ -187,7 +188,7 @@ impl ProcessStats {
     pub fn new(process_id: u32) -> Self {
         Self {
             alive: true,
-            tid_to_thread_stats: HashMap::new(),
+            tid_to_thread_stats: HashMap::default(),
             track_top_x_threads: 0,
             process_name: String::new(),
             process_id,
@@ -246,7 +247,7 @@ pub struct ThreadStats {
     /// Check is_valid_handle() before using other handles.
     pub handle: Option<ThreadHandle>,
 
-    pub pinned_cpu_set_ids: Vec<u32>,
+    pub pinned_cpu_set_ids: List<[u32; CONSUMER_CPUS]>,
 
     pub active_streak: u8,
 
@@ -283,7 +284,7 @@ impl ThreadStats {
             last_cycles: 0,
             cached_cycles: 0,
             handle: None,
-            pinned_cpu_set_ids: vec![],
+            pinned_cpu_set_ids: List::new(),
             active_streak: 0,
             start_address: 0,
             original_priority: None,

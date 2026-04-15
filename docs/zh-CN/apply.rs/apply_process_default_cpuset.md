@@ -69,4 +69,4 @@ pub fn apply_process_default_cpuset<'a>(
 | winapi 模块 | [`winapi.rs`](../winapi.rs/README.md) |
 
 ---
-*Commit: b0df9da35213b050501fab02c3020ad4dbd6c4e0*
+*Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)*

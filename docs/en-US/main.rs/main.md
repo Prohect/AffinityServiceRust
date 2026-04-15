@@ -110,4 +110,4 @@ After the loop, the ETW monitor is stopped if it was started.
 | event_trace module | [event_trace.rs README](../event_trace.rs/README.md) |
 
 ---
-Commit: `b0df9da35213b050501fab02c3020ad4dbd6c4e0`
+Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)

@@ -55,4 +55,4 @@ A vector containing one or more static string slices. Each slice is a multi-line
 | read_config | [read_config](../config.rs/read_config.md) |
 
 ---
-> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`
+> Commit SHA: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)

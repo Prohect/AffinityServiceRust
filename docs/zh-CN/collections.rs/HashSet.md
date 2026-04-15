@@ -63,4 +63,4 @@ pub type HashSet<V> = FxHashSet<V>;
 | logging 静态变量 (FINDS_SET, FINDS_FAIL_SET) | [statics](../logging.rs/statics.md) |
 
 ---
-> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`
+> Commit SHA: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)

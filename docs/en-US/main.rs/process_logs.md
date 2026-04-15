@@ -83,4 +83,4 @@ If `es.exe` returns no output, `"Not found, result empty"` is printed instead. I
 | config module | [config](../config.rs/README.md) |
 
 ---
-> Commit SHA: `b0df9da35213b050501fab02c3020ad4dbd6c4e0`
+> Commit SHA: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)

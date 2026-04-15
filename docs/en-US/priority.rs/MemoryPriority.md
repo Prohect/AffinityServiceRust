@@ -92,4 +92,4 @@ Looks up the human-readable string name for a raw `u32` memory priority value as
 | apply_process_level | [apply_process_level](../main.rs/apply_process_level.md) |
 
 ---
-> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`
+> Commit SHA: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)

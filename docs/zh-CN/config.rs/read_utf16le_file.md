@@ -71,4 +71,4 @@ pub fn read_utf16le_file(path: &str) -> Result<String> {
 | config 模块概述 | [README](README.md) |
 
 ---
-*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*
+*Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)*

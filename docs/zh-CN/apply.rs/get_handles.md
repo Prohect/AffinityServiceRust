@@ -66,4 +66,4 @@ fn get_handles(process_handle: &ProcessHandle) -> (Option<HANDLE>, Option<HANDLE
 | apply_memory_priority | [`apply_memory_priority`](apply_memory_priority.md) |
 
 ---
-*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*
+*Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)*

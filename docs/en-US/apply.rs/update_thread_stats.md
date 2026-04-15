@@ -81,4 +81,4 @@ Calling `update_thread_stats` before these functions would cause all deltas to b
 | PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
 
 ---
-*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*
+*Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)*

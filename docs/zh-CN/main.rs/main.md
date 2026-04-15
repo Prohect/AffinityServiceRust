@@ -110,4 +110,4 @@ fn main() -> windows::core::Result<()>
 | event_trace 模块 | [event_trace.rs README](../event_trace.rs/README.md) |
 
 ---
-Commit: `b0df9da35213b050501fab02c3020ad4dbd6c4e0`
+Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)

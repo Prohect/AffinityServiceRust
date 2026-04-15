@@ -29,4 +29,4 @@
 | [logging.rs 模块](../logging.rs/README.md) | 使用 `HashMap` 和 `HashSet` 进行失败跟踪和去重。 |
 
 ---
-> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`
+> Commit SHA: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)

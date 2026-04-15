@@ -79,5 +79,20 @@ Translate for other locales after changes to en-US finishing, know about basic i
 
 ## Documentation on Commit SHA
 
-Always leave a git commit SHA256 in a doc.
-b0df9da35213b050501fab02c3020ad4dbd6c4e0
+Always leave a git commit SHA as a clickable link at the bottom of every doc file.
+
+### Format
+
+```
+[<7-char prefix>](https://github.com/Prohect/AffinityServiceRust/tree/<full SHA>)
+```
+
+### Example
+
+```
+*Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)*
+```
+
+### Current commit
+
+[b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)

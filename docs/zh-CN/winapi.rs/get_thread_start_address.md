@@ -58,4 +58,4 @@ pub fn get_thread_start_address(thread_handle: HANDLE) -> usize
 | MODULE_CACHE 静态变量 | [MODULE_CACHE](MODULE_CACHE.md) |
 
 ---
-> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`
+> Commit SHA: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)

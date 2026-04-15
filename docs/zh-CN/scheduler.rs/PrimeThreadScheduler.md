@@ -138,4 +138,4 @@ pub fn drop_process_by_pid(&mut self, pid: &u32)
 | apply_thread_level | [apply_thread_level](../main.rs/apply_thread_level.md) |
 
 ---
-> Commit SHA: `b0df9da35213b050501fab02c3020ad4dbd6c4e0`
+> Commit SHA: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)

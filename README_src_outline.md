@@ -24,29 +24,29 @@ Read this by multiple calls if it's too large to fit in one
     process_handle: &ProcessHandle,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L133:209]fn apply_affinity(
+- [L133:209]fn apply_affinity<'a>(
     pid: u32,
     config: &ProcessLevelConfig,
     dry_run: bool,
     current_mask: &mut usize,
     process_handle: &ProcessHandle,
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L211:295]fn reset_thread_ideal_processors(
+- [L211:295]fn reset_thread_ideal_processors<'a>(
     pid: u32,
     config: &ProcessLevelConfig,
     dry_run: bool,
     cpus: &[u32],
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L297:400]fn apply_process_default_cpuset(
+- [L297:400]fn apply_process_default_cpuset<'a>(
     pid: u32,
     config: &ProcessLevelConfig,
     dry_run: bool,
     process_handle: &ProcessHandle,
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     apply_config_result: &mut ApplyConfigResult,
 ) 
 - [L402:488]fn apply_io_priority(
@@ -63,20 +63,20 @@ Read this by multiple calls if it's too large to fit in one
     process_handle: &ProcessHandle,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L579:686]fn prefetch_all_thread_cycles(
+- [L579:686]fn prefetch_all_thread_cycles<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     prime_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L688:788]fn apply_prime_threads(
+- [L688:788]fn apply_prime_threads<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
     dry_run: bool,
     current_mask: &mut usize,
-    process: &ProcessEntry,
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    process: &'a ProcessEntry,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) 
@@ -94,19 +94,19 @@ Read this by multiple calls if it's too large to fit in one
     prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L950:1041]fn apply_prime_threads_demote(
+- [L950:1041]fn apply_prime_threads_demote<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     tid_with_delta_cycles: &[(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L1043:1311]fn apply_ideal_processors(
+- [L1043:1311]fn apply_ideal_processors<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
     dry_run: bool,
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     prime_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) 
@@ -299,23 +299,23 @@ Read this by multiple calls if it's too large to fit in one
 - [L212:221]fn log_process_find(process_name: &str) 
 
 ## src/main.rs
-- [L55:73]fn apply_process_level(
+- [L56:74]fn apply_process_level<'a>(
     pid: u32,
     config: &ProcessLevelConfig,
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     dry_run: bool,
     apply_configs: &mut ApplyConfigResult,
 ) 
-- [L75:116]fn apply_thread_level(
+- [L76:117]fn apply_thread_level<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
-    process: &ProcessEntry,
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    process: &'a ProcessEntry,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     dry_run: bool,
     apply_configs: &mut ApplyConfigResult,
 ) 
-- [L118:152]fn apply_config(
+- [L119:154]fn apply_config(
     cli: &CliArgs,
     configs: &ConfigResult,
     prime_core_scheduler: &mut PrimeThreadScheduler,
@@ -327,10 +327,10 @@ Read this by multiple calls if it's too large to fit in one
     process_level_config: &ProcessLevelConfig,
     process: &ProcessEntry,
 ) 
-- [L154:168]fn log_apply_results(pid: &u32, name: &String, result: ApplyConfigResult) 
-- [L170:262]fn process_logs(configs: &ConfigResult, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
-- [L264:301]fn process_find(cli: &CliArgs, configs: &ConfigResult, blacklist: &[String]) -> Result<(), windows::core::Error> 
-- [L303:613]fn main() -> windows::core::Result<()> 
+- [L156:170]fn log_apply_results(pid: &u32, name: &String, result: ApplyConfigResult) 
+- [L172:264]fn process_logs(configs: &ConfigResult, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
+- [L266:303]fn process_find(cli: &CliArgs, configs: &ConfigResult, blacklist: &[String]) -> Result<(), windows::core::Error> 
+- [L305:616]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L8:16]enum ProcessPriority {

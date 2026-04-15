@@ -22,6 +22,7 @@ use config::{
 use event_trace::EtwProcessMonitor;
 use logging::{log_message, log_process_find, log_pure_message, log_to_find, purge_fail_map};
 use ntapi::ntexapi::SYSTEM_THREAD_INFORMATION;
+use once_cell::unsync::OnceCell;
 use process::{PID_TO_PROCESS_MAP, ProcessEntry, ProcessSnapshot, SNAPSHOT_BUFFER};
 use scheduler::PrimeThreadScheduler;
 use winapi::{
@@ -54,10 +55,10 @@ use crate::config::ConfigResult;
 
 /// Applies process-level settings (one-shot per process).
 /// Includes: priority, affinity (with thread ideal processor reset), CPU set, IO priority, memory priority.
-fn apply_process_level(
+fn apply_process_level<'a>(
     pid: u32,
     config: &ProcessLevelConfig,
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     dry_run: bool,
     apply_configs: &mut ApplyConfigResult,
 ) {
@@ -74,12 +75,12 @@ fn apply_process_level(
 
 /// Applies thread-level settings (every polling iteration).
 /// Includes: prime thread scheduling, ideal processor assignment, cycle time tracking.
-fn apply_thread_level(
+fn apply_thread_level<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
-    process: &ProcessEntry,
-    threads: &HashMap<u32, SYSTEM_THREAD_INFORMATION>,
+    process: &'a ProcessEntry,
+    threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     dry_run: bool,
     apply_configs: &mut ApplyConfigResult,
 ) {
@@ -130,7 +131,8 @@ fn apply_config(
     process: &ProcessEntry,
 ) {
     let mut result = ApplyConfigResult::new();
-    let threads = process.get_threads();
+    let threads_cache: OnceCell<HashMap<u32, SYSTEM_THREAD_INFORMATION>> = OnceCell::new();
+    let threads = || threads_cache.get_or_init(|| process.get_threads());
     apply_process_level(*pid, process_level_config, &threads, cli.dry_run, &mut result);
     if let Some(thread_level_config) = match configs.thread_level_configs.get(grade) {
         Some(thread_level_configs) => thread_level_configs.get(*name),
@@ -503,7 +505,8 @@ fn main() -> windows::core::Result<()> {
                                 continue;
                             };
                             let mut result = ApplyConfigResult::new();
-                            let threads = process.get_threads();
+                            let threads_cache: OnceCell<HashMap<u32, SYSTEM_THREAD_INFORMATION>> = OnceCell::new();
+                            let threads = || threads_cache.get_or_init(|| process.get_threads());
                             apply_thread_level(
                                 *pid,
                                 thread_level_config,

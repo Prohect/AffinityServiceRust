@@ -11,7 +11,7 @@ This module does not export standalone functions. All functionality is exposed t
 | Struct | Description |
 |--------|-------------|
 | [ProcessSnapshot](ProcessSnapshot.md) | RAII wrapper that captures a point-in-time snapshot of all processes and threads via `NtQuerySystemInformation`, with automatic cleanup on drop. |
-| [ProcessEntry](ProcessEntry.md) | Represents a single process from the snapshot, wrapping `SYSTEM_PROCESS_INFORMATION` with cached process name and lazy thread enumeration. |
+| [ProcessEntry](ProcessEntry.md) | Represents a single process from the snapshot, wrapping `SYSTEM_PROCESS_INFORMATION` with cached process name and on-demand thread enumeration. |
 
 ## Statics
 
@@ -29,4 +29,4 @@ This module does not export standalone functions. All functionality is exposed t
 | [event_trace.rs](../event_trace.rs/README.md) | ETW-based real-time process monitoring that complements polling-based snapshots. |
 
 ---
-> Commit: `7221ea0694670265d4eb4975582d8ed2ae02439d`
+> Commit: `d51fb5fe999bfe703a5bed980ab2435c1e2fe690`

@@ -56,4 +56,4 @@ The `logging` module provides file-based and console-based logging facilities fo
 | [winapi module](../winapi.rs/README.md) | Windows API wrappers that call into logging for error reporting. |
 
 ---
-> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`
+> Commit SHA: `d51fb5fe999bfe703a5bed980ab2435c1e2fe690`

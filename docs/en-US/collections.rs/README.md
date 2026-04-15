@@ -9,6 +9,7 @@ The `collections` module provides project-wide type aliases for high-performance
 | [HashMap](HashMap.md) | Alias for `FxHashMap<K, V>`, a hash map using the Fx (Firefox) non-cryptographic hash function for fast lookups. |
 | [HashSet](HashSet.md) | Alias for `FxHashSet<V>`, a hash set using the Fx non-cryptographic hash function. |
 | [List](List.md) | Alias for `SmallVec<E>`, a vector that stores elements inline up to a fixed capacity before spilling to the heap. |
+| [list!](list.md) | Re-export of the `smallvec!` macro as `list!`, used to construct `List` instances with vec-like syntax. |
 
 ## Constants
 
@@ -29,4 +30,4 @@ The `collections` module provides project-wide type aliases for high-performance
 | [logging.rs module](../logging.rs/README.md) | Uses `HashMap` and `HashSet` for failure tracking and deduplication. |
 
 ---
-> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`
+> Commit SHA: `d51fb5fe999bfe703a5bed980ab2435c1e2fe690`

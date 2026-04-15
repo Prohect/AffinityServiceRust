@@ -55,4 +55,4 @@ The `winapi` module provides low-level Windows API wrappers for process and thre
 | error_codes module | [error_codes.rs](../error_codes.rs/README.md) |
 
 ---
-> Commit SHA: `7221ea0694670265d4eb4975582d8ed2ae02439d`
+> Commit SHA: `d51fb5fe999bfe703a5bed980ab2435c1e2fe690`

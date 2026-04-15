@@ -29,4 +29,4 @@ The `scheduler` module implements the core thread-scheduling engine for Affinity
 | winapi module | [winapi.rs README](../winapi.rs/README.md) |
 
 ---
-Commit: `7221ea0694670265d4eb4975582d8ed2ae02439d`
+Commit: `d51fb5fe999bfe703a5bed980ab2435c1e2fe690`

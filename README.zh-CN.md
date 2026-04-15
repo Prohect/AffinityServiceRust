@@ -186,7 +186,7 @@ game.exe:normal:*a:@0-3:*p:normal:normal:1
 process_name:priority:affinity:cpuset:prime_cpus[@prefixes]:io_priority:memory_priority:ideal[@prefixes]:grade
 ```
 
-解析后的表示请参见 [`ProcessConfig`](docs/zh-CN/config.rs/ProcessConfig.md) 结构体。
+解析后的表示请参见 [`ProcessLevelConfig`](docs/zh-CN/config.rs/ProcessLevelConfig.md) 结构体。
 
 ### CPU 规格格式
 
@@ -349,7 +349,7 @@ AffinityServiceRust 持续监控运行中的进程，并应用配置的规则，
 
    这是**预期行为** —— 服务会对快照中所有名称匹配的进程应用规则，包括自身短暂存活的子进程。该子进程会在主循环启动前被终止（见启动清理逻辑），因此此条目每次运行最多出现一次，可安全忽略。
 
-8. **`[OPEN][ACCESS_DENIED]` 按线程去重**：当 [`apply_config_process_level()`](docs/zh-CN/main.rs/apply_config_process_level.md)/[`apply_config_thread_level()`](docs/zh-CN/main.rs/apply_config_thread_level.md) 因 `ACCESS_DENIED`（或其他错误）无法打开某进程或线程时，该错误仅对每个唯一的 `(pid, tid, 进程名, 操作)` 组合写入一次 `.find.log`。每次获取快照后，去重映射表会与当前快照对账：PID 已退出或被其他可执行文件复用的条目将被清除，因此若同一进程名在新 PID 下再次出现，错误将重新触发一次。同名可执行文件的多个并发实例（如具有不同 PID 的多个 `svchost.exe`）被独立跟踪——某个实例被拒绝访问，不会压制其他同名但不同 PID 实例的错误输出。
+8. **`[OPEN][ACCESS_DENIED]` 按线程去重**：当 [`apply_process_level()`](docs/zh-CN/main.rs/apply_process_level.md)/[`apply_thread_level()`](docs/zh-CN/main.rs/apply_thread_level.md) 因 `ACCESS_DENIED`（或其他错误）无法打开某进程或线程时，该错误仅对每个唯一的 `(pid, tid, 进程名, 操作)` 组合写入一次 `.find.log`。每次获取快照后，去重映射表会与当前快照对账：PID 已退出或被其他可执行文件复用的条目将被清除，因此若同一进程名在新 PID 下再次出现，错误将重新触发一次。同名可执行文件的多个并发实例（如具有不同 PID 的多个 `svchost.exe`）被独立跟踪——某个实例被拒绝访问，不会压制其他同名但不同 PID 实例的错误输出。
 
 错误去重实现请参见 [`is_new_error()`](docs/zh-CN/logging.rs/is_new_error.md)。
 
@@ -371,7 +371,7 @@ AffinityServiceRust 持续监控运行中的进程，并应用配置的规则，
 
 欢迎提交问题和拉取请求。
 
-请尝试更新此 README 时更新提交 SHA：**920d8fafb3d9e22e6078f62bbb7d8d97e7d21c4b**。这让开发者能够对比最新源码以理解变更。
+请尝试更新此 README 时更新提交 SHA：**7221ea0694670265d4eb4975582d8ed2ae02439d**。这让开发者能够对比最新源码以理解变更。
 
 ## 许可证
 

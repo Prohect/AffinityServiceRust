@@ -42,4 +42,4 @@ The `apply` module is responsible for applying process- and thread-level configu
 | collections module | [`collections.rs`](../collections.rs/README.md) |
 
 ---
-*Commit: 7221ea0694670265d4eb4975582d8ed2ae02439d*
+*Commit: d51fb5fe999bfe703a5bed980ab2435c1e2fe690*

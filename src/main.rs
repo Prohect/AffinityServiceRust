@@ -577,7 +577,7 @@ fn main() -> windows::core::Result<()> {
                         Ok(_) => {
                             if (pending > 0
                                 && Local::now() - *get_local_time!() > TimeDelta::milliseconds(((cli.interval_ms - 16) / 2) as i64))
-                                || Local::now() - *get_local_time!() > TimeDelta::milliseconds(cli.interval_ms as i64)
+                                || (pending == 0 && Local::now() - *get_local_time!() > TimeDelta::milliseconds(cli.interval_ms as i64))
                             {
                                 break;
                             }

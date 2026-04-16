@@ -567,7 +567,10 @@ fn main() -> windows::core::Result<()> {
                             should_continue = false;
                             break;
                         }
-                        _ => {
+                        Err(RecvTimeoutError::Timeout) => {
+                            continue;
+                        }
+                        Ok(_) => {
                             if Local::now() - *get_local_time!() > TimeDelta::milliseconds(cli.interval_ms as i64) {
                                 break;
                             }

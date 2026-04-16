@@ -563,7 +563,7 @@ fn main() -> windows::core::Result<()> {
             {
                 etw_sleep = true;
                 loop {
-                    match event_trace_receiver.recv_timeout(Duration::from_millis(((cli.interval_ms + 32) / 2) as u64)) {
+                    match event_trace_receiver.recv_timeout(Duration::from_millis(((cli.interval_ms + 16) / 2) as u64)) {
                         Err(RecvTimeoutError::Disconnected) => {
                             should_continue = false;
                             break;

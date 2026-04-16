@@ -557,23 +557,28 @@ fn main() -> windows::core::Result<()> {
         }
         if should_continue {
             let mut etw_sleep = false;
+            let mut pending = 0u32;
             if prime_core_scheduler.pid_to_process_stats.is_empty()
                 && let Some(ref event_trace_receiver) = event_trace_receiver
             {
                 etw_sleep = true;
                 loop {
-                    match event_trace_receiver.recv_timeout(Duration::from_millis(((cli.interval_ms + 16) / 2) as u64)) {
+                    match event_trace_receiver.recv_timeout(Duration::from_millis(((cli.interval_ms + 48) / 4) as u64)) {
                         Err(RecvTimeoutError::Disconnected) => {
                             should_continue = false;
                             break;
                         }
                         Err(RecvTimeoutError::Timeout) => {
+                            if pending > 0 {
+                                break;
+                            }
                             continue;
                         }
                         Ok(_) => {
-                            if Local::now() - *get_local_time!() > TimeDelta::milliseconds(cli.interval_ms as i64) {
+                            if Local::now() - *get_local_time!() > TimeDelta::milliseconds(cli.interval_ms as i64) || pending > 7 {
                                 break;
                             }
+                            pending += 1;
                         }
                     }
                 }

@@ -13,12 +13,10 @@ if [ -n "$members" ]; then
     echo "# Workspace Code Structure Outline, auto-generated during cargo build/check"
     files=$(for member in $members; do find "$member" -name "*.rs" 2>/dev/null; done | sort)
 else
-    echo "# Src Code Structure Outline, auto-generated during cargo build/check"
+    echo "# Src Code Structure Outline, auto-generated during cargo build/check, READ this by MULTIPLE calls if it's **too large to fit in one**"
     files=$(echo src/*.rs)
 fi
 
-echo ""
-echo "Read this by multiple calls if it's too large to fit in one"
 echo ""
 
 for file in $files; do

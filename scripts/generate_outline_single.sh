@@ -16,10 +16,8 @@ if [ ! -f "$FILE" ]; then
     exit 1
 fi
 
-echo "# File outline for $FILE"
+echo "# File outline for $FILE, , READ this by MULTIPLE calls if it's **too large to fit in one**"
 
-echo ""
-echo "Read this by multiple calls if it's too large to fit in one"
 echo ""
 
 # Use awk to parse and accumulate multi-line declarations

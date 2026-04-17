@@ -436,7 +436,7 @@ fn main() -> windows::core::Result<()> {
                     // process_level_pending dont respect grade being applied just in time
                     // since it's retain call here, it do not hit performance in next loop iterations
                     process_level_pending.retain(|pid_pending| {
-                        pids_and_names.iter().any(|(pid, name)| -> bool {
+                        !pids_and_names.iter().any(|(pid, name)| -> bool {
                             if pid == pid_pending {
                                 if let Some(process_level_config) = graded_process_level_configs.get(*name)
                                     && let Some(process) = processes.pid_to_process.get(pid)
@@ -453,12 +453,12 @@ fn main() -> windows::core::Result<()> {
                                         process_level_config,
                                         process,
                                     );
-                                    false
-                                } else {
                                     true
+                                } else {
+                                    false
                                 }
                             } else {
-                                true
+                                false
                             }
                         })
                     });

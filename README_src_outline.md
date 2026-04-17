@@ -360,7 +360,13 @@
 - [L156:170]fn log_apply_results(pid: &u32, name: &String, result: ApplyConfigResult) 
 - [L172:264]fn process_logs(configs: &ConfigResult, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
 - [L266:303]fn process_find(cli: &CliArgs, configs: &ConfigResult, blacklist: &[String]) -> Result<(), windows::core::Error> 
-- [L305:627]fn main() -> windows::core::Result<()> 
+- [L305:630]fn main() -> windows::core::Result<()> 
+- [L632:649]fn process_events(
+    prime_core_scheduler: &mut PrimeThreadScheduler,
+    process_level_applied: &mut smallvec::SmallVec<[u32; 256]>,
+    process_level_pending: &mut smallvec::SmallVec<[u32; 16]>,
+    event_trace_receiver: &std::sync::mpsc::Receiver<event_trace::EtwProcessEvent>,
+) 
 
 ## src/priority.rs
 - [L8:16]enum ProcessPriority {

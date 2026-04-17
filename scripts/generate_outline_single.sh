@@ -16,7 +16,7 @@ if [ ! -f "$FILE" ]; then
     exit 1
 fi
 
-echo "# File outline for $FILE, , READ this by MULTIPLE calls if it's **too large to fit in one**"
+echo "# File outline for $FILE, , **READ this by MULTIPLE calls if it's too large being outlined by first call**"
 
 echo ""
 

@@ -398,6 +398,7 @@ fn main() -> windows::core::Result<()> {
     let mut prime_core_scheduler = PrimeThreadScheduler::new(configs.constants.clone());
     let mut current_loop = 0u32;
     let mut should_continue = true;
+    let mut first_loop = true;
 
     // Start ETW process monitor for reactive process level rule application
     let (event_trace_monitor, event_trace_receiver) = if !(cli.no_etw) {
@@ -463,8 +464,9 @@ fn main() -> windows::core::Result<()> {
                         })
                     });
                     // fallback of cli flag -no_etw, and processes launched before this project's process's running
-                    if !current_loop.is_multiple_of(*grade)
-                        || (prime_core_scheduler.pid_to_process_stats.is_empty() && event_trace_receiver.is_some())
+                    if !first_loop
+                        && (!current_loop.is_multiple_of(*grade)
+                            || (prime_core_scheduler.pid_to_process_stats.is_empty() && event_trace_receiver.is_some()))
                     {
                         continue;
                     }
@@ -559,6 +561,7 @@ fn main() -> windows::core::Result<()> {
             should_continue = false;
         }
         process_level_pending.clear(); // SAFETY: avoid short-lived process not found in retain's pid grows
+        first_loop = false;
         if should_continue {
             let mut etw_sleep = false;
             if prime_core_scheduler.pid_to_process_stats.is_empty()

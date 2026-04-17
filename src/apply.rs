@@ -288,6 +288,7 @@ pub fn reset_thread_ideal_processors<'a>(
                         }
                     }
                 }
+                drop(thread_handle);
             }
         })
         .collect();
@@ -602,6 +603,15 @@ pub fn prefetch_all_thread_cycles<'a>(
     if tid_with_delta_times.is_empty() {
         return;
     }
+    if let Some(process_stats) = prime_scheduler.pid_to_process_stats.get_mut(&pid) {
+        process_stats.tid_to_thread_stats.retain(|tid, thread_stats| {
+            let contain = tid_with_delta_times.iter().any(|(alive_tid, _delta_time)| alive_tid == tid);
+            if !contain && let handle = thread_stats.handle.take() {
+                drop(handle); // SAFETY: clean handle of dead thread
+            }
+            contain
+        });
+    }
 
     tid_with_delta_times.sort_unstable_by_key(|(_, time)| Reverse(*time));
     let mut counter = 0;
@@ -774,17 +784,6 @@ pub fn apply_prime_threads<'a>(
         prime_core_scheduler,
         apply_config_result,
     );
-
-    // Clean up handles for threads that no longer exist in the process
-    let live_set: HashSet<u32> = tid_with_time_deltas.iter().map(|&(tid, _)| tid).collect();
-    if let Some(ps) = prime_core_scheduler.pid_to_process_stats.get_mut(&pid) {
-        for (tid, ts) in ps.tid_to_thread_stats.iter_mut() {
-            if !live_set.contains(tid) {
-                // Remove handle - ThreadHandle's Drop will close handles automatically
-                let _ = ts.handle.take();
-            }
-        }
-    }
 }
 
 /// Selects top threads for prime status using hysteresis.
@@ -822,7 +821,7 @@ pub fn apply_prime_threads_promote(
             continue;
         }
         let thread_stats = prime_core_scheduler.get_thread_stats(pid, tid);
-        if let Some(ref thread_handle) = thread_stats.handle
+        if let Some(thread_handle) = thread_stats.handle.as_ref()
             && thread_stats.pinned_cpu_set_ids.is_empty()
         {
             let handle: &HANDLE = match thread_handle.w_handle.is_invalid() {
@@ -971,7 +970,7 @@ pub fn apply_prime_threads_demote<'a>(
         if prime_set.contains(&tid) || thread_stats.pinned_cpu_set_ids.is_empty() {
             continue;
         }
-        let handle: &HANDLE = match &thread_stats.handle {
+        let handle = match thread_stats.handle.as_ref() {
             Some(thread_handle) => match thread_handle.w_handle.is_invalid() {
                 true => match thread_handle.w_limited_handle.is_invalid() {
                     true => {
@@ -1119,7 +1118,7 @@ pub fn apply_ideal_processors<'a>(
                 if thread_stats.ideal_processor.is_assigned {
                     claimed.insert(thread_stats.ideal_processor.current_number as u32);
                 } else {
-                    let handle: &HANDLE = match &thread_stats.handle {
+                    let handle = match thread_stats.handle.as_ref() {
                         Some(thread_handle) => match thread_handle.w_handle.is_invalid() {
                             true => match thread_handle.w_limited_handle.is_invalid() {
                                 true => {
@@ -1180,7 +1179,7 @@ pub fn apply_ideal_processors<'a>(
             if thread_stats.ideal_processor.is_assigned {
                 continue;
             }
-            let thread_handle = match &thread_stats.handle {
+            let thread_handle = match thread_stats.handle.as_ref() {
                 Some(h) => h,
                 _ => continue,
             };
@@ -1255,7 +1254,7 @@ pub fn apply_ideal_processors<'a>(
             let cur_group = thread_stats.ideal_processor.current_group;
             let cur_number = thread_stats.ideal_processor.current_number;
             if prev_group != cur_group || prev_number != cur_number {
-                let handle: &HANDLE = match &thread_stats.handle {
+                let handle = match thread_stats.handle.as_ref() {
                     Some(thread_handle) => match thread_handle.w_handle.is_invalid() {
                         true => match thread_handle.w_limited_handle.is_invalid() {
                             true => {

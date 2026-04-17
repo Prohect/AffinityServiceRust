@@ -71,6 +71,7 @@ fn apply_process_level<'a>(
     apply_process_default_cpuset(pid, config, dry_run, &process_handle, threads, apply_configs);
     apply_io_priority(pid, config, dry_run, &process_handle, apply_configs);
     apply_memory_priority(pid, config, dry_run, &process_handle, apply_configs);
+    drop(process_handle);
 }
 
 /// Applies thread-level settings (every polling iteration).
@@ -521,7 +522,7 @@ fn main() -> windows::core::Result<()> {
                     }
                 }
 
-                if event_trace_receiver.is_none() {
+                if event_trace_receiver.is_none() || !prime_core_scheduler.pid_to_process_stats.is_empty() {
                     // fallback of cli flag -no_etw, resource cleanup and state update,
                     let dead_pids: List<[u32; PENDING]> = prime_core_scheduler
                         .pid_to_process_stats
@@ -534,7 +535,6 @@ fn main() -> windows::core::Result<()> {
                     purge_fail_map(&pids_and_names);
                     process_level_applied.retain(|pid| pids_and_names.iter().any(|(p, _)| p == pid));
                 }
-                process_level_pending.clear(); // SAFETY: avoid short-lived process not found in retain's pid grows
                 if cli.dry_run {
                     should_continue = false;
                 }
@@ -555,9 +555,9 @@ fn main() -> windows::core::Result<()> {
             }
             should_continue = false;
         }
+        process_level_pending.clear(); // SAFETY: avoid short-lived process not found in retain's pid grows
         if should_continue {
             let mut etw_sleep = false;
-            let mut pending = 0u32;
             if prime_core_scheduler.pid_to_process_stats.is_empty()
                 && let Some(ref event_trace_receiver) = event_trace_receiver
             {
@@ -569,34 +569,27 @@ fn main() -> windows::core::Result<()> {
                             break;
                         }
                         Err(RecvTimeoutError::Timeout) => {
-                            if pending > 0 {
-                                process_events(
-                                    &mut prime_core_scheduler,
-                                    &mut process_level_applied,
-                                    &mut process_level_pending,
-                                    event_trace_receiver,
-                                );
-                                if !process_level_pending.is_empty() {
-                                    break;
-                                }
+                            if !process_level_pending.is_empty() {
+                                break;
                             }
-                            continue;
                         }
-                        Ok(_) => {
-                            if (pending > 0
+                        Ok(event) => {
+                            let empty_pending_pre = process_level_pending.is_empty();
+                            if event.is_start {
+                                process_level_pending.push(event.pid);
+                            } else {
+                                process_level_pending.retain(|&mut pid| pid != event.pid);
+                                process_level_applied.retain(|&mut pid| pid != event.pid);
+                                get_pid_map_fail_entry_set!().remove(&event.pid);
+                                prime_core_scheduler.drop_process_by_pid(&event.pid);
+                            }
+                            if (!empty_pending_pre
                                 && Local::now() - *get_local_time!() > TimeDelta::milliseconds(((cli.interval_ms - 16) / 2) as i64))
-                                || (pending == 0 && Local::now() - *get_local_time!() > TimeDelta::milliseconds(cli.interval_ms as i64))
+                                || (empty_pending_pre
+                                    && !process_level_pending.is_empty()
+                                    && Local::now() - *get_local_time!() > TimeDelta::milliseconds(cli.interval_ms as i64))
                             {
-                                process_events(
-                                    &mut prime_core_scheduler,
-                                    &mut process_level_applied,
-                                    &mut process_level_pending,
-                                    event_trace_receiver,
-                                );
-                                if !process_level_pending.is_empty() {
-                                    break;
-                                }
-                                pending += 1;
+                                break;
                             }
                         }
                     }
@@ -627,23 +620,4 @@ fn main() -> windows::core::Result<()> {
         log!("ETW process monitor stopped");
     }
     Ok(())
-}
-
-fn process_events(
-    prime_core_scheduler: &mut PrimeThreadScheduler,
-    process_level_applied: &mut smallvec::SmallVec<[u32; PIDS]>,
-    process_level_pending: &mut smallvec::SmallVec<[u32; PENDING]>,
-    event_trace_receiver: &std::sync::mpsc::Receiver<event_trace::EtwProcessEvent>,
-) {
-    let mut pid_map_fail_entry_set = get_pid_map_fail_entry_set!();
-    while let Ok(event) = event_trace_receiver.try_recv() {
-        if event.is_start {
-            process_level_pending.push(event.pid);
-        } else {
-            process_level_pending.retain(|&mut pid| pid != event.pid);
-            process_level_applied.retain(|&mut pid| pid != event.pid);
-            pid_map_fail_entry_set.remove(&event.pid);
-            prime_core_scheduler.drop_process_by_pid(&event.pid);
-        }
-    }
 }

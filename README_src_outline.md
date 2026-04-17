@@ -36,7 +36,7 @@
     threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L211:295]fn reset_thread_ideal_processors<'a>(
+- [L211:296]fn reset_thread_ideal_processors<'a>(
     pid: u32,
     config: &ProcessLevelConfig,
     dry_run: bool,
@@ -44,7 +44,7 @@
     threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L297:400]fn apply_process_default_cpuset<'a>(
+- [L298:401]fn apply_process_default_cpuset<'a>(
     pid: u32,
     config: &ProcessLevelConfig,
     dry_run: bool,
@@ -52,28 +52,28 @@
     threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L402:488]fn apply_io_priority(
+- [L403:489]fn apply_io_priority(
     pid: u32,
     config: &ProcessLevelConfig,
     dry_run: bool,
     process_handle: &ProcessHandle,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L490:577]fn apply_memory_priority(
+- [L491:578]fn apply_memory_priority(
     pid: u32,
     config: &ProcessLevelConfig,
     dry_run: bool,
     process_handle: &ProcessHandle,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L579:686]fn prefetch_all_thread_cycles<'a>(
+- [L580:696]fn prefetch_all_thread_cycles<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
     threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     prime_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L688:788]fn apply_prime_threads<'a>(
+- [L698:787]fn apply_prime_threads<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
     dry_run: bool,
@@ -83,13 +83,13 @@
     prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L790:804]fn apply_prime_threads_select(
+- [L789:803]fn apply_prime_threads_select(
     pid: u32,
     prime_count: usize,
     tid_with_delta_cycles: &mut [(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
 ) 
-- [L806:948]fn apply_prime_threads_promote(
+- [L805:947]fn apply_prime_threads_promote(
     pid: u32,
     config: &ThreadLevelConfig,
     current_mask: &mut usize,
@@ -97,7 +97,7 @@
     prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L950:1041]fn apply_prime_threads_demote<'a>(
+- [L949:1040]fn apply_prime_threads_demote<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
     threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
@@ -105,7 +105,7 @@
     prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L1043:1311]fn apply_ideal_processors<'a>(
+- [L1042:1310]fn apply_ideal_processors<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
     dry_run: bool,
@@ -113,7 +113,7 @@
     prime_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L1313:1326]fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler) 
+- [L1312:1325]fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler) 
 
 ## src/cli.rs
 - [L5:28]struct CliArgs {
@@ -329,14 +329,14 @@
 - [L212:221]fn log_process_find(process_name: &str) 
 
 ## src/main.rs
-- [L56:74]fn apply_process_level<'a>(
+- [L56:75]fn apply_process_level<'a>(
     pid: u32,
     config: &ProcessLevelConfig,
     threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     dry_run: bool,
     apply_configs: &mut ApplyConfigResult,
 ) 
-- [L76:117]fn apply_thread_level<'a>(
+- [L77:118]fn apply_thread_level<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
@@ -345,7 +345,7 @@
     dry_run: bool,
     apply_configs: &mut ApplyConfigResult,
 ) 
-- [L119:154]fn apply_config(
+- [L120:155]fn apply_config(
     cli: &CliArgs,
     configs: &ConfigResult,
     prime_core_scheduler: &mut PrimeThreadScheduler,
@@ -357,16 +357,10 @@
     process_level_config: &ProcessLevelConfig,
     process: &ProcessEntry,
 ) 
-- [L156:170]fn log_apply_results(pid: &u32, name: &String, result: ApplyConfigResult) 
-- [L172:264]fn process_logs(configs: &ConfigResult, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
-- [L266:303]fn process_find(cli: &CliArgs, configs: &ConfigResult, blacklist: &[String]) -> Result<(), windows::core::Error> 
-- [L305:630]fn main() -> windows::core::Result<()> 
-- [L632:649]fn process_events(
-    prime_core_scheduler: &mut PrimeThreadScheduler,
-    process_level_applied: &mut smallvec::SmallVec<[u32; PIDS]>,
-    process_level_pending: &mut smallvec::SmallVec<[u32; PENDING]>,
-    event_trace_receiver: &std::sync::mpsc::Receiver<event_trace::EtwProcessEvent>,
-) 
+- [L157:171]fn log_apply_results(pid: &u32, name: &String, result: ApplyConfigResult) 
+- [L173:265]fn process_logs(configs: &ConfigResult, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
+- [L267:304]fn process_find(cli: &CliArgs, configs: &ConfigResult, blacklist: &[String]) -> Result<(), windows::core::Error> 
+- [L306:623]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L8:16]enum ProcessPriority {
@@ -455,48 +449,48 @@
   - [L149:151]fn thread_count(&self) -> u32 
 
 ## src/scheduler.rs
-- [L15:18]struct PrimeThreadScheduler {
+- [L16:19]struct PrimeThreadScheduler {
     pub pid_to_process_stats: HashMap<u32, ProcessStats>,
     pub constants: ConfigConstants,
 }
-- [L20]impl PrimeThreadScheduler
-  - [L21:26]fn new(constants: ConfigConstants) -> Self 
-  - [L28:30]fn reset_alive(&mut self) 
-  - [L32:34]fn set_alive(&mut self, pid: u32) 
-  - [L36:40]fn set_tracking_info(&mut self, pid: u32, track_top_x_threads: i32, process_name: String) 
-  - [L43:50]fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats 
-  - [L52:81]fn update_active_streaks(&mut self, pid: u32, tid_with_delta_cycles: &[(u32, u64)]) 
-  - [L83:130]fn select_top_threads_with_hysteresis(
+- [L21]impl PrimeThreadScheduler
+  - [L22:27]fn new(constants: ConfigConstants) -> Self 
+  - [L29:31]fn reset_alive(&mut self) 
+  - [L33:35]fn set_alive(&mut self, pid: u32) 
+  - [L37:41]fn set_tracking_info(&mut self, pid: u32, track_top_x_threads: i32, process_name: String) 
+  - [L44:51]fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats 
+  - [L53:82]fn update_active_streaks(&mut self, pid: u32, tid_with_delta_cycles: &[(u32, u64)]) 
+  - [L84:131]fn select_top_threads_with_hysteresis(
         &mut self,
         pid: u32,
         tid_with_delta_cycles: &mut [(u32, u64, bool)],
         slot_count: usize,
         is_currently_assigned: fn(&ThreadStats) -> bool,
     ) 
-  - [L132:182]fn drop_process_by_pid(&mut self, pid: &u32) 
-- [L186:193]struct ProcessStats {
+  - [L133:188]fn drop_process_by_pid(&mut self, pid: &u32) 
+- [L192:199]struct ProcessStats {
     pub alive: bool,
     pub tid_to_thread_stats: HashMap<u32, ThreadStats>,
     pub track_top_x_threads: i32,
     pub process_name: String,
     pub process_id: u32,
 }
-- [L195]impl ProcessStats
-  - [L196:204]fn new(process_id: u32) -> Self 
-- [L207]impl Default for ProcessStats
-  - [L208:210]fn default() -> Self 
-- [L214:224]struct IdealProcessorState {
+- [L201]impl ProcessStats
+  - [L202:210]fn new(process_id: u32) -> Self 
+- [L213]impl Default for ProcessStats
+  - [L214:216]fn default() -> Self 
+- [L220:230]struct IdealProcessorState {
     pub current_group: u16,
     pub current_number: u8,
     pub previous_group: u16,
     pub previous_number: u8,
     pub is_assigned: bool,
 }
-- [L226]impl IdealProcessorState
-  - [L227:235]fn new() -> Self 
-- [L238]impl Default for IdealProcessorState
-  - [L239:241]fn default() -> Self 
-- [L244:269]struct ThreadStats {
+- [L232]impl IdealProcessorState
+  - [L233:241]fn new() -> Self 
+- [L244]impl Default for IdealProcessorState
+  - [L245:247]fn default() -> Self 
+- [L250:275]struct ThreadStats {
     pub last_total_time: i64,
     pub cached_total_time: i64,
     pub last_cycles: u64,
@@ -510,14 +504,14 @@
     pub ideal_processor: IdealProcessorState,
     pub process_id: u32,
 }
-- [L271]impl fmt::Debug for ThreadStats
-  - [L272:284]fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result 
-- [L287]impl ThreadStats
-  - [L288:303]fn new(process_id: u32) -> Self 
-- [L306]impl Default for ThreadStats
-  - [L307:309]fn default() -> Self 
-- [L311:315]fn format_100ns(time: i64) -> String 
-- [L317:324]fn format_filetime(time: i64) -> String 
+- [L277]impl fmt::Debug for ThreadStats
+  - [L278:290]fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result 
+- [L293]impl ThreadStats
+  - [L294:309]fn new(process_id: u32) -> Self 
+- [L312]impl Default for ThreadStats
+  - [L313:315]fn default() -> Self 
+- [L317:321]fn format_100ns(time: i64) -> String 
+- [L323:330]fn format_filetime(time: i64) -> String 
 
 ## src/winapi.rs
 - [L65:68]struct CpuSetData {

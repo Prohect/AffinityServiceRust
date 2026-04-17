@@ -449,48 +449,48 @@
   - [L149:151]fn thread_count(&self) -> u32 
 
 ## src/scheduler.rs
-- [L16:19]struct PrimeThreadScheduler {
+- [L15:18]struct PrimeThreadScheduler {
     pub pid_to_process_stats: HashMap<u32, ProcessStats>,
     pub constants: ConfigConstants,
 }
-- [L21]impl PrimeThreadScheduler
-  - [L22:27]fn new(constants: ConfigConstants) -> Self 
-  - [L29:31]fn reset_alive(&mut self) 
-  - [L33:35]fn set_alive(&mut self, pid: u32) 
-  - [L37:41]fn set_tracking_info(&mut self, pid: u32, track_top_x_threads: i32, process_name: String) 
-  - [L44:51]fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats 
-  - [L53:82]fn update_active_streaks(&mut self, pid: u32, tid_with_delta_cycles: &[(u32, u64)]) 
-  - [L84:131]fn select_top_threads_with_hysteresis(
+- [L20]impl PrimeThreadScheduler
+  - [L21:26]fn new(constants: ConfigConstants) -> Self 
+  - [L28:30]fn reset_alive(&mut self) 
+  - [L32:34]fn set_alive(&mut self, pid: u32) 
+  - [L36:40]fn set_tracking_info(&mut self, pid: u32, track_top_x_threads: i32, process_name: String) 
+  - [L43:50]fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats 
+  - [L52:81]fn update_active_streaks(&mut self, pid: u32, tid_with_delta_cycles: &[(u32, u64)]) 
+  - [L83:130]fn select_top_threads_with_hysteresis(
         &mut self,
         pid: u32,
         tid_with_delta_cycles: &mut [(u32, u64, bool)],
         slot_count: usize,
         is_currently_assigned: fn(&ThreadStats) -> bool,
     ) 
-  - [L133:188]fn drop_process_by_pid(&mut self, pid: &u32) 
-- [L192:199]struct ProcessStats {
+  - [L132:186]fn drop_process_by_pid(&mut self, pid: &u32) 
+- [L190:197]struct ProcessStats {
     pub alive: bool,
     pub tid_to_thread_stats: HashMap<u32, ThreadStats>,
     pub track_top_x_threads: i32,
     pub process_name: String,
     pub process_id: u32,
 }
-- [L201]impl ProcessStats
-  - [L202:210]fn new(process_id: u32) -> Self 
-- [L213]impl Default for ProcessStats
-  - [L214:216]fn default() -> Self 
-- [L220:230]struct IdealProcessorState {
+- [L199]impl ProcessStats
+  - [L200:208]fn new(process_id: u32) -> Self 
+- [L211]impl Default for ProcessStats
+  - [L212:214]fn default() -> Self 
+- [L218:228]struct IdealProcessorState {
     pub current_group: u16,
     pub current_number: u8,
     pub previous_group: u16,
     pub previous_number: u8,
     pub is_assigned: bool,
 }
-- [L232]impl IdealProcessorState
-  - [L233:241]fn new() -> Self 
-- [L244]impl Default for IdealProcessorState
-  - [L245:247]fn default() -> Self 
-- [L250:275]struct ThreadStats {
+- [L230]impl IdealProcessorState
+  - [L231:239]fn new() -> Self 
+- [L242]impl Default for IdealProcessorState
+  - [L243:245]fn default() -> Self 
+- [L248:273]struct ThreadStats {
     pub last_total_time: i64,
     pub cached_total_time: i64,
     pub last_cycles: u64,
@@ -504,14 +504,14 @@
     pub ideal_processor: IdealProcessorState,
     pub process_id: u32,
 }
-- [L277]impl fmt::Debug for ThreadStats
-  - [L278:290]fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result 
-- [L293]impl ThreadStats
-  - [L294:309]fn new(process_id: u32) -> Self 
-- [L312]impl Default for ThreadStats
-  - [L313:315]fn default() -> Self 
-- [L317:321]fn format_100ns(time: i64) -> String 
-- [L323:330]fn format_filetime(time: i64) -> String 
+- [L275]impl fmt::Debug for ThreadStats
+  - [L276:288]fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result 
+- [L291]impl ThreadStats
+  - [L292:307]fn new(process_id: u32) -> Self 
+- [L310]impl Default for ThreadStats
+  - [L311:313]fn default() -> Self 
+- [L315:319]fn format_100ns(time: i64) -> String 
+- [L321:328]fn format_filetime(time: i64) -> String 
 
 ## src/winapi.rs
 - [L65:68]struct CpuSetData {

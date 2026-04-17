@@ -1,7 +1,6 @@
 use crate::{
     collections::{CONSUMER_CPUS, TIDS_CAPED},
     config::ConfigConstants,
-    log,
     logging::log_message,
     priority::ThreadPriority,
     winapi::{ThreadHandle, drop_module_cache, resolve_address_to_module},
@@ -136,7 +135,6 @@ impl PrimeThreadScheduler {
         let Some(process_stats) = self.pid_to_process_stats.remove(pid) else {
             return;
         };
-        log!("Droping process_stats: {:#?}", process_stats);
         if process_stats.track_top_x_threads != 0 {
             let x = process_stats.track_top_x_threads.unsigned_abs() as usize;
             let mut threads: List<[(&u32, &ThreadStats); TIDS_CAPED]> = process_stats.tid_to_thread_stats.iter().collect();

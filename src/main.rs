@@ -10,28 +10,31 @@ mod process;
 mod scheduler;
 mod winapi;
 
-use apply::{
-    ApplyConfigResult, apply_affinity, apply_ideal_processors, apply_io_priority, apply_memory_priority, apply_prime_threads, apply_priority,
-    apply_process_default_cpuset, prefetch_all_thread_cycles, update_thread_stats,
-};
-use cli::{CliArgs, parse_args, print_help, print_help_all};
-use collections::{HashMap, HashSet, List, PENDING, PIDS};
-use config::{
-    ProcessLevelConfig, ThreadLevelConfig, convert, hotreload_blacklist, hotreload_config, read_config, read_list, sort_and_group_config,
-};
-use event_trace::EtwProcessMonitor;
-use logging::{log_message, log_process_find, log_pure_message, log_to_find, purge_fail_map};
-use ntapi::ntexapi::SYSTEM_THREAD_INFORMATION;
-use once_cell::unsync::OnceCell;
-use process::{PID_TO_PROCESS_MAP, ProcessEntry, ProcessSnapshot, SNAPSHOT_BUFFER};
-use scheduler::PrimeThreadScheduler;
-use winapi::{
-    drop_module_cache, enable_debug_privilege, enable_inc_base_priority_privilege, get_process_handle, is_affinity_unset, is_running_as_admin,
-    request_uac_elevation, set_timer_resolution, terminate_child_processes,
+use crate::{
+    apply::{
+        ApplyConfigResult, apply_affinity, apply_ideal_processors, apply_io_priority, apply_memory_priority, apply_prime_threads,
+        apply_priority, apply_process_default_cpuset, prefetch_all_thread_cycles, update_thread_stats,
+    },
+    cli::{CliArgs, parse_args, print_help, print_help_all},
+    collections::{HashMap, HashSet, List, PENDING, PIDS},
+    config::{
+        ConfigResult, ProcessLevelConfig, ThreadLevelConfig, convert, hotreload_blacklist, hotreload_config, read_config, read_list,
+        sort_and_group_config,
+    },
+    event_trace::EtwProcessMonitor,
+    logging::{log_message, log_process_find, log_pure_message, log_to_find, purge_fail_map},
+    process::{PID_TO_PROCESS_MAP, ProcessEntry, ProcessSnapshot, SNAPSHOT_BUFFER},
+    scheduler::PrimeThreadScheduler,
+    winapi::{
+        drop_module_cache, enable_debug_privilege, enable_inc_base_priority_privilege, get_process_handle, is_affinity_unset,
+        is_running_as_admin, request_uac_elevation, set_timer_resolution, terminate_child_processes,
+    },
 };
 
 use chrono::{Local, TimeDelta};
 use encoding_rs::Encoding;
+use ntapi::ntexapi::SYSTEM_THREAD_INFORMATION;
+use once_cell::unsync::OnceCell;
 use std::{
     env,
     fs::{metadata, read_dir, read_to_string, write},
@@ -50,8 +53,6 @@ use windows::Win32::{
         Threading::GetProcessAffinityMask,
     },
 };
-
-use crate::config::ConfigResult;
 
 /// Applies process-level settings (one-shot per process).
 /// Includes: priority, affinity (with thread ideal processor reset), CPU set, IO priority, memory priority.

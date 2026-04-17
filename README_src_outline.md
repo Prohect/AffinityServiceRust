@@ -284,15 +284,15 @@
   - [L262:264]fn drop(&mut self) 
 
 ## src/logging.rs
-- [L11:11]static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::default()));
-- [L62:62]static USE_CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
-- [L63:63]static DUST_BIN_MODE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
-- [L64:64]static LOCAL_TIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
-- [L65:65]static LOG_FILE: Lazy<Mutex<File>> =
-- [L67:67]static FIND_LOG_FILE: Lazy<Mutex<File>> =
-- [L69:69]static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::default()));
-- [L70:70]static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>> = Lazy::new(|| Mutex::new(HashMap::default()));
-- [L74:95]enum Operation {
+- [L12:12]static FINDS_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::default()));
+- [L63:63]static USE_CONSOLE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
+- [L64:64]static DUST_BIN_MODE: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::from(false));
+- [L65:65]static LOCAL_TIME_BUFFER: Lazy<Mutex<DateTime<Local>>> = Lazy::new(|| Mutex::new(Local::now()));
+- [L66:66]static LOG_FILE: Lazy<Mutex<File>> =
+- [L68:68]static FIND_LOG_FILE: Lazy<Mutex<File>> =
+- [L70:70]static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::default()));
+- [L71:71]static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>> = Lazy::new(|| Mutex::new(HashMap::default()));
+- [L75:96]enum Operation {
     OpenProcess2processQueryLimitedInformation,
     OpenProcess2processSetLimitedInformation,
     OpenProcess2processQueryInformation,
@@ -314,29 +314,29 @@
     GetThreadIdealProcessorEx,
     InvalidHandle,
 }
-- [L97:102]struct ApplyFailEntry {
+- [L98:103]struct ApplyFailEntry {
     tid: u32,
     process_name: String,
     operation: Operation,
     error_code: u32,
 }
-- [L104:147]fn is_new_error(pid: u32, tid: u32, process_name: &str, operation: Operation, error_code: u32) -> bool 
-- [L149:170]fn purge_fail_map(pids_and_names: &[(u32, &str)]) 
-- [L172:181]fn get_log_path(suffix: &str) -> PathBuf 
-- [L183:193]fn log_message(args: &str) 
-- [L195:201]fn log_pure_message(args: &str) 
-- [L203:210]fn log_to_find(msg: &str) 
-- [L212:221]fn log_process_find(process_name: &str) 
+- [L105:148]fn is_new_error(pid: u32, tid: u32, process_name: &str, operation: Operation, error_code: u32) -> bool 
+- [L150:171]fn purge_fail_map(pids_and_names: &[(u32, &str)]) 
+- [L173:182]fn get_log_path(suffix: &str) -> PathBuf 
+- [L184:194]fn log_message(args: &str) 
+- [L196:202]fn log_pure_message(args: &str) 
+- [L204:211]fn log_to_find(msg: &str) 
+- [L213:222]fn log_process_find(process_name: &str) 
 
 ## src/main.rs
-- [L56:75]fn apply_process_level<'a>(
+- [L57:76]fn apply_process_level<'a>(
     pid: u32,
     config: &ProcessLevelConfig,
     threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
     dry_run: bool,
     apply_configs: &mut ApplyConfigResult,
 ) 
-- [L77:118]fn apply_thread_level<'a>(
+- [L78:119]fn apply_thread_level<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
     prime_core_scheduler: &mut PrimeThreadScheduler,
@@ -345,7 +345,7 @@
     dry_run: bool,
     apply_configs: &mut ApplyConfigResult,
 ) 
-- [L120:155]fn apply_config(
+- [L121:156]fn apply_config(
     cli: &CliArgs,
     configs: &ConfigResult,
     prime_core_scheduler: &mut PrimeThreadScheduler,
@@ -357,10 +357,10 @@
     process_level_config: &ProcessLevelConfig,
     process: &ProcessEntry,
 ) 
-- [L157:171]fn log_apply_results(pid: &u32, name: &String, result: ApplyConfigResult) 
-- [L173:265]fn process_logs(configs: &ConfigResult, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
-- [L267:304]fn process_find(cli: &CliArgs, configs: &ConfigResult, blacklist: &[String]) -> Result<(), windows::core::Error> 
-- [L306:623]fn main() -> windows::core::Result<()> 
+- [L158:172]fn log_apply_results(pid: &u32, name: &String, result: ApplyConfigResult) 
+- [L174:266]fn process_logs(configs: &ConfigResult, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
+- [L268:305]fn process_find(cli: &CliArgs, configs: &ConfigResult, blacklist: &[String]) -> Result<(), windows::core::Error> 
+- [L307:624]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L8:16]enum ProcessPriority {
@@ -425,72 +425,72 @@
   - [L237:239]fn to_thread_priority_struct(self) -> THREAD_PRIORITY 
 
 ## src/process.rs
-- [L7:7]static SNAPSHOT_BUFFER: Lazy<Mutex<Vec<u8>>> = Lazy::new(|| Mutex::new(vec![0u8; 32]));
-- [L9:9]static PID_TO_PROCESS_MAP: Lazy<Mutex<HashMap<u32, ProcessEntry>>> = Lazy::new(|| Mutex::new(HashMap::default()));
-- [L6:14]struct ProcessSnapshot<'a> {
+- [L8:8]static SNAPSHOT_BUFFER: Lazy<Mutex<Vec<u8>>> = Lazy::new(|| Mutex::new(vec![0u8; 32]));
+- [L10:10]static PID_TO_PROCESS_MAP: Lazy<Mutex<HashMap<u32, ProcessEntry>>> = Lazy::new(|| Mutex::new(HashMap::default()));
+- [L7:15]struct ProcessSnapshot<'a> {
     buffer: &'a mut Vec<u8>,
     pub pid_to_process: &'a mut HashMap<u32, ProcessEntry>,
 }
-- [L16]impl<'a> Drop for ProcessSnapshot<'a>
-  - [L17:20]fn drop(&mut self) 
-- [L23]impl<'a> ProcessSnapshot<'a>
-  - [L24:72]fn take(buffer: &'a mut Vec<u8>, pid_to_process: &'a mut HashMap<u32, ProcessEntry>) -> Result<Self, i32> 
-- [L76:80]struct ProcessEntry {
+- [L17]impl<'a> Drop for ProcessSnapshot<'a>
+  - [L18:21]fn drop(&mut self) 
+- [L24]impl<'a> ProcessSnapshot<'a>
+  - [L25:73]fn take(buffer: &'a mut Vec<u8>, pid_to_process: &'a mut HashMap<u32, ProcessEntry>) -> Result<Self, i32> 
+- [L77:81]struct ProcessEntry {
     pub process: SYSTEM_PROCESS_INFORMATION,
     threads_base_ptr: usize,
     name: String,
 }
-- [L87]impl ProcessEntry
-  - [L88:103]fn new(process: SYSTEM_PROCESS_INFORMATION, threads_base_ptr: *const SYSTEM_THREAD_INFORMATION) -> Self 
-  - [L105:122]fn get_threads(&self) -> HashMap<u32, SYSTEM_THREAD_INFORMATION> 
-  - [L125:127]fn get_name(&self) -> &str 
-  - [L131:141]fn get_name_original_case(&self) -> String 
-  - [L144:146]fn pid(&self) -> u32 
-  - [L149:151]fn thread_count(&self) -> u32 
+- [L88]impl ProcessEntry
+  - [L89:104]fn new(process: SYSTEM_PROCESS_INFORMATION, threads_base_ptr: *const SYSTEM_THREAD_INFORMATION) -> Self 
+  - [L106:123]fn get_threads(&self) -> HashMap<u32, SYSTEM_THREAD_INFORMATION> 
+  - [L126:128]fn get_name(&self) -> &str 
+  - [L132:142]fn get_name_original_case(&self) -> String 
+  - [L145:147]fn pid(&self) -> u32 
+  - [L150:152]fn thread_count(&self) -> u32 
 
 ## src/scheduler.rs
-- [L15:18]struct PrimeThreadScheduler {
+- [L14:17]struct PrimeThreadScheduler {
     pub pid_to_process_stats: HashMap<u32, ProcessStats>,
     pub constants: ConfigConstants,
 }
-- [L20]impl PrimeThreadScheduler
-  - [L21:26]fn new(constants: ConfigConstants) -> Self 
-  - [L28:30]fn reset_alive(&mut self) 
-  - [L32:34]fn set_alive(&mut self, pid: u32) 
-  - [L36:40]fn set_tracking_info(&mut self, pid: u32, track_top_x_threads: i32, process_name: String) 
-  - [L43:50]fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats 
-  - [L52:81]fn update_active_streaks(&mut self, pid: u32, tid_with_delta_cycles: &[(u32, u64)]) 
-  - [L83:130]fn select_top_threads_with_hysteresis(
+- [L19]impl PrimeThreadScheduler
+  - [L20:25]fn new(constants: ConfigConstants) -> Self 
+  - [L27:29]fn reset_alive(&mut self) 
+  - [L31:33]fn set_alive(&mut self, pid: u32) 
+  - [L35:39]fn set_tracking_info(&mut self, pid: u32, track_top_x_threads: i32, process_name: String) 
+  - [L42:49]fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats 
+  - [L51:80]fn update_active_streaks(&mut self, pid: u32, tid_with_delta_cycles: &[(u32, u64)]) 
+  - [L82:129]fn select_top_threads_with_hysteresis(
         &mut self,
         pid: u32,
         tid_with_delta_cycles: &mut [(u32, u64, bool)],
         slot_count: usize,
         is_currently_assigned: fn(&ThreadStats) -> bool,
     ) 
-  - [L132:186]fn drop_process_by_pid(&mut self, pid: &u32) 
-- [L190:197]struct ProcessStats {
+  - [L131:185]fn drop_process_by_pid(&mut self, pid: &u32) 
+- [L189:196]struct ProcessStats {
     pub alive: bool,
     pub tid_to_thread_stats: HashMap<u32, ThreadStats>,
     pub track_top_x_threads: i32,
     pub process_name: String,
     pub process_id: u32,
 }
-- [L199]impl ProcessStats
-  - [L200:208]fn new(process_id: u32) -> Self 
-- [L211]impl Default for ProcessStats
-  - [L212:214]fn default() -> Self 
-- [L218:228]struct IdealProcessorState {
+- [L198]impl ProcessStats
+  - [L199:207]fn new(process_id: u32) -> Self 
+- [L210]impl Default for ProcessStats
+  - [L211:213]fn default() -> Self 
+- [L217:227]struct IdealProcessorState {
     pub current_group: u16,
     pub current_number: u8,
     pub previous_group: u16,
     pub previous_number: u8,
     pub is_assigned: bool,
 }
-- [L230]impl IdealProcessorState
-  - [L231:239]fn new() -> Self 
-- [L242]impl Default for IdealProcessorState
-  - [L243:245]fn default() -> Self 
-- [L248:273]struct ThreadStats {
+- [L229]impl IdealProcessorState
+  - [L230:238]fn new() -> Self 
+- [L241]impl Default for IdealProcessorState
+  - [L242:244]fn default() -> Self 
+- [L247:272]struct ThreadStats {
     pub last_total_time: i64,
     pub cached_total_time: i64,
     pub last_cycles: u64,
@@ -504,14 +504,14 @@
     pub ideal_processor: IdealProcessorState,
     pub process_id: u32,
 }
-- [L275]impl fmt::Debug for ThreadStats
-  - [L276:288]fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result 
-- [L291]impl ThreadStats
-  - [L292:307]fn new(process_id: u32) -> Self 
-- [L310]impl Default for ThreadStats
-  - [L311:313]fn default() -> Self 
-- [L315:319]fn format_100ns(time: i64) -> String 
-- [L321:328]fn format_filetime(time: i64) -> String 
+- [L274]impl fmt::Debug for ThreadStats
+  - [L275:287]fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result 
+- [L290]impl ThreadStats
+  - [L291:306]fn new(process_id: u32) -> Self 
+- [L309]impl Default for ThreadStats
+  - [L310:312]fn default() -> Self 
+- [L314:318]fn format_100ns(time: i64) -> String 
+- [L320:327]fn format_filetime(time: i64) -> String 
 
 ## src/winapi.rs
 - [L65:68]struct CpuSetData {

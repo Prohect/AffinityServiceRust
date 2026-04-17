@@ -1,12 +1,11 @@
 use crate::{
-    collections::{CONSUMER_CPUS, TIDS_CAPED},
+    collections::{CONSUMER_CPUS, HashMap, List, TIDS_CAPED},
     config::ConfigConstants,
     logging::log_message,
     priority::ThreadPriority,
     winapi::{ThreadHandle, drop_module_cache, resolve_address_to_module},
 };
 
-use crate::collections::{HashMap, List};
 use chrono::{DateTime, Local};
 use ntapi::ntexapi::SYSTEM_THREAD_INFORMATION;
 use std::{cmp::Reverse, fmt};

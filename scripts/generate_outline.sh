@@ -10,7 +10,7 @@ if [ -f "Cargo.toml" ]; then
 fi
 
 if [ -n "$members" ]; then
-    echo "# Workspace Code Structure Outline, auto-generated during cargo build/check"
+    echo "# Workspace Code Structure Outline, **READ this by MULTIPLE calls if it's too large being outlined by first call**"
     files=$(for member in $members; do find "$member" -name "*.rs" 2>/dev/null; done | sort)
 else
     echo "# Src Outline, **READ this by MULTIPLE calls if it's too large being outlined by first call**"

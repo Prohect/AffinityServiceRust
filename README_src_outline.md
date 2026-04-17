@@ -153,9 +153,9 @@
 - [L4:4]type HashMap<K, V> = FxHashMap<K, V>;
 - [L5:5]type HashSet<V> = FxHashSet<V>;
 - [L6:6]type List<E> = SmallVec<E>;
-- [L9:9]const PIDS: usize = 512;
-- [L10:10]const TIDS_FULL: usize = 128;
-- [L11:11]const TIDS_CAPED: usize = 64;
+- [L9:9]const PIDS: usize = 256;
+- [L10:10]const TIDS_FULL: usize = 96;
+- [L11:11]const TIDS_CAPED: usize = 32;
 - [L12:12]const CONSUMER_CPUS: usize = 32;
 - [L13:13]const PENDING: usize = 16;
 

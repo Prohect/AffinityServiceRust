@@ -523,7 +523,7 @@ fn main() -> windows::core::Result<()> {
                 }
 
                 if event_trace_receiver.is_none() || !prime_core_scheduler.pid_to_process_stats.is_empty() {
-                    // fallback of cli flag -no_etw, resource cleanup and state update,
+                    // fallback of cli flag -no_etw or threal_level tracking, resource cleanup and state update
                     let dead_pids: List<[u32; PENDING]> = prime_core_scheduler
                         .pid_to_process_stats
                         .iter()

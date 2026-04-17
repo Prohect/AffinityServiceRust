@@ -631,8 +631,8 @@ fn main() -> windows::core::Result<()> {
 
 fn process_events(
     prime_core_scheduler: &mut PrimeThreadScheduler,
-    process_level_applied: &mut smallvec::SmallVec<[u32; 256]>,
-    process_level_pending: &mut smallvec::SmallVec<[u32; 16]>,
+    process_level_applied: &mut smallvec::SmallVec<[u32; PIDS]>,
+    process_level_pending: &mut smallvec::SmallVec<[u32; PENDING]>,
     event_trace_receiver: &std::sync::mpsc::Receiver<event_trace::EtwProcessEvent>,
 ) {
     let mut pid_map_fail_entry_set = get_pid_map_fail_entry_set!();

@@ -463,7 +463,9 @@ fn main() -> windows::core::Result<()> {
                         })
                     });
                     // fallback of cli flag -no_etw, and processes launched before this project's process's running
-                    if !current_loop.is_multiple_of(*grade) {
+                    if !current_loop.is_multiple_of(*grade)
+                        || (prime_core_scheduler.pid_to_process_stats.is_empty() && event_trace_receiver.is_some())
+                    {
                         continue;
                     }
                     for (pid, name) in &pids_and_names {

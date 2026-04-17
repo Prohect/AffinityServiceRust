@@ -1,6 +1,6 @@
 # apply_prime_threads function (apply.rs)
 
-The `apply_prime_threads` function orchestrates the prime-thread scheduling pipeline for a single process. It identifies the most CPU-intensive threads by sorting them according to their cycle-count deltas, selects the top candidates using hysteresis, promotes winners to designated high-performance CPUs via CPU Sets with optional priority boosts, and demotes threads that no longer qualify. The function also manages thread handle lifecycle by closing handles for threads that have exited the process.
+The `apply_prime_threads` function orchestrates the prime-thread scheduling pipeline for a single process. It identifies the most CPU-intensive threads by sorting them according to their cycle-count deltas, selects the top candidates using hysteresis, promotes winners to designated high-performance CPUs via CPU Sets with optional priority boosts, and demotes threads that no longer qualify.
 
 ## Syntax
 
@@ -50,7 +50,7 @@ If both `do_prime` and `has_tracking` are `false`, the function returns immediat
 
 1. **Build candidate list**: For each thread in `threads()` (invoking the lazy closure), the function looks up the thread's cached cycle count in the scheduler. Only threads with `cached_cycles > 0` (i.e., threads whose cycles were successfully prefetched by [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md)) are included. If `has_tracking` is enabled, the thread's `last_system_thread_info` is also updated. The list is sorted by time delta (cached total time minus last total time) in descending order.
 
-2. **Size the candidate pool**: The pool size is `max(prime_count * 4, cpu_count)` capped at the process thread count. This ensures enough candidates are considered to account for threads that may briefly spike in activity. Previously-pinned threads that have dropped out of the top candidates are also re-added to ensure they can be properly demoted.
+2. **Size the candidate pool**: The pool size is `max(prime_count * 4, cpu_count)` capped at the process thread count. This ensures enough candidates are considered to account for threads that may briefly spike in activity.
 
 3. **Compute cycle deltas**: For each candidate thread, the delta is `cached_cycles - last_cycles` (saturating subtraction). The third element of each tuple (`bool`) is initialized to `false` and will be set to `true` by the selection phase for threads that qualify as prime.
 
@@ -60,14 +60,11 @@ If both `do_prime` and `has_tracking` are `false`, the function returns immediat
 
 6. **Demote** ([`apply_prime_threads_demote`](apply_prime_threads_demote.md)): For each thread that was previously pinned but is no longer selected as prime, removes the CPU set pinning (by setting an empty CPU set) and restores its original thread priority.
 
-7. **Handle cleanup**: After the promote/demote cycle, the function builds a set of live thread IDs from the candidate list. For any thread in the scheduler's state that is not in the live set, the thread handle is dropped (which closes the underlying OS handles via `ThreadHandle`'s `Drop` implementation). This prevents handle leaks for threads that have exited the process.
-
 ### Edge cases
 
 - If `prime_threads_cpus` is empty but `prime_threads_prefixes` is non-empty, the function still runs the pipeline. Each prefix entry may carry its own `cpus` override, and if none match a particular thread, that thread will not be promoted.
 - If `track_top_x_threads` is negative, prime scheduling is disabled but thread tracking may still occur if the absolute value triggers `has_tracking`.
 - Threads whose cycles were not prefetched (e.g., because handle acquisition failed in `prefetch_all_thread_cycles`) have `cached_cycles == 0` and are excluded from the candidate list entirely.
-- Previously-pinned threads that no longer appear in the top candidates are re-injected into the candidate list with their last known cycle delta. This ensures the demotion phase can process them even if their CPU activity has dropped to zero.
 
 ## Requirements
 
@@ -98,4 +95,4 @@ If both `do_prime` and `has_tracking` are `false`, the function returns immediat
 | ProcessEntry | [`process.rs/ProcessEntry`](../process.rs/ProcessEntry.md) |
 
 ---
-*Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)*
+*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

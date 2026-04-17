@@ -49,4 +49,4 @@ pub fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>>
 
 ---
 
-> Commit SHA: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)
+*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

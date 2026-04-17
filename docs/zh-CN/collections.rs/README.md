@@ -14,9 +14,9 @@
 
 | 常量 | 值 | 描述 |
 |------|-----|------|
-| [PIDS](PIDS.md) | `512` | 用于存储进程 ID 的 `SmallVec` 数组的内联容量。 |
-| [TIDS_FULL](TIDS_FULL.md) | `128` | 用于存储完整线程 ID 集合的 `SmallVec` 数组的内联容量。 |
-| [TIDS_CAPED](TIDS_CAPED.md) | `64` | 用于存储有上限（受限）线程 ID 集合的 `SmallVec` 数组的内联容量。 |
+| [PIDS](PIDS.md) | `256` | 用于存储进程 ID 的 `SmallVec` 数组的内联容量。 |
+| [TIDS_FULL](TIDS_FULL.md) | `96` | 用于存储完整线程 ID 集合的 `SmallVec` 数组的内联容量。 |
+| [TIDS_CAPED](TIDS_CAPED.md) | `32` | 用于存储有上限（受限）线程 ID 集合的 `SmallVec` 数组的内联容量。 |
 | [CONSUMER_CPUS](CONSUMER_CPUS.md) | `32` | 用于存储 CPU 集合 ID 或 CPU 索引的 `SmallVec` 数组的内联容量。 |
 | [PENDING](PENDING.md) | `16` | 用于存储待处理操作条目的 `SmallVec` 数组的内联容量。 |
 
@@ -29,4 +29,4 @@
 | [logging.rs 模块](../logging.rs/README.md) | 使用 `HashMap` 和 `HashSet` 进行失败跟踪和去重。 |
 
 ---
-> Commit SHA: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)
+*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

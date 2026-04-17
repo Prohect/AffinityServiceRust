@@ -34,19 +34,21 @@ pub fn prefetch_all_thread_cycles<'a>(
 
 1. **计算时间增量**：对于 `threads` 中的每个线程，函数计算 `KernelTime + UserTime` 并存储到 `thread_stats.cached_total_time` 中。它还会计算与上一个周期 `last_total_time` 之间的增量。结果被收集到一个固定容量的 `(tid, delta_time)` 元组列表中。
 
-2. **按时间增量排序**：列表使用 `sort_unstable_by_key` 配合 `Reverse` 按时间增量降序排列，使 CPU 使用最活跃的线程排在最前面。
+2. **死线程清理**：计算时间增量后，函数从调度器的 `tid_to_thread_stats` 映射中移除不再出现在活跃线程列表中的线程。死线程持有的句柄会被显式释放以防止句柄泄漏。此清理工作先前在 `apply_prime_threads` 中执行，现在移至管道的更早阶段以确保句柄更快释放。
 
-3. **限制候选数量**：仅保留前 `min(cpu_count * 2, thread_count).saturating_sub(1) + 1` 个线程用于周期查询。`saturating_sub(1)` 可防止线程数为零时的算术下溢。这将打开的线程句柄数量限制在大约 CPU 数量的两倍，足以覆盖主候选线程和一定余量的备选线程，而无需为可能拥有数百或数千个线程的进程打开所有线程的句柄。
+3. **按时间增量排序**：列表使用 `sort_unstable_by_key` 配合 `Reverse` 按时间增量降序排列，使 CPU 使用最活跃的线程排在最前面。
 
-4. **打开句柄并查询周期**：对于每个候选线程：
+4. **限制候选数量**：仅保留前 `min(cpu_count * 2, thread_count).saturating_sub(1) + 1` 个线程用于周期查询。`saturating_sub(1)` 可防止线程数为零时的算术下溢。这将打开的线程句柄数量限制在大约 CPU 数量的两倍，足以覆盖主候选线程和一定余量的备选线程，而无需为可能拥有数百或数千个线程的进程打开所有线程的句柄。
+
+5. **打开句柄并查询周期**：对于每个候选线程：
    - 如果调度器中尚未有缓存的句柄，则调用 `get_thread_handle` 打开一个句柄。该句柄存储在 `thread_stats.handle` 中，供后续应用周期复用。
    - 选择读取句柄（优先使用 `r_handle`，其次使用 `r_limited_handle`）。
    - 如果 `thread_stats.start_address` 为 `0`（尚未解析），则调用 `get_thread_start_address` 填充该值。
    - 使用读取句柄调用 `QueryThreadCycleTime` 获取当前硬件周期计数。成功时，值存储到 `thread_stats.cached_cycles` 中。失败时，Win32 错误码通过 [`log_error_if_new`](log_error_if_new.md) 以 `Operation::QueryThreadCycleTime` 记录。
 
-5. **计算周期增量**：所有候选线程查询完毕后，函数遍历进程的调度器线程统计信息，对每个 `cached_cycles` 非零的线程计算 `cached_cycles - last_cycles`（饱和减法）。`cached_cycles` 为零的线程（即句柄无法打开或周期查询失败的线程）的 `active_streak` 被重置为 `0`。
+6. **计算周期增量**：所有候选线程查询完毕后，函数遍历进程的调度器线程统计信息，对每个 `cached_cycles` 非零的线程计算 `cached_cycles - last_cycles`（饱和减法）。`cached_cycles` 为零的线程（即句柄无法打开或周期查询失败的线程）的 `active_streak` 被重置为 `0`。
 
-6. **更新活跃连续次数**：计算得到的周期增量传递给 `prime_scheduler.update_active_streaks`，该方法对具有正增量的线程递增连续计数器，对增量为零的线程重置计数器。活跃连续次数在 [`apply_prime_threads_select`](apply_prime_threads_select.md) 的滞后选择中使用，要求线程在提升前保持持续的活跃度。
+7. **更新活跃连续次数**：计算得到的周期增量传递给 `prime_scheduler.update_active_streaks`，该方法对具有正增量的线程递增连续计数器，对增量为零的线程重置计数器。活跃连续次数在 [`apply_prime_threads_select`](apply_prime_threads_select.md) 的滞后选择中使用，要求线程在提升前保持持续的活跃度。
 
 ### 副作用
 
@@ -92,4 +94,4 @@ pub fn prefetch_all_thread_cycles<'a>(
 | PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
 
 ---
-*Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)*
+*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

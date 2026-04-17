@@ -34,19 +34,21 @@ This function does not return a value. All outcomes are communicated through mut
 
 1. **Compute time deltas**: For every thread in `threads`, the function computes `KernelTime + UserTime` and stores it in `thread_stats.cached_total_time`. It also computes the delta from the previous cycle's `last_total_time`. The results are collected into a fixed-capacity list of `(tid, delta_time)` tuples.
 
-2. **Sort by time delta**: The list is sorted in descending order of time delta using `sort_unstable_by_key` with `Reverse`, so the most CPU-active threads appear first.
+2. **Dead-thread cleanup**: After computing time deltas, the function removes threads from the scheduler's `tid_to_thread_stats` map that no longer appear in the live thread list. Handles held by dead threads are explicitly dropped to prevent handle leaks. This cleanup was previously performed in `apply_prime_threads` but is now done earlier in the pipeline to ensure handles are released sooner.
 
-3. **Cap the candidate count**: Only the top `min(cpu_count * 2, thread_count).saturating_sub(1) + 1` threads are retained for cycle querying. The `saturating_sub(1)` prevents arithmetic underflow when the thread count is zero. This limits the number of thread handles opened to approximately twice the CPU count, which is sufficient to cover prime candidates and a margin of alternates without opening handles to every thread in a process that may have hundreds or thousands.
+3. **Sort by time delta**: The list is sorted in descending order of time delta using `sort_unstable_by_key` with `Reverse`, so the most CPU-active threads appear first.
 
-4. **Open handles and query cycles**: For each candidate thread:
+4. **Cap the candidate count**: Only the top `min(cpu_count * 2, thread_count).saturating_sub(1) + 1` threads are retained for cycle querying. The `saturating_sub(1)` prevents arithmetic underflow when the thread count is zero. This limits the number of thread handles opened to approximately twice the CPU count, which is sufficient to cover prime candidates and a margin of alternates without opening handles to every thread in a process that may have hundreds or thousands.
+
+5. **Open handles and query cycles**: For each candidate thread:
    - If the thread does not already have a cached handle in the scheduler, `get_thread_handle` is called to open one. The handle is stored in `thread_stats.handle` for reuse across apply cycles.
    - The read handle is selected (preferring `r_handle` over `r_limited_handle`).
    - If `thread_stats.start_address` is `0` (not yet resolved), `get_thread_start_address` is called to populate it.
    - `QueryThreadCycleTime` is called with the read handle to obtain the current hardware cycle count. On success, the value is stored in `thread_stats.cached_cycles`. On failure, the Win32 error code is logged via [`log_error_if_new`](log_error_if_new.md) with `Operation::QueryThreadCycleTime`.
 
-5. **Compute cycle deltas**: After all candidate threads have been queried, the function iterates over the scheduler's thread stats for the process and computes `cached_cycles - last_cycles` (saturating subtraction) for each thread that has a non-zero `cached_cycles`. Threads with zero `cached_cycles` (i.e., those whose handles could not be opened or whose cycle query failed) have their `active_streak` reset to `0`.
+6. **Compute cycle deltas**: After all candidate threads have been queried, the function iterates over the scheduler's thread stats for the process and computes `cached_cycles - last_cycles` (saturating subtraction) for each thread that has a non-zero `cached_cycles`. Threads with zero `cached_cycles` (i.e., those whose handles could not be opened or whose cycle query failed) have their `active_streak` reset to `0`.
 
-6. **Update active streaks**: The computed cycle deltas are passed to `prime_scheduler.update_active_streaks`, which increments the streak counter for threads with positive deltas and resets it for threads with zero deltas. The active streak is used by the hysteresis selection in [`apply_prime_threads_select`](apply_prime_threads_select.md) to require sustained activity before promotion.
+7. **Update active streaks**: The computed cycle deltas are passed to `prime_scheduler.update_active_streaks`, which increments the streak counter for threads with positive deltas and resets it for threads with zero deltas. The active streak is used by the hysteresis selection in [`apply_prime_threads_select`](apply_prime_threads_select.md) to require sustained activity before promotion.
 
 ### Side effects
 
@@ -92,4 +94,4 @@ This function is called **before** [`apply_prime_threads`](apply_prime_threads.m
 | PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
 
 ---
-*Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)*
+*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

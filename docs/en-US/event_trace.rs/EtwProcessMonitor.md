@@ -111,4 +111,4 @@ Attempts to stop any pre-existing ETW session with the given name. This is calle
 | event_trace module overview | [README](README.md) |
 
 ---
-> Commit SHA: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)
+*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

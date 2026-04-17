@@ -15,9 +15,9 @@ The `collections` module provides project-wide type aliases for high-performance
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| [PIDS](PIDS.md) | `512` | Inline capacity for `SmallVec` arrays holding process IDs. |
-| [TIDS_FULL](TIDS_FULL.md) | `128` | Inline capacity for `SmallVec` arrays holding full thread ID sets. |
-| [TIDS_CAPED](TIDS_CAPED.md) | `64` | Inline capacity for `SmallVec` arrays holding capped (limited) thread ID sets. |
+| [PIDS](PIDS.md) | `256` | Inline capacity for `SmallVec` arrays holding process IDs. |
+| [TIDS_FULL](TIDS_FULL.md) | `96` | Inline capacity for `SmallVec` arrays holding full thread ID sets. |
+| [TIDS_CAPED](TIDS_CAPED.md) | `32` | Inline capacity for `SmallVec` arrays holding capped (limited) thread ID sets. |
 | [CONSUMER_CPUS](CONSUMER_CPUS.md) | `32` | Inline capacity for `SmallVec` arrays holding CPU set IDs or CPU indices. |
 | [PENDING](PENDING.md) | `16` | Inline capacity for `SmallVec` arrays holding pending operation entries. |
 
@@ -30,4 +30,4 @@ The `collections` module provides project-wide type aliases for high-performance
 | [logging.rs module](../logging.rs/README.md) | Uses `HashMap` and `HashSet` for failure tracking and deduplication. |
 
 ---
-> Commit SHA: `d51fb5fe999bfe703a5bed980ab2435c1e2fe690`
+*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

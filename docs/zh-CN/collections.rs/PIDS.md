@@ -5,20 +5,20 @@
 ## 语法
 
 ```rust
-pub const PIDS: usize = 512;
+pub const PIDS: usize = 256;
 ```
 
 ## 值
 
-`512`
+`256`
 
 ## 备注
 
 - 此常量用作应用程序中所有需要进程 ID 集合的 `List<[T; PIDS]>`（即 `SmallVec<[T; PIDS]>`）的内联容量参数。
 
-- 选择 `512` 这个值是为了在桌面或工作站系统上容纳典型数量的匹配进程，而无需触发堆分配。在匹配 PID 超过 512 个的系统上，`SmallVec` 会透明地溢出到堆上，行为不会发生任何变化——仅会产生额外分配带来的性能开销。
+- 选择 `256` 这个值是为了在桌面或工作站系统上容纳典型数量的匹配进程，而无需触发堆分配。在匹配 PID 超过 256 个的系统上，`SmallVec` 会透明地溢出到堆上，行为不会发生任何变化——仅会产生额外分配带来的性能开销。
 
-- 由于 `SmallVec` 将其内联元素直接存储在结构体内部，因此 `List<[u32; PIDS]>` 在栈上占用 `512 * 4 = 2048` 字节。在深度递归函数中使用此容量，或同时存在多个此类集合时，调用者应注意栈帧大小。
+- 由于 `SmallVec` 将其内联元素直接存储在结构体内部，因此 `List<[u32; PIDS]>` 在栈上占用 `256 * 4 = 1024` 字节。在深度递归函数中使用此容量，或同时存在多个此类集合时，调用者应注意栈帧大小。
 
 - 此常量在模块级别定义，所有从 `collections` 导入的模块均可使用。
 
@@ -26,9 +26,9 @@ pub const PIDS: usize = 512;
 
 | 常量 | 值 | 典型用途 |
 |----------|-------|-------------|
-| **PIDS** | `512` | 进程 ID 集合 |
-| [TIDS_FULL](TIDS_FULL.md) | `128` | 完整线程 ID 集合 |
-| [TIDS_CAPED](TIDS_CAPED.md) | `64` | 有上限（受限）的线程 ID 集合 |
+| **PIDS** | `256` | 进程 ID 集合 |
+| [TIDS_FULL](TIDS_FULL.md) | `96` | 完整线程 ID 集合 |
+| [TIDS_CAPED](TIDS_CAPED.md) | `32` | 有上限（受限）的线程 ID 集合 |
 | [CONSUMER_CPUS](CONSUMER_CPUS.md) | `32` | CPU 集合 ID 和 CPU 索引数组 |
 | [PENDING](PENDING.md) | `16` | 待处理操作条目 |
 
@@ -53,4 +53,4 @@ pub const PIDS: usize = 512;
 | collections 模块概述 | [README](README.md) |
 
 ---
-> Commit SHA: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)
+*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

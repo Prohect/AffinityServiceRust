@@ -106,13 +106,13 @@ pub fn drop_process_by_pid(&mut self, pid: &u32)
 
 Cleans up all state for the given process. If `track_top_x_threads` is nonzero, the method first builds a sorted report of the top N threads by `last_cycles`, including module-name resolution for each thread's start address and optional `SYSTEM_THREAD_INFORMATION` details (kernel time, user time, create time, wait time, context switches, thread state, wait reason, priority). The report is emitted via `log_message`.
 
-After logging, the method calls `drop_module_cache` to release the per-process module-resolution cache and then removes the `ProcessStats` entry from the map. All owned `ThreadHandle` values are dropped automatically by Rust's `Drop` implementation, which closes the underlying Win32 handles.
+After logging, the method calls `drop_module_cache` to release the per-process module-resolution cache and then calls `self.pid_to_process_stats.remove(pid)` to remove the `ProcessStats` entry from the map. It then explicitly iterates over the removed process's `tid_to_thread_stats` to drop each thread handle individually, ensuring that Win32 handles are closed promptly and deterministically rather than relying on implicit `Drop` during map removal.
 
 ## Remarks
 
 - The scheduler is instantiated once in `main` and lives for the entire duration of the service.
 - The `HashMap` type used is the project's custom `collections::HashMap`, which may differ from `std::collections::HashMap` (e.g., using a different hasher or inline storage).
-- Thread handles stored inside `ThreadStats` are closed automatically when entries are removed. There is no need for manual handle management.
+- Thread handles stored inside `ThreadStats` are explicitly dropped by `drop_process_by_pid` after removing the process entry, ensuring deterministic handle closure.
 - The `constants` field is cloned from the parsed configuration. If configuration is hot-reloaded, a new scheduler may be constructed with updated constants.
 
 ## Requirements
@@ -138,4 +138,4 @@ After logging, the method calls `drop_module_cache` to release the per-process m
 | apply_thread_level | [apply_thread_level](../main.rs/apply_thread_level.md) |
 
 ---
-> Commit SHA: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)
+*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

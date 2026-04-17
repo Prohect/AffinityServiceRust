@@ -42,4 +42,4 @@ The `apply` module is responsible for applying process- and thread-level configu
 | collections module | [`collections.rs`](../collections.rs/README.md) |
 
 ---
-*Commit: d51fb5fe999bfe703a5bed980ab2435c1e2fe690*
+*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

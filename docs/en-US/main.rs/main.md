@@ -45,26 +45,27 @@ Each iteration:
 3. Resets the alive flags in `PrimeThreadScheduler`.
 4. **Process-level config pass** — Iterates over `configs.process_level_configs` by grade:
    - First, processes any ETW-pending PIDs via `process_level_pending.retain(...)`, calling `apply_config` for each match (just-in-time, grade-independent).
-   - Then, for PIDs matching the grade schedule (`current_loop.is_multiple_of(*grade)`), calls `apply_config` for each `(pid, name)` that matches a `ProcessLevelConfig` entry—provided the PID has not already been applied (or `continuous_process_level_apply` is set).
+   - Then, for PIDs matching the grade schedule (`current_loop.is_multiple_of(*grade)`), calls `apply_config` for each `(pid, name)` that matches a `ProcessLevelConfig` entry—provided the PID has not already been applied (or `continuous_process_level_apply` is set). The grade loop also skips when `prime_core_scheduler.pid_to_process_stats` is empty and ETW is active (`event_trace_receiver.is_some()`), avoiding unnecessary iterations when there is no thread-level tracking work.
    - `apply_config` internally also looks up and applies any matching `ThreadLevelConfig` for the same grade and name, pushing the PID into both `process_level_applied` and `thread_level_applied`. This "both-level apply" path exists to reduce `get_threads()` calls and merge log output for the same process.
 5. **Standalone thread-level config pass** — If the scheduler has any tracked processes (`pid_to_process_stats` is non-empty), iterates over `configs.thread_level_configs` by grade. For each matching `(pid, name)`, if the PID was **not** already handled by the both-level apply in step 4 (i.e., not in `thread_level_applied`), creates its own `OnceCell`-backed thread cache and calls `apply_thread_level` directly, followed by `log_apply_results`.
-6. Cleans up dead processes (handle closure, module-cache purge, optional top-thread report) when ETW is not active.
+6. Cleans up dead processes (handle closure, module-cache purge, optional top-thread report) when either ETW is not active (`event_trace_receiver.is_none()`) or the prime scheduler has active entries (`!pid_to_process_stats.is_empty()`). Previously cleanup only ran in non-ETW mode.
 7. Runs `process_find` if find mode is active.
 8. In `dry_run` mode, sets `should_continue = false` to exit after a single iteration (no longer logs a total change count).
-9. Drops `pids_and_names` and `processes` explicitly before sleep.
+9. Calls `process_level_pending.clear()` after the snapshot block (outside it), rather than inside. This prevents short-lived processes from accumulating in pending when they are found during retain but exit quickly. Then drops `pids_and_names` and `processes` explicitly before sleep.
 10. Flushes loggers.
 11. **Sleep** — Either blocks on the ETW receiver channel (power-efficient wait) when no thread-level work is pending, or falls back to `thread::sleep(interval_ms)`.
-12. On wake, drains the ETW channel to update `process_level_pending` and `process_level_applied` lists.
-13. Calls `hotreload_config` and `hotreload_blacklist` to pick up file changes without restarting.
-14. Calls `process_level_applied.dedup()` and `process_level_pending.dedup()` for compaction; clears `thread_level_applied` so thread-level rules are re-evaluated next iteration.
+12. Calls `hotreload_config` and `hotreload_blacklist` to pick up file changes without restarting.
+13. Calls `process_level_applied.dedup()` and `process_level_pending.dedup()` for compaction; clears `thread_level_applied` so thread-level rules are re-evaluated next iteration.
 
 ### ETW-driven sleep
 
-When the ETW monitor is active and the prime-thread scheduler has no tracked processes (`pid_to_process_stats` is empty), the loop enters a power-efficient wait instead of a fixed `thread::sleep`. It calls `event_trace_receiver.recv_timeout(...)` in a loop with a timeout of `(interval_ms + 16) / 2` milliseconds. The loop breaks when either:
-- The receiver disconnects (sets `should_continue = false` to trigger shutdown).
-- Enough wall-clock time has elapsed (checked via `Local::now() - last_time > TimeDelta::milliseconds(interval_ms)`).
+When the ETW monitor is active and the prime-thread scheduler has no tracked processes (`pid_to_process_stats` is empty), the loop enters a power-efficient wait instead of a fixed `thread::sleep`. Events are now processed **inline** during the sleep phase via `recv_timeout` on the ETW channel:
 
-This reduces CPU wake-ups when the service has no thread-level work to perform and is only waiting for new processes to appear via ETW events.
+- On `RecvTimeoutError::Disconnected`: sets `should_continue = false` and breaks out of the sleep loop.
+- On `RecvTimeoutError::Timeout`: breaks only if `process_level_pending` is non-empty.
+- On successful event receipt: process-start events push to `process_level_pending`; process-stop events clean up from pending, applied, fail map, and scheduler. The loop breaks with smart throttling — if pending was already non-empty, it breaks after half the interval minus 16 ms; if pending was previously empty and a new event arrives, it breaks after the full interval.
+
+The old two-phase approach (sleep first, then batch-drain events) has been replaced by this single-phase inline processing for lower latency.
 
 When the ETW monitor is **not** active (e.g., `-no_etw`), fallback polling detects dead processes by comparing the scheduler's alive flags after each snapshot pass, and the loop always uses `thread::sleep`.
 
@@ -110,4 +111,4 @@ After the loop, the ETW monitor is stopped if it was started.
 | event_trace module | [event_trace.rs README](../event_trace.rs/README.md) |
 
 ---
-Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)
+*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

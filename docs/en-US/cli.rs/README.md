@@ -28,4 +28,4 @@ The `cli` module provides command-line argument parsing and help text generation
 | logging module | [logging.rs overview](../logging.rs/README.md) |
 
 ---
-> Commit SHA: `d51fb5fe999bfe703a5bed980ab2435c1e2fe690`
+*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

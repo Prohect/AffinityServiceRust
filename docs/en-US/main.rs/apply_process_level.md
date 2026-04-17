@@ -36,6 +36,7 @@ This function does not return a value. If the process handle cannot be obtained 
 - The order of application is deterministic: priority → affinity → CPU set → I/O priority → memory priority. This order ensures that the process priority class is set before any thread-level side effects of affinity changes take place.
 - Each sub-function (`apply_priority`, `apply_affinity`, `apply_process_default_cpuset`, `apply_io_priority`, `apply_memory_priority`) independently checks whether its corresponding config field is set to a `None` sentinel and skips itself when no change is requested.
 - This function is **not** called on every polling iteration by default. Once a PID appears in `process_level_applied`, it is skipped unless the `-continuousProcessLevelApply` CLI flag is active.
+- At the end of the function, `process_handle` is explicitly dropped to release OS handles promptly. This ensures the process handle's read/write handles are closed as soon as all sub-operations complete, rather than waiting for scope exit.
 
 ## Requirements
 
@@ -58,4 +59,4 @@ This function does not return a value. If the process handle cannot be obtained 
 | apply module | [apply module](../apply.rs/README.md) |
 
 ---
-> Commit SHA: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)
+*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

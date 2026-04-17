@@ -1,6 +1,6 @@
 # apply_prime_threads 函数 (apply.rs)
 
-`apply_prime_threads` 函数为单个进程编排主线程（prime-thread）调度管线。它通过按周期计数增量排序来识别 CPU 使用最密集的线程，使用滞后机制选择顶部候选线程，通过 CPU Sets 将优胜者提升到指定的高性能 CPU 并可选地提升优先级，同时降级不再符合条件的线程。该函数还通过关闭已退出进程的线程句柄来管理线程句柄的生命周期。
+`apply_prime_threads` 函数为单个进程编排主线程（prime-thread）调度管线。它通过按周期计数增量排序来识别 CPU 使用最密集的线程，使用滞后机制选择顶部候选线程，通过 CPU Sets 将优胜者提升到指定的高性能 CPU 并可选地提升优先级，同时降级不再符合条件的线程。
 
 ## 语法
 
@@ -60,14 +60,11 @@ pub fn apply_prime_threads<'a>(
 
 6. **降级**（[`apply_prime_threads_demote`](apply_prime_threads_demote.md)）：对于先前被固定但不再被选为主线程的每个线程，移除 CPU Set 固定（通过设置空的 CPU Set）并恢复其原始线程优先级。
 
-7. **句柄清理**：在提升/降级周期之后，函数从候选列表构建存活线程 ID 的集合。对于调度器状态中不在存活集中的任何线程，线程句柄被丢弃（通过 `ThreadHandle` 的 `Drop` 实现关闭底层操作系统句柄）。这防止了已退出进程的线程造成句柄泄漏。
-
 ### 边缘情况
 
 - 如果 `prime_threads_cpus` 为空但 `prime_threads_prefixes` 非空，函数仍会运行管线。每个前缀条目可能携带自己的 `cpus` 覆盖配置，如果没有任何前缀匹配特定线程，该线程将不会被提升。
 - 如果 `track_top_x_threads` 为负数，主线程调度被禁用，但如果其绝对值触发 `has_tracking`，线程跟踪仍可能发生。
 - 未被预取周期的线程（例如，因为在 `prefetch_all_thread_cycles` 中句柄获取失败）的 `cached_cycles == 0`，将被完全排除在候选列表之外。
-- 先前被固定但不再出现在顶部候选中的线程会以其最后已知的周期增量重新注入候选列表。这确保降级阶段即使在其 CPU 活动降至零时也能处理它们。
 
 ## 要求
 
@@ -98,4 +95,4 @@ pub fn apply_prime_threads<'a>(
 | ProcessEntry | [`process.rs/ProcessEntry`](../process.rs/ProcessEntry.md) |
 
 ---
-*Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)*
+*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

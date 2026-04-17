@@ -81,4 +81,4 @@ pub fn get_thread_handle(tid: u32, pid: u32, process_name: &str) -> Option<Threa
 | is_new_error | [is_new_error](../logging.rs/is_new_error.md) |
 
 ---
-> Commit SHA: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)
+*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

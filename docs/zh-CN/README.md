@@ -50,4 +50,4 @@ AffinityServiceRust 是一个用 Rust 编写的高性能 Windows 进程管理服
 | 文档索引 | [../README.md](../README.md) |
 | en-US 区域 | [../en-US/README.md](../en-US/README.md) |
 
-*提交：[c35e4ee](https://github.com/Prohect/AffinityServiceRust/tree/c35e4ee0073135bb4fb2dc4c3f8f39c8e1210b2a)*
+*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

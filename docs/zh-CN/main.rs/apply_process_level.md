@@ -35,6 +35,7 @@ fn apply_process_level<'a>(
 - `threads` 参数是延迟闭包而非直接引用。这避免了在没有子函数实际需要线程映射时（例如仅配置了优先级或 I/O/内存优先级变更时）枚举线程的开销。调用方中由 `OnceCell` 支持的闭包确保即使多个子函数对其解引用，线程快照也最多只获取一次。
 - 应用顺序是确定性的：优先级 → 亲和性 → CPU 集合 → I/O 优先级 → 内存优先级。此顺序确保在亲和性变更的线程级副作用发生之前，进程优先级类别已被设置。
 - 每个子函数（`apply_priority`、`apply_affinity`、`apply_process_default_cpuset`、`apply_io_priority`、`apply_memory_priority`）独立检查其对应的配置字段是否设置为 `None` 哨兵值，在不需要变更时跳过自身。
+- 函数末尾显式调用 `drop(process_handle)` 以释放操作系统句柄。这确保进程句柄的读/写句柄在所有子操作完成后立即关闭，而非等待作用域退出。
 - 默认情况下，此函数**不会**在每次轮询迭代中被调用。一旦某个 PID 出现在 `process_level_applied` 中，除非激活了 `-continuousProcessLevelApply` CLI 标志，否则将被跳过。
 
 ## 要求
@@ -58,4 +59,4 @@ fn apply_process_level<'a>(
 | apply 模块 | [apply 模块](../apply.rs/README.md) |
 
 ---
-> Commit SHA: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)
+*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

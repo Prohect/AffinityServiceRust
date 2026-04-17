@@ -40,7 +40,8 @@ pub fn reset_thread_ideal_processors<'a>(
 4. **随机偏移**：通过 `rand::random::<u8>()` 生成一个随机 `u8` 值作为 CPU 数组的起始偏移。这避免了总是将第一个线程分配到列表中的第一个 CPU，在多次应用周期间提供一定程度的负载均衡。
 5. **轮询分配**：通过循环遍历 `cpus` 数组为每个线程分配一个理想处理器：`target_cpu = cpus[(success_count + random_shift) % cpus.len()]`。函数使用 group `0` 和计算出的 CPU 索引调用 `set_thread_ideal_processor_ex`。
 6. **句柄解析**：对于每个线程，通过 `get_thread_handle` 获取句柄。函数优先使用 `w_handle`，仅在 `w_handle` 无效时回退到 `w_limited_handle`。无法获取句柄的线程将被静默跳过。
-7. **结果记录**：完成后，附加一条格式为 `"reset ideal processor for N threads"` 的变更消息，其中 N 是成功重新分配的线程数。
+7. **立即释放句柄**：每个线程句柄在使用后立即通过 `drop(thread_handle)` 显式释放，以尽快归还操作系统资源。
+8. **结果记录**：完成后，附加一条格式为 `"reset ideal processor for N threads"` 的变更消息，其中 N 是成功重新分配的线程数。
 
 ### 边界情况
 
@@ -79,4 +80,4 @@ pub fn reset_thread_ideal_processors<'a>(
 | ProcessLevelConfig | [`config.rs/ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
 
 ---
-*Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)*
+*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

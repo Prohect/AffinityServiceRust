@@ -42,7 +42,7 @@ This function does not return a value. All outcomes are communicated through mut
    - It is in the `prime_set` (still selected as prime), or
    - Its `pinned_cpu_set_ids` is empty (it was never promoted).
 
-4. **Handle resolution**: The function retrieves the thread's write handle from `thread_stats.handle`. It prefers `w_handle` over `w_limited_handle`. If both are invalid, an error is logged via [`log_error_if_new`](log_error_if_new.md) with `Operation::OpenThread` and the thread is skipped. If no handle exists at all, the thread is silently skipped.
+4. **Handle resolution**: The function retrieves the thread's write handle from `thread_stats.handle` using the `.as_ref()` access pattern (rather than the previous `ref` binding style). It prefers `w_handle` over `w_limited_handle`. If both are invalid, an error is logged via [`log_error_if_new`](log_error_if_new.md) with `Operation::OpenThread` and the thread is skipped. If no handle exists at all, the thread is silently skipped.
 
 5. **Remove CPU set pinning**: `SetThreadSelectedCpuSets` is called with an empty slice (`&[]`) to clear the thread's CPU set assignment, returning it to the process's default scheduling behavior. On success, a change message is recorded:
    `"Thread <tid> -> (demoted, start=<module>)"`
@@ -91,4 +91,4 @@ This function undoes the work of [`apply_prime_threads_promote`](apply_prime_thr
 | ThreadPriority | [`priority.rs/ThreadPriority`](../priority.rs/ThreadPriority.md) |
 
 ---
-*Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)*
+*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

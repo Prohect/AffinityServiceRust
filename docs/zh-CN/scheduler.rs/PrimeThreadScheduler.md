@@ -104,15 +104,17 @@ pub fn select_top_threads_with_hysteresis(
 pub fn drop_process_by_pid(&mut self, pid: &u32)
 ```
 
-清理给定进程的所有状态。如果 `track_top_x_threads` 非零，该方法首先按 `last_cycles` 排序构建前 N 个线程的报告，包括每个线程起始地址的模块名称解析和可选的 `SYSTEM_THREAD_INFORMATION` 详细信息（内核时间、用户时间、创建时间、等待时间、上下文切换次数、线程状态、等待原因、优先级）。报告通过 `log_message` 输出。
+清理给定进程的所有状态。方法现在首先调用 `self.pid_to_process_stats.remove(pid)`（而非先 `get_mut` 再后续 `remove`），然后显式遍历已移除进程的 `tid_to_thread_stats` 以逐个释放每个线程句柄。这确保句柄被显式关闭，而非依赖映射移除时的隐式 Drop。
 
-日志记录完成后，该方法调用 `drop_module_cache` 释放每进程的模块解析缓存，然后从映射中移除 `ProcessStats` 条目。所有拥有的 `ThreadHandle` 值通过 Rust 的 `Drop` 实现自动释放，底层的 Win32 句柄会被关闭。
+如果 `track_top_x_threads` 非零，该方法首先按 `last_cycles` 排序构建前 N 个线程的报告，包括每个线程起始地址的模块名称解析和可选的 `SYSTEM_THREAD_INFORMATION` 详细信息（内核时间、用户时间、创建时间、等待时间、上下文切换次数、线程状态、等待原因、优先级）。报告通过 `log_message` 输出。
+
+日志记录完成后，该方法调用 `drop_module_cache` 释放每进程的模块解析缓存。
 
 ## 备注
 
 - 调度器在 `main` 中实例化一次，并在服务的整个运行期间存活。
 - 使用的 `HashMap` 类型是项目自定义的 `collections::HashMap`，可能与 `std::collections::HashMap` 不同（例如，使用不同的哈希器或内联存储）。
-- 存储在 `ThreadStats` 中的线程句柄在条目被移除时自动关闭。无需手动句柄管理。
+- `drop_process_by_pid` 显式遍历并释放每个线程句柄，而非依赖映射移除时的隐式 `Drop`。
 - `constants` 字段从解析的配置克隆而来。如果配置热重载，可能会使用更新的常量构造新的调度器。
 
 ## 要求
@@ -138,4 +140,4 @@ pub fn drop_process_by_pid(&mut self, pid: &u32)
 | apply_thread_level | [apply_thread_level](../main.rs/apply_thread_level.md) |
 
 ---
-> Commit SHA: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)
+*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

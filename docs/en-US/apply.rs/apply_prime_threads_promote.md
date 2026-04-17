@@ -38,7 +38,7 @@ For each `(tid, delta_cycles, is_prime)` tuple in `tid_with_delta_cycles` where 
 
 1. **Skip already-pinned threads**: If `thread_stats.pinned_cpu_set_ids` is non-empty, the thread is already promoted and is skipped. This prevents re-applying the CPU set and priority boost on every apply cycle.
 
-2. **Handle resolution**: The function retrieves the thread's write handle from `thread_stats.handle`. It prefers `w_handle` over `w_limited_handle`. If both are invalid, an error is logged via [`log_error_if_new`](log_error_if_new.md) with `Operation::OpenThread` and the thread is skipped.
+2. **Handle resolution**: The function retrieves the thread's write handle from `thread_stats.handle` using the `.as_ref()` access pattern. It prefers `w_handle` over `w_limited_handle`. If both are invalid, an error is logged via [`log_error_if_new`](log_error_if_new.md) with `Operation::OpenThread` and the thread is skipped.
 
 3. **Module prefix matching**: The thread's start address is resolved to a module name via `resolve_address_to_module`. If `config.prime_threads_prefixes` is non-empty, the module name is compared (case-insensitive) against each prefix rule's `prefix` field. The first matching prefix determines:
    - An alternative CPU set (`prefix.cpus`) to use instead of `config.prime_threads_cpus`.
@@ -98,4 +98,4 @@ Threads promoted by this function are later subject to demotion by [`apply_prime
 | ThreadPriority | [`priority.rs/ThreadPriority`](../priority.rs/ThreadPriority.md) |
 
 ---
-*Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)*
+*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

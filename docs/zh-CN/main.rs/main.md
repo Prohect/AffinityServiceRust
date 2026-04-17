@@ -46,25 +46,28 @@ fn main() -> windows::core::Result<()>
 4. **进程级配置遍历** — 按 grade 迭代 `configs.process_level_configs`：
    - 首先，通过 `process_level_pending.retain(...)` 处理所有 ETW 待处理的 PID，为每个匹配项调用 `apply_config`（即时应用，与 grade 无关）。
    - 然后，对于匹配 grade 调度的 PID（`current_loop.is_multiple_of(*grade)`），为每个匹配 `ProcessLevelConfig` 条目的 `(pid, name)` 调用 `apply_config`——前提是该 PID 尚未被应用（或设置了 `continuous_process_level_apply`）。
+   - 等级循环现在还会在 `prime_core_scheduler.pid_to_process_stats` 为空且 ETW 处于活动状态时跳过。这避免了在没有线程级跟踪工作时进行不必要的迭代。
    - `apply_config` 内部还会查找并应用同一 grade 和名称的任何匹配 `ThreadLevelConfig`，将 PID 推入 `process_level_applied` 和 `thread_level_applied`。此"双级应用"路径的存在是为了减少 `get_threads()` 调用并合并同一进程的日志输出。
 5. **独立线程级配置遍历** — 如果调度器有任何被跟踪的进程（`pid_to_process_stats` 非空），则按 grade 迭代 `configs.thread_level_configs`。对于每个匹配的 `(pid, name)`，如果该 PID **未**在步骤 4 的双级应用中被处理（即不在 `thread_level_applied` 中），则创建自己的基于 `OnceCell` 的线程缓存并直接调用 `apply_thread_level`，然后调用 `log_apply_results`。
-6. 当 ETW 未活动时，清理已终止的进程（关闭句柄、清除模块缓存、可选的顶级线程报告）。
+6. 清理已终止的进程（关闭句柄、清除模块缓存、可选的顶级线程报告）。清理现在在ETW未激活（`event_trace_receiver.is_none()`）或主调度器有活跃条目（`!pid_to_process_stats.is_empty()`）时运行。之前仅在非 ETW 模式下运行。
 7. 如果 find 模式处于活动状态，则运行 `process_find`。
 8. 在 `dry_run` 模式下，设置 `should_continue = false` 以在单次迭代后退出（不再记录总变更计数）。
-9. 在睡眠前显式丢弃 `pids_and_names` 和 `processes`。
-10. 刷新日志记录器。
-11. **睡眠** — 当没有线程级工作待处理时，阻塞在 ETW 接收器通道上（节能等待）；否则回退到 `thread::sleep(interval_ms)`。
-12. 唤醒后，排空 ETW 通道以更新 `process_level_pending` 和 `process_level_applied` 列表。
-13. 调用 `hotreload_config` 和 `hotreload_blacklist` 以在不重启的情况下获取文件更改。
-14. 调用 `process_level_applied.dedup()` 和 `process_level_pending.dedup()` 进行压缩；清除 `thread_level_applied` 以便在下次迭代中重新评估线程级规则。
+9. `process_level_pending.clear()` 现在在快照块之外（之后）调用，而不是在其内部。这防止了短生命周期进程在 retain 中被发现但很快退出时在 pending 中累积。
+10. 在睡眠前显式丢弃 `pids_and_names` 和 `processes`。
+11. 刷新日志记录器。
+12. **睡眠** — 当没有线程级工作待处理时，阻塞在 ETW 接收器通道上（节能等待）；否则回退到 `thread::sleep(interval_ms)`。
+13. 唤醒后，排空 ETW 通道以更新 `process_level_pending` 和 `process_level_applied` 列表。
+14. 调用 `hotreload_config` 和 `hotreload_blacklist` 以在不重启的情况下获取文件更改。
+15. 调用 `process_level_applied.dedup()` 和 `process_level_pending.dedup()` 进行压缩；清除 `thread_level_applied` 以便在下次迭代中重新评估线程级规则。
 
 ### ETW 驱动的睡眠
 
-当 ETW 监视器处于活动状态且主线程调度器没有被跟踪的进程（`pid_to_process_stats` 为空）时，循环进入节能等待而非固定的 `thread::sleep`。它在循环中调用 `event_trace_receiver.recv_timeout(...)`，超时时间为 `(interval_ms + 16) / 2` 毫秒。循环在以下情况之一时中断：
-- 接收器断开连接（设置 `should_continue = false` 以触发关闭）。
-- 已经过足够的墙钟时间（通过 `Local::now() - last_time > TimeDelta::milliseconds(interval_ms)` 检查）。
+当 ETW 活跃且 `pid_to_process_stats` 为空时，循环在 ETW 通道上使用 `recv_timeout`。事件现在在休眠阶段内联处理：
+- `RecvTimeoutError::Disconnected`：设置 `should_continue = false` 并跳出。
+- `RecvTimeoutError::Timeout`：仅在 `process_level_pending` 非空时跳出。
+- 成功接收事件：进程启动事件推入 `process_level_pending`；进程停止事件从 pending、applied、fail map 和调度器中清理。循环使用智能节流跳出：如果 pending 已非空，则在半个间隔减去 16ms 后跳出；如果 pending 之前为空且有新事件到达，则在完整间隔后跳出。
 
-当服务没有线程级工作要执行且仅等待通过 ETW 事件出现的新进程时，这可以减少 CPU 唤醒次数。
+旧的两阶段方法（先休眠，再批量处理事件）已被此单阶段内联处理所替代，以降低延迟。
 
 当 ETW 监视器**未**活动时（例如 `-no_etw`），回退轮询通过在每次快照遍历后比较调度器的存活标志来检测已终止的进程，且循环始终使用 `thread::sleep`。
 
@@ -110,4 +113,4 @@ fn main() -> windows::core::Result<()>
 | event_trace 模块 | [event_trace.rs README](../event_trace.rs/README.md) |
 
 ---
-Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)
+*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

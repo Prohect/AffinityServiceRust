@@ -40,7 +40,8 @@ This function does not return a value. All outcomes are communicated through the
 4. **Random offset**: A random `u8` value is generated via `rand::random::<u8>()` and used as a starting offset into the CPU array. This avoids always assigning the first thread to the first CPU in the list, providing a degree of load balancing across apply cycles.
 5. **Round-robin assignment**: Each thread is assigned an ideal processor by cycling through the `cpus` array: `target_cpu = cpus[(success_count + random_shift) % cpus.len()]`. The function calls `set_thread_ideal_processor_ex` with group `0` and the computed CPU index.
 6. **Handle resolution**: For each thread, a handle is obtained via `get_thread_handle`. The function prefers `w_handle` over `w_limited_handle` (falling back to `w_limited_handle` only when `w_handle` is invalid). Threads for which a handle cannot be obtained are silently skipped.
-7. **Result recording**: On completion, a change message of the form `"reset ideal processor for N threads"` is appended, where N is the count of threads that were successfully reassigned.
+7. **Immediate handle release**: After each thread is processed, the thread handle is explicitly dropped immediately after use to release OS resources promptly, rather than deferring cleanup to the end of the iteration.
+8. **Result recording**: On completion, a change message of the form `"reset ideal processor for N threads"` is appended, where N is the count of threads that were successfully reassigned.
 
 ### Edge cases
 
@@ -79,4 +80,4 @@ This function is called from two sites:
 | ProcessLevelConfig | [`config.rs/ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
 
 ---
-*Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)*
+*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

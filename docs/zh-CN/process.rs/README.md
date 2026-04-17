@@ -29,4 +29,4 @@
 | [event_trace.rs](../event_trace.rs/README.md) | 基于 ETW 的实时进程监控，作为基于轮询的快照的补充。 |
 
 ---
-> Commit: [b0df9da](https://github.com/Prohect/AffinityServiceRust/tree/b0df9da35213b050501fab02c3020ad4dbd6c4e0)
+*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*

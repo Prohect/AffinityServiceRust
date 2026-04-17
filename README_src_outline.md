@@ -360,7 +360,7 @@
 - [L158:172]fn log_apply_results(pid: &u32, name: &String, result: ApplyConfigResult) 
 - [L174:266]fn process_logs(configs: &ConfigResult, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
 - [L268:305]fn process_find(cli: &CliArgs, configs: &ConfigResult, blacklist: &[String]) -> Result<(), windows::core::Error> 
-- [L307:629]fn main() -> windows::core::Result<()> 
+- [L307:630]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L8:16]enum ProcessPriority {

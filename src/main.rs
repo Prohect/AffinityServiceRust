@@ -565,6 +565,7 @@ fn main() -> windows::core::Result<()> {
         if should_continue {
             let mut etw_sleep = false;
             if prime_core_scheduler.pid_to_process_stats.is_empty()
+                && !cli.continuous_process_level_apply
                 && let Some(ref event_trace_receiver) = event_trace_receiver
             {
                 etw_sleep = true;

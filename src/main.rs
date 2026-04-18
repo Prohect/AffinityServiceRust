@@ -18,7 +18,7 @@ use crate::{
     cli::{CliArgs, parse_args, print_help, print_help_all},
     collections::{HashMap, HashSet, List, PENDING, PIDS},
     config::{
-        ConfigResult, ProcessLevelConfig, ThreadLevelConfig, convert, hotreload_blacklist, hotreload_config, read_config, read_list,
+        ConfigResult, ProcessLevelConfig, ThreadLevelConfig, convert, hotreload_blacklist, hotreload_config, read_bleack_list, read_config,
         sort_and_group_config,
     },
     event_trace::EtwProcessMonitor,
@@ -324,19 +324,15 @@ fn main() -> windows::core::Result<()> {
         sort_and_group_config(cli.in_file_name, cli.out_file_name);
         return Ok(());
     }
-    let mut configs = read_config(&cli.config_file_name);
 
     *get_dust_bin_mod!() = cli.skip_log_before_elevation;
+    let mut configs = read_config(&cli.config_file_name);
     configs.print_report();
-    if !configs.errors.is_empty() {
-        log!("Configuration file has errors, please fix them before running the service.");
-        return Ok(());
-    }
-    if cli.validate_mode {
+    if !configs.errors.is_empty() || cli.validate_mode {
         return Ok(());
     }
     let mut blacklist = if let Some(ref bf) = cli.blacklist_file_name {
-        read_list(bf).unwrap_or_default()
+        read_bleack_list(bf).unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -354,29 +350,15 @@ fn main() -> windows::core::Result<()> {
     let is_blacklist_empty = blacklist.is_empty();
     if is_config_empty && is_blacklist_empty {
         if !cli.find_mode {
-            log!("not even a single config, existing");
+            log!("not config, find mode not enabled, exiting");
             return Ok(());
         }
-    } else {
-        log!("{} blacklist items load", blacklist.len());
     }
 
-    if !cli.no_debug_priv {
-        enable_debug_privilege();
-    } else {
-        log!("SeDebugPrivilege disabled by -noDebugPriv flag");
-    }
-    if !cli.no_inc_base_priority {
-        enable_inc_base_priority_privilege();
-    } else {
-        log!("SeIncreaseBasePriorityPrivilege disabled by -noIncBasePriority flag");
-    }
-
-    if cli.time_resolution != 0 {
-        set_timer_resolution(&cli);
-    }
+    enable_debug_privilege(cli.no_debug_priv);
+    enable_inc_base_priority_privilege(cli.no_inc_base_priority);
+    set_timer_resolution(&cli);
     log!("Affinity Service started with time interval: {}", cli.interval_ms);
-
     if !is_running_as_admin() {
         if cli.no_uac {
             log!("Not running as administrator. UAC elevation disabled by -noUAC flag.");
@@ -384,9 +366,7 @@ fn main() -> windows::core::Result<()> {
         } else {
             log!("Not running as administrator. Requesting UAC elevation...");
             match request_uac_elevation(*get_use_console!()) {
-                Ok(_) => {
-                    log!("Running with administrator privileges.");
-                }
+                Ok(_) => {}
                 Err(e) => {
                     log!("Failed to request elevation: {}, may not manage all processes", e);
                 }
@@ -395,12 +375,7 @@ fn main() -> windows::core::Result<()> {
     }
     terminate_child_processes();
     *get_dust_bin_mod!() = false;
-    let mut prime_core_scheduler = PrimeThreadScheduler::new(configs.constants.clone());
-    let mut current_loop = 0u32;
-    let mut should_continue = true;
-    let mut first_loop = true;
 
-    // Start ETW process monitor for reactive process level rule application
     let (event_trace_monitor, event_trace_receiver) = if !(cli.no_etw) {
         match EtwProcessMonitor::start() {
             Err(e) => {
@@ -416,10 +391,16 @@ fn main() -> windows::core::Result<()> {
         (None, None)
     };
 
+    let mut prime_core_scheduler = PrimeThreadScheduler::new(configs.constants.clone());
+    let mut current_loop = 0u32;
+    let mut should_continue = true;
+    // always do a full rule match on the first loop, or on config reload
+    let mut full_process_level_match = true;
+    // reduce api calls when continues_process_level_apply cli flag is not set
     let mut process_level_applied: List<[u32; PIDS]> = List::new();
-    // avoid re-applying thread-level configs after both-level apply in a single iteration
-    // both-level apply exists to reduce get_threads calls and merge logs for a same process
+    // avoid re-applying thread-level configs in a single iteration, which breaks scheduler's call based data tracking
     let mut thread_level_applied: List<[u32; PENDING]> = List::new();
+    // both-level apply exists to reduce get_threads' enumeration and merge logs for a same process
     let mut process_level_pending: List<[u32; PENDING]> = List::new();
 
     while should_continue {
@@ -435,7 +416,7 @@ fn main() -> windows::core::Result<()> {
                 prime_core_scheduler.reset_alive();
                 for (grade, graded_process_level_configs) in &configs.process_level_configs {
                     // process_level_pending dont respect grade being applied just in time
-                    // since it's retain call here, it do not hit performance in next loop iterations
+                    // since it's retain here, it does not hurt performance in next loop iterations
                     process_level_pending.retain(|pid_pending| {
                         !pids_and_names.iter().any(|(pid, name)| -> bool {
                             if pid == pid_pending {
@@ -464,7 +445,7 @@ fn main() -> windows::core::Result<()> {
                         })
                     });
                     // fallback of cli flag -no_etw, and processes launched before this project's process's running
-                    if !first_loop
+                    if !full_process_level_match
                         && (!current_loop.is_multiple_of(*grade)
                             || (prime_core_scheduler.pid_to_process_stats.is_empty() && event_trace_receiver.is_some()))
                     {
@@ -494,7 +475,7 @@ fn main() -> windows::core::Result<()> {
                     }
                 }
 
-                // the scheduler should be populated before thread-level config applying in its previous both-level apply
+                // the scheduler should be inited before thread-level config applying in its previous both-level apply
                 if !prime_core_scheduler.pid_to_process_stats.is_empty() {
                     for (grade, graded_thread_level_configs) in &configs.thread_level_configs {
                         if !current_loop.is_multiple_of(*grade) {
@@ -561,10 +542,10 @@ fn main() -> windows::core::Result<()> {
             should_continue = false;
         }
         process_level_pending.clear(); // SAFETY: avoid short-lived process not found in retain's pid grows
-        first_loop = false;
+        full_process_level_match = false;
         if should_continue {
             let mut etw_sleep = false;
-            if prime_core_scheduler.pid_to_process_stats.is_empty()
+            if prime_core_scheduler.pid_to_process_stats.is_empty()// thread-level config needs to track threading performance
                 && !cli.continuous_process_level_apply
                 && let Some(ref event_trace_receiver) = event_trace_receiver
             {
@@ -572,7 +553,7 @@ fn main() -> windows::core::Result<()> {
                 loop {
                     match event_trace_receiver.recv_timeout(Duration::from_millis(((cli.interval_ms + 16) / 2) as u64)) {
                         Err(RecvTimeoutError::Disconnected) => {
-                            should_continue = false;
+                            should_continue = false; // probably another AffinityServiceRust instance is running and reusing the same event trace pipe
                             break;
                         }
                         Err(RecvTimeoutError::Timeout) => {
@@ -607,8 +588,7 @@ fn main() -> windows::core::Result<()> {
             }
 
             *get_local_time!() = Local::now();
-            process_level_applied.dedup(); // cli flag and this controls process-level apply, to reduce api calls
-            // thread-level config needs to be re-applied each iteration to track threading performance
+            process_level_applied.dedup();
             thread_level_applied.clear();
             process_level_pending.dedup();
             hotreload_config(
@@ -617,6 +597,7 @@ fn main() -> windows::core::Result<()> {
                 &mut last_config_mod_time,
                 &mut prime_core_scheduler,
                 &mut process_level_applied,
+                &mut full_process_level_match,
             );
             hotreload_blacklist(&cli, &mut blacklist, &mut last_blacklist_mod_time);
         }

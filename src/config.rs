@@ -874,15 +874,17 @@ pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult {
     result
 }
 
-pub fn read_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
+pub fn read_bleack_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
-    Ok(reader
+    let result: Vec<String> = reader
         .lines()
         .map_while(Result::ok)
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty() && !s.starts_with('#'))
-        .collect())
+        .collect();
+    log!("{} blacklist items loaded", result.len());
+    Ok(result)
 }
 
 pub fn read_utf16le_file(path: &str) -> Result<String> {
@@ -1292,7 +1294,7 @@ pub fn hotreload_blacklist(cli: &CliArgs, blacklist: &mut Vec<String>, last_blac
                 {
                     *last_blacklist_mod_time = Some(mod_time);
                     log!("Blacklist file '{}' changed, reloading...", blacklist_file);
-                    *blacklist = read_list(blacklist_file).unwrap_or_default();
+                    *blacklist = read_bleack_list(blacklist_file).unwrap_or_default();
                     log!("Blacklist reload complete: {} items loaded.", blacklist.len());
                 }
             }
@@ -1306,6 +1308,7 @@ pub fn hotreload_config(
     last_config_mod_time: &mut Option<std::time::SystemTime>,
     prime_core_scheduler: &mut PrimeThreadScheduler,
     process_level_applied: &mut List<[u32; PIDS]>,
+    full_process_level_match: &mut bool,
 ) {
     if let Ok(metadata) = metadata(&cli.config_file_name)
         && let Ok(mod_time) = metadata.modified()
@@ -1321,6 +1324,7 @@ pub fn hotreload_config(
             let total_rules = (*configs).total_rules();
             log!("Configuration reload complete: {} rules loaded.", total_rules);
             process_level_applied.clear(); //reset process_level_applied on config reload
+            *full_process_level_match = true;
         } else {
             log!(
                 "Configuration file '{}' has errors, keeping previous configuration.",

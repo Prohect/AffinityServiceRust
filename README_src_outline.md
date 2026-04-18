@@ -245,18 +245,19 @@
     result: &mut ConfigResult,
 ) 
 - [L743:829]fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult 
-- [L877:886]fn read_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>> 
-- [L888:892]fn read_utf16le_file(path: &str) -> Result<String> 
-- [L895:898]fn parse_mask(s: &str) -> usize 
-- [L900:1063]fn convert(in_file: Option<String>, out_file: Option<String>) 
-- [L1065:1277]fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
-- [L1279:1301]fn hotreload_blacklist(cli: &CliArgs, blacklist: &mut Vec<String>, last_blacklist_mod_time: &mut Option<std::time::SystemTime>) 
-- [L1303:1334]fn hotreload_config(
+- [L877:888]fn read_bleack_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>> 
+- [L890:894]fn read_utf16le_file(path: &str) -> Result<String> 
+- [L897:900]fn parse_mask(s: &str) -> usize 
+- [L902:1065]fn convert(in_file: Option<String>, out_file: Option<String>) 
+- [L1067:1279]fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
+- [L1281:1303]fn hotreload_blacklist(cli: &CliArgs, blacklist: &mut Vec<String>, last_blacklist_mod_time: &mut Option<std::time::SystemTime>) 
+- [L1305:1338]fn hotreload_config(
     cli: &CliArgs,
     configs: &mut ConfigResult,
     last_config_mod_time: &mut Option<std::time::SystemTime>,
     prime_core_scheduler: &mut PrimeThreadScheduler,
     process_level_applied: &mut List<[u32; PIDS]>,
+    full_process_level_match: &mut bool,
 ) 
 
 ## src/error_codes.rs
@@ -360,7 +361,7 @@
 - [L158:172]fn log_apply_results(pid: &u32, name: &String, result: ApplyConfigResult) 
 - [L174:266]fn process_logs(configs: &ConfigResult, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
 - [L268:305]fn process_find(cli: &CliArgs, configs: &ConfigResult, blacklist: &[String]) -> Result<(), windows::core::Error> 
-- [L307:630]fn main() -> windows::core::Result<()> 
+- [L307:611]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L8:16]enum ProcessPriority {
@@ -546,16 +547,16 @@
 - [L430:437]fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> List<[u32; CONSUMER_CPUS]> 
 - [L439:468]fn is_running_as_admin() -> bool 
 - [L470:503]fn request_uac_elevation(console: bool) -> io::Result<()> 
-- [L505:543]fn enable_debug_privilege() 
-- [L545:583]fn enable_inc_base_priority_privilege() 
-- [L585:637]fn is_affinity_unset(pid: u32, process_name: &str) -> bool 
-- [L639:658]fn get_thread_start_address(thread_handle: HANDLE) -> usize 
-- [L660:671]fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: u8) -> Result<PROCESSOR_NUMBER, Error> 
-- [L673:679]fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, Error> 
-- [L682:682]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::default()));
-- [L684:710]fn resolve_address_to_module(pid: u32, address: usize) -> String 
-- [L712:715]fn drop_module_cache(pid: u32) 
-- [L717:767]fn terminate_child_processes() 
-- [L769:822]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
-- [L824:838]fn set_timer_resolution(cli: &CliArgs) 
+- [L505:548]fn enable_debug_privilege(no_debug_priv: bool) 
+- [L550:592]fn enable_inc_base_priority_privilege(no_inc_base_priority: bool) 
+- [L594:646]fn is_affinity_unset(pid: u32, process_name: &str) -> bool 
+- [L648:667]fn get_thread_start_address(thread_handle: HANDLE) -> usize 
+- [L669:680]fn set_thread_ideal_processor_ex(thread_handle: HANDLE, group: u16, number: u8) -> Result<PROCESSOR_NUMBER, Error> 
+- [L682:688]fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, Error> 
+- [L691:691]static MODULE_CACHE: Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>> = Lazy::new(|| Mutex::new(HashMap::default()));
+- [L693:719]fn resolve_address_to_module(pid: u32, address: usize) -> String 
+- [L721:724]fn drop_module_cache(pid: u32) 
+- [L726:776]fn terminate_child_processes() 
+- [L778:831]fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> 
+- [L833:850]fn set_timer_resolution(cli: &CliArgs) 
 

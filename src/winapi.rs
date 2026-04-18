@@ -502,7 +502,12 @@ pub fn request_uac_elevation(console: bool) -> io::Result<()> {
     }
 }
 
-pub fn enable_debug_privilege() {
+pub fn enable_debug_privilege(no_debug_priv: bool) {
+    if no_debug_priv {
+        log!("SeDebugPrivilege disabled by -noDebugPriv flag");
+        return;
+    }
+
     let mut handle: HANDLE = HANDLE::default();
 
     let open_result = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut handle) };
@@ -542,7 +547,11 @@ pub fn enable_debug_privilege() {
     let _ = unsafe { CloseHandle(handle) };
 }
 
-pub fn enable_inc_base_priority_privilege() {
+pub fn enable_inc_base_priority_privilege(no_inc_base_priority: bool) {
+    if no_inc_base_priority {
+        log!("SeIncreaseBasePriorityPrivilege disabled by -noIncBasePriority flag");
+        return;
+    }
     let mut handle: HANDLE = HANDLE::default();
 
     let open_result = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &mut handle) };
@@ -822,6 +831,9 @@ fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)> {
 }
 
 pub fn set_timer_resolution(cli: &CliArgs) {
+    if cli.time_resolution == 0 {
+        return;
+    }
     unsafe {
         let mut current_resolution = 0u32;
         match NtSetTimerResolution(cli.time_resolution, true, &mut current_resolution as *mut _ as *mut c_void).0 {

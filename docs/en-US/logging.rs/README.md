@@ -56,4 +56,4 @@ The `logging` module provides file-based and console-based logging facilities fo
 | [winapi module](../winapi.rs/README.md) | Windows API wrappers that call into logging for error reporting. |
 
 ---
-*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

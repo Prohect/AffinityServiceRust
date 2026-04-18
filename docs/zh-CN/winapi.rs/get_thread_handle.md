@@ -81,4 +81,4 @@ pub fn get_thread_handle(tid: u32, pid: u32, process_name: &str) -> Option<Threa
 | is_new_error | [is_new_error](../logging.rs/is_new_error.md) |
 
 ---
-*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

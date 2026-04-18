@@ -44,26 +44,13 @@ each top level item of a souce file is a markdown in that dir(eg. "\en-US\config
 
 ## CONTRIBUTING
 
+The docs should only contain the information of the project, no history needs to be documented.
 Update en-US first, do not considering update for all locales at same time.
 Translate for other locales after changes to en-US finishing, know about basic ideas about this project before translating.
-
 
 ## Documentation on Commit SHA
 
 Always leave a git commit SHA as a clickable link at the bottom of every doc file.
 
-### Format
-
-```
-[<7-char prefix>](https://github.com/Prohect/AffinityServiceRust/tree/<full SHA>)
-```
-
-### Example
-
-```
-*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
-```
-
-### Current commit
-
-[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)
+## Current commit
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

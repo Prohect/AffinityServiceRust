@@ -84,4 +84,4 @@ The raw `i32` value is cast to `u32` for hexadecimal formatting to produce the c
 | winapi module | [winapi.rs](../winapi.rs/README.md) |
 
 ---
-*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

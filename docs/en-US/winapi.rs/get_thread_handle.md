@@ -81,4 +81,4 @@ Non-required handle failures (codes 1–3) are currently commented out in the so
 | is_new_error | [is_new_error](../logging.rs/is_new_error.md) |
 
 ---
-*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

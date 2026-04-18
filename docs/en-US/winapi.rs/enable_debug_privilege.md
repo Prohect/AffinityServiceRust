@@ -22,7 +22,7 @@ This function does not return a value. Success or failure is reported via [`log_
 
 ### Early-return when disabled
 
-When `no_debug_priv` is `true`, the function logs `"SeDebugPrivilege disabled by -noDebugPriv flag"` and returns immediately without opening the process token or calling any Win32 privilege APIs. This conditional check was previously performed by the caller in `main.rs` but has been moved into this function for encapsulation.
+When `no_debug_priv` is `true`, the function logs `"SeDebugPrivilege disabled by -noDebugPriv flag"` and returns immediately without opening the process token or calling any Win32 privilege APIs.
 
 ### Privilege enablement steps
 
@@ -80,4 +80,4 @@ The function performs the following steps:
 | get_thread_handle | [get_thread_handle](get_thread_handle.md) |
 
 ---
-*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

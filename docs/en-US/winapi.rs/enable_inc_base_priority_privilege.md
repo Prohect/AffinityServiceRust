@@ -22,7 +22,7 @@ This function does not return a value. Success or failure is reported via [`log_
 
 ### Early-return when disabled
 
-When `no_inc_base_priority` is `true`, the function logs `"SeIncreaseBasePriorityPrivilege disabled by -noIncBasePriority flag"` and returns immediately without opening the process token or calling any Win32 privilege APIs. This conditional check was previously performed by the caller in `main.rs` but has been moved into this function for encapsulation.
+When `no_inc_base_priority` is `true`, the function logs `"SeIncreaseBasePriorityPrivilege disabled by -noIncBasePriority flag"` and returns immediately without opening the process token or calling any Win32 privilege APIs.
 
 ### Privilege-enablement steps
 
@@ -86,4 +86,4 @@ Without this privilege enabled, the operating system silently caps the effective
 | winapi module overview | [README](README.md) |
 
 ---
-*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

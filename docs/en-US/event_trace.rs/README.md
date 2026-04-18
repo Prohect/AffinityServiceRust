@@ -31,4 +31,4 @@ This module does not expose public functions directly. All functionality is acce
 | [error_codes.rs module](../error_codes.rs/README.md) | Win32 error code translation used when ETW API calls fail. |
 
 ---
-*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

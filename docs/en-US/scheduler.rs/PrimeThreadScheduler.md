@@ -138,4 +138,4 @@ After logging, the method calls `drop_module_cache` to release the per-process m
 | apply_thread_level | [apply_thread_level](../main.rs/apply_thread_level.md) |
 
 ---
-*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

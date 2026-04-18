@@ -58,4 +58,4 @@ Returns the start address of the thread as a `usize`. If the query fails (i.e., 
 | MODULE_CACHE static | [MODULE_CACHE](MODULE_CACHE.md) |
 
 ---
-*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

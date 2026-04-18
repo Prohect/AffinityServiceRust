@@ -29,4 +29,4 @@ This module does not export standalone functions. All functionality is exposed t
 | [event_trace.rs](../event_trace.rs/README.md) | ETW-based real-time process monitoring that complements polling-based snapshots. |
 
 ---
-*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

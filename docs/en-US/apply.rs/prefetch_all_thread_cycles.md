@@ -34,7 +34,7 @@ This function does not return a value. All outcomes are communicated through mut
 
 1. **Compute time deltas**: For every thread in `threads`, the function computes `KernelTime + UserTime` and stores it in `thread_stats.cached_total_time`. It also computes the delta from the previous cycle's `last_total_time`. The results are collected into a fixed-capacity list of `(tid, delta_time)` tuples.
 
-2. **Dead-thread cleanup**: After computing time deltas, the function removes threads from the scheduler's `tid_to_thread_stats` map that no longer appear in the live thread list. Handles held by dead threads are explicitly dropped to prevent handle leaks. This cleanup was previously performed in `apply_prime_threads` but is now done earlier in the pipeline to ensure handles are released sooner.
+2. **Dead-thread cleanup**: After computing time deltas, the function removes threads from the scheduler's `tid_to_thread_stats` map that no longer appear in the live thread list. Handles held by dead threads are explicitly dropped to prevent handle leaks. This cleanup is done early in the pipeline to ensure handles are released promptly.
 
 3. **Sort by time delta**: The list is sorted in descending order of time delta using `sort_unstable_by_key` with `Reverse`, so the most CPU-active threads appear first.
 
@@ -94,4 +94,4 @@ This function is called **before** [`apply_prime_threads`](apply_prime_threads.m
 | PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
 
 ---
-*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

@@ -56,4 +56,4 @@ fn format_100ns(time: i64) -> String
 | scheduler 模块概述 | [README](README.md) |
 
 ---
-*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

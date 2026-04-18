@@ -30,7 +30,7 @@ pub fn set_timer_resolution(cli: &CliArgs)
 
 ### 零分辨率保护
 
-如果 `cli.time_resolution` 为 `0`，函数立即返回而不调用 `NtSetTimerResolution`。此检查之前由 `main.rs` 中的调用方执行，现已移入此函数以实现封装。
+如果 `cli.time_resolution` 为 `0`，函数立即返回而不调用 `NtSetTimerResolution`。
 
 ### NTSTATUS 处理
 
@@ -84,4 +84,4 @@ pub fn set_timer_resolution(cli: &CliArgs)
 | winapi 模块概述 | [README](README.md) |
 
 ---
-*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

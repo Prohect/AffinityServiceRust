@@ -31,4 +31,4 @@
 | [error_codes.rs 模块](../error_codes.rs/README.md) | ETW API 调用失败时使用的 Win32 错误码翻译。 |
 
 ---
-*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

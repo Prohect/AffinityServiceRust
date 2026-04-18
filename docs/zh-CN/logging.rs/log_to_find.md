@@ -75,4 +75,4 @@ Find 日志文件是一个带日期戳且带有 `.find` 后缀的文件，创建
 | logging 模块概述 | [README](README.md) |
 
 ---
-*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

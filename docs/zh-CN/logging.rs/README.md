@@ -56,4 +56,4 @@
 | [winapi 模块](../winapi.rs/README.md) | 调用日志记录进行错误报告的 Windows API 封装。 |
 
 ---
-*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

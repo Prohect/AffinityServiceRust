@@ -25,9 +25,9 @@ fn main() -> windows::core::Result<()>
 3. **配置加载** — 调用 `read_config` 将 TOML/自定义配置文件解析为 `ConfigResult` 结构体（包含 `process_level_configs`、`thread_level_configs`、`constants` 和 `errors`）。配置错误和 `-validate` 模式合并为单一检查：`if !configs.errors.is_empty() || cli.validate_mode { return Ok(()); }`。
 4. **黑名单加载** — 可选地加载要忽略的进程名称黑名单文件（`read_bleack_list`）。加载函数内部已记录计数，不再单独记录。
 5. **处理日志模式** — 如果 `-processLogs` 处于活动状态，则委托给 `process_logs` 并返回。
-6. **特权获取** — 调用 `enable_debug_privilege(cli.no_debug_priv)` 和 `enable_inc_base_priority_privilege(cli.no_inc_base_priority)`。条件检查已移入函数内部，函数现在接受布尔参数。
-7. **定时器分辨率** — 无条件调用 `set_timer_resolution`（零值检查已移入函数内部）。
-8. **空配置检查** — 空配置消息从 `"not even a single config, existing"` 改为 `"not config, find mode not enabled, exiting"`。
+6. **特权获取** — 调用 `enable_debug_privilege(cli.no_debug_priv)` 和 `enable_inc_base_priority_privilege(cli.no_inc_base_priority)`。每个函数接受一个布尔参数，在内部处理禁用的情况。
+7. **定时器分辨率** — 无条件调用 `set_timer_resolution`（函数在内部处理零值情况）。
+8. **空配置检查** — 如果没有配置且 find 模式未启用，记录 `"not config, find mode not enabled, exiting"` 并返回。
 9. **UAC 提升** — 如果进程未以管理员身份运行且未指定 `-noUAC`，则尝试 `request_uac_elevation`。
 10. **子进程清理** — 调用 `terminate_child_processes` 清理上次运行遗留的过期子进程。
 11. **ETW 监视器** — 除非设置了 `-no_etw`，否则启动 `EtwProcessMonitor`，通过通道接收器传递进程启动和进程停止事件。
@@ -73,8 +73,6 @@ fn main() -> windows::core::Result<()>
 - `RecvTimeoutError::Timeout`：仅在 `process_level_pending` 非空时跳出。
 - 成功接收事件：进程启动事件推入 `process_level_pending`；进程停止事件从 pending、applied、fail map 和调度器中清理。循环使用智能节流跳出：如果 pending 已非空，则在半个间隔减去 16ms 后跳出；如果 pending 之前为空且有新事件到达，则在完整间隔后跳出。
 
-旧的两阶段方法（先休眠，再批量处理事件）已被此单阶段内联处理所替代，以降低延迟。
-
 当 ETW 监视器**未**活动时（例如 `-no_etw`），回退轮询通过在每次快照遍历后比较调度器的存活标志来检测已终止的进程，且循环始终使用 `thread::sleep`。
 
 ### 关闭
@@ -119,4 +117,4 @@ fn main() -> windows::core::Result<()>
 | event_trace 模块 | [event_trace.rs README](../event_trace.rs/README.md) |
 
 ---
-*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

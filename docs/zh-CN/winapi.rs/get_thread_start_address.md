@@ -58,4 +58,4 @@ pub fn get_thread_start_address(thread_handle: HANDLE) -> usize
 | MODULE_CACHE 静态变量 | [MODULE_CACHE](MODULE_CACHE.md) |
 
 ---
-*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

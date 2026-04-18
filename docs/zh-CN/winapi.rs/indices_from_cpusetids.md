@@ -58,4 +58,4 @@ pub fn indices_from_cpusetids(cpuids: &[u32]) -> List<[u32; CONSUMER_CPUS]>
 | CONSUMER_CPUS 常量 | [CONSUMER_CPUS](../collections.rs/CONSUMER_CPUS.md) |
 
 ---
-*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

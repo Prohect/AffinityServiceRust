@@ -34,7 +34,7 @@ pub fn prefetch_all_thread_cycles<'a>(
 
 1. **计算时间增量**：对于 `threads` 中的每个线程，函数计算 `KernelTime + UserTime` 并存储到 `thread_stats.cached_total_time` 中。它还会计算与上一个周期 `last_total_time` 之间的增量。结果被收集到一个固定容量的 `(tid, delta_time)` 元组列表中。
 
-2. **死线程清理**：计算时间增量后，函数从调度器的 `tid_to_thread_stats` 映射中移除不再出现在活跃线程列表中的线程。死线程持有的句柄会被显式释放以防止句柄泄漏。此清理工作先前在 `apply_prime_threads` 中执行，现在移至管道的更早阶段以确保句柄更快释放。
+2. **死线程清理**：计算时间增量后，函数从调度器的 `tid_to_thread_stats` 映射中移除不再出现在活跃线程列表中的线程。死线程持有的句柄会被显式释放以防止句柄泄漏。此清理在管道的较早阶段执行，以确保句柄及时释放。
 
 3. **按时间增量排序**：列表使用 `sort_unstable_by_key` 配合 `Reverse` 按时间增量降序排列，使 CPU 使用最活跃的线程排在最前面。
 
@@ -94,4 +94,4 @@ pub fn prefetch_all_thread_cycles<'a>(
 | PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
 
 ---
-*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

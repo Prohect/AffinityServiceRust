@@ -22,7 +22,7 @@ This function does not return a value. Success or failure is communicated throug
 
 ### Zero-resolution guard
 
-If `cli.time_resolution` is `0`, the function returns immediately without calling `NtSetTimerResolution`. This check was previously performed by the caller in `main.rs` but has been moved into this function for encapsulation.
+If `cli.time_resolution` is `0`, the function returns immediately without calling `NtSetTimerResolution`.
 
 ### Mechanism
 
@@ -84,4 +84,4 @@ The function body is wrapped in an `unsafe` block because `NtSetTimerResolution`
 | winapi module overview | [README](README.md) |
 
 ---
-*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

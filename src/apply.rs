@@ -274,7 +274,7 @@ pub fn reset_thread_ideal_processors<'a>(
                                 apply_config_result,
                                 || {
                                     format!(
-                                        "reset_ideal_processor: [SET_IDEAL][{}] {:>5}-{}-{} - SetThreadIdealProcessorEx failed",
+                                        "reset_ideal_processor: [SET_IDEAL][{}] {:>5}-{:>5}-{} - SetThreadIdealProcessorEx failed",
                                         error_from_code_win32(error_code),
                                         pid,
                                         tid,
@@ -661,7 +661,7 @@ pub fn prefetch_all_thread_cycles<'a>(
                     apply_config_result,
                     || {
                         format!(
-                            "prefetch_thread_cycles: [QUERY_THREAD_CYCLE_TIME][{}] {:>5}-{}-{}",
+                            "prefetch_thread_cycles: [QUERY_THREAD_CYCLE_TIME][{}] {:>5}-{:>5}-{}",
                             error_from_code_win32(error_code),
                             pid,
                             tid,
@@ -1148,7 +1148,7 @@ pub fn apply_ideal_processors<'a>(
                                 apply_config_result,
                                 || {
                                     format!(
-                                        "apply_ideal_processor: [GET_IDEAL][{}] {:>5}-{}-{}",
+                                        "apply_ideal_processor: [GET_IDEAL][{}] {:>5}-{:>5}-{}",
                                         error_from_code_win32(error_code),
                                         pid,
                                         tid,
@@ -1217,7 +1217,7 @@ pub fn apply_ideal_processors<'a>(
                         apply_config_result,
                         || {
                             format!(
-                                "apply_ideal_processor: [SET_IDEAL][{}] {:>5}-{}-{}",
+                                "apply_ideal_processor: [SET_IDEAL][{}] {:>5}-{:>5}-{}",
                                 error_from_code_win32(error_code),
                                 pid,
                                 tid,

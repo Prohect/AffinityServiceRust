@@ -5,18 +5,26 @@ Enables the `SeDebugPrivilege` privilege on the current process token. This priv
 ## Syntax
 
 ```rust
-pub fn enable_debug_privilege()
+pub fn enable_debug_privilege(no_debug_priv: bool)
 ```
 
 ## Parameters
 
-This function takes no parameters.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `no_debug_priv` | `bool` | If `true`, the function logs a message indicating the privilege is disabled and returns immediately without modifying the process token. This flag is typically set by the `-noDebugPriv` CLI argument. |
 
 ## Return value
 
 This function does not return a value. Success or failure is reported via [`log_message`](../logging.rs/log_message.md) (through the `log!` macro).
 
 ## Remarks
+
+### Early-return when disabled
+
+When `no_debug_priv` is `true`, the function logs `"SeDebugPrivilege disabled by -noDebugPriv flag"` and returns immediately without opening the process token or calling any Win32 privilege APIs. This conditional check was previously performed by the caller in `main.rs` but has been moved into this function for encapsulation.
+
+### Privilege enablement steps
 
 The function performs the following steps:
 
@@ -44,6 +52,7 @@ The function performs the following steps:
 
 | Condition | Log message |
 |-----------|-------------|
+| `no_debug_priv` is `true` | `SeDebugPrivilege disabled by -noDebugPriv flag` |
 | `OpenProcessToken` fails | `enable_debug_privilege: self OpenProcessToken failed` |
 | `LookupPrivilegeValueW` fails | `enable_debug_privilege: LookupPrivilegeValueW failed` |
 | `AdjustTokenPrivileges` fails | `enable_debug_privilege: AdjustTokenPrivileges failed` |
@@ -71,4 +80,4 @@ The function performs the following steps:
 | get_thread_handle | [get_thread_handle](get_thread_handle.md) |
 
 ---
-*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*
+*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

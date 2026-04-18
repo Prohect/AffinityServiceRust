@@ -1,19 +1,21 @@
-# read_list function (config.rs)
+# read_bleack_list function (config.rs)
 
-Reads a text file and returns its non-empty, non-comment lines as a vector of lowercase strings. This utility function is used to load simple line-oriented list files such as the blacklist file used in find mode.
+Reads a text file and returns its non-empty, non-comment lines as a vector of lowercase strings. This utility function is used to load simple line-oriented list files such as the blacklist file used in find mode. After collecting results, the function logs the count of loaded blacklist items.
 
 ## Syntax
 
-```AffinityServiceRust/src/config.rs#L877-886
-pub fn read_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
+```AffinityServiceRust/src/config.rs#L877-888
+pub fn read_bleack_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
-    Ok(reader
+    let result: Vec<String> = reader
         .lines()
         .map_while(Result::ok)
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty() && !s.starts_with('#'))
-        .collect())
+        .collect();
+    log!("{} blacklist items loaded", result.len());
+    Ok(result)
 }
 ```
 
@@ -58,6 +60,10 @@ The returned vector would be:
 4. Empty lines (after trimming) and lines that start with `#` (comments) are filtered out.
 5. The remaining lines are collected into a `Vec<String>`.
 
+### Logging
+
+After collecting the results, `read_bleack_list` logs the number of loaded blacklist items using the `log!` macro with the message `"{} blacklist items loaded"`. This provides immediate feedback in the service log about how many entries were parsed from the file, which is useful for verifying that the blacklist file was read correctly and for diagnosing configuration issues.
+
 ### Case normalization
 
 All entries are lowercased to enable case-insensitive comparisons with Windows process names, which are inherently case-insensitive.
@@ -76,7 +82,7 @@ The function reads the file as UTF-8 (the default for `BufReader::lines`). For f
 
 ### Usage
 
-`read_list` is primarily used by:
+`read_bleack_list` is primarily used by:
 - The main loop to load the blacklist file (`-blacklist <file>`) for find mode.
 - [`hotreload_blacklist`](hotreload_blacklist.md) to reload the blacklist when it changes on disk.
 
@@ -87,7 +93,7 @@ The function reads the file as UTF-8 (the default for `BufReader::lines`). For f
 | Module | `config.rs` |
 | Visibility | `pub` |
 | Callers | `main.rs` (blacklist loading), [`hotreload_blacklist`](hotreload_blacklist.md) |
-| Callees | `File::open`, `BufReader::new`, `BufRead::lines` |
+| Callees | `File::open`, `BufReader::new`, `BufRead::lines`, `log!` |
 | API | `std::io::Result`, `std::fs::File`, `std::io::BufReader`, `std::path::Path` |
 | Privileges | File system read access to the specified path |
 
@@ -101,4 +107,4 @@ The function reads the file as UTF-8 (the default for `BufReader::lines`). For f
 | config module overview | [README](README.md) |
 
 ---
-*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*
+*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

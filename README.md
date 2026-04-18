@@ -362,7 +362,7 @@ See [`is_new_error()`](docs/en-US/logging.rs/is_new_error.md) for error deduplic
 
 Issues and pull requests are welcome.
 
-Please update the commit SHA here when you try to update this README: **[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)**. This give the developer a way to compare source code from the newest to understand changes.
+Please update the commit SHA here when you try to update this README: **[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)**. This give the developer a way to compare source code from the newest to understand changes.
 
 ## License
 

@@ -33,7 +33,7 @@ This function does not return a value. All results are communicated through muta
    - **Metadata call fails** (file deleted, permissions changed, etc.): If `last_blacklist_mod_time` was previously `Some` (meaning the file was loaded at least once), the blacklist is cleared, `last_blacklist_mod_time` is reset to `None`, and a log message is emitted: `"Blacklist file '{path}' no longer accessible, clearing blacklist."`. If it was already `None`, no action is taken (avoids repeated log spam).
    - **Metadata call succeeds**: The file's modification time is compared against `last_blacklist_mod_time`. If the timestamps differ (or if `last_blacklist_mod_time` is `None`, indicating first load), the file is reloaded.
 
-3. On reload, the function calls [`read_list`](read_list.md) to parse the file contents into a vector of lowercase, non-empty, non-comment strings. If `read_list` returns an error, an empty vector is used as a fallback via `unwrap_or_default()`.
+3. On reload, the function calls [`read_bleack_list`](read_bleack_list.md) to parse the file contents into a vector of lowercase, non-empty, non-comment strings. If `read_bleack_list` returns an error, an empty vector is used as a fallback via `unwrap_or_default()`.
 4. The cached timestamp is updated to the file's current modification time.
 5. Log messages are emitted:
    - `"Blacklist file '{path}' changed, reloading..."` — before the reload.
@@ -68,9 +68,9 @@ This function is not thread-safe and must be called from a single thread (the ma
 | Module | `config.rs` |
 | Visibility | `pub` |
 | Callers | `main.rs` (main polling loop) |
-| Callees | [`read_list`](read_list.md), `std::fs::metadata`, `log!` macro |
+| Callees | [`read_bleack_list`](read_bleack_list.md), `std::fs::metadata`, `log!` macro |
 | Dependencies | [`CliArgs`](../cli.rs/CliArgs.md) (for `blacklist_file_name`), `std::time::SystemTime` |
-| I/O | Filesystem metadata query + optional file read via [`read_list`](read_list.md) |
+| I/O | Filesystem metadata query + optional file read via [`read_bleack_list`](read_bleack_list.md) |
 | Privileges | Filesystem read access to the blacklist file path |
 
 ## See Also
@@ -78,10 +78,10 @@ This function is not thread-safe and must be called from a single thread (the ma
 | Resource | Link |
 |----------|------|
 | hotreload_config | [hotreload_config](hotreload_config.md) |
-| read_list | [read_list](read_list.md) |
+| read_bleack_list | [read_bleack_list](read_bleack_list.md) |
 | CliArgs | [CliArgs](../cli.rs/CliArgs.md) |
 | read_config | [read_config](read_config.md) |
 | config module overview | [README](README.md) |
 
 ---
-*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*
+*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

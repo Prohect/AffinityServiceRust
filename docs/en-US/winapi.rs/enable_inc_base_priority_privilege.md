@@ -5,18 +5,26 @@ Enables the `SeIncreaseBasePriorityPrivilege` privilege on the current process t
 ## Syntax
 
 ```rust
-pub fn enable_inc_base_priority_privilege()
+pub fn enable_inc_base_priority_privilege(no_inc_base_priority: bool)
 ```
 
 ## Parameters
 
-This function takes no parameters.
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `no_inc_base_priority` | `bool` | If `true`, the function logs a message indicating the privilege is disabled and returns immediately without modifying the process token. This flag is typically set by the `-noIncBasePriority` CLI argument. |
 
 ## Return value
 
 This function does not return a value. Success or failure is reported via [`log_message`](../logging.rs/log_message.md) (through the `log!` macro).
 
 ## Remarks
+
+### Early-return when disabled
+
+When `no_inc_base_priority` is `true`, the function logs `"SeIncreaseBasePriorityPrivilege disabled by -noIncBasePriority flag"` and returns immediately without opening the process token or calling any Win32 privilege APIs. This conditional check was previously performed by the caller in `main.rs` but has been moved into this function for encapsulation.
+
+### Privilege-enablement steps
 
 The function follows the standard Windows privilege-enablement pattern:
 
@@ -50,6 +58,7 @@ Without this privilege enabled, the operating system silently caps the effective
 
 | Condition | Log Message |
 |-----------|-------------|
+| `no_inc_base_priority` is `true` | `SeIncreaseBasePriorityPrivilege disabled by -noIncBasePriority flag` |
 | `OpenProcessToken` fails | `enable_inc_base_priority_privilege: self OpenProcessToken failed` |
 | `LookupPrivilegeValueW` fails | `enable_inc_base_priority_privilege: LookupPrivilegeValueW failed` |
 | `AdjustTokenPrivileges` fails | `enable_inc_base_priority_privilege: AdjustTokenPrivileges failed` |
@@ -77,4 +86,4 @@ Without this privilege enabled, the operating system silently caps the effective
 | winapi module overview | [README](README.md) |
 
 ---
-*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*
+*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

@@ -5,18 +5,24 @@
 ## 语法
 
 ```rust
-pub fn enable_debug_privilege()
+pub fn enable_debug_privilege(no_debug_priv: bool)
 ```
 
 ## 参数
 
-此函数不接受参数。
+| 参数 | 类型 | 描述 |
+|------|------|------|
+| `no_debug_priv` | `bool` | 如果为 `true`，函数记录一条消息表示该权限已禁用，并立即返回而不修改进程令牌。此标志通常由 `-noDebugPriv` CLI 参数设置。 |
 
 ## 返回值
 
 此函数不返回值。成功或失败通过 [`log_message`](../logging.rs/log_message.md)（通过 `log!` 宏）报告。
 
 ## 备注
+
+### 禁用时提前返回
+
+当 `no_debug_priv` 为 `true` 时，函数记录 `"SeDebugPrivilege disabled by -noDebugPriv flag"` 并立即返回，不执行任何令牌操作。
 
 该函数执行以下步骤：
 
@@ -44,6 +50,7 @@ pub fn enable_debug_privilege()
 
 | 条件 | 日志消息 |
 |------|----------|
+| `no_debug_priv` 为 `true` | `SeDebugPrivilege disabled by -noDebugPriv flag` |
 | `OpenProcessToken` 失败 | `enable_debug_privilege: self OpenProcessToken failed` |
 | `LookupPrivilegeValueW` 失败 | `enable_debug_privilege: LookupPrivilegeValueW failed` |
 | `AdjustTokenPrivileges` 失败 | `enable_debug_privilege: AdjustTokenPrivileges failed` |
@@ -71,4 +78,4 @@ pub fn enable_debug_privilege()
 | get_thread_handle | [get_thread_handle](get_thread_handle.md) |
 
 ---
-*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*
+*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

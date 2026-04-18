@@ -20,6 +20,10 @@ This function does not return a value. Success or failure is communicated throug
 
 ## Remarks
 
+### Zero-resolution guard
+
+If `cli.time_resolution` is `0`, the function returns immediately without calling `NtSetTimerResolution`. This check was previously performed by the caller in `main.rs` but has been moved into this function for encapsulation.
+
 ### Mechanism
 
 The function calls `NtSetTimerResolution(desired_resolution, true, &mut current_resolution)` where:
@@ -65,7 +69,7 @@ The function body is wrapped in an `unsafe` block because `NtSetTimerResolution`
 | Requirement | Value |
 |-------------|-------|
 | **Module** | `winapi.rs` |
-| **Callers** | `main.rs` — called during startup when `cli.time_resolution` is configured. |
+| **Callers** | `main.rs` — called unconditionally during startup; the zero-resolution check is handled internally. |
 | **Callees** | `NtSetTimerResolution` (ntdll), `log!` macro → [`log_message`](../logging.rs/log_message.md) |
 | **API** | NT Native API — `NtSetTimerResolution` |
 | **Privileges** | None explicitly required, but may be limited by group policy on locked-down systems. |
@@ -80,4 +84,4 @@ The function body is wrapped in an `unsafe` block because `NtSetTimerResolution`
 | winapi module overview | [README](README.md) |
 
 ---
-*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*
+*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

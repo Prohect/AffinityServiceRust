@@ -21,22 +21,27 @@ Returns `windows::core::Result<()>`. Returns `Ok(())` on normal exit, or propaga
 ### Startup sequence
 
 1. **CLI parsing** — Calls `parse_args` to populate a `CliArgs` struct. Early-exit modes (`-help`, `-helpAll`, `-convert`, `-autogroup`) return immediately after their respective operations.
-2. **Configuration loading** — Calls `read_config` to parse the TOML/custom configuration file into a `ConfigResult` struct (containing `process_level_configs`, `thread_level_configs`, `constants`, and `errors`). If errors are present, the function prints them and exits. If `-validate` was specified, it exits after the report.
-3. **Blacklist loading** — Optionally loads a blacklist file of process names to ignore.
-4. **Process-logs mode** — If `-processLogs` is active, delegates to `process_logs` and returns.
-5. **Privilege acquisition** — Calls `enable_debug_privilege` and `enable_inc_base_priority_privilege` unless suppressed by `-noDebugPriv` or `-noIncBasePriority` CLI flags.
-6. **Timer resolution** — If a custom timer resolution was requested, applies it via `set_timer_resolution`.
-7. **UAC elevation** — If the process is not running as administrator and `-noUAC` was not specified, attempts `request_uac_elevation`.
-8. **Child process cleanup** — Calls `terminate_child_processes` to clean up stale child processes from a previous run.
-9. **ETW monitor** — Unless `-no_etw` is set, starts an `EtwProcessMonitor` that delivers process-start and process-stop events through a channel receiver.
+2. **`DUST_BIN_MODE` setup** — Sets the `DUST_BIN_MODE` environment variable before any configuration is loaded.
+3. **Configuration loading** — Calls `read_config` to parse the TOML/custom configuration file into a `ConfigResult` struct (containing `process_level_configs`, `thread_level_configs`, `constants`, and `errors`). Config errors and `-validate` mode are handled in a single check: if errors are present **or** `-validate` was specified, the function returns `Ok(())` immediately (no separate error log message).
+4. **Blacklist loading** — Optionally loads a blacklist file of process names to ignore via `read_bleack_list`. The function logs the count internally; the caller no longer logs it separately.
+5. **Process-logs mode** — If `-processLogs` is active, delegates to `process_logs` and returns.
+6. **Privilege acquisition** — Calls `enable_debug_privilege(cli.no_debug_priv)` and `enable_inc_base_priority_privilege(cli.no_inc_base_priority)`. The conditional checks for whether the flags are set have been moved inside these functions (they now take a boolean parameter).
+7. **Timer resolution** — Calls `set_timer_resolution` unconditionally; the zero-check for whether a custom resolution was actually requested has been moved inside the function.
+8. **UAC elevation** — If the process is not running as administrator and `-noUAC` was not specified, attempts `request_uac_elevation`.
+9. **Child process cleanup** — Calls `terminate_child_processes` to clean up stale child processes from a previous run.
+10. **Empty config guard** — If there are no configs and find mode is not enabled, logs `"not config, find mode not enabled, exiting"` and returns.
+11. **ETW monitor** — Unless `-no_etw` is set, starts an `EtwProcessMonitor` that delivers process-start and process-stop events through a channel receiver.
 
 ### Main polling loop
 
-The loop maintains three PID tracking lists:
+The loop maintains four tracking variables:
 
 - `process_level_applied` — PIDs that have already had process-level settings applied (deduped each iteration, retained across iterations).
 - `thread_level_applied` — PIDs that have already had thread-level settings applied in the **current** iteration (cleared at the end of each iteration so thread-level configs are re-applied every poll).
 - `process_level_pending` — PIDs queued by ETW events for just-in-time application regardless of grade.
+- `full_process_level_match: bool` — Initialized to `true`. When `true`, forces full rule evaluation for all grades (skipping the grade schedule check). Set to `false` after each processing pass, and set back to `true` by `hotreload_config` when configuration is reloaded.
+
+The ETW monitor is started **before** `prime_core_scheduler`, `current_loop`, and related variables are initialized.
 
 Each iteration:
 
@@ -44,24 +49,25 @@ Each iteration:
 2. Builds `pids_and_names` as a `List<[(u32, &str); PIDS]>` (stack-allocated small-vec of PID/name pairs borrowed from the snapshot).
 3. Resets the alive flags in `PrimeThreadScheduler`.
 4. **Process-level config pass** — Iterates over `configs.process_level_configs` by grade:
-   - First, processes any ETW-pending PIDs via `process_level_pending.retain(...)`, calling `apply_config` for each match (just-in-time, grade-independent).
-   - Then, for PIDs matching the grade schedule (`current_loop.is_multiple_of(*grade)`), calls `apply_config` for each `(pid, name)` that matches a `ProcessLevelConfig` entry—provided the PID has not already been applied (or `continuous_process_level_apply` is set). The grade loop also skips when `prime_core_scheduler.pid_to_process_stats` is empty and ETW is active (`event_trace_receiver.is_some()`), avoiding unnecessary iterations when there is no thread-level tracking work.
+   - First, processes any ETW-pending PIDs via `process_level_pending.retain(...)`, calling `apply_config` for each match. The retain predicate uses `!pids_and_names.iter().any(...)` — i.e., a pending entry is **removed** when it matches (inverted from the previous logic to fix correctness).
+   - Then, for PIDs matching the grade schedule, calls `apply_config` for each `(pid, name)` that matches a `ProcessLevelConfig` entry—provided the PID has not already been applied (or `continuous_process_level_apply` is set). The grade-skip condition checks `full_process_level_match` first: `if !full_process_level_match && (!current_loop.is_multiple_of(*grade) || ...)` — when `full_process_level_match` is `true`, the grade schedule is bypassed so every config is evaluated. The grade loop also skips when `prime_core_scheduler.pid_to_process_stats` is empty and ETW is active (`event_trace_receiver.is_some()`), avoiding unnecessary iterations when there is no thread-level tracking work.
    - `apply_config` internally also looks up and applies any matching `ThreadLevelConfig` for the same grade and name, pushing the PID into both `process_level_applied` and `thread_level_applied`. This "both-level apply" path exists to reduce `get_threads()` calls and merge log output for the same process.
+   - After the process-level pass completes, `full_process_level_match` is set to `false`.
 5. **Standalone thread-level config pass** — If the scheduler has any tracked processes (`pid_to_process_stats` is non-empty), iterates over `configs.thread_level_configs` by grade. For each matching `(pid, name)`, if the PID was **not** already handled by the both-level apply in step 4 (i.e., not in `thread_level_applied`), creates its own `OnceCell`-backed thread cache and calls `apply_thread_level` directly, followed by `log_apply_results`.
-6. Cleans up dead processes (handle closure, module-cache purge, optional top-thread report) when either ETW is not active (`event_trace_receiver.is_none()`) or the prime scheduler has active entries (`!pid_to_process_stats.is_empty()`). Previously cleanup only ran in non-ETW mode.
+6. Cleans up dead processes (handle closure, module-cache purge, optional top-thread report) when either ETW is not active (`event_trace_receiver.is_none()`) or the prime scheduler has active entries (`!pid_to_process_stats.is_empty()`).
 7. Runs `process_find` if find mode is active.
 8. In `dry_run` mode, sets `should_continue = false` to exit after a single iteration (no longer logs a total change count).
 9. Calls `process_level_pending.clear()` after the snapshot block (outside it), rather than inside. This prevents short-lived processes from accumulating in pending when they are found during retain but exit quickly. Then drops `pids_and_names` and `processes` explicitly before sleep.
 10. Flushes loggers.
-11. **Sleep** — Either blocks on the ETW receiver channel (power-efficient wait) when no thread-level work is pending, or falls back to `thread::sleep(interval_ms)`.
-12. Calls `hotreload_config` and `hotreload_blacklist` to pick up file changes without restarting.
+11. **Sleep** — Either blocks on the ETW receiver channel (power-efficient wait) when no thread-level work is pending and `!cli.continuous_process_level_apply`, or falls back to `thread::sleep(interval_ms)`.
+12. Calls `hotreload_config` (which now takes `&mut full_process_level_match` as an additional parameter, setting it to `true` on reload) and `hotreload_blacklist` to pick up file changes without restarting.
 13. Calls `process_level_applied.dedup()` and `process_level_pending.dedup()` for compaction; clears `thread_level_applied` so thread-level rules are re-evaluated next iteration.
 
 ### ETW-driven sleep
 
-When the ETW monitor is active and the prime-thread scheduler has no tracked processes (`pid_to_process_stats` is empty), the loop enters a power-efficient wait instead of a fixed `thread::sleep`. Events are now processed **inline** during the sleep phase via `recv_timeout` on the ETW channel:
+When the ETW monitor is active, the prime-thread scheduler has no tracked processes (`pid_to_process_stats` is empty), **and** `!cli.continuous_process_level_apply`, the loop enters a power-efficient wait instead of a fixed `thread::sleep`. Events are now processed **inline** during the sleep phase via `recv_timeout` on the ETW channel:
 
-- On `RecvTimeoutError::Disconnected`: sets `should_continue = false` and breaks out of the sleep loop.
+- On `RecvTimeoutError::Disconnected`: sets `should_continue = false` and breaks out of the sleep loop. Comment: "probably another AffinityServiceRust instance is running and reusing the same event trace pipe".
 - On `RecvTimeoutError::Timeout`: breaks only if `process_level_pending` is non-empty.
 - On successful event receipt: process-start events push to `process_level_pending`; process-stop events clean up from pending, applied, fail map, and scheduler. The loop breaks with smart throttling — if pending was already non-empty, it breaks after half the interval minus 16 ms; if pending was previously empty and a new event arrives, it breaks after the full interval.
 
@@ -91,7 +97,7 @@ After the loop, the ETW monitor is stopped if it was started.
 |-------------|-------|
 | Module | `main.rs` |
 | Callers | Operating system (program entry point) |
-| Callees | `parse_args`, `read_config`, `read_list`, `process_logs`, `process_find`, `apply_config`, `apply_thread_level`, `log_apply_results`, `enable_debug_privilege`, `enable_inc_base_priority_privilege`, `set_timer_resolution`, `is_running_as_admin`, `request_uac_elevation`, `terminate_child_processes`, `EtwProcessMonitor::start`, `ProcessSnapshot::take`, `hotreload_config`, `hotreload_blacklist`, `PrimeThreadScheduler::new` |
+| Callees | `parse_args`, `read_config`, `read_bleack_list`, `process_logs`, `process_find`, `apply_config`, `apply_thread_level`, `log_apply_results`, `enable_debug_privilege`, `enable_inc_base_priority_privilege`, `set_timer_resolution`, `is_running_as_admin`, `request_uac_elevation`, `terminate_child_processes`, `EtwProcessMonitor::start`, `ProcessSnapshot::take`, `hotreload_config`, `hotreload_blacklist`, `PrimeThreadScheduler::new` |
 | Win32 API | `CreateToolhelp32Snapshot`, `Process32FirstW`, `Process32NextW`, `GetProcessAffinityMask`, `CloseHandle`, `GetConsoleOutputCP` |
 | Privileges | `SeDebugPrivilege`, `SeIncreaseBasePriorityPrivilege` (optional, enabled by default) |
 
@@ -111,4 +117,4 @@ After the loop, the ETW monitor is stopped if it was started.
 | event_trace module | [event_trace.rs README](../event_trace.rs/README.md) |
 
 ---
-*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*
+*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

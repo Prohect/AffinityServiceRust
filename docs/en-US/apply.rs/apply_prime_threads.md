@@ -95,4 +95,4 @@ If both `do_prime` and `has_tracking` are `false`, the function returns immediat
 | ProcessEntry | [`process.rs/ProcessEntry`](../process.rs/ProcessEntry.md) |
 
 ---
-*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*
+*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

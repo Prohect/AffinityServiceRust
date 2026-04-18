@@ -28,6 +28,10 @@ pub fn set_timer_resolution(cli: &CliArgs)
 - 第二个参数（`set_resolution: true`）请求**设置**分辨率而非查询。
 - `current_resolution` 接收更改**之前**生效的定时器分辨率（"先前"分辨率）。
 
+### 零分辨率保护
+
+如果 `cli.time_resolution` 为 `0`，函数立即返回而不调用 `NtSetTimerResolution`。此检查之前由 `main.rs` 中的调用方执行，现已移入此函数以实现封装。
+
 ### NTSTATUS 处理
 
 | 条件 | 行为 |
@@ -65,7 +69,7 @@ pub fn set_timer_resolution(cli: &CliArgs)
 | 要求 | 值 |
 |------|-----|
 | **模块** | `winapi.rs` |
-| **调用者** | `main.rs` — 在配置了 `cli.time_resolution` 时于启动期间调用。 |
+| **调用者** | `main.rs` — 现在在启动期间无条件调用；零分辨率检查在内部处理。 |
 | **被调用者** | `NtSetTimerResolution` (ntdll)、`log!` 宏 → [`log_message`](../logging.rs/log_message.md) |
 | **API** | NT 原生 API — `NtSetTimerResolution` |
 | **权限** | 无明确要求，但在安全策略严格的系统上可能受组策略限制。 |
@@ -80,4 +84,4 @@ pub fn set_timer_resolution(cli: &CliArgs)
 | winapi 模块概述 | [README](README.md) |
 
 ---
-*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*
+*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

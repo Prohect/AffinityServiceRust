@@ -18,7 +18,7 @@
 | [collect_group_block](collect_group_block.md) | 从多行 `{ … }` 分组块中收集进程名称，直到遇到右花括号。 |
 | [parse_and_insert_rules](parse_and_insert_rules.md) | 从配置行中解析规则字段，并为所有分组成员插入进程级和线程级配置条目。 |
 | [read_config](read_config.md) | 读取并解析整个配置文件，返回完整填充的 `ConfigResult`。 |
-| [read_list](read_list.md) | 读取文本文件，将非空、非注释行作为小写字符串列表返回。 |
+| [read_bleack_list](read_bleack_list.md) | 读取文本文件，将非空、非注释行作为小写字符串列表返回，并记录加载的条目数。 |
 | [read_utf16le_file](read_utf16le_file.md) | 读取 UTF-16 LE 编码的文件，并将其内容作为 Rust `String` 返回。 |
 | [parse_mask](parse_mask.md) | 便捷函数，解析 CPU 规格字符串并返回对应的 `usize` 位掩码。 |
 | [convert](convert.md) | 将 Process Lasso 配置文件转换为 AffinityServiceRust 的原生格式。 |
@@ -47,4 +47,4 @@
 | apply 模块 | [apply.rs 概述](../apply.rs/README.md) |
 
 ---
-*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*
+*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

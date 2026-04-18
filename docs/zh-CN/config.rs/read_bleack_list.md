@@ -1,19 +1,21 @@
-# read_list 函数 (config.rs)
+# read_bleack_list 函数 (config.rs)
 
-读取文本文件，将其中非空、非注释的行作为小写字符串向量返回。此实用函数用于加载简单的面向行的列表文件，例如查找模式中使用的黑名单文件。
+读取文本文件，将其中非空、非注释的行作为小写字符串向量返回，并记录加载的条目数量。此实用函数用于加载简单的面向行的列表文件，例如查找模式中使用的黑名单文件。
 
 ## 语法
 
-```AffinityServiceRust/src/config.rs#L877-886
-pub fn read_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
+```AffinityServiceRust/src/config.rs#L877-888
+pub fn read_bleack_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
-    Ok(reader
+    let result: Vec<String> = reader
         .lines()
         .map_while(Result::ok)
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty() && !s.starts_with('#'))
-        .collect())
+        .collect();
+    log!("{} blacklist items loaded", result.len());
+    Ok(result)
 }
 ```
 
@@ -58,6 +60,10 @@ System
 4. 修剪后为空的行以及以 `#` 开头的行（注释）被过滤掉。
 5. 剩余的行被收集到 `Vec<String>` 中。
 
+### 日志记录
+
+在返回结果之前，函数通过 `log!` 宏输出加载的黑名单条目数量（例如 `"3 blacklist items loaded"`）。这有助于在运行时确认黑名单文件是否被正确读取以及实际加载了多少条目。
+
 ### 大小写规范化
 
 所有条目都被转为小写，以便与 Windows 进程名称进行不区分大小写的比较，因为 Windows 进程名称本身就是不区分大小写的。
@@ -76,7 +82,7 @@ System
 
 ### 用途
 
-`read_list` 主要用于：
+`read_bleack_list` 主要用于：
 - 主循环加载黑名单文件（`-blacklist <file>`），用于查找模式。
 - [`hotreload_blacklist`](hotreload_blacklist.md) 在黑名单文件在磁盘上发生变更时重新加载。
 
@@ -87,7 +93,7 @@ System
 | 模块 | `config.rs` |
 | 可见性 | `pub` |
 | 调用方 | `main.rs`（黑名单加载）、[`hotreload_blacklist`](hotreload_blacklist.md) |
-| 被调用方 | `File::open`、`BufReader::new`、`BufRead::lines` |
+| 被调用方 | `File::open`、`BufReader::new`、`BufRead::lines`、`log!` |
 | API | `std::io::Result`、`std::fs::File`、`std::io::BufReader`、`std::path::Path` |
 | 权限 | 对指定路径的文件系统读取权限 |
 
@@ -101,4 +107,4 @@ System
 | config 模块概述 | [README](README.md) |
 
 ---
-*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*
+*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

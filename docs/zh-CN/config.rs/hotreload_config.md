@@ -4,13 +4,14 @@
 
 ## 语法
 
-```AffinityServiceRust/src/config.rs#L1303-1334
+```AffinityServiceRust/src/config.rs#L1305-1338
 pub fn hotreload_config(
     cli: &CliArgs,
     configs: &mut ConfigResult,
     last_config_mod_time: &mut Option<std::time::SystemTime>,
     prime_core_scheduler: &mut PrimeThreadScheduler,
     process_level_applied: &mut List<[u32; PIDS]>,
+    full_process_level_match: &mut bool,
 )
 ```
 
@@ -23,10 +24,11 @@ pub fn hotreload_config(
 | `last_config_mod_time` | `&mut Option<std::time::SystemTime>` | 上次成功检查时配置文件的缓存修改时间戳的可变引用。每当检测到变更时（无论新配置是否有效），都会更新为当前修改时间。首次调用时应为 `None`，以强制执行初始加载。 |
 | `prime_core_scheduler` | `&mut PrimeThreadScheduler` | 主线程调度器的可变引用。当配置成功重载时，调度器的 `constants` 字段会更新为重载配置中新的 [`ConfigConstants`](ConfigConstants.md) 值。 |
 | `process_level_applied` | `&mut List<[u32; PIDS]>` | 已应用进程级设置的进程 ID 列表的可变引用。成功重载后会被清空，以便在下次轮询迭代中使用新规则重新评估所有进程。 |
+| `full_process_level_match` | `&mut bool` | 完整匹配标志的可变引用。在配置成功重载后设置为 `true`，以便下一次轮询迭代对所有进程执行完整规则匹配，不受 grade 调度限制，确保新规则立即应用于每个运行中的进程。 |
 
 ## 返回值
 
-此函数不返回值。所有副作用通过对 `configs`、`last_config_mod_time`、`prime_core_scheduler` 和 `process_level_applied` 参数的修改来传达。
+此函数不返回值。所有副作用通过对 `configs`、`last_config_mod_time`、`prime_core_scheduler`、`process_level_applied` 和 `full_process_level_match` 参数的修改来传达。
 
 ## 备注
 
@@ -49,10 +51,15 @@ pub fn hotreload_config(
    - 更新调度器常量：`prime_core_scheduler.constants = configs.constants.clone()`。
    - 记录总规则数。
    - 清空 `process_level_applied`，以便在下一次循环中重新评估所有进程。
+   - 将 `*full_process_level_match` 设置为 `true`，以确保下一次轮询迭代对所有进程执行完整规则匹配。
 4. **如果新配置有错误**：
    - 保留先前的 `*configs` 不变。
    - 发出日志消息：`"Configuration file '{name}' has errors, keeping previous configuration."`。
    - 每个错误以 `"  - "` 前缀单独记录。
+
+### 完整匹配标志
+
+成功重载后，`*full_process_level_match` 被设置为 `true`。此标志告知主轮询循环在下一次迭代中绕过 grade 调度限制，对所有运行中的进程执行完整的规则匹配。这确保了新加载的配置规则能够立即应用于每个进程，而不是等待其正常的 grade 调度周期。该标志在完成一次完整匹配后由主循环重置为 `false`。
 
 ### 原子替换
 
@@ -109,4 +116,4 @@ pub fn hotreload_config(
 | config 模块概述 | [README](README.md) |
 
 ---
-*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*
+*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

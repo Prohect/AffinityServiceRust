@@ -18,7 +18,7 @@ The `config` module is the configuration engine for AffinityServiceRust. It is r
 | [collect_group_block](collect_group_block.md) | Collects process names from a multi-line `{ … }` group block until the closing brace. |
 | [parse_and_insert_rules](parse_and_insert_rules.md) | Parses rule fields from a config line and inserts process-level and thread-level config entries for all group members. |
 | [read_config](read_config.md) | Reads and parses an entire configuration file, returning a fully populated `ConfigResult`. |
-| [read_list](read_list.md) | Reads a text file and returns non-empty, non-comment lines as a list of lowercase strings. |
+| [read_bleack_list](read_bleack_list.md) | Reads a text file and returns non-empty, non-comment lines as a list of lowercase strings, and logs the count of loaded items. |
 | [read_utf16le_file](read_utf16le_file.md) | Reads a file encoded as UTF-16 LE and returns its content as a Rust `String`. |
 | [parse_mask](parse_mask.md) | Convenience function that parses a CPU spec string and returns the corresponding `usize` bitmask. |
 | [convert](convert.md) | Converts a Process Lasso configuration file into AffinityServiceRust's native format. |
@@ -47,4 +47,4 @@ The `config` module is the configuration engine for AffinityServiceRust. It is r
 | apply module | [apply.rs overview](../apply.rs/README.md) |
 
 ---
-*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*
+*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

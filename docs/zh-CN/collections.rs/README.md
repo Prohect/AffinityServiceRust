@@ -29,4 +29,4 @@
 | [logging.rs 模块](../logging.rs/README.md) | 使用 `HashMap` 和 `HashSet` 进行失败跟踪和去重。 |
 
 ---
-*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*
+*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

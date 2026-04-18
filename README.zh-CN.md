@@ -371,7 +371,7 @@ AffinityServiceRust 持续监控运行中的进程，并应用配置的规则，
 
 欢迎提交问题和拉取请求。
 
-请尝试更新此 README 时更新提交 SHA：**[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)**。这让开发者能够对比最新源码以理解变更。
+请尝试更新此 README 时更新提交 SHA：**[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)**。这让开发者能够对比最新源码以理解变更。
 
 ## 许可证
 

@@ -33,7 +33,7 @@ pub fn hotreload_blacklist(
    - **元数据调用失败**（文件被删除、权限变更等）：如果 `last_blacklist_mod_time` 之前为 `Some`（表示文件至少被加载过一次），则清空黑名单，将 `last_blacklist_mod_time` 重置为 `None`，并发出日志消息：`"Blacklist file '{path}' no longer accessible, clearing blacklist."`。如果它已经是 `None`，则不执行任何操作（避免重复的日志输出）。
    - **元数据调用成功**：将文件的修改时间与 `last_blacklist_mod_time` 进行比较。如果时间戳不同（或 `last_blacklist_mod_time` 为 `None`，表示首次加载），则重新加载文件。
 
-3. 重新加载时，函数调用 [`read_list`](read_list.md) 将文件内容解析为小写、非空、非注释字符串的向量。如果 `read_list` 返回错误，则通过 `unwrap_or_default()` 使用空向量作为后备。
+3. 重新加载时，函数调用 [`read_bleack_list`](read_bleack_list.md) 将文件内容解析为小写、非空、非注释字符串的向量。如果 `read_bleack_list` 返回错误，则通过 `unwrap_or_default()` 使用空向量作为后备。
 4. 缓存的时间戳更新为文件的当前修改时间。
 5. 发出日志消息：
    - `"Blacklist file '{path}' changed, reloading..."` — 重新加载之前。
@@ -68,9 +68,9 @@ pub fn hotreload_blacklist(
 | 模块 | `config.rs` |
 | 可见性 | `pub` |
 | 调用方 | `main.rs`（主轮询循环） |
-| 被调用方 | [`read_list`](read_list.md)、`std::fs::metadata`、`log!` 宏 |
+| 被调用方 | [`read_bleack_list`](read_bleack_list.md)、`std::fs::metadata`、`log!` 宏 |
 | 依赖 | [`CliArgs`](../cli.rs/CliArgs.md)（用于 `blacklist_file_name`）、`std::time::SystemTime` |
-| I/O | 文件系统元数据查询 + 通过 [`read_list`](read_list.md) 的可选文件读取 |
+| I/O | 文件系统元数据查询 + 通过 [`read_bleack_list`](read_bleack_list.md) 的可选文件读取 |
 | 权限 | 对黑名单文件路径的文件系统读取权限 |
 
 ## 另请参阅
@@ -78,10 +78,10 @@ pub fn hotreload_blacklist(
 | 资源 | 链接 |
 |------|------|
 | hotreload_config | [hotreload_config](hotreload_config.md) |
-| read_list | [read_list](read_list.md) |
+| read_bleack_list | [read_bleack_list](read_bleack_list.md) |
 | CliArgs | [CliArgs](../cli.rs/CliArgs.md) |
 | read_config | [read_config](read_config.md) |
 | config 模块概述 | [README](README.md) |
 
 ---
-*提交：[37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*
+*提交：[29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

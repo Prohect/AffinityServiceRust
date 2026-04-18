@@ -1,16 +1,17 @@
 # hotreload_config function (config.rs)
 
-Watches the configuration file for modifications by comparing its filesystem modification timestamp against a cached value, and hot-reloads the configuration when a change is detected. If the newly parsed configuration is valid, it atomically replaces the active configuration, updates the scheduler constants, and resets the per-PID application tracking list. If the new configuration contains errors, the previous configuration is retained and the errors are logged.
+Watches the configuration file for modifications by comparing its filesystem modification timestamp against a cached value, and hot-reloads the configuration when a change is detected. If the newly parsed configuration is valid, it atomically replaces the active configuration, updates the scheduler constants, resets the per-PID application tracking list, and sets the full-match flag to force immediate re-evaluation of all processes. If the new configuration contains errors, the previous configuration is retained and the errors are logged.
 
 ## Syntax
 
-```AffinityServiceRust/src/config.rs#L1303-1334
+```AffinityServiceRust/src/config.rs#L1305-1338
 pub fn hotreload_config(
     cli: &CliArgs,
     configs: &mut ConfigResult,
     last_config_mod_time: &mut Option<std::time::SystemTime>,
     prime_core_scheduler: &mut PrimeThreadScheduler,
     process_level_applied: &mut List<[u32; PIDS]>,
+    full_process_level_match: &mut bool,
 )
 ```
 
@@ -23,10 +24,11 @@ pub fn hotreload_config(
 | `last_config_mod_time` | `&mut Option<std::time::SystemTime>` | A mutable reference to the cached modification timestamp of the config file from the last successful check. Updated to the current modification time whenever a change is detected (regardless of whether the new config is valid). On the first call, this should be `None` to force an initial load. |
 | `prime_core_scheduler` | `&mut PrimeThreadScheduler` | A mutable reference to the prime-thread scheduler. When the configuration is successfully reloaded, the scheduler's `constants` field is updated to the new [`ConfigConstants`](ConfigConstants.md) values from the reloaded config. |
 | `process_level_applied` | `&mut List<[u32; PIDS]>` | A mutable reference to the list of process IDs that have already had process-level settings applied. Cleared on successful reload so that all processes are re-evaluated with the new rules on the next polling iteration. |
+| `full_process_level_match` | `&mut bool` | A mutable reference to the full-match flag. Set to `true` on successful configuration reload so the next polling iteration evaluates all processes against all rules regardless of grade scheduling, ensuring new rules are immediately applied to every running process. |
 
 ## Return value
 
-This function does not return a value. All side effects are communicated through mutations to the `configs`, `last_config_mod_time`, `prime_core_scheduler`, and `process_level_applied` parameters.
+This function does not return a value. All side effects are communicated through mutations to the `configs`, `last_config_mod_time`, `prime_core_scheduler`, `process_level_applied`, and `full_process_level_match` parameters.
 
 ## Remarks
 
@@ -49,6 +51,7 @@ When a change is detected:
    - The scheduler's constants are updated: `prime_core_scheduler.constants = configs.constants.clone()`.
    - The total rule count is logged.
    - `process_level_applied` is cleared so all processes are re-evaluated on the next loop.
+   - `*full_process_level_match` is set to `true` to force a full rule match on the next iteration.
 4. **If the new config has errors**:
    - The previous `*configs` is retained unchanged.
    - A log message is emitted: `"Configuration file '{name}' has errors, keeping previous configuration."`.
@@ -61,6 +64,10 @@ The replacement of `*configs` uses a simple assignment (`*configs = new_config_r
 ### Clearing process_level_applied
 
 After a successful reload, `process_level_applied.clear()` is called. This list tracks which PIDs have already had process-level settings (priority, affinity, CPU set, I/O priority, memory priority) applied. Clearing it ensures that the new rules are applied to all running processes on the next polling iteration, not just newly spawned ones.
+
+### Forcing full process-level match
+
+In addition to clearing `process_level_applied`, the function sets `*full_process_level_match = true`. Under normal operation the main loop may use grade scheduling to evaluate only a subset of processes per iteration for performance. Setting this flag overrides that optimization for the next iteration, guaranteeing that every running process is matched against the newly loaded rules. This ensures that rule additions, removals, or modifications take effect immediately across all processes rather than waiting for the gradual scheduling cycle to reach them.
 
 ### Scheduler constant propagation
 
@@ -109,4 +116,4 @@ The function calls `std::fs::metadata` on every invocation (typically once per p
 | config module overview | [README](README.md) |
 
 ---
-*Commit: [37fbbc5](https://github.com/Prohect/AffinityServiceRust/tree/37fbbc5135cec7c7ace9ffdacdcfc27b5865c30f)*
+*Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*

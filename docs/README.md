@@ -4,6 +4,7 @@ the docs of this project follows a MSDN style doc schema.
 that is: 
 each source file is a dir(/<$locale>/<$source_file_name>/, eg. "/en-US/config.rs/") with a README.md which contains an overview that follows [`schema`](#schema-for-overview-for-a-souce-file).
 each top level item of a souce file is a markdown in that dir(eg. "\en-US\config.rs\read_config.md") that follows [`schema`](#schema-for-top-level-item-for-a-souce-file).
+naming follows clippy. Funcs of structs or enums have a doc file name like CamelCaseName_snake_name.md
 
 ## Schema for Overview for a Souce File
 | Section | Description |
@@ -44,13 +45,15 @@ each top level item of a souce file is a markdown in that dir(eg. "\en-US\config
 
 ## CONTRIBUTING
 
+Know enough about this project before documenting.
 The docs should only contain the information of the project, no history needs to be documented.
 Update en-US first, do not considering update for all locales at same time.
-Translate for other locales after changes to en-US finishing, know about basic ideas about this project before translating.
+Cross check terms between docs to make sure they use same terms after batch documenting.
+Translate to other locales after documenting to en-US done. 
 
 ## Documentation on Commit SHA
 
 Always leave a git commit SHA as a clickable link at the bottom of every doc file.
 
 ## Current commit
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

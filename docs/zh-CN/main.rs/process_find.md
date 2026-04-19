@@ -1,6 +1,6 @@
 # process_find 函数 (main.rs)
 
-使用 Windows Toolhelp32 快照 API 枚举所有正在运行的进程，并记录任何尚未被已加载配置覆盖、未出现在黑名单中、且亲和性掩码未被显式设置的进程。此函数实现了 `-find` CLI 模式，帮助管理员发现可能需要进行亲和性或优先级调优的进程。
+通过 Win32 toolhelp 快照枚举所有正在运行的进程，并记录任何具有默认（完整）CPU 亲和性掩码且未被已加载配置或黑名单覆盖的进程。这是 `-find` 模式的每次迭代伴随函数，在每次主循环迭代结束时调用。
 
 ## 语法
 
@@ -14,49 +14,62 @@ fn process_find(
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `cli` | `&CliArgs` | 已解析的命令行参数。函数会检查 `cli.find_mode`；如果为 `false`，函数会立即返回而不枚举进程。 |
-| `configs` | `&ConfigResult` | 完整解析的配置结果，包含按等级和进程名称索引的 `process_level_configs` 和 `thread_level_configs`。用于判断已发现的进程是否已被管理。 |
-| `blacklist` | `&[String]` | 小写进程名称字符串的切片，在发现过程中应被静默忽略。 |
+`cli: &CliArgs`
+
+已解析的[命令行参数](../cli.rs/CliArgs.md)。仅检查 `find_mode` 标志——如果为 `false`，函数立即返回 `Ok(())` 且不执行任何工作。
+
+`configs: &ConfigResult`
+
+已加载的 [ConfigResult](../config.rs/ConfigResult.md)。会搜索所有等级的 `process_level_configs` 和 `thread_level_configs`，以确定进程名称是否已被管理。
+
+`blacklist: &[String]`
+
+在发现过程中应被静默忽略的小写进程名称列表。此列表中的进程即使具有默认亲和性也不会被记录。
 
 ## 返回值
 
-成功时返回 `Ok(())`。如果调用 `CreateToolhelp32Snapshot` 失败，则返回 `Err(windows::core::Error)`。
+`Result<(), windows::core::Error>` — 成功时返回 `Ok(())`。仅在 `CreateToolhelp32Snapshot` 失败时返回错误。
 
 ## 备注
 
-- 该函数仅在 `cli.find_mode` 为 `true` 时执行其主体逻辑，否则作为空操作返回 `Ok(())`。
-- 函数内部调用 `CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)` 获取所有正在运行的进程的快照，然后通过 `Process32FirstW` / `Process32NextW` 进行迭代。
-- 每个进程名称通过 `String::from_utf16_lossy` 转换为小写，并在 `szExeFile` 缓冲区的第一个空字符处截断。
-- 仅当满足以下**所有**条件时，进程才会被记录（通过 `log_process_find`）：
-  1. 进程名称**不在**内部查找失败集合中（该集合包含先前发现失败的名称，抑制这些名称以减少日志噪音）。
-  2. 进程名称**未出现**在任何等级的 `configs.process_level_configs` 或 `configs.thread_level_configs` 中。
-  3. 进程名称**未包含**在 `blacklist` 中。
-  4. `is_affinity_unset(pid, name)` 返回 `true`，表示该进程仍然使用系统默认亲和性掩码，且未被其他工具修改。
-- 迭代完成后，快照句柄通过 `CloseHandle` 关闭。
-- 此函数在每次主循环迭代中调用一次，不受等级限制，因此发现输出可能在每个轮询间隔出现。
-- 此函数中的所有 Win32 调用均在 `unsafe` 块内进行。
+当 `cli.find_mode` 为 `true` 时，函数执行以下步骤：
+
+1. **快照** — 调用 `CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)` 捕获所有进程的时间点列表。
+2. **迭代** — 使用 `Process32FirstW` / `Process32NextW` 遍历每个 `PROCESSENTRY32W` 条目。
+3. **规范化** — 将进程名称从以空字符结尾的 UTF-16 `szExeFile` 字段转换为小写 `String`。
+4. **过滤 — 已管理** — 检查进程名称是否存在于任何等级的 `configs.process_level_configs` 或 `configs.thread_level_configs` 中。如果找到，则跳过该进程。
+5. **过滤 — 已列入黑名单** — 检查进程名称是否出现在 `blacklist` 向量中。如果找到，则跳过该进程。
+6. **过滤 — 已记录** — 检查全局 `fail_find_set` 以避免在同一会话中重复记录相同的进程名称。
+7. **过滤 — 亲和性检查** — 调用 [`is_affinity_unset`](../winapi.rs/is_affinity_unset.md) 以确定进程是否具有完整（默认）亲和性掩码。只有具有未修改亲和性的进程才被视为"未管理"并值得记录。
+8. **记录** — 调用 [`log_process_find`](../logging.rs/log_process_find.md) 将发现的进程名称写入 `.find.log` 文件。
+9. **清理** — 通过 `CloseHandle` 关闭快照句柄。
+
+### 去重
+
+全局 `fail_find_set` 防止相同的进程名称在每次轮询迭代中被重复记录。进程名称在首次记录时被添加到该集合中，直到服务重启才会被移除。这使得 `.find.log` 文件保持简洁，便于后续通过 [`process_logs`](process_logs.md) 进行分析。
+
+### 亲和性启发式
+
+该假设是：任何仍以系统默认完整亲和性掩码运行的进程都未被任何外部工具或 AffinityServiceRust 本身管理。这是一个简单的启发式方法；有意使用完整亲和性的进程也会被标记。
 
 ## 要求
 
-| 要求 | 值 |
-|------|------|
-| 模块 | `main.rs` |
-| 调用者 | [main](main.md)（每次轮询迭代调用一次） |
-| 被调用者 | `CreateToolhelp32Snapshot`、`Process32FirstW`、`Process32NextW`、`CloseHandle`、[is_affinity_unset](../winapi.rs/is_affinity_unset.md)、[log_process_find](../logging.rs/log_process_find.md) |
-| 权限 | 建议拥有 `SeDebugPrivilege` 以获得完整的进程枚举可见性 |
-| 平台 | 仅限 Windows（`windows` crate，`Win32::System::Diagnostics::ToolHelp`） |
+| | |
+|---|---|
+| **模块** | `src/main.rs` |
+| **调用方** | [main](main.md)（每次循环迭代结束时） |
+| **被调用方** | `CreateToolhelp32Snapshot`、`Process32FirstW`、`Process32NextW`、`CloseHandle`、[`is_affinity_unset`](../winapi.rs/is_affinity_unset.md)、[`log_process_find`](../logging.rs/log_process_find.md) |
+| **Win32 API** | [`CreateToolhelp32Snapshot`](https://learn.microsoft.com/zh-cn/windows/win32/api/tlhelp32/nf-tlhelp32-createtoolhelp32snapshot)、[`Process32FirstW`](https://learn.microsoft.com/zh-cn/windows/win32/api/tlhelp32/nf-tlhelp32-process32firstw)、[`Process32NextW`](https://learn.microsoft.com/zh-cn/windows/win32/api/tlhelp32/nf-tlhelp32-process32nextw) |
+| **权限** | 除启动时已获取的权限外无需额外权限（调试权限可提供更广泛的进程可见性） |
 
 ## 另请参阅
 
 | 主题 | 链接 |
-|------|------|
-| main 入口点 | [main](main.md) |
-| process_logs（配套发现模式） | [process_logs](process_logs.md) |
-| apply_config | [apply_config](apply_config.md) |
-| scheduler 模块 | [scheduler.rs README](../scheduler.rs/README.md) |
-| priority 模块 | [priority.rs README](../priority.rs/README.md) |
+|-------|------|
+| 会话后日志分析 | [process_logs](process_logs.md) |
+| 亲和性检查辅助函数 | [is_affinity_unset](../winapi.rs/is_affinity_unset.md) |
+| 发现模式日志记录器 | [log_process_find](../logging.rs/log_process_find.md) |
+| 命令行标志 | [CliArgs](../cli.rs/CliArgs.md) |
+| 模块概述 | [main.rs](README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*为提交 [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf) 记录*

@@ -1,85 +1,88 @@
 # is_new_error 函数 (logging.rs)
 
-跟踪操作失败以避免重复的错误消息刷屏日志。仅在给定的 PID/TID/进程名称/操作/错误码组合首次出现时返回 `true`，允许调用者仅对每个唯一失败进行一次条件日志记录或处理。
+确定对于给定进程是否首次看到特定操作失败，使调用方能够仅记录新颖错误并抑制重复的相同失败。
 
 ## 语法
 
 ```rust
-pub fn is_new_error(pid: u32, tid: u32, process_name: &str, operation: Operation, error_code: u32) -> bool
+pub fn is_new_error(
+    pid: u32,
+    tid: u32,
+    process_name: &str,
+    operation: Operation,
+    error_code: u32,
+) -> bool
 ```
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `pid` | `u32` | 与失败关联的进程标识符。用作失败跟踪映射中的顶层键。 |
-| `tid` | `u32` | 与失败关联的线程标识符。与 `process_name`、`operation` 和 `error_code` 组合形成唯一的失败键。对于非线程特定的进程级操作，使用 `0`。 |
-| `process_name` | `&str` | 与失败关联的进程名称。既用作失败键的一部分，也用于过时条目检测（参见备注）。 |
-| `operation` | [`Operation`](Operation.md) | 失败的 Windows API 操作。[`Operation`](Operation.md) 枚举的每个变体代表一个不同的 API 调用或句柄获取步骤。 |
-| `error_code` | `u32` | 失败操作返回的 Win32 错误码或自定义标识符。当没有上下文错误码时使用 `0`，或者如果需要区分共享相同操作但有不同原因的失败，使用自定义值。 |
+`pid: u32`
+
+经历失败的进程标识符。用作全局 `PID_MAP_FAIL_ENTRY_SET` 映射中的顶层键。
+
+`tid: u32`
+
+与失败关联的线程标识符。对于不涉及特定线程的进程级操作，调用方通常传递 `0`。
+
+`process_name: &str`
+
+进程的可执行文件名（例如 `"explorer.exe"`）。既用作去重键的一部分，也用于检测 PID 重用 — 如果 PID 的现有条目有不同的进程名称，则在插入新条目之前清除该 PID 的整个条目集。
+
+`operation: Operation`
+
+[Operation](Operation.md) 变体，标识哪个 Windows API 调用失败。
+
+`error_code: u32`
+
+失败 API 调用返回的 Win32 或 NTSTATUS 错误代码。如果上下文中没有可用错误代码，调用方传递 `0` 或自定义区分符以区分不同的失败模式。
 
 ## 返回值
 
-如果这是该特定 `(pid, tid, process_name, operation, error_code)` 组合**首次**被记录，则返回 `true`。如果相同的组合已经存在于失败跟踪映射中，则返回 `false`。
+`bool` — 如果这是第一次记录确切的 `(pid, tid, process_name, operation, error_code)` 组合，则返回 `true`，意味着调用方应该记录它。如果失败已经被跟踪，则返回 `false`，意味着调用方应该抑制日志。
 
 ## 备注
 
-### 数据结构
+### 去重策略
 
-该函数使用全局 [`PID_MAP_FAIL_ENTRY_SET`](statics.md#pid_map_fail_entry_set) 静态变量，其类型为：
+该函数通过全局静态 `PID_MAP_FAIL_ENTRY_SET` 维护两级映射：
 
-```text
-Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>
+```
+HashMap<u32, HashMap<ApplyFailEntry, bool>>
+  ^pid         ^(tid, process_name, operation, error_code) -> 存活标志
 ```
 
-- **外层键**是 `pid`。
-- **内层键**是一个 [`ApplyFailEntry`](ApplyFailEntry.md) 结构体，包含 `(tid, process_name, operation, error_code)`。
-- **内层值**是一个 `bool` "存活"标志，由 [`purge_fail_map`](purge_fail_map.md) 用于检测和移除过时条目。
-
-### 算法
-
-1. 从提供的参数构造一个 [`ApplyFailEntry`](ApplyFailEntry.md)。
-2. 锁定 `PID_MAP_FAIL_ENTRY_SET` 互斥量。
-3. 在外层映射中查找 `pid`：
-   - **如果找到** — 在内层 `HashMap` 中搜索匹配的条目：
-     - **如果存在匹配的条目** — 将其标记为存活（`true`）并返回 `false`（不是新错误）。
-     - **如果不存在匹配的条目** — 检查现有条目的 `process_name` 是否与新条目相同。如果不同（表示 PID 被不同的进程重用），则在插入新条目之前**清空整个内层映射**。插入新条目并将 `alive = true`，然后返回 `true`。
-   - **如果未找到** — 创建一个仅包含新条目（`alive = true`）的新内层映射，将其插入到 `pid` 键下，然后返回 `true`。
+每个 [ApplyFailEntry](ApplyFailEntry.md) 通过所有四个字段（`tid`、`process_name`、`operation`、`error_code`）进行相等比较。`bool` 值是由 [purge_fail_map](purge_fail_map.md) 在垃圾回收期间使用的"存活"标志。
 
 ### PID 重用检测
 
-当一个 PID 被不同的进程重用时（例如，原始进程退出后新进程被分配了相同的 PID），现有的失败条目会变得过时。该函数通过比较第一个现有条目的 `process_name` 与新条目的 `process_name` 来检测此情况。如果两者不同，则在插入新条目之前清空内层映射。这可以防止误报（即由于先前具有相同 PID 的不相关进程有相同的操作失败，而导致真正的新错误被抑制）。
+**不变量：** 期望 PID 的失败条目集中的所有条目共享相同的 `process_name`。当函数发现 PID 的现有条目的进程名称与提供的不同时，它在插入新条目之前清除该 PID 的整个条目集。这处理了 Windows PID 重用场景，其中终止进程的 PID 被重新分配给新的无关进程。
 
-### 存活标志
+### 存活标志管理
 
-每个条目存储一个 `alive` 标志（内层 `HashMap` 中的 `bool` 值）。当 `is_new_error` 找到匹配条目时，它将 `alive` 设置为 `true`。配套函数 [`purge_fail_map`](purge_fail_map.md) 使用此标志实现标记-清除垃圾回收方案：它首先将所有条目标记为已死（`false`），然后将当前正在运行的进程的条目重新标记为存活，最后移除所有仍然为死状态的条目。
+当找到现有条目（重复）时，其存活标志设置为 `true`。这确保条目在下一个 [purge_fail_map](purge_fail_map.md) 周期中存活，该周期将所有条目标记为死，然后重新标记活动的条目。
 
 ### 线程安全
 
-该函数通过 `get_pid_map_fail_entry_set!()` 宏获取 `PID_MAP_FAIL_ENTRY_SET` 互斥量。锁在查找和插入操作的整个持续期间被持有。
+该函数通过 `get_pid_map_fail_entry_set!()` 宏获取全局 `PID_MAP_FAIL_ENTRY_SET` 互斥锁。锁在查找和潜在插入期间保持。
 
 ## 要求
 
-| 要求 | 值 |
-|------|-----|
-| **模块** | `logging.rs` |
-| **调用方** | [`get_process_handle`](../winapi.rs/get_process_handle.md)、[`get_thread_handle`](../winapi.rs/get_thread_handle.md)、`apply.rs` 规则应用逻辑 |
-| **被调用方** | `get_pid_map_fail_entry_set!()` 宏（锁定 [`PID_MAP_FAIL_ENTRY_SET`](statics.md#pid_map_fail_entry_set)） |
-| **静态变量** | [`PID_MAP_FAIL_ENTRY_SET`](statics.md#pid_map_fail_entry_set) |
-| **依赖** | [`ApplyFailEntry`](ApplyFailEntry.md)、[`Operation`](Operation.md) |
-| **平台** | 与平台无关的逻辑（数据为平台特定） |
+| | |
+|---|---|
+| **模块** | `src/logging.rs` |
+| **调用方** | [log_error_if_new](../apply.rs/log_error_if_new.md)，[apply.rs](../apply.rs/README.md) 中的应用函数 |
+| **被调用方** | `get_pid_map_fail_entry_set!()` 宏 |
+| **Win32 API** | 无 |
+| **权限** | 无 |
 
-## 另请参阅
+## 参见
 
 | 主题 | 链接 |
-|------|------|
-| purge_fail_map | [purge_fail_map](purge_fail_map.md) |
-| ApplyFailEntry 结构体 | [ApplyFailEntry](ApplyFailEntry.md) |
-| Operation 枚举 | [Operation](Operation.md) |
-| PID_MAP_FAIL_ENTRY_SET | [statics](statics.md#pid_map_fail_entry_set) |
-| get_process_handle | [get_process_handle](../winapi.rs/get_process_handle.md) |
-| get_thread_handle | [get_thread_handle](../winapi.rs/get_thread_handle.md) |
-| logging 模块概述 | [README](README.md) |
+|-------|------|
+| 模块概述 | [logging.rs](README.md) |
+| 失败键结构体 | [ApplyFailEntry](ApplyFailEntry.md) |
+| 操作枚举 | [Operation](Operation.md) |
+| 陈旧条目的垃圾回收 | [purge_fail_map](purge_fail_map.md) |
+| 调用方侧错误日志记录辅助函数 | [log_error_if_new](../apply.rs/log_error_if_new.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*记录于提交：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

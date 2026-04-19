@@ -1,6 +1,6 @@
-# ThreadStats type (scheduler.rs)
+# ThreadStats struct (scheduler.rs)
 
-Per-thread statistics and state container used by the `PrimeThreadScheduler` to track CPU cycle activity, manage thread handles, record ideal-processor assignments, and support hysteresis-based prime-thread selection across polling iterations. Each `ThreadStats` instance corresponds to a single OS thread identified by its TID within a parent process.
+Per-thread scheduling state container used by [PrimeThreadScheduler](PrimeThreadScheduler.md) to track CPU cycle counters, timing deltas, handle caching, CPU set pinning, active streak counters, ideal processor assignments, and priority bookkeeping across polling iterations. Each thread observed by the scheduler has one `ThreadStats` entry in its parent [ProcessStats](ProcessStats.md)'s `tid_to_thread_stats` map.
 
 ## Syntax
 
@@ -25,48 +25,116 @@ pub struct ThreadStats {
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `last_total_time` | `i64` | The most recently observed total (kernel + user) execution time for this thread, in 100-nanosecond intervals. Updated each polling iteration. |
-| `cached_total_time` | `i64` | The `last_total_time` value from the previous polling iteration. Used to compute per-iteration delta time. |
-| `last_cycles` | `u64` | The most recently observed CPU cycle count for this thread, as returned by `QueryThreadCycleTime` or equivalent. |
-| `cached_cycles` | `u64` | The `last_cycles` value from the previous polling iteration. The difference `last_cycles - cached_cycles` gives the per-iteration delta used for prime-thread ranking. |
-| `handle` | `Option<ThreadHandle>` | Optional thread handle container. `None` means the handle has not been opened yet. When `Some`, the `r_limited_handle` within is always valid; callers should check `is_valid_handle()` before using elevated handles. The `ThreadHandle`'s `Drop` implementation closes the OS handles automatically. |
-| `pinned_cpu_set_ids` | `List<[u32; CONSUMER_CPUS]>` | Stack-allocated list of CPU set IDs that this thread has been pinned to by the prime-thread engine. Empty when the thread is not currently assigned to any prime CPU set. The capacity is bounded by the `CONSUMER_CPUS` constant. |
-| `active_streak` | `u8` | Counter for consecutive polling iterations during which this thread's cycle delta exceeded the entry threshold. Used by `PrimeThreadScheduler::update_active_streaks` to implement hysteresis—threads must sustain activity for `min_active_streak` iterations before being promoted to prime status. Capped at 254 to prevent overflow. Reset to 0 when cycles drop below the keep threshold. |
-| `start_address` | `usize` | The thread's start address (entry point), used to resolve the originating module name via `resolve_address_to_module`. Useful for prefix-based thread filtering (e.g., only promote threads starting in `"game.dll"`). |
-| `original_priority` | `Option<ThreadPriority>` | Snapshot of the thread's priority level at the time it was first observed. Stored so that the service can restore the original priority when a thread loses prime status or the process exits. `None` if not yet captured. |
-| `last_system_thread_info` | `Option<SYSTEM_THREAD_INFORMATION>` | The most recent `SYSTEM_THREAD_INFORMATION` snapshot from `NtQuerySystemInformation` for this thread. Used for diagnostic reporting when a process exits and `track_top_x_threads` is nonzero. Contains kernel time, user time, create time, wait reason, context switches, and scheduling priority. |
-| `ideal_processor` | `IdealProcessorState` | Tracks the current and previous ideal-processor assignment for this thread. See [IdealProcessorState](IdealProcessorState.md). |
-| `process_id` | `u32` | The Windows PID of the parent process. Stored here so that the custom `Debug` implementation can call `resolve_address_to_module` without requiring external context. |
+| `last_total_time` | `i64` | The total CPU time (kernel + user, in 100ns units) recorded at the end of the most recently completed apply cycle. Serves as the baseline for computing the time delta in the next iteration. |
+| `cached_total_time` | `i64` | The total CPU time read during the current cycle, before it is committed to `last_total_time` at the end of the cycle by [update_thread_stats](../apply.rs/update_thread_stats.md). |
+| `last_cycles` | `u64` | The thread's CPU cycle count snapshot from the previous iteration, used as the baseline for delta calculation in [prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md). |
+| `cached_cycles` | `u64` | The thread's CPU cycle count read during the current iteration, before being committed to `last_cycles`. |
+| `handle` | `Option<ThreadHandle>` | Cached [ThreadHandle](../winapi.rs/ThreadHandle.md) for this thread. `None` if the handle has not yet been opened. When present, `r_limited_handle` is guaranteed valid; other handles should be checked via `is_invalid()` before use. The handle is closed automatically via `ThreadHandle::Drop` when the stats entry is removed. |
+| `pinned_cpu_set_ids` | `List<[u32; CONSUMER_CPUS]>` | The CPU Set IDs currently assigned to this thread via [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md). Empty when the thread is not pinned to dedicated cores. Used by the demotion path to know which CPU sets to clear. |
+| `active_streak` | `u8` | Consecutive iteration count during which this thread's delta cycles exceeded the entry threshold relative to the max. Incremented by [PrimeThreadScheduler::update_active_streaks](PrimeThreadScheduler.md), consumed by [PrimeThreadScheduler::select_top_threads_with_hysteresis](PrimeThreadScheduler.md). Capped at 254 to prevent overflow. Reset to 0 when the thread drops below the keep threshold. |
+| `start_address` | `usize` | The Win32 start address of the thread, obtained via [get_thread_start_address](../winapi.rs/get_thread_start_address.md). Used for module-prefix based ideal processor assignment and resolved to a module name in the custom `Debug` implementation and exit reports. |
+| `original_priority` | `Option<ThreadPriority>` | The thread's priority before the service modified it. Captured on first promotion so that [apply_prime_threads_demote](../apply.rs/apply_prime_threads_demote.md) can restore the original value when the thread loses prime status. `None` if the thread has never been promoted. |
+| `last_system_thread_info` | `Option<SYSTEM_THREAD_INFORMATION>` | The most recent `SYSTEM_THREAD_INFORMATION` from the process snapshot, cached for the diagnostic report generated by [PrimeThreadScheduler::drop_process_by_pid](PrimeThreadScheduler.md) on process exit. Contains kernel time, user time, context switches, wait reason, priority, and other OS-reported thread state. |
+| `ideal_processor` | `IdealProcessorState` | Tracks the current and previous ideal processor group/number assignment for this thread. See [IdealProcessorState](IdealProcessorState.md). |
+| `process_id` | `u32` | The PID of the owning process. Used by the custom `Debug` implementation to call [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md) with the correct PID. |
+
+## Methods
+
+### new
+
+```rust
+pub fn new(process_id: u32) -> Self
+```
+
+Creates a new `ThreadStats` with all counters zeroed, no handle, empty CPU set list, zero streak, and a default [IdealProcessorState](IdealProcessorState.md).
+
+**Parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `process_id` | `u32` | The PID of the process that owns this thread. Stored for use by the `Debug` implementation. |
+
+**Return value**
+
+`ThreadStats` — A new instance with all fields at their default/zero values.
+
+### Default
+
+```rust
+impl Default for ThreadStats {
+    fn default() -> Self;
+}
+```
+
+Delegates to `ThreadStats::new(0)`.
+
+### Debug
+
+```rust
+impl fmt::Debug for ThreadStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result;
+}
+```
+
+Custom `Debug` implementation that resolves `start_address` to a module name via [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md) instead of printing the raw numeric address. This makes debug output immediately actionable — showing e.g. `start_address: "game.dll+0x1A40"` instead of `start_address: 0x7FF612341A40`.
+
+**Included fields:** `last_total_time`, `cached_total_time`, `last_cycles`, `cached_cycles`, `pinned_cpu_set_ids`, `active_streak`, `start_address` (resolved), `original_priority`, `ideal_processor`.
+
+**Excluded fields:** `handle`, `last_system_thread_info`, `process_id` — omitted to reduce noise in debug output.
 
 ## Remarks
 
-- `ThreadStats` implements a custom `fmt::Debug` trait that resolves `start_address` to a module name using `resolve_address_to_module(process_id, start_address)`, making debug output human-readable. The `handle` and `last_system_thread_info` fields are intentionally omitted from the debug output for brevity.
-- The `new(process_id)` constructor initializes all numeric fields to zero, all `Option` fields to `None`, `pinned_cpu_set_ids` to an empty list, and `ideal_processor` to a default `IdealProcessorState`.
-- The `Default` implementation calls `Self::new(0)`, which is suitable for placeholder contexts but means the `process_id` must be explicitly set or the entry must be created through `PrimeThreadScheduler::get_thread_stats`.
-- The delta between `last_cycles` and `cached_cycles` is the primary metric used by `PrimeThreadScheduler::select_top_threads_with_hysteresis` to rank threads and decide which ones receive prime CPU assignments.
-- Thread handles are opened lazily. The `handle` field remains `None` until the apply engine first needs to call a Win32 API on the thread (e.g., `SetThreadAffinityMask`, `SetThreadIdealProcessorEx`, `SetThreadPriority`). Once opened, the handle is reused for the lifetime of the `ThreadStats` entry and closed automatically when the entry is dropped.
-- The `CONSUMER_CPUS` constant bounds the maximum number of CPU set IDs that can be stored per thread without heap allocation, reflecting typical consumer hardware core counts.
+### Double-buffering pattern
+
+The `last_*` / `cached_*` field pairs implement a double-buffering scheme for time and cycle measurements:
+
+1. At the start of each polling iteration, the current values are read from the OS and stored in `cached_total_time` / `cached_cycles`.
+2. The delta is computed as `cached - last` to determine activity since the previous iteration.
+3. At the end of the iteration (in [update_thread_stats](../apply.rs/update_thread_stats.md)), the cached values are copied to `last_*`, establishing the new baseline.
+
+This separation ensures that the delta calculation and the state update happen at well-defined points in the polling loop, even when multiple apply functions read the same thread stats.
+
+### Handle caching
+
+Thread handles are opened lazily on first use (typically by [get_handles](../apply.rs/get_handles.md) or [prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md)) and stored in the `handle` field for reuse across iterations. This avoids the overhead of repeatedly calling `OpenThread` on every polling cycle. The handle is closed when:
+
+- The thread's parent process exits ([drop_process_by_pid](PrimeThreadScheduler.md) drops the `ThreadStats`).
+- The handle is explicitly taken and dropped.
+
+### CPU set pinning
+
+The `pinned_cpu_set_ids` field uses a stack-allocated `List<[u32; CONSUMER_CPUS]>` to avoid heap allocation for the common case of consumer systems (≤64 CPUs). When a thread is promoted to prime status, its dedicated CPU Set IDs are stored here. When demoted, this list is used to identify which CPU sets to clear, and the list is then emptied.
+
+### Active streak lifecycle
+
+| Streak value | Meaning |
+|---|---|
+| `0` | Thread is inactive or recently dropped below keep threshold |
+| `1` | Thread just exceeded entry threshold this iteration |
+| `2..min_active_streak-1` | Thread is building its streak, not yet eligible for promotion |
+| `≥ min_active_streak` | Thread is eligible for promotion via `select_top_threads_with_hysteresis` |
+| `254` | Maximum streak value (hard cap to prevent `u8` overflow) |
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `scheduler.rs` |
-| Callers | [PrimeThreadScheduler](PrimeThreadScheduler.md), `apply` module (thread-level apply functions) |
-| Dependencies | [ThreadPriority](../priority.rs/ThreadPriority.md), [IdealProcessorState](IdealProcessorState.md), `winapi::ThreadHandle`, `winapi::resolve_address_to_module`, `collections::List`, `collections::CONSUMER_CPUS`, `ntapi::ntexapi::SYSTEM_THREAD_INFORMATION` |
-| Platform | Windows (depends on NT thread information structures and Win32 thread handles) |
+| | |
+|---|---|
+| **Module** | `src/scheduler.rs` |
+| **Callers** | [PrimeThreadScheduler](PrimeThreadScheduler.md) (all methods), [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md), [apply_prime_threads_demote](../apply.rs/apply_prime_threads_demote.md), [update_thread_stats](../apply.rs/update_thread_stats.md), [prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md) |
+| **Dependencies** | [ThreadHandle](../winapi.rs/ThreadHandle.md), [IdealProcessorState](IdealProcessorState.md), [ThreadPriority](../priority.rs/ThreadPriority.md), `SYSTEM_THREAD_INFORMATION` (ntapi), `List` / `CONSUMER_CPUS` from `crate::collections` |
+| **Privileges** | None (data structure only; handle acquisition requires appropriate privileges) |
 
 ## See Also
 
-| Reference | Link |
-|-----------|------|
-| PrimeThreadScheduler | [PrimeThreadScheduler](PrimeThreadScheduler.md) |
-| ProcessStats | [ProcessStats](ProcessStats.md) |
-| IdealProcessorState | [IdealProcessorState](IdealProcessorState.md) |
-| ThreadPriority | [ThreadPriority](../priority.rs/ThreadPriority.md) |
-| format_100ns | [format_100ns](format_100ns.md) |
-| format_filetime | [format_filetime](format_filetime.md) |
-| scheduler module | [README](README.md) |
+| Topic | Link |
+|-------|------|
+| Module overview | [scheduler.rs](README.md) |
+| Parent container | [ProcessStats](ProcessStats.md) |
+| Ideal processor state | [IdealProcessorState](IdealProcessorState.md) |
+| Thread handle RAII wrapper | [ThreadHandle](../winapi.rs/ThreadHandle.md) |
+| Cycle prefetching | [prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md) |
+| Stats commit step | [update_thread_stats](../apply.rs/update_thread_stats.md) |
+| Module address resolution | [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md) |
+| Hysteresis selection | [PrimeThreadScheduler](PrimeThreadScheduler.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

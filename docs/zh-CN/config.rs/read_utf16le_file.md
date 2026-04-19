@@ -1,74 +1,63 @@
 # read_utf16le_file 函数 (config.rs)
 
-读取 UTF-16 Little Endian 编码的文件，并将其内容作为 Rust `String` 返回。此函数用于读取 Process Lasso 配置文件，这些文件在 Windows 上通常以 UTF-16 LE 编码保存。
+读取 UTF-16 小端编码的文件，并将其内容作为标准 Rust UTF-8 `String` 返回。由 [convert](convert.md) 函数使用，用于导入 Process Lasso 配置文件，这些文件通常保存为 UTF-16LE 编码。
 
 ## 语法
 
-```AffinityServiceRust/src/config.rs#L888-892
-pub fn read_utf16le_file(path: &str) -> Result<String> {
-    let bytes = read(path)?;
-    let utf16: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-    Ok(String::from_utf16_lossy(&utf16))
-}
+```rust
+pub fn read_utf16le_file(path: &str) -> Result<String>
 ```
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `path` | `&str` | 要读取的 UTF-16 LE 编码文件的文件系统路径。 |
+`path: &str`
+
+要读取的 UTF-16LE 编码文件的路径。路径直接传递给 `std::fs::read` 以进行原始字节加载。
 
 ## 返回值
 
-类型：`std::io::Result<String>`
-
-成功时，返回包含文件解码后 UTF-8 内容的 `Ok(String)`。失败时，返回从 `std::fs::read` 传播的 `Err`（例如，文件未找到、权限被拒绝）。
+`Result<String>` — 成功时，返回 `Ok(String)`，包含从 UTF-16LE 解码为 UTF-8 的文件内容。失败时，返回从底层 `std::fs::read` 调用传播的 `Err`（例如，文件未找到、权限被拒绝）。
 
 ## 备注
 
-### 编码转换
+### 解码算法
 
-该函数执行以下步骤：
-
-1. 通过 `std::fs::read` 将整个文件读入 `Vec<u8>` 字节缓冲区。
-2. 使用 `chunks_exact(2)` 将字节分组为配对，并通过 `u16::from_le_bytes` 将每对重建为小端序 `u16` 码元。
-3. 使用 `String::from_utf16_lossy` 将结果 `Vec<u16>` 转换为 Rust `String`，该方法会将任何无效的 UTF-16 代理序列替换为 Unicode 替换字符（U+FFFD），而不是返回错误。
+1. 整个文件通过 `std::fs::read` 作为原始字节向量读入内存。
+2. 字节被分成两字节对（`chunks_exact(2)`），每对被解释为 little-endian `u16` 代码单元，使用 `u16::from_le_bytes([c[0], c[1]])`。
+3. 生成的 `Vec<u16>` 通过 `String::from_utf16_lossy` 解码为 Rust `String`，它将任何无效的 UTF-16 代理序列替换为 Unicode 替换字符（U+FFFD），而不是返回错误。
 
 ### BOM 处理
 
-此函数**不会**去除文件开头的 UTF-16 字节顺序标记（BOM，U+FEFF）（如果存在的话）。BOM 将作为返回字符串的第一个字符出现。如果调用方需要处理带 BOM 前缀的文件，应在必要时从结果中修剪前导的 `\u{FEFF}` 字符。在实际使用中，下游消费者（[`convert`](convert.md)）逐行处理文件，而 BOM（如果存在）仅影响第一行，该行通常是节标题或空行。
+此函数**不**剥离 UTF-16LE 字节顺序标记（BOM，`U+FEFF`）。如果源文件以 BOM 开头，返回字符串的第一个字符将是 `\u{FEFF}`。实际上，这不会影响 [convert](convert.md) 函数，因为 BOM 字符是类似空白的字符，在基于行的解析期间会被忽略。
 
-### 有损转换
+### 奇数字节计数
 
-使用 `String::from_utf16_lossy` 而非 `String::from_utf16`（后者返回 `Result`）。这意味着格式错误的 UTF-16 序列——如未配对的代理或由于 `chunks_exact` 静默丢弃尾随字节而导致的奇数字节文件——会被静默替换为 `U+FFFD`，而不是导致错误。这种权衡优先考虑健壮性而非严格正确性，因为第三方配置文件可能包含轻微的编码异常。
+如果文件有奇数个字节，最后一个字节会被 `chunks_exact(2)` 静默丢弃。对此边缘情况不会产生警告或错误。
 
-### 奇数字节数
+### 损耗转换
 
-如果文件具有奇数个字节，最后一个尾随字节会被 `chunks_exact(2)` 丢弃。此边界情况不会产生警告或错误。
+使用 `from_utf16_lossy` 意味着此函数永远不会因编码问题而失败——只有 I/O 错误会导致失败。任何损坏的 UTF-16 序列都会被替换为 `�`（U+FFFD），这可能会产生意外输出，但不会panic或返回错误。
 
-### 平台说明
+### 与标准文件读取的比较
 
-此函数专为 Windows 环境设计，其中 UTF-16 LE 是常见的文件编码。Process Lasso 和其他 Windows 工具经常对配置和导出文件使用此编码。
+对于采用 UTF-8 编码的文件（AffinityServiceRust 配置文件的默认编码），[read_config](read_config.md) 使用带逐行读取的 `std::io::BufReader`。`read_utf16le_file` 仅用于 Process Lasso 导入，这些导入使用 Windows 原生 UTF-16LE 编码。
 
-## 要求
+## 需求
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `config.rs` |
-| 可见性 | `pub` |
-| 调用方 | [`convert`](convert.md) |
-| 被调用方 | `std::fs::read`、`u16::from_le_bytes`、`String::from_utf16_lossy` |
-| API | `std::io::Result` |
-| 权限 | 指定路径的文件系统读取权限 |
+| | |
+|---|---|
+| **模块** | `src/config.rs` |
+| **调用方** | [convert](convert.md) |
+| **被调用方** | `std::fs::read`, `u16::from_le_bytes`, `String::from_utf16_lossy` |
+| **权限** | 指定路径的文件系统读取访问 |
 
-## 另请参阅
+## 参见
 
-| 资源 | 链接 |
-|------|------|
-| convert | [convert](convert.md) |
-| read_list | [read_list](read_list.md) |
-| read_config | [read_config](read_config.md) |
-| config 模块概述 | [README](README.md) |
+| 主题 | 链接 |
+|-------|------|
+| 模块概述 | [config.rs](README.md) |
+| Process Lasso 转换器 | [convert](convert.md) |
+| 标准配置读取器（UTF-8） | [read_config](read_config.md) |
+| 黑名单读取器（UTF-8） | [read_bleack_list](read_bleack_list.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档针对 Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

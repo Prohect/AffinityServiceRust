@@ -1,6 +1,6 @@
 # drop_module_cache 函数 (winapi.rs)
 
-从全局 [MODULE_CACHE](MODULE_CACHE.md) 静态变量中移除给定进程 ID 的缓存模块列表。这确保在进程退出或下次调用 [resolve_address_to_module](resolve_address_to_module.md) 需要全新的模块枚举时，过期的模块信息会被丢弃。
+从全局 [MODULE_CACHE](README.md) 静态变量中删除特定进程的缓存模块枚举数据。在进程退出时调用，以释放内存并确保不会在 OS 随后重用该 PID 时使用过时的模块数据。
 
 ## 语法
 
@@ -12,51 +12,42 @@ pub fn drop_module_cache(pid: u32)
 
 | 参数 | 类型 | 描述 |
 |-----------|------|-------------|
-| `pid` | `u32` | 应移除其缓存模块列表的进程标识符。 |
+| `pid` | `u32` | 应删除其缓存模块数据的进程标识符。 |
 
 ## 返回值
 
 此函数不返回值。
 
-## 备注
+## 说明
 
-- 该函数获取 [MODULE_CACHE](MODULE_CACHE.md) `Mutex<HashMap<u32, Vec<(usize, usize, String)>>>` 的锁，并使用提供的 `pid` 键调用 `HashMap::remove`。
+- 函数获取 `MODULE_CACHE` 互斥锁的锁，调用 `HashMap::remove(&pid)`，然后释放锁。如果给定 PID 没有条目，调用即为空操作。
+- `MODULE_CACHE` 是一个 `Lazy<Mutex<HashMap<u32, Vec<(usize, usize, String)>>>>`，将每个 PID 映射到 `(基地址、大小、模块名称)` 元组列表。条目按需填充，通过 [resolve_address_to_module](resolve_address_to_module.md) 在首次请求给定进程的地址解析时填充。
+- 此函数由 [PrimeThreadScheduler::drop_process_by_pid](../scheduler.rs/PrimeThreadScheduler.md) 在进程退出清理期间调用。在此时丢弃缓存可确保：
+  1. 当进程不再被跟踪时，用于模块列表的内存会立即释放。
+  2. 如果 OS 为新的进程重用相同的 PID，旧进程的过时模块列表将不会由 [resolve_address_to_module](resolve_address_to_module.md) 返回。
+- 此函数**不**关闭任何句柄 — 模块枚举在 [enumerate_process_modules](enumerate_process_modules.md) 内打开并关闭临时句柄。
 
-- 如果 `pid` 不在缓存中（例如该进程从未被查询过或已被移除），则调用为空操作。
+### 时机
 
-- 此函数的设计意图是在主调度循环中，当进程不再被跟踪时调用，或者在新迭代开始时调用以强制执行全新的模块枚举。如果不显式移除，缓存将无限期保留已终止进程的条目，消耗内存并在新进程复用相同 PID 时可能返回不正确的结果。
-
-- 该函数是轻量级的——它在互斥锁保护下仅执行一次哈希映射查找和移除操作，不涉及系统调用或 I/O。
-
-### 典型调用模式
-
-1. 调度器检测到进程已退出（通过快照比较或 ETW 停止事件）。
-2. 调用 `drop_module_cache(pid)` 丢弃过期的模块列表。
-3. 如果相同的 PID 之后被新进程复用，[resolve_address_to_module](resolve_address_to_module.md) 将按需重新枚举模块。
-
-### 线程安全
-
-该函数获取 `MODULE_CACHE` 互斥锁，因此可以安全地从多个线程并发调用。但是，调用者应注意同时持有其他锁（例如 `CPU_SET_INFORMATION`）可能会产生锁顺序方面的问题。
+在典型的生命周期中，`drop_module_cache` 在每个跟踪的进程退出时调用一次。在进程存活期间的正常操作中不调用它，因此缓存会在进程的整个跟踪期内保留，以避免冗余的 `EnumProcessModulesEx` 调用。
 
 ## 要求
 
-| 要求 | 值 |
-|------|-----|
-| **模块** | `winapi.rs` |
-| **调用者** | `apply.rs`、`scheduler.rs` — 进程生命周期管理 |
-| **被调用者** | `Mutex::lock`、`HashMap::remove`（标准库） |
+| | |
+|---|---|
+| **模块** | `src/winapi.rs` |
+| **调用方** | [PrimeThreadScheduler::drop_process_by_pid](../scheduler.rs/PrimeThreadScheduler.md) |
+| **被调用方** | 无（仅操作 `MODULE_CACHE` 静态变量） |
 | **Win32 API** | 无 |
-| **权限** | 无需特殊权限 |
+| **权限** | 无 |
 
-## 另请参阅
+## 参见
 
 | 主题 | 链接 |
-|------|------|
-| resolve_address_to_module | [resolve_address_to_module](resolve_address_to_module.md) |
-| MODULE_CACHE 静态变量 | [MODULE_CACHE](MODULE_CACHE.md) |
-| enumerate_process_modules | [enumerate_process_modules](enumerate_process_modules.md) |
-| get_thread_start_address | [get_thread_start_address](get_thread_start_address.md) |
-| winapi 模块概述 | [README](README.md) |
+|-------|------|
+| 模块概述 | [winapi.rs](README.md) |
+| 填充缓存的地址解析 | [resolve_address_to_module](resolve_address_to_module.md) |
+| 填充缓存条目的模块枚举 | [enumerate_process_modules](enumerate_process_modules.md) |
+| 调用此函数的进程清理 | [PrimeThreadScheduler::drop_process_by_pid](../scheduler.rs/PrimeThreadScheduler.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档记录于提交：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

@@ -1,10 +1,10 @@
 # get_thread_ideal_processor_ex function (winapi.rs)
 
-Retrieves the ideal processor assignment for a thread, returning the processor group and number. This is used to read back the current ideal processor setting before or after applying configuration rules.
+Retrieves the current ideal processor assignment for a thread. Wraps the Windows `GetThreadIdealProcessorEx` API, returning the processor group and number as a `PROCESSOR_NUMBER` structure.
 
 ## Syntax
 
-```AffinityServiceRust/src/winapi.rs#L673-679
+```rust
 pub fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_NUMBER, Error>
 ```
 
@@ -12,63 +12,53 @@ pub fn get_thread_ideal_processor_ex(thread_handle: HANDLE) -> Result<PROCESSOR_
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `thread_handle` | `HANDLE` | A valid thread handle opened with at least `THREAD_QUERY_LIMITED_INFORMATION` access. Typically the `r_limited_handle` or `r_handle` field from a [`ThreadHandle`](ThreadHandle.md). |
+| `thread_handle` | `HANDLE` | A valid thread handle with `THREAD_QUERY_LIMITED_INFORMATION` or `THREAD_QUERY_INFORMATION` access. Typically sourced from [ThreadHandle](ThreadHandle.md)`.r_limited_handle` or `.r_handle`. |
 
 ## Return value
 
-Returns `Result<PROCESSOR_NUMBER, Error>`.
-
-| Outcome | Description |
-|---------|-------------|
-| `Ok(PROCESSOR_NUMBER)` | A `PROCESSOR_NUMBER` struct containing the `Group` (processor group number), `Number` (processor number within the group), and `Reserved` fields representing the thread's current ideal processor. |
-| `Err(Error)` | A `windows::core::Error` describing why the underlying `GetThreadIdealProcessorEx` Win32 call failed. |
-
-## Remarks
-
-- This function is a thin safe wrapper around the Win32 [`GetThreadIdealProcessorEx`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getthreadidealprocessorex) API. It initializes a default `PROCESSOR_NUMBER` struct and passes it to the API to be populated.
-
-- The ideal processor is a **scheduling hint** to the Windows scheduler indicating which logical processor the thread should preferentially run on. It does not guarantee execution on that processor.
-
-- If the thread has never had an ideal processor explicitly set, the OS returns whatever default ideal processor the scheduler assigned when the thread was created.
-
-- This function does **not** log errors internally. The caller is responsible for handling the `Err` variant and deciding whether to log or propagate the error.
-
-- The companion function [`set_thread_ideal_processor_ex`](set_thread_ideal_processor_ex.md) is used to assign the ideal processor, and returns the **previous** ideal processor as part of its success value.
-
-### PROCESSOR_NUMBER layout
+`Result<PROCESSOR_NUMBER, Error>` — On success, returns a `PROCESSOR_NUMBER` structure containing:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `Group` | `u16` | The processor group number (0 on systems with ≤ 64 logical processors). |
-| `Number` | `u8` | The processor number within the group. |
-| `Reserved` | `u8` | Reserved; should be ignored. |
+| `Group` | `u16` | The processor group of the thread's ideal processor. On single-group systems (≤64 logical processors), this is always `0`. |
+| `Number` | `u8` | The logical processor number within the group that is the thread's current ideal processor. |
+| `Reserved` | `u8` | Reserved; always `0`. |
 
-### Platform notes
+On failure, returns a `windows::core::Error` containing the underlying Win32 error code (e.g., `ERROR_INVALID_HANDLE` if the handle is invalid or lacks the required access right).
 
-- **Windows only.** Uses the `windows::Win32::System::Kernel::PROCESSOR_NUMBER` type and `GetThreadIdealProcessorEx` from `processthreadsapi.h`.
-- On systems with a single processor group (≤ 64 logical processors), the `Group` field is always `0`.
-- On multi-group systems (> 64 logical processors), the `Group` field identifies which processor group the ideal processor belongs to.
+## Remarks
+
+- The function allocates a default `PROCESSOR_NUMBER` on the stack and passes it to `GetThreadIdealProcessorEx` as an out-parameter. On success, the filled structure is returned.
+- The ideal processor is a scheduling *hint* — Windows prefers to run the thread on the specified processor but may schedule it elsewhere under load. This function reads the current hint, which may have been set by the OS, by the application itself, or by a prior call to [set_thread_ideal_processor_ex](set_thread_ideal_processor_ex.md).
+- This function is used by the [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) logic to read the current ideal processor before deciding whether an update is needed. The returned group and number are compared against the [IdealProcessorState](../scheduler.rs/IdealProcessorState.md) to avoid redundant `SetThreadIdealProcessorEx` calls.
+
+### Relationship to set_thread_ideal_processor_ex
+
+| Function | Direction | API |
+|----------|-----------|-----|
+| **get_thread_ideal_processor_ex** | Read | `GetThreadIdealProcessorEx` |
+| [set_thread_ideal_processor_ex](set_thread_ideal_processor_ex.md) | Write | `SetThreadIdealProcessorEx` |
+
+Both functions operate on the same per-thread ideal processor attribute. The get variant requires only read access; the set variant requires write access (`THREAD_SET_INFORMATION`).
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `winapi.rs` |
-| **Callers** | `apply.rs` — reads ideal processor before/after setting it for comparison and logging. |
-| **Callees** | [`GetThreadIdealProcessorEx`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getthreadidealprocessorex) (Win32 API) |
-| **Win32 API** | `kernel32.dll` — `GetThreadIdealProcessorEx` |
-| **Privileges** | Requires a valid thread handle with query access. |
+| | |
+|---|---|
+| **Module** | `src/winapi.rs` |
+| **Callers** | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md), [reset_thread_ideal_processors](../apply.rs/reset_thread_ideal_processors.md) |
+| **Callees** | None (thin Win32 wrapper) |
+| **Win32 API** | [GetThreadIdealProcessorEx](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getthreadidealprocessorex) |
+| **Privileges** | `THREAD_QUERY_LIMITED_INFORMATION` or `THREAD_QUERY_INFORMATION` access on the thread handle |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| set_thread_ideal_processor_ex | [set_thread_ideal_processor_ex](set_thread_ideal_processor_ex.md) |
-| get_thread_start_address | [get_thread_start_address](get_thread_start_address.md) |
-| ThreadHandle struct | [ThreadHandle](ThreadHandle.md) |
-| get_thread_handle | [get_thread_handle](get_thread_handle.md) |
-| resolve_address_to_module | [resolve_address_to_module](resolve_address_to_module.md) |
-| winapi module overview | [README](README.md) |
+| Module overview | [winapi.rs](README.md) |
+| Write counterpart | [set_thread_ideal_processor_ex](set_thread_ideal_processor_ex.md) |
+| Ideal processor tracking state | [IdealProcessorState](../scheduler.rs/IdealProcessorState.md) |
+| Thread handle wrapper | [ThreadHandle](ThreadHandle.md) |
+| Ideal processor application logic | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

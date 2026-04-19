@@ -1,10 +1,11 @@
-# ConfigResult type (config.rs)
+# ConfigResult struct (config.rs)
 
-`ConfigResult` is the aggregated output of the configuration parser. It contains all parsed process-level and thread-level rules organized by grade, tunable constants, alias/group/rule statistics, and any errors or warnings produced during parsing. It is the primary return type of [`read_config`](read_config.md) and serves as the central data structure that the main loop consults when applying rules to running processes.
+Aggregated output of the configuration parser. Contains all parsed process-level and thread-level rules organized by grade (application frequency), along with parsing statistics, errors, and warnings. This is the primary return type of [read_config](read_config.md) and the struct consumed by the main service loop and [hotreload_config](hotreload_config.md).
 
 ## Syntax
 
-```AffinityServiceRust/src/config.rs#L162-175
+```rust
+#[derive(Debug, Default)]
 pub struct ConfigResult {
     pub process_level_configs: HashMap<u32, HashMap<String, ProcessLevelConfig>>,
     pub thread_level_configs: HashMap<u32, HashMap<String, ThreadLevelConfig>>,
@@ -25,85 +26,95 @@ pub struct ConfigResult {
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `process_level_configs` | `HashMap<u32, HashMap<String, ProcessLevelConfig>>` | Process-level rules keyed by grade (polling frequency), then by lowercase process name. Each entry contains priority, affinity, CPU set, I/O priority, and memory priority settings. |
-| `thread_level_configs` | `HashMap<u32, HashMap<String, ThreadLevelConfig>>` | Thread-level rules keyed by grade, then by lowercase process name. Each entry contains prime-thread CPUs, prefix filters, tracking counts, and ideal-processor rules. |
-| `constants` | [`ConfigConstants`](ConfigConstants.md) | Tunable numeric constants (`MIN_ACTIVE_STREAK`, `KEEP_THRESHOLD`, `ENTRY_THRESHOLD`) that control the prime-thread scheduler's behavior. Populated from `@NAME = value` lines, or defaults if none are specified. |
-| `constants_count` | `usize` | Number of `@CONSTANT` directives successfully parsed from the config file. |
-| `aliases_count` | `usize` | Number of `*alias = cpu_spec` directives successfully parsed from the config file. |
-| `groups_count` | `usize` | Number of `{ }` process group blocks encountered in the config file. |
-| `group_members_count` | `usize` | Total number of individual process names collected from all group blocks. |
-| `process_rules_count` | `usize` | Total number of process rules parsed (includes both individual rules and group-expanded members). |
-| `redundant_rules_count` | `usize` | Count of rules that were defined more than once for the same process name. When a redundant rule is encountered, the earlier definition is overwritten and a warning is emitted. |
-| `errors` | `Vec<String>` | List of fatal parsing errors. When this vector is non-empty, the configuration is considered invalid and should not be applied. |
-| `warnings` | `Vec<String>` | List of non-fatal warnings (e.g., unknown priority strings, redundant rules, empty groups). The configuration is still usable when warnings are present. |
-| `thread_level_configs_count` | `usize` | Total number of thread-level configuration entries inserted across all grades. |
+| `process_level_configs` | `HashMap<u32, HashMap<String, ProcessLevelConfig>>` | Process-level rules keyed by grade (outer) and lowercased process name (inner). Grade `1` is the default and means the rule is applied on every polling iteration; higher grades reduce application frequency. |
+| `thread_level_configs` | `HashMap<u32, HashMap<String, ThreadLevelConfig>>` | Thread-level rules keyed by grade (outer) and lowercased process name (inner). These rules are evaluated every polling iteration for thread-level scheduling (prime threads, ideal processors). |
+| `constants` | [ConfigConstants](ConfigConstants.md) | Tuning constants for prime thread hysteresis. Populated from `@CONSTANT = value` lines in the config file; uses `Default` values when not specified. |
+| `constants_count` | `usize` | Number of `@CONSTANT` directives successfully parsed. |
+| `aliases_count` | `usize` | Number of `*alias = cpu_spec` alias definitions successfully parsed. |
+| `groups_count` | `usize` | Number of `{ }` group blocks successfully parsed. |
+| `group_members_count` | `usize` | Total number of process names contained across all parsed group blocks. |
+| `process_rules_count` | `usize` | Total number of process names for which rules were attempted (includes both singles and group members). |
+| `redundant_rules_count` | `usize` | Number of rules that overwrote a previously defined rule for the same process name. Each redundant rule also generates a warning. |
+| `errors` | `Vec<String>` | Fatal parsing errors. Any non-empty error list causes [is_valid](#is_valid) to return `false` and prevents the configuration from being applied. Messages include line numbers. |
+| `warnings` | `Vec<String>` | Non-fatal parsing warnings (e.g., unknown priority names treated as `none`, redundant rules, empty groups). The configuration is still usable when warnings are present. |
+| `thread_level_configs_count` | `usize` | Running count of thread-level config entries inserted. Incremented per process name that produces a valid thread-level rule. |
 
 ## Methods
 
-### `is_valid`
+### is_valid
 
-```AffinityServiceRust/src/config.rs#L178-180
-pub fn is_valid(&self) -> bool {
-    self.errors.is_empty()
-}
+```rust
+pub fn is_valid(&self) -> bool
 ```
 
-Returns `true` if the configuration contains no errors and is safe to apply. Warnings alone do not cause `is_valid` to return `false`.
+Returns `true` if the `errors` vector is empty, indicating the configuration was parsed without fatal errors and is safe to apply.
 
-### `total_rules`
+**Return value**
 
-```AffinityServiceRust/src/config.rs#L182-186
-pub fn total_rules(&self) -> usize {
-    let a: usize = self.process_level_configs.values().map(|grade_configs| grade_configs.len()).sum();
-    let b: usize = self.thread_level_configs.values().map(|grade_configs| grade_configs.len()).sum();
-    a + b
-}
+`bool` — `true` when no parsing errors were recorded; `false` otherwise.
+
+### total_rules
+
+```rust
+pub fn total_rules(&self) -> usize
 ```
 
-Returns the total number of active rules across all grades by summing the lengths of all inner `HashMap` entries for both process-level and thread-level configs.
+Returns the total number of active rules across all grades, combining both process-level and thread-level configurations. This counts entries in the inner `HashMap`s, not the raw `process_rules_count` counter.
 
-### `print_report`
+**Return value**
 
-```AffinityServiceRust/src/config.rs#L188-217
+`usize` — Sum of all process-level config entries and all thread-level config entries across every grade.
+
+### print_report
+
+```rust
 pub fn print_report(&self)
 ```
 
-Prints a human-readable summary of the parse result to the log. When the configuration is valid, it reports the count of process groups and process rules. When errors exist, it prints each error and warning prefixed with `✗` or `⚠` respectively, followed by a count of errors. Redundant-rule warnings are also printed when `redundant_rules_count > 0`.
+Logs a human-readable summary of the parsing result. Behavior depends on validity:
+
+- **Valid configuration:** Logs group statistics (if any groups exist), total process rules count, and any warnings prefixed with `⚠`.
+- **Invalid configuration:** Logs all errors prefixed with `✗`, all warnings prefixed with `⚠`, and a final summary of the error count.
+- **Redundant rules present:** Also prints warnings even for valid configurations to alert the user about duplicate definitions.
 
 ## Remarks
 
-- **Grade-based organization**: Both `process_level_configs` and `thread_level_configs` use a `HashMap<u32, HashMap<String, ...>>` structure. The outer key is the *grade* — a positive integer (≥ 1) that determines how frequently a rule is applied. A grade of `1` means the rule runs every polling loop; a grade of `N` means it runs every N-th loop. This design allows the main loop to efficiently select only the rules that apply to the current iteration.
+### Two-tier HashMap structure
 
-- **Deriving Default**: `ConfigResult` derives `Default`, which initializes both `HashMap` collections as empty, sets all counters to `0`, and creates empty `Vec`s for errors and warnings. The `constants` field receives the `ConfigConstants::default()` values (`min_active_streak = 2`, `keep_threshold = 0.69`, `entry_threshold = 0.42`).
+The outer `HashMap<u32, ...>` key is the **grade**, an unsigned integer ≥ 1 that controls how often rules are applied. Grade 1 rules run every polling cycle; grade *N* rules run every *N*th cycle. This allows users to configure less frequent enforcement for processes that don't need constant monitoring. The inner `HashMap<String, ...>` maps lowercased process names to their respective configurations.
 
-- **Redundant rule handling**: When a process name appears in more than one rule, [`parse_and_insert_rules`](parse_and_insert_rules.md) overwrites the earlier entry and increments `redundant_rules_count`. A warning is also pushed to `warnings` identifying the line number and process name.
+### Process-level vs. thread-level separation
 
-- **Hot-reload safety**: [`hotreload_config`](hotreload_config.md) parses the config file into a new `ConfigResult` and only replaces the active configuration if `is_valid()` returns `true`. If the reload fails validation, the previous `ConfigResult` is retained and an error is logged.
+A single config line can produce both a [ProcessLevelConfig](ProcessLevelConfig.md) and a [ThreadLevelConfig](ThreadLevelConfig.md). The parser in [parse_and_insert_rules](parse_and_insert_rules.md) determines validity independently: a process-level entry is created only if at least one of priority, affinity, CPU set, IO priority, or memory priority is non-default; a thread-level entry is created only if prime CPUs, tracking, or ideal processor rules are specified. A warning is emitted if neither is valid.
 
-- **Split into process-level and thread-level**: A single config line may produce entries in both `process_level_configs` and `thread_level_configs`. The split occurs inside [`parse_and_insert_rules`](parse_and_insert_rules.md): process-level settings (priority, affinity, CPU set, I/O priority, memory priority) go into `process_level_configs`, while thread-level settings (prime CPUs, prefixes, tracking, ideal processor) go into `thread_level_configs`. A process with only thread-level settings (e.g., only ideal processor rules) will have no entry in `process_level_configs`, and vice versa.
+### Redundancy detection
+
+When a rule is inserted for a process name that already exists in any grade, the old entry is overwritten and `redundant_rules_count` is incremented. This is a warning, not an error — the last definition wins.
+
+### Default derivation
+
+The struct derives `Default`, which initializes all `HashMap`s and `Vec`s to empty, all counters to zero, and `constants` to `ConfigConstants::default()`. This is used by [read_config](read_config.md) to create the initial accumulator before parsing begins.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `config.rs` |
-| Constructed by | [`read_config`](read_config.md) (via `ConfigResult::default()`) |
-| Populated by | [`parse_and_insert_rules`](parse_and_insert_rules.md), [`parse_constant`](parse_constant.md), [`parse_alias`](parse_alias.md), [`collect_group_block`](collect_group_block.md) |
-| Consumed by | `main.rs` main loop, [`hotreload_config`](hotreload_config.md), `apply.rs` |
-| API | Internal |
-| Privileges | None |
+| | |
+|---|---|
+| **Module** | `src/config.rs` |
+| **Callers** | [read_config](read_config.md), [hotreload_config](hotreload_config.md), main polling loop, [parse_and_insert_rules](parse_and_insert_rules.md), [parse_constant](parse_constant.md), [parse_alias](parse_alias.md) |
+| **Dependencies** | [ProcessLevelConfig](ProcessLevelConfig.md), [ThreadLevelConfig](ThreadLevelConfig.md), [ConfigConstants](ConfigConstants.md), [HashMap](../collections.rs/README.md) |
+| **Privileges** | None (data structure only) |
 
 ## See Also
 
-| Resource | Link |
-|----------|------|
-| ProcessLevelConfig | [ProcessLevelConfig](ProcessLevelConfig.md) |
-| ThreadLevelConfig | [ThreadLevelConfig](ThreadLevelConfig.md) |
-| ConfigConstants | [ConfigConstants](ConfigConstants.md) |
-| read_config | [read_config](read_config.md) |
-| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| hotreload_config | [hotreload_config](hotreload_config.md) |
-| config module overview | [README](README.md) |
+| Topic | Link |
+|-------|------|
+| Module overview | [config.rs](README.md) |
+| Process-level rule struct | [ProcessLevelConfig](ProcessLevelConfig.md) |
+| Thread-level rule struct | [ThreadLevelConfig](ThreadLevelConfig.md) |
+| Tuning constants | [ConfigConstants](ConfigConstants.md) |
+| Config file parser | [read_config](read_config.md) |
+| Rule insertion logic | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| Hot-reload with validation | [hotreload_config](hotreload_config.md) |
+| Apply engine | [apply.rs](../apply.rs/README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

@@ -1,110 +1,77 @@
 # read_bleack_list function (config.rs)
 
-Reads a text file and returns its non-empty, non-comment lines as a vector of lowercase strings. This utility function is used to load simple line-oriented list files such as the blacklist file used in find mode. After collecting results, the function logs the count of loaded blacklist items.
+Reads a blacklist file containing process names to exclude from configuration enforcement. Each line in the file specifies one process name; lines starting with `#` are treated as comments and ignored.
+
+> **Note:** The function name preserves the original spelling `read_bleack_list` as it appears in the source code.
 
 ## Syntax
 
-```AffinityServiceRust/src/config.rs#L877-888
-pub fn read_bleack_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
-    let file = File::open(path)?;
-    let reader = BufReader::new(file);
-    let result: Vec<String> = reader
-        .lines()
-        .map_while(Result::ok)
-        .map(|s| s.trim().to_lowercase())
-        .filter(|s| !s.is_empty() && !s.starts_with('#'))
-        .collect();
-    log!("{} blacklist items loaded", result.len());
-    Ok(result)
-}
+```rust
+pub fn read_bleack_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>>
 ```
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `path` | `P: AsRef<Path>` | A file system path to the text file to read. Accepts any type that can be converted to a `Path` reference, including `&str`, `String`, and `PathBuf`. |
+`path: P`
+
+File system path to the blacklist file. Accepts any type that implements `AsRef<Path>`, such as `&str`, `String`, or `PathBuf`. The file is expected to be a UTF-8 text file with one process name per line.
 
 ## Return value
 
-Type: `std::io::Result<Vec<String>>`
-
-On success, returns `Ok` containing a vector of strings where each element is a trimmed, lowercased, non-empty line from the file that does not begin with `#`. On failure, returns the `std::io::Error` from `File::open` (e.g., file not found, permission denied).
-
-### Examples
-
-Given a file with the following content:
-
-```/dev/null/example_blacklist.txt#L1-6
-# Processes to ignore during find mode
-svchost.exe
-System
-  Explorer.EXE
-
-# End of list
-```
-
-The returned vector would be:
-
-```/dev/null/example_result.txt#L1-3
-["svchost.exe", "system", "explorer.exe"]
-```
+`Result<Vec<String>>` — On success, returns a `Vec<String>` of lowercased process names. On failure (e.g., file not found, permission denied), returns the underlying `std::io::Error`.
 
 ## Remarks
 
-### Processing pipeline
+### File format
 
-1. The file is opened with `File::open` and wrapped in a `BufReader` for line-buffered reading.
-2. Lines are read lazily via the `lines()` iterator. The `map_while(Result::ok)` combinator stops reading at the first I/O error encountered after a successful open (partial results are not returned in that case — the iterator simply terminates early and returns what was collected so far).
-3. Each line is trimmed of leading and trailing whitespace and converted to lowercase for case-insensitive matching at runtime.
-4. Empty lines (after trimming) and lines that start with `#` (comments) are filtered out.
-5. The remaining lines are collected into a `Vec<String>`.
+The blacklist file uses a simple line-oriented format:
 
-### Logging
+```
+# This is a comment
+svchost.exe
+explorer.exe
+# Another comment
+taskmgr.exe
+```
 
-After collecting the results, `read_bleack_list` logs the number of loaded blacklist items using the `log!` macro with the message `"{} blacklist items loaded"`. This provides immediate feedback in the service log about how many entries were parsed from the file, which is useful for verifying that the blacklist file was read correctly and for diagnosing configuration issues.
+### Parsing rules
 
-### Case normalization
+1. The file is opened and read line-by-line using a buffered reader.
+2. Each line is trimmed of leading and trailing whitespace.
+3. The line is converted to lowercase for case-insensitive matching against running process names.
+4. Empty lines and lines starting with `#` are discarded.
+5. All surviving lines are collected into a `Vec<String>`.
 
-All entries are lowercased to enable case-insensitive comparisons with Windows process names, which are inherently case-insensitive.
+After successful loading, the function logs the count of loaded blacklist items via the `log!` macro (e.g., `"12 blacklist items loaded"`).
 
-### Comment syntax
+### Relationship with hot-reload
 
-Lines beginning with `#` (after trimming) are treated as comments and excluded from the result. Inline comments (e.g., `svchost.exe # system process`) are **not** supported — the entire line would be included as-is (lowercased and trimmed) because it does not start with `#`.
+This function is called by [hotreload_blacklist](hotreload_blacklist.md) whenever the blacklist file's modification timestamp changes. On read failure during hot-reload, the previous blacklist is retained via `unwrap_or_default()` at the call site.
 
-### Error propagation
+### Effect on service behavior
 
-Only the `File::open` call can produce an error that propagates to the caller via the `?` operator. Subsequent line-reading errors are silently absorbed by `map_while(Result::ok)`, which terminates iteration at the first failed line read rather than propagating the error.
+Processes whose lowercased names appear in the blacklist are skipped entirely during the apply loop. No process-level or thread-level configuration is applied to blacklisted processes, even if matching rules exist in the config file.
 
-### Encoding
+### Error handling
 
-The function reads the file as UTF-8 (the default for `BufReader::lines`). For files encoded in other formats (e.g., UTF-16 LE), use [`read_utf16le_file`](read_utf16le_file.md) instead.
-
-### Usage
-
-`read_bleack_list` is primarily used by:
-- The main loop to load the blacklist file (`-blacklist <file>`) for find mode.
-- [`hotreload_blacklist`](hotreload_blacklist.md) to reload the blacklist when it changes on disk.
+The function propagates `std::io::Error` from `File::open` if the file cannot be opened. Line-reading errors cause the iterator to stop at the first failure (via `map_while(Result::ok)`), but lines read successfully up to that point are still included in the result.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `config.rs` |
-| Visibility | `pub` |
-| Callers | `main.rs` (blacklist loading), [`hotreload_blacklist`](hotreload_blacklist.md) |
-| Callees | `File::open`, `BufReader::new`, `BufRead::lines`, `log!` |
-| API | `std::io::Result`, `std::fs::File`, `std::io::BufReader`, `std::path::Path` |
-| Privileges | File system read access to the specified path |
+| | |
+|---|---|
+| **Module** | [`src/config.rs`](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf/src/config.rs) |
+| **Callers** | [hotreload_blacklist](hotreload_blacklist.md), main initialization in `main.rs` |
+| **Callees** | `std::fs::File::open`, `std::io::BufReader`, `log!` macro |
+| **Privileges** | File read access to the blacklist path |
 
 ## See Also
 
-| Resource | Link |
-|----------|------|
-| read_utf16le_file | [read_utf16le_file](read_utf16le_file.md) |
-| read_config | [read_config](read_config.md) |
-| hotreload_blacklist | [hotreload_blacklist](hotreload_blacklist.md) |
-| config module overview | [README](README.md) |
+| Topic | Link |
+|-------|------|
+| Module overview | [config.rs](README.md) |
+| Hot-reload mechanism for blacklist | [hotreload_blacklist](hotreload_blacklist.md) |
+| Config file reader (counterpart) | [read_config](read_config.md) |
+| CLI arguments specifying blacklist path | [CliArgs](../cli.rs/CliArgs.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

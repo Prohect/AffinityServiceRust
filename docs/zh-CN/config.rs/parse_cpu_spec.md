@@ -1,85 +1,73 @@
 # parse_cpu_spec 函数 (config.rs)
 
-将 CPU 规格字符串解析为已排序的 CPU 索引列表。此函数是解释 AffinityServiceRust 配置文件所支持的各种 CPU 规格格式的主要入口点，包括数字范围、分号分隔的单独索引和旧式十六进制位掩码。
+将 CPU 规格字符串解析为已排序的 CPU 索引列表。这是配置系统中使用的中心 CPU 集合解析器——每个 CPU 别名定义、亲和性字段、CPU 集合字段和 Prime 线程字段最终都会通过这个函数。
 
 ## 语法
 
-```AffinityServiceRust/src/config.rs#L78-113
+```rust
 pub fn parse_cpu_spec(s: &str) -> List<[u32; CONSUMER_CPUS]>
 ```
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `s` | `&str` | 以下述支持格式之一表示的 CPU 规格字符串。解析前会去除前导和尾随空白。 |
+`s: &str`
+
+描述一组逻辑处理器索引的字符串。接受以下格式：
+
+| 格式 | 示例 | 结果 |
+|--------|---------|--------|
+| 空或 `"0"` | `""`, `"0"` | 空列表（无 CPU/无更改） |
+| 十六进制位掩码 | `"0xFF"`, `"0x15"` | 从设置位派生的 CPU 索引（旧版，≤64 核） |
+| 包含范围 | `"0-7"` | `[0, 1, 2, 3, 4, 5, 6, 7]` |
+| 分号分隔的单个值 | `"0;4;8"` | `[0, 4, 8]` |
+| 混合范围和单个值 | `"0-3;8;12-15"` | `[0, 1, 2, 3, 8, 12, 13, 14, 15]` |
 
 ## 返回值
 
-类型：`List<[u32; CONSUMER_CPUS]>`
-
-已排序、已去重的 `u32` CPU 索引列表。当输入为空、`"0"` 或无法解析时，返回空列表。
+`List<[u32; CONSUMER_CPUS]>` — 已排序、去重的 [SmallVec](../collections.rs/README.md) 支持的 `u32` CPU 索引列表。如果输入为空、`"0"` 或无法解析，则返回空列表。
 
 ## 备注
 
-### 支持的格式
+### 解析算法
 
-| 格式 | 示例 | 结果 | 说明 |
-|------|------|------|------|
-| 空或 `"0"` | `""`、`"0"` | `[]`（空） | 表示"不更改"——当前 CPU 分配保持不变。 |
-| 十六进制位掩码 | `"0xFF"`、`"0X0F"` | `[0,1,2,3,4,5,6,7]`、`[0,1,2,3]` | 适用于 ≤ 64 个逻辑处理器的旧式格式。必须以 `0x` 或 `0X` 开头。通过 `u64::from_str_radix` 解析。 |
-| CPU 范围 | `"0-7"` | `[0,1,2,3,4,5,6,7]` | 包含范围。推荐的现代配置格式。 |
-| 单独 CPU | `"0;4;8"` | `[0,4,8]` | 以分号分隔的单独 CPU 索引列表。 |
-| 混合范围 | `"0-3;8-11"` | `[0,1,2,3,8,9,10,11]` | 以分号分隔的多个范围和/或单独索引。支持超过 64 核的系统。 |
-| 单个 CPU | `"7"` | `[7]` | 解释为 CPU 索引 7，**不是**位掩码。使用 `"0x7"` 或 `"0-2"` 表示核心 0–2。 |
+1. **修剪** 输入字符串。
+2. **空/零检查：** 如果修剪后的字符串为空或恰好是 `"0"`，立即返回空列表。值 `"0"` 是配置约定，表示"无 CPU 限制"。
+3. **十六进制前缀检测：** 如果字符串以 `"0x"` 或 `"0X"` 开头，将剩余部分解析为十六进制 `u64`，并委托给 [mask_to_cpu_indices](mask_to_cpu_indices.md) 提取设置位位置。解析失败时，返回空列表。
+4. **分号分割：** 在 `';'` 上分割字符串。每个段独立处理：
+   - 如果段包含 `'-'`，解析破折号前后的部分为 `u32` 起始值和结束值，并插入 `[start, end]` 范围内每个整数。
+   - 否则，将段解析为单个 `u32` CPU 索引。
+   - 插入时跳过重复项（`contains` 检查）。
+5. 在返回之前，将结果列表按升序**排序**。
 
-### 算法
+### 设计选择
 
-1. 对输入字符串去除空白。
-2. 如果结果为空或正好是 `"0"`，立即返回空列表。
-3. 如果字符串以 `"0x"` 或 `"0X"` 开头，将其视为十六进制位掩码：
-   - 将十六进制部分解析为 `u64`。
-   - 通过 [`mask_to_cpu_indices`](mask_to_cpu_indices.md) 将被设置的位位置（`1`）转换为 CPU 索引。
-   - 如果十六进制解析失败，返回空列表。
-4. 否则，按 `';'` 拆分字符串，逐段处理：
-   - 跳过空段（来自尾随或连续分号）。
-   - 如果段包含 `'-'`，将其解析为包含范围 `start-end`。解析失败时两个边界都默认为 `0`；起始值失败时终止值默认为起始值。
-   - 如果段是纯整数，作为单个 CPU 索引添加。
-   - 在插入过程中抑制重复的 CPU 索引。
-5. 在返回之前将结果列表按升序排序。
+- **分号作为分隔符：** 冒号 (`:`) 保留用于配置规则格式中的字段分隔符，因此 CPU 规格使用分号来分隔单个值或范围。
+- **`"0"` 表示无更改：** 这是故意的哨兵值。配置字段为 `0` 表示服务不应修改相应设置。这与十六进制掩码 `0x0`（也产生空列表）不同。
+- **十六进制掩码限制在 64 核：** 十六进制位掩码格式是作为 Process Lasso 兼容性的旧版便利功能继承而来的。对于拥有超过 64 个逻辑处理器的系统，请使用基于范围的语法（`"0-7;64-71"`）。
+- **无错误报告：** 分号分隔规格内的无效令牌会被静默跳过（`unwrap_or` 到 `0` 或解析失败被忽略）。验证错误在更高层级通过检查结果列表是否意外为空来捕获。
 
-### 重要的歧义消除
+### 栈分配
 
-值 `"7"` 表示 **CPU 索引 7**（单个逻辑处理器），而不是 CPU 0–2 的位掩码。这是一个有意的设计选择，以避免位掩码和索引解释之间的歧义。要指定 CPU 0、1 和 2，请使用十六进制表示法 `"0x7"` 或范围表示法 `"0-2"`。
+返回类型 `List<[u32; CONSUMER_CPUS]>` 是 `SmallVec`，可在栈上存储多达 `CONSUMER_CPUS`（32）个 CPU 索引。典型的消费者系统（≤32 核）永远不会堆分配。
 
-### 边界情况
+## 需求
 
-- `0x`/`0X` 前缀之后的无效十六进制字符串返回空列表，不产生错误。
-- 非数字的范围边界（例如 `"a-z"`）通过 `unwrap_or(0)` 回退到 `0`。
-- 规格中的重复索引会被静默去重。
-- 该函数不验证 CPU 索引是否对应系统上物理存在的处理器；该验证在应用时进行。
+| | |
+|---|---|
+| **模块** | `src/config.rs` |
+| **调用方** | [parse_alias](parse_alias.md), [resolve_cpu_spec](resolve_cpu_spec.md), [parse_mask](parse_mask.md), [convert](convert.md) |
+| **被调用方** | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
+| **权限** | 无 |
 
-## 要求
+## 参见
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `config.rs` |
-| 可见性 | `pub` |
-| 调用方 | [`resolve_cpu_spec`](resolve_cpu_spec.md)、[`parse_alias`](parse_alias.md)、[`parse_mask`](parse_mask.md)、[`read_config`](read_config.md)（间接） |
-| 被调用方 | [`mask_to_cpu_indices`](mask_to_cpu_indices.md)（用于十六进制位掩码输入） |
-| API | [`collections.rs`](../collections.rs/README.md) 中的 `List` 和 `CONSUMER_CPUS` |
-| 权限 | 无 |
+| 主题 | 链接 |
+|-------|------|
+| 模块概述 | [config.rs](README.md) |
+| 位掩码到 CPU 索引 | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
+| CPU 索引到位掩码 | [cpu_indices_to_mask](cpu_indices_to_mask.md) |
+| 格式化 CPU 索引用于显示 | [format_cpu_indices](format_cpu_indices.md) |
+| 别名解析包装器 | [resolve_cpu_spec](resolve_cpu_spec.md) |
+| 集合类型 | [List / CONSUMER_CPUS](../collections.rs/README.md) |
 
-## 另请参阅
-
-| 资源 | 链接 |
-|------|------|
-| mask_to_cpu_indices | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
-| cpu_indices_to_mask | [cpu_indices_to_mask](cpu_indices_to_mask.md) |
-| format_cpu_indices | [format_cpu_indices](format_cpu_indices.md) |
-| resolve_cpu_spec | [resolve_cpu_spec](resolve_cpu_spec.md) |
-| parse_mask | [parse_mask](parse_mask.md) |
-| config 模块概述 | [README](README.md) |
-
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档针对 Commit：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

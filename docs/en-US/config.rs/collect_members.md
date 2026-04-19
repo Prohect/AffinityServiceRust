@@ -1,87 +1,67 @@
 # collect_members function (config.rs)
 
-Splits a colon-delimited string of process names into individual lowercase member entries and appends them to the provided list. This is a helper function used internally by the configuration parser to extract process names from both inline rule lines and `{ }` group blocks.
+Parses a colon-separated list of process names from a text fragment and appends them to an accumulator vector. Used internally to extract group member names from both single-line and multi-line group block definitions.
 
 ## Syntax
 
-```AffinityServiceRust/src/config.rs#L242-249
-fn collect_members(text: &str, members: &mut Vec<String>) {
-    for item in text.split(':') {
-        let item = item.trim().to_lowercase();
-        if !item.is_empty() && !item.starts_with('#') {
-            members.push(item);
-        }
-    }
-}
+```rust
+fn collect_members(text: &str, members: &mut Vec<String>)
 ```
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `text` | `&str` | A string containing one or more process names separated by colons (`:`). May also contain inline comments (tokens starting with `#`) and whitespace, both of which are filtered out. |
-| `members` | `&mut Vec<String>` | A mutable reference to a vector that collected member names are appended to. The caller is responsible for initializing this vector; `collect_members` only appends and never clears it. |
+`text: &str`
+
+A string fragment containing colon-separated process names. Typically the content between `{` and `}` in a group definition, or a single line within a multi-line group block. Whitespace around each item is trimmed. Items beginning with `#` are treated as comments and skipped.
+
+`members: &mut Vec<String>`
+
+**\[in, out\]** Accumulator vector to which parsed process names are appended. Existing entries are preserved; new names are pushed onto the end. All names are normalized to lowercase.
 
 ## Return value
 
-This function does not return a value. Results are accumulated in the `members` vector passed by the caller.
+This function does not return a value. Results are communicated through the `members` out-parameter.
 
 ## Remarks
 
-### Processing steps
+### Parsing rules
 
-1. The input `text` is split on the `:` delimiter.
-2. Each resulting token is trimmed of leading and trailing whitespace and converted to lowercase.
-3. Tokens that are empty after trimming or that begin with `#` (inline comments) are discarded.
-4. All remaining tokens are pushed onto the `members` vector.
+1. The input `text` is split on `:` (colon) characters.
+2. Each resulting fragment is trimmed of leading and trailing whitespace.
+3. The fragment is converted to lowercase for case-insensitive matching downstream.
+4. Empty fragments and fragments starting with `#` are discarded.
+5. All surviving fragments are pushed onto `members`.
 
-### Deduplication
+### Separator choice
 
-`collect_members` does **not** perform deduplication. If the same process name appears multiple times in `text`, it will be added to `members` multiple times. Deduplication is the responsibility of downstream consumers (e.g., [`parse_and_insert_rules`](parse_and_insert_rules.md) detects and warns about redundant rules).
+The colon `:` separator is used because the main rule syntax already uses `:` as a field delimiter. Within a group block (between `{` and `}`), process names are separated by colons — not commas or semicolons — to maintain consistency with the outer config line format.
 
-### Case normalization
+### No deduplication
 
-All member names are lowercased before insertion. This ensures case-insensitive matching at runtime, since Windows process names are case-insensitive.
+`collect_members` does **not** check for duplicate names. If the same process name appears multiple times in the input or across multiple calls, it will appear multiple times in `members`. Deduplication, if needed, is handled by the caller or by later stages such as [sort_and_group_config](sort_and_group_config.md).
 
-### Usage context
+### Example
 
-This function is called from two sites:
-
-- **[`collect_group_block`](collect_group_block.md)**: Collects members from each line inside a multi-line `{ }` group block and from the content before the closing brace.
-- **[`read_config`](read_config.md)**: Collects members from single-line group blocks where both the opening and closing braces appear on the same line.
-- **[`sort_and_group_config`](sort_and_group_config.md)**: Collects members when re-parsing group blocks during the auto-grouping pass.
-
-### Edge cases
-
-| Input | Result |
-|-------|--------|
-| `""` (empty string) | Nothing appended |
-| `"  "` (whitespace only) | Nothing appended |
-| `"# comment"` | Nothing appended (comment filtered) |
-| `"game.exe"` | `["game.exe"]` appended |
-| `"Game.EXE : app.exe"` | `["game.exe", "app.exe"]` appended |
-| `"a.exe: : b.exe"` | `["a.exe", "b.exe"]` appended (empty token skipped) |
+Given the input text `"game.exe: helper.exe: # comment: tool.EXE"`, the function appends `["game.exe", "helper.exe", "tool.exe"]` to `members`. The comment fragment is skipped, and `tool.EXE` is lowercased.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `config.rs` |
-| Visibility | Private (`fn`, not `pub fn`) |
-| Callers | [`collect_group_block`](collect_group_block.md), [`read_config`](read_config.md), [`sort_and_group_config`](sort_and_group_config.md) |
-| Callees | `str::split`, `str::trim`, `str::to_lowercase`, `str::starts_with`, `Vec::push` |
-| API | Standard library only |
-| Privileges | None |
+| | |
+|---|---|
+| **Module** | `src/config.rs` |
+| **Visibility** | Private (`fn`) — internal to the config module |
+| **Callers** | [read_config](read_config.md) (inline group parsing), [collect_group_block](collect_group_block.md) (multi-line group parsing), [sort_and_group_config](sort_and_group_config.md) (auto-grouping tool) |
+| **Callees** | None (uses only `str` standard library methods) |
+| **Privileges** | None |
 
 ## See Also
 
-| Resource | Link |
-|----------|------|
-| collect_group_block | [collect_group_block](collect_group_block.md) |
-| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| read_config | [read_config](read_config.md) |
-| sort_and_group_config | [sort_and_group_config](sort_and_group_config.md) |
-| config module overview | [README](README.md) |
+| Topic | Link |
+|-------|------|
+| Module overview | [config.rs](README.md) |
+| Multi-line group block collector | [collect_group_block](collect_group_block.md) |
+| Rule parser that consumes group members | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| Main config reader | [read_config](read_config.md) |
+| Auto-grouping utility | [sort_and_group_config](sort_and_group_config.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

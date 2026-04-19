@@ -1,6 +1,6 @@
 # enumerate_process_modules function (winapi.rs)
 
-Enumerates all loaded modules (DLLs and the main executable) for a given process, returning each module's base address, size, and name. This is an internal helper used by [`resolve_address_to_module`](resolve_address_to_module.md) to build the per-process module map cached in [`MODULE_CACHE`](MODULE_CACHE.md).
+Enumerates all loaded modules in a target process, returning each module's base address, size, and name. Used internally by [resolve_address_to_module](resolve_address_to_module.md) to populate the per-PID module cache for address-to-module resolution.
 
 ## Syntax
 
@@ -12,79 +12,72 @@ fn enumerate_process_modules(pid: u32) -> Vec<(usize, usize, String)>
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `pid` | `u32` | The process identifier of the target process whose loaded modules should be enumerated. |
+| `pid` | `u32` | The process identifier of the target process whose modules should be enumerated. |
 
 ## Return value
 
-Returns a `Vec<(usize, usize, String)>` where each tuple element represents:
+`Vec<(usize, usize, String)>` — A vector of tuples where each element represents a loaded module:
 
-| Index | Type | Description |
-|-------|------|-------------|
-| `.0` | `usize` | The base address of the module in the target process's virtual address space (`MODULEINFO.lpBaseOfDll`). |
-| `.1` | `usize` | The size of the module image in bytes (`MODULEINFO.SizeOfImage`). |
-| `.2` | `String` | The base name of the module (e.g., `kernel32.dll`), obtained via `GetModuleBaseNameW`. |
+| Tuple index | Type | Description |
+|-------------|------|-------------|
+| `.0` | `usize` | Base address of the module in the target process's virtual address space (`MODULEINFO::lpBaseOfDll`). |
+| `.1` | `usize` | Size of the module image in bytes (`MODULEINFO::SizeOfImage`). |
+| `.2` | `String` | The base name of the module (e.g., `"kernel32.dll"`, `"ntdll.dll"`), obtained via `GetModuleBaseNameW`. |
 
 Returns an empty `Vec` if:
-
-- The process could not be opened with the required access rights.
-- The opened handle is invalid.
-- `EnumProcessModulesEx` fails (e.g., the process is protected or 32-bit/64-bit mismatch).
+- The process cannot be opened (e.g., access denied, invalid PID).
+- The process handle is invalid after opening.
+- `EnumProcessModulesEx` fails (e.g., 32-bit process querying a 64-bit process without WOW64 support).
 
 ## Remarks
 
-### Algorithm
+### Implementation steps
 
-1. **Open the process** — Calls `OpenProcess` with `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` access. Both rights are required: `PROCESS_QUERY_INFORMATION` for module enumeration and `PROCESS_VM_READ` for reading module names and information from the target process's memory.
+1. **Open process** — Opens the target process with `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` via `OpenProcess`. Both access rights are required: `PROCESS_QUERY_INFORMATION` for module enumeration, and `PROCESS_VM_READ` for reading module names from the target process's address space.
 
-2. **Enumerate modules** — Calls `EnumProcessModulesEx` with `LIST_MODULES_ALL` to retrieve handles (HMODULEs) for all loaded modules (both 32-bit and 64-bit). The function uses a fixed-size array of 1024 `HMODULE` entries as the output buffer, which is sufficient for virtually all real-world processes.
+2. **Enumerate modules** — Calls `EnumProcessModulesEx` with `LIST_MODULES_ALL` to retrieve module handles for both 32-bit and 64-bit modules. The function uses a fixed-size array of 1024 `HMODULE` slots, which is sufficient for the vast majority of processes.
 
-3. **Gather module info** — For each returned `HMODULE`:
-   - Calls `GetModuleInformation` to obtain the `MODULEINFO` struct (base address and image size).
-   - Calls `GetModuleBaseNameW` to obtain the module's file name as a UTF-16 string, then converts it to a Rust `String` via `String::from_utf16_lossy`.
-   - If either call fails for a given module, that module is silently skipped.
+3. **Query each module** — For each returned module handle:
+   - `GetModuleInformation` retrieves the `MODULEINFO` structure containing `lpBaseOfDll` (base address) and `SizeOfImage` (module size).
+   - `GetModuleBaseNameW` retrieves the module's base name as a UTF-16 string, which is converted to a Rust `String` via `String::from_utf16_lossy`.
+   - Modules where either call fails are silently skipped.
 
-4. **Clean up** — The process handle is closed via `CloseHandle` before returning, regardless of success or failure.
+4. **Cleanup** — The process handle is closed via `CloseHandle` before returning, on both success and early-exit paths.
 
-### Capacity limits
+### Module limit
 
-The function allocates a stack array of 1024 `HMODULE` entries. If a process has more than 1024 loaded modules, only the first 1024 are enumerated. In practice, even very large applications (e.g., web browsers, game engines) rarely exceed a few hundred modules.
+The function allocates space for 1024 module handles on the stack. If a process has more than 1024 loaded modules, only the first 1024 are returned. In practice, even complex applications rarely exceed a few hundred modules.
 
-### Module name buffer
+### Visibility
 
-Module names are read into a fixed `[u16; 260]` buffer (matching `MAX_PATH`). Module names longer than 260 characters are truncated.
+This function is module-private (`fn`, not `pub fn`) and is only called by [resolve_address_to_module](resolve_address_to_module.md) during module cache population. External code should use `resolve_address_to_module` instead of calling this function directly.
 
 ### Error handling
 
-This function does not log errors. If the process cannot be opened or module enumeration fails, it returns an empty vector silently. Error reporting is left to the caller ([`resolve_address_to_module`](resolve_address_to_module.md)), which falls back to formatting the raw address as a hex string.
+All Win32 API failures are handled by returning an empty result or skipping the failing module — no errors are logged or propagated. This is intentional because module enumeration is a best-effort diagnostic feature; failure does not affect the service's core functionality.
 
-### Platform notes
+### Access requirements
 
-- **Windows only.** Uses `EnumProcessModulesEx`, `GetModuleInformation`, and `GetModuleBaseNameW` from `psapi` (linked via the `windows` crate's `Win32::System::ProcessStatus` module).
-- `LIST_MODULES_ALL` ensures that both 32-bit and 64-bit modules are included in the results, which is relevant when a WoW64 process is being inspected from a 64-bit host.
-- The function opens a **new** process handle each time it is called. Results are cached externally by [`MODULE_CACHE`](MODULE_CACHE.md) to avoid redundant handle opens and module enumerations.
+The combination of `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` is more restrictive than the limited-access handles used elsewhere in the service. This means module enumeration may fail for processes where [get_process_handle](get_process_handle.md) succeeds with limited access. [SeDebugPrivilege](enable_debug_privilege.md) typically resolves access issues for most processes.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `winapi.rs` |
-| **Visibility** | Private (module-internal, no `pub`) |
-| **Callers** | [`resolve_address_to_module`](resolve_address_to_module.md) (via [`MODULE_CACHE`](MODULE_CACHE.md) population) |
-| **Callees** | `OpenProcess`, `EnumProcessModulesEx`, `GetModuleInformation`, `GetModuleBaseNameW`, `CloseHandle` (Win32 API) |
-| **Win32 API** | [EnumProcessModulesEx](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-enumprocessmodulesexw), [GetModuleInformation](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-getmoduleinformation), [GetModuleBaseNameW](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-getmodulebasenamew) |
-| **Access rights** | `PROCESS_QUERY_INFORMATION \| PROCESS_VM_READ` |
-| **Privileges** | `SeDebugPrivilege` recommended for opening protected or elevated processes. |
+| | |
+|---|---|
+| **Module** | `src/winapi.rs` |
+| **Callers** | [resolve_address_to_module](resolve_address_to_module.md) (via [MODULE_CACHE](README.md) population) |
+| **Callees** | `OpenProcess`, `EnumProcessModulesEx`, `GetModuleInformation`, `GetModuleBaseNameW`, `CloseHandle` (Win32) |
+| **Win32 API** | [OpenProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocess), [EnumProcessModulesEx](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-enumprocessmodulesex), [GetModuleInformation](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-getmoduleinformation), [GetModuleBaseNameW](https://learn.microsoft.com/en-us/windows/win32/api/psapi/nf-psapi-getmodulebasenamew), [CloseHandle](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-closehandle) |
+| **Privileges** | `PROCESS_QUERY_INFORMATION` and `PROCESS_VM_READ` on the target process; [SeDebugPrivilege](enable_debug_privilege.md) recommended |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| resolve_address_to_module | [resolve_address_to_module](resolve_address_to_module.md) |
-| drop_module_cache | [drop_module_cache](drop_module_cache.md) |
-| MODULE_CACHE static | [MODULE_CACHE](MODULE_CACHE.md) |
-| get_thread_start_address | [get_thread_start_address](get_thread_start_address.md) |
-| get_process_handle | [get_process_handle](get_process_handle.md) |
-| winapi module overview | [README](README.md) |
+| Module overview | [winapi.rs](README.md) |
+| Address resolution consumer | [resolve_address_to_module](resolve_address_to_module.md) |
+| Module cache cleanup | [drop_module_cache](drop_module_cache.md) |
+| Thread start address query | [get_thread_start_address](get_thread_start_address.md) |
+| ThreadStats that stores start_address | [ThreadStats](../scheduler.rs/ThreadStats.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

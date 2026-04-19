@@ -1,10 +1,10 @@
 # apply_affinity 函数 (apply.rs)
 
-`apply_affinity` 函数通过 `GetProcessAffinityMask` 读取当前进程亲和性掩码，如果与配置的目标掩码不同，则通过 `SetProcessAffinityMask` 设置新掩码。亲和性成功更改后，该函数还会调用 [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) 在新的 CPU 集合上重新分配线程理想处理器。作为副作用，该函数会将当前（或新应用的）亲和性掩码写入调用方提供的 `current_mask` 输出参数。
+设置进程的 CPU 亲和性掩码，限制其仅在指定的逻辑处理器上运行。
 
 ## 语法
 
-```AffinityServiceRust/src/apply.rs#L134-145
+```AffinityServiceRust/src/apply.rs#L134-142
 pub fn apply_affinity<'a>(
     pid: u32,
     config: &ProcessLevelConfig,
@@ -18,52 +18,83 @@ pub fn apply_affinity<'a>(
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `pid` | `u32` | 目标进程的进程 ID。用于错误日志记录，并传递给 `reset_thread_ideal_processors`。 |
-| `config` | `&ProcessLevelConfig` | 进程级配置，包含 `affinity_cpus`（CPU 索引列表）和日志消息中使用的进程 `name`。如果 `affinity_cpus` 为空，函数将立即返回且不做任何更改。 |
-| `dry_run` | `bool` | 当为 `true` 时，函数在 `apply_config_result` 中记录*将要*执行的更改，而不调用任何 Windows API 修改状态。在 dry-run 模式下读取操作也会被跳过（`GetProcessAffinityMask` 的错误将被抑制）。 |
-| `current_mask` | `&mut usize` | 输出参数。查询或设置成功时，`*current_mask` 将被更新以反映进程的亲和性掩码。此值将被下游函数（如 [`apply_prime_threads_promote`](apply_prime_threads_promote.md)）使用，以根据当前亲和性筛选优选 CPU 索引。 |
-| `process_handle` | `&ProcessHandle` | 提供对进程的读写访问的句柄包装器。函数通过 [`get_handles`](get_handles.md) 提取 `r_handle`（用于 `GetProcessAffinityMask`）和 `w_handle`（用于 `SetProcessAffinityMask`）。如果任一句柄不可用，函数将提前返回。 |
-| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | 返回线程 ID 到 `SYSTEM_THREAD_INFORMATION` 快照映射的惰性闭包。该闭包仅在亲和性成功更改后 `reset_thread_ideal_processors` 需要重新分配理想处理器时才被调用。这种延迟求值避免了在未发生亲和性更改时构建线程映射的开销。 |
-| `apply_config_result` | `&mut ApplyConfigResult` | 执行过程中产生的更改描述和错误消息的累加器。 |
+`pid: u32`
+
+目标进程的进程标识符。
+
+`config: &ProcessLevelConfig`
+
+进程级配置，包含 `affinity_cpus`，即进程应被限制到的 CPU 索引列表。如果 `affinity_cpus` 为空，函数将立即返回而不执行任何操作。
+
+`dry_run: bool`
+
+如果为 `true`，则将预期更改记录到 `apply_config_result` 中，而不调用任何 Windows API。
+
+`current_mask: &mut usize`
+
+**\[输出\]** 在成功查询后接收进程的当前亲和性掩码。成功设置后更新为新掩码。此值被下游函数（如 [apply_prime_threads_promote](apply_prime_threads_promote.md)）使用，后者用它将主 CPU 索引过滤为仅包含进程亲和性范围内的索引。
+
+`process_handle: &ProcessHandle`
+
+目标进程的句柄包装器。需要读和写句柄；如果任一不可用，函数将提前返回。
+
+`threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>`
+
+目标进程线程映射的惰性访问器。当亲和性成功更改时，传递给 [reset_thread_ideal_processors](reset_thread_ideal_processors.md)。
+
+`apply_config_result: &mut ApplyConfigResult`
+
+操作中产生的更改消息和错误的累积器。
 
 ## 返回值
 
-此函数不返回值。所有结果通过 `current_mask` 输出参数和 `apply_config_result` 累加器传达。
+此函数不返回值。结果通过 `current_mask`（副作用）和 `apply_config_result` 通信。
 
 ## 备注
 
-- 目标亲和性掩码通过 `cpu_indices_to_mask` 从 `config.affinity_cpus` 计算得出。如果生成的掩码为 `0` 或与当前进程亲和性掩码匹配，则不应用任何更改。
-- 当亲和性掩码成功更改时，`*current_mask` 将被更新为新的目标掩码，并以 `dry_run: false` 和 `config.affinity_cpus` 作为 CPU 列表调用 [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md)。这会在新的亲和性集合上重新分配线程理想处理器，以防止 Windows 在掩码更改后将线程集中到单个 CPU 上。
-- 该函数通过 `GetProcessAffinityMask` 同时查询进程亲和性掩码和系统亲和性掩码，但仅使用进程掩码进行比较。系统掩码被丢弃。
-- `GetProcessAffinityMask` 的错误仅在 `dry_run` 为 `false` 时才通过 [`log_error_if_new`](log_error_if_new.md) 记录。在 dry-run 模式下，查询失败将被静默忽略，并根据配置的目标生成合成更改消息。
-- `SetProcessAffinityMask` 的错误通过 [`log_error_if_new`](log_error_if_new.md) 以 `Operation::SetProcessAffinityMask` 记录。当设置操作失败时，`current_mask` **不会**被更新。
-- 更改消息格式为 `"Affinity: {current:#X} -> {target:#X}"`，显示十六进制亲和性掩码。
+函数通过 `cpu_indices_to_mask` 将配置的 CPU 索引转换为位掩码。然后使用 **GetProcessAffinityMask** 查询当前进程亲和性掩码，并将其与目标进行比较。如果不同，则调用 **SetProcessAffinityMask** 应用新掩码。
 
-## 要求
+### 副作用
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `apply.rs` |
-| Crate | `AffinityServiceRust` |
-| Windows API | `GetProcessAffinityMask`、`SetProcessAffinityMask`、`GetLastError` |
-| 调用方 | `scheduler.rs` / `main.rs` 中的编排代码 |
-| 被调用方 | [`get_handles`](get_handles.md)、[`log_error_if_new`](log_error_if_new.md)、[`reset_thread_ideal_processors`](reset_thread_ideal_processors.md)、`cpu_indices_to_mask`（config 模块）、`error_from_code_win32`（error_codes 模块） |
-| 权限 | 读取需要 `PROCESS_QUERY_INFORMATION` 或 `PROCESS_QUERY_LIMITED_INFORMATION`，写入需要 `PROCESS_SET_INFORMATION`。这些权限封装在 `ProcessHandle` 句柄中。 |
+- **填充 `current_mask`**：即使配置的亲和性已匹配，当前掩码也通过 `GetProcessAffinityMask` 输出参数写入到 `*current_mask`。此内容被后续的线程逻辑消费。
+- **重置线程理想处理器**：在亲和性成功更改后，函数立即调用 [reset_thread_ideal_processors](reset_thread_ideal_processors.md)，传入 `config.affinity_cpus`。这会将线程理想处理器重新分配到新的 CPU 集合上，以防止过时的分配将线程聚集在不再属于亲和性掩码的 CPU 上。
+- **更新 `current_mask` 为新值**：成功设置后，`*current_mask` 被新亲和性掩码覆盖。
 
-## 另请参阅
+### 错误处理
 
-| 参考 | 链接 |
-|------|------|
-| apply 模块概述 | [`README`](README.md) |
-| ApplyConfigResult | [`ApplyConfigResult`](ApplyConfigResult.md) |
-| get_handles | [`get_handles`](get_handles.md) |
-| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
-| reset_thread_ideal_processors | [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) |
-| apply_process_default_cpuset | [`apply_process_default_cpuset`](apply_process_default_cpuset.md) |
-| apply_priority | [`apply_priority`](apply_priority.md) |
-| ProcessLevelConfig | [`config.rs/ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
+- 如果 **GetProcessAffinityMask** 失败，错误通过 [log_error_if_new](log_error_if_new.md) 针对每个唯一的 (pid, operation, error_code) 记录一次，函数在不尝试设置的情况下退出。
+- 如果 **SetProcessAffinityMask** 失败，错误同样被记录，并且掩码不会更新。
+- 两个错误路径在 `dry_run` 模式下被抑制（获取路径的错误完全被跳过）。
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+### 亲和性掩码格式
+
+亲和性掩码是一个 `usize` 位掩码，其中位 *N* 代表逻辑处理器 *N*。例如，CPUs `[0, 2, 4]` 产生掩码 `0x15`。转换后的零掩码导致函数跳过设置操作，因为 Windows 拒绝零亲和性掩码。
+
+### 更改消息格式
+
+```/dev/null/example.txt#L1
+Affinity: 0xFF -> 0x15
+```
+
+## 需求
+
+| | |
+|---|---|
+| **模块** | `src/apply.rs` |
+| **调用方** | 主轮询循环（通过进程级配置应用） |
+| **被调用方** | [get_handles](get_handles.md), [log_error_if_new](log_error_if_new.md), [reset_thread_ideal_processors](reset_thread_ideal_processors.md), `cpu_indices_to_mask` |
+| **Win32 API** | [GetProcessAffinityMask](https://learn.microsoft.com/zh-cn/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask), [SetProcessAffinityMask](https://learn.microsoft.com/zh-cn/windows/win32/api/winbase/nf-winbase-setprocessaffinitymask) |
+| **权限** | `PROCESS_QUERY_LIMITED_INFORMATION`（读）, `PROCESS_SET_INFORMATION`（写） |
+
+## 参见
+
+| 主题 | 描述 |
+|---|---|
+| [ApplyConfigResult](ApplyConfigResult.md) | 更改和错误的累积器 |
+| [apply_process_default_cpuset](apply_process_default_cpuset.md) | 通过 CPU 集合进行的软 CPU 偏好（硬亲和性的替代） |
+| [reset_thread_ideal_processors](reset_thread_ideal_processors.md) | 亲和性更改后重新分配线程理想处理器 |
+| [apply_prime_threads_promote](apply_prime_threads_promote.md) | 使用 `current_mask` 过滤主 CPU 索引 |
+| [ProcessLevelConfig](../config.rs/ProcessLevelConfig.md) | 包含 `affinity_cpus` 的配置结构 |
+| [ProcessHandle](../winapi.rs/ProcessHandle.md) | 具有读/写访问级别的进程句柄包装器 |
+
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

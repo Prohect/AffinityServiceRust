@@ -1,32 +1,29 @@
 # process module (AffinityServiceRust)
 
-The `process` module provides efficient process and thread enumeration by wrapping the native `NtQuerySystemInformation` API. It captures point-in-time snapshots of every running process and its threads on the system, storing them in a reusable buffer and a PID-keyed lookup map. The snapshot model uses RAII semantics — the buffer and map are automatically cleared when the `ProcessSnapshot` is dropped, preventing stale data from persisting between scheduling cycles.
-
-## Functions
-
-This module does not export standalone functions. All functionality is exposed through `ProcessSnapshot` and `ProcessEntry` methods.
-
-## Structs
-
-| Struct | Description |
-|--------|-------------|
-| [ProcessSnapshot](ProcessSnapshot.md) | RAII wrapper that captures a point-in-time snapshot of all processes and threads via `NtQuerySystemInformation`, with automatic cleanup on drop. |
-| [ProcessEntry](ProcessEntry.md) | Represents a single process from the snapshot, wrapping `SYSTEM_PROCESS_INFORMATION` with cached process name and on-demand thread enumeration. |
+The `process` module provides a high-performance process snapshot mechanism built on top of `NtQuerySystemInformation(SystemProcessInformation)`. It captures a point-in-time view of all running processes and their threads into reusable buffers, minimizing allocation overhead across polling iterations. The module exposes an RAII-based [ProcessSnapshot](ProcessSnapshot.md) type that automatically clears shared state on drop, and a [ProcessEntry](ProcessEntry.md) struct that wraps per-process data including thread arrays parsed from raw kernel structures.
 
 ## Statics
 
-| Static | Description |
-|--------|-------------|
-| [SNAPSHOT_BUFFER](SNAPSHOT_BUFFER.md) | `Lazy<Mutex<Vec<u8>>>` — Shared backing buffer for `NtQuerySystemInformation` results. Must not be accessed directly; use `ProcessSnapshot` instead. |
-| [PID_TO_PROCESS_MAP](PID_TO_PROCESS_MAP.md) | `Lazy<Mutex<HashMap<u32, ProcessEntry>>>` — Shared PID-to-process lookup map populated by `ProcessSnapshot::take`. Must not be accessed directly; use `ProcessSnapshot` instead. |
+| Name | Type | Description |
+|------|------|-------------|
+| `SNAPSHOT_BUFFER` | `Lazy<Mutex<Vec<u8>>>` | Shared byte buffer used by [ProcessSnapshot::take](ProcessSnapshot.md) to receive raw `SYSTEM_PROCESS_INFORMATION` data from the kernel. Reused across iterations to avoid repeated allocation; dynamically grown when the kernel reports `STATUS_INFO_LENGTH_MISMATCH`. **Do not access directly** — use [ProcessSnapshot](ProcessSnapshot.md). |
+| `PID_TO_PROCESS_MAP` | `Lazy<Mutex<HashMap<u32, ProcessEntry>>>` | Shared map of PID → [ProcessEntry](ProcessEntry.md) populated during each snapshot. Cleared on [ProcessSnapshot](ProcessSnapshot.md) drop. **Do not access directly** — use [ProcessSnapshot](ProcessSnapshot.md). |
+
+## Structs
+
+| Name | Description |
+|------|-------------|
+| [ProcessSnapshot](ProcessSnapshot.md) | RAII guard that captures a system-wide process snapshot into the shared buffer and process map. Clears both on drop. |
+| [ProcessEntry](ProcessEntry.md) | Per-process data wrapper containing the `SYSTEM_PROCESS_INFORMATION` record, a pointer to the raw thread array, and the lowercased process name. |
 
 ## See Also
 
-| Link | Description |
-|------|-------------|
-| [winapi.rs](../winapi.rs/README.md) | Low-level Windows API wrappers including handle management and CPU set operations. |
-| [collections.rs](../collections.rs/README.md) | Type aliases (`HashMap`, `HashSet`, `List`) and capacity constants used throughout the project. |
-| [event_trace.rs](../event_trace.rs/README.md) | ETW-based real-time process monitoring that complements polling-based snapshots. |
+| Topic | Link |
+|-------|------|
+| Snapshot consumer — main loop | [main.rs](../main.rs/README.md) |
+| Thread scheduling engine | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
+| Process handle management | [ProcessHandle](../winapi.rs/ProcessHandle.md) |
+| Configuration application | [apply.rs](../apply.rs/README.md) |
+| Windows API wrappers | [winapi.rs](../winapi.rs/README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

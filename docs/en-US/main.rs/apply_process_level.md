@@ -1,6 +1,6 @@
 # apply_process_level function (main.rs)
 
-Applies one-shot process-level settings to a single Windows process identified by its PID. This function obtains a process handle and then delegates to specialized apply helpers for each setting category: priority class, processor affinity (with thread ideal-processor reset), default CPU set, I/O priority, and memory priority. It is called once per process (unless continuous process-level apply is enabled via CLI flag).
+Opens a process handle for the given PID and applies all process-level settings — priority class, CPU affinity mask, default CPU set, IO priority, and memory priority — in a single pass. This is the process-level wrapper called once per process when it first matches a configuration rule (or every iteration if continuous apply is enabled).
 
 ## Syntax
 
@@ -16,47 +16,66 @@ fn apply_process_level<'a>(
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `pid` | `u32` | The Windows process identifier of the target process. |
-| `config` | `&ProcessLevelConfig` | The process-level configuration block that describes the desired priority class, affinity mask, CPU set IDs, I/O priority, and memory priority for this process. |
-| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A lazy closure that returns a reference to a map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots. The closure is backed by a `OnceCell` in the caller (`apply_config`), so the thread map is only materialised on first access and reused thereafter. Used by `apply_affinity` and `apply_process_default_cpuset` to reset per-thread ideal processors after a process-wide change. |
-| `dry_run` | `bool` | When `true`, the function logs what it *would* do but does not call any Win32 APIs to mutate process state. |
-| `apply_configs` | `&mut ApplyConfigResult` | Accumulator for changes and errors produced during the apply pass. Populated by each sub-function and later consumed by [`log_apply_results`](log_apply_results.md). |
+`pid: u32`
+
+The process identifier of the target process.
+
+`config: &ProcessLevelConfig`
+
+The [`ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) containing the desired process-level settings (priority, affinity CPUs, CPU set CPUs, IO priority, memory priority). The `config.name` field is used when opening the process handle for error reporting.
+
+`threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>`
+
+A lazily-evaluated closure that returns the process's thread map, keyed by thread ID. This is shared with the thread-level path via a `OnceCell` in the caller ([`apply_config`](apply_config.md)). The thread map is needed by [`apply_affinity`](../apply.rs/apply_affinity.md) (to reset ideal processors after an affinity change) and [`apply_process_default_cpuset`](../apply.rs/apply_process_default_cpuset.md).
+
+`dry_run: bool`
+
+When **true**, all downstream `apply_*` functions record what *would* change without calling any Windows API. When **false**, changes are applied to the live process.
+
+`apply_configs: &mut ApplyConfigResult`
+
+Accumulator for change descriptions and error messages. See [`ApplyConfigResult`](../apply.rs/ApplyConfigResult.md).
 
 ## Return value
 
-This function does not return a value. If the process handle cannot be obtained (e.g., insufficient privileges or the process has already exited), the function returns early without applying any settings. All outcomes—successes and failures—are recorded in the `apply_configs` accumulator.
+This function does not return a value. All outcomes (changes applied, errors encountered) are recorded in `apply_configs`.
 
 ## Remarks
 
-- The function calls `get_process_handle` first. If this returns `None` (access denied, process exited, etc.), the entire function is a no-op.
-- A local `current_mask` variable is initialized to `0` and passed to `apply_affinity`, which populates it with the current affinity mask if an affinity change is requested. This mask is used internally by affinity helpers to determine whether ideal-processor resets are necessary.
-- The `threads` parameter is a lazy closure rather than a direct reference. This avoids the cost of enumerating threads when no sub-function actually needs the thread map (e.g. when only priority or I/O/memory priority changes are configured). The `OnceCell`-backed closure in the caller ensures the thread snapshot is taken at most once even when multiple sub-functions dereference it.
-- The order of application is deterministic: priority → affinity → CPU set → I/O priority → memory priority. This order ensures that the process priority class is set before any thread-level side effects of affinity changes take place.
-- Each sub-function (`apply_priority`, `apply_affinity`, `apply_process_default_cpuset`, `apply_io_priority`, `apply_memory_priority`) independently checks whether its corresponding config field is set to a `None` sentinel and skips itself when no change is requested.
-- This function is **not** called on every polling iteration by default. Once a PID appears in `process_level_applied`, it is skipped unless the `-continuousProcessLevelApply` CLI flag is active.
-- At the end of the function, `process_handle` is explicitly dropped to release OS handles promptly. This ensures the process handle's read/write handles are closed as soon as all sub-operations complete, rather than waiting for scope exit.
+The function follows a fixed order of operations:
+
+1. **Open handle** — Calls [`get_process_handle`](../winapi.rs/get_process_handle.md) to obtain a [`ProcessHandle`](../winapi.rs/ProcessHandle.md). If the handle cannot be opened (e.g., access denied, process exited), the function returns immediately with no effect and no error recorded.
+2. **Apply priority** — Delegates to [`apply_priority`](../apply.rs/apply_priority.md).
+3. **Apply affinity** — Delegates to [`apply_affinity`](../apply.rs/apply_affinity.md). A local `current_mask` variable is passed to capture the process's current affinity mask for downstream use.
+4. **Apply CPU set** — Delegates to [`apply_process_default_cpuset`](../apply.rs/apply_process_default_cpuset.md).
+5. **Apply IO priority** — Delegates to [`apply_io_priority`](../apply.rs/apply_io_priority.md).
+6. **Apply memory priority** — Delegates to [`apply_memory_priority`](../apply.rs/apply_memory_priority.md).
+7. **Drop handle** — The `ProcessHandle` is explicitly dropped after all operations complete.
+
+Each `apply_*` function independently checks whether its corresponding config field is set to `None` and short-circuits if so. This means a config that only specifies priority and affinity will not touch IO or memory priority.
+
+### Thread enumeration cost
+
+The `threads` closure is only invoked if an `apply_*` function actually needs thread information (e.g., `apply_affinity` resets ideal processors, or `apply_process_default_cpuset` redistributes threads). The `OnceCell` backing ensures the thread enumeration happens at most once across both process-level and thread-level application.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `main.rs` |
-| Callers | [`apply_config`](apply_config.md) |
-| Callees | `winapi::get_process_handle`, `apply::apply_priority`, `apply::apply_affinity`, `apply::apply_process_default_cpuset`, `apply::apply_io_priority`, `apply::apply_memory_priority` |
-| Win32 API | Indirect — delegates to `apply` module functions that call `SetPriorityClass`, `SetProcessAffinityMask`, `SetProcessDefaultCpuSets`, `NtSetInformationProcess` |
-| Privileges | `SeDebugPrivilege` (for opening handles to elevated/system processes) |
+| | |
+|---|---|
+| **Module** | [`src/main.rs`](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf/src/main.rs) |
+| **Callers** | [`apply_config`](apply_config.md) |
+| **Callees** | [`get_process_handle`](../winapi.rs/get_process_handle.md), [`apply_priority`](../apply.rs/apply_priority.md), [`apply_affinity`](../apply.rs/apply_affinity.md), [`apply_process_default_cpuset`](../apply.rs/apply_process_default_cpuset.md), [`apply_io_priority`](../apply.rs/apply_io_priority.md), [`apply_memory_priority`](../apply.rs/apply_memory_priority.md) |
+| **Win32 API** | None directly (delegated to callees) |
+| **Privileges** | `SeDebugPrivilege` (for opening handles to elevated processes) |
 
 ## See Also
 
-| Reference | Link |
-|-----------|------|
-| apply_thread_level | [apply_thread_level](apply_thread_level.md) |
-| apply_config | [apply_config](apply_config.md) |
-| log_apply_results | [log_apply_results](log_apply_results.md) |
-| ProcessLevelConfig | [config module](../config.rs/README.md) |
-| apply module | [apply module](../apply.rs/README.md) |
+| Topic | Link |
+|-------|------|
+| Thread-level counterpart | [`apply_thread_level`](apply_thread_level.md) |
+| Combined caller | [`apply_config`](apply_config.md) |
+| Apply engine overview | [apply.rs](../apply.rs/README.md) |
+| Configuration struct | [`ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
+| Result accumulator | [`ApplyConfigResult`](../apply.rs/ApplyConfigResult.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

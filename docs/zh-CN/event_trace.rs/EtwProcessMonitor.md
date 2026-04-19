@@ -1,6 +1,6 @@
-# EtwProcessMonitor 结构体 (event_trace.rs)
+# EtwProcessMonitor 结构体（event_trace.rs）
 
-管理用于进程启动/停止监控的 ETW（Windows 事件跟踪）实时跟踪会话。`EtwProcessMonitor` 拥有会话的完整生命周期——包括控制句柄、跟踪句柄、属性缓冲区和后台处理线程——并在析构时自动清理所有资源。
+管理 ETW（Windows 事件跟踪）实时跟踪会话的生命周期，该会话用于监控进程的启动和停止事件。监视器订阅 **Microsoft-Windows-Kernel-Process** 提供者，并通过标准的 `mpsc` 通道传递 [EtwProcessEvent](EtwProcessEvent.md) 值。
 
 ## 语法
 
@@ -15,100 +15,114 @@ pub struct EtwProcessMonitor {
 
 ## 成员
 
-| 字段 | 类型 | 描述 |
-|------|------|------|
-| `control_handle` | `CONTROLTRACE_HANDLE` | 由 `StartTraceW` 返回的句柄，用于通过 `ControlTraceW` 控制（停止）跟踪会话。 |
-| `trace_handle` | `PROCESSTRACE_HANDLE` | 由 `OpenTraceW` 返回的句柄，用于实时消费事件以及通过 `CloseTrace` 关闭跟踪。 |
-| `properties_buf` | `Vec<u8>` | `EVENT_TRACE_PROPERTIES` 结构体的后备缓冲区，包括附加的会话名称。在会话持续期间保持存活，因为 `ControlTraceW`（停止操作）需要有效的属性指针。 |
-| `process_thread` | `Option<thread::JoinHandle<()>>` | 运行 `ProcessTrace` 的后台线程句柄。会话活跃时为 `Some`；当调用 `stop()` 并加入线程后变为 `None`（通过 `take()`）。 |
-
-所有字段均为**私有**。外部代码仅通过其公共方法与 `EtwProcessMonitor` 交互。
+| 成员 | 类型 | 描述 |
+|--------|------|-------------|
+| `control_handle` | `CONTROLTRACE_HANDLE` | 由 `StartTraceW` 返回的句柄，用于控制（停止）ETW 会话。 |
+| `trace_handle` | `PROCESSTRACE_HANDLE` | 由 `OpenTraceW` 返回的句柄，用于关闭跟踪消费者并解除阻塞处理线程。 |
+| `properties_buf` | `Vec<u8>` | 支持 `EVENT_TRACE_PROPERTIES` 结构的堆分配缓冲区以及附加的会话名称。在会话持续期间保持活动状态，因为 `ControlTraceW` 在停止时需要它。 |
+| `process_thread` | `Option<thread::JoinHandle<()>>` | 运行 `ProcessTrace` 的后台线程的 Join 句柄。在 `stop()` 期间线程加入后设置为 `None`。 |
 
 ## 方法
 
-### `EtwProcessMonitor::start`
+### start
 
 ```rust
 pub fn start() -> Result<(Self, Receiver<EtwProcessEvent>), String>
 ```
 
-启动一个新的 ETW 跟踪会话，监控来自 `Microsoft-Windows-Kernel-Process` 提供程序的进程启动/停止事件。返回一个元组，包含监控器实例和一个 `mpsc::Receiver<EtwProcessEvent>`，调用者可从中读取事件。
+创建并开始新的 ETW 实时跟踪会话以进行进程监控。
 
-#### 执行步骤
+**返回值**
 
-1. **创建通道** — 创建一个 `mpsc::channel`，并将发送端安装到全局 [ETW_SENDER](ETW_SENDER.md) 静态变量中，以便 `extern "system"` 回调函数能够访问它。
-2. **准备属性** — 分配一个 `EVENT_TRACE_PROPERTIES` 缓冲区，附加会话名称 `"AffinityServiceRust_EtwProcessMonitor"`，配置为使用 QPC 时间戳的实时模式。
-3. **停止残留会话** — 调用 `stop_existing_session` 来清除任何同名的残留会话（例如，之前崩溃遗留的会话）。
-4. **启动跟踪** — 调用 `StartTraceW` 创建会话并获取 `control_handle`。
-5. **启用提供程序** — 调用 `EnableTraceEx2` 订阅 `Microsoft-Windows-Kernel-Process` 提供程序，级别为 `TRACE_LEVEL_INFORMATION`，关键字为 `WINEVENT_KEYWORD_PROCESS` (0x10)。
-6. **打开跟踪** — 以实时 + 事件记录模式调用 `OpenTraceW`，注册模块级 `etw_event_callback` 函数作为事件记录回调。
-7. **生成后台线程** — 将 [ETW_ACTIVE](ETW_ACTIVE.md) 设置为 `true`，并生成一个名为 `"etw-process-trace"` 的线程，该线程调用 `ProcessTrace`，该调用会阻塞直到跟踪被关闭。
+`Result<(EtwProcessMonitor, Receiver<EtwProcessEvent>), String>` — 成功时，返回监视器实例和通道接收器，该接收器生成 [EtwProcessEvent](EtwProcessEvent.md) 值。失败时，返回可读的错误字符串。
 
-如果任何步骤失败，所有先前获取的资源都会被清理，并返回一个 `Err(String)`，其中包含描述性消息以及通过 [`error_from_code_win32`](../error_codes.rs/error_from_code_win32.md) 翻译的 Win32 错误代码。
+**备注**
 
-### `EtwProcessMonitor::stop`
+启动顺序按顺序执行六个步骤：
+
+1. **创建通道** — 分配一个 `mpsc` 通道，并将发送者安装到全局 [ETW_SENDER](README.md) 静态变量中，以便 OS 回调可以访问它。
+2. **准备 `EVENT_TRACE_PROPERTIES`** — 分配足够大的缓冲区以容纳属性结构以及 UTF-16 会话名称 `"AffinityServiceRust_EtwProcessMonitor"`。配置为实时模式，使用 QPC 时间戳。
+3. **停止现有会话** — 调用 `stop_existing_session` 以清理具有相同名称的任何陈旧会话（例如，来自以前的崩溃）。
+4. **开始跟踪** — 调用 `StartTraceW` 创建 ETW 会话并获得控制句柄。
+5. **启用提供者** — 调用 `EnableTraceEx2`，使用 `Microsoft-Windows-Kernel-Process` 提供者 GUID (`{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}`) 和 `WINEVENT_KEYWORD_PROCESS` (`0x10`) 关键字，级别为 `TRACE_LEVEL_INFORMATION`。
+6. **打开并处理跟踪** — 调用 `OpenTraceW`，带有 `PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD` 和 [etw_event_callback](README.md) 函数指针。启动名为 `"etw-process-trace"` 的后台线程调用 `ProcessTrace`，该线程在跟踪关闭之前会阻塞。
+
+如果任何步骤失败，在返回错误之前释放所有先前获取的资源（停止会话，清除发送者）。
+
+### stop
 
 ```rust
 pub fn stop(&mut self)
 ```
 
-停止 ETW 跟踪会话并释放所有关联资源：
+停止 ETW 跟踪会话并释放所有资源。
 
-1. 检查 [ETW_ACTIVE](ETW_ACTIVE.md)；如果已为 `false`，则立即返回（幂等操作）。
-2. 将 `ETW_ACTIVE` 设置为 `false`。
-3. 调用 `CloseTrace(trace_handle)` 以解除后台线程上 `ProcessTrace` 调用的阻塞。
-4. 使用 `EVENT_TRACE_CONTROL_STOP` 调用 `ControlTraceW` 停止跟踪会话。
-5. 加入后台线程（`process_thread.take().join()`）。
-6. 清除全局 [ETW_SENDER](ETW_SENDER.md) 以释放通道发送端。
+**备注**
 
-### `EtwProcessMonitor::stop_existing_session`（私有）
+关闭顺序为：
+
+1. 检查并清除全局 `ETW_ACTIVE` 标志。如果已经非活动，则立即返回（幂等）。
+2. 在 `trace_handle` 上调用 `CloseTrace` 以解除阻塞后台线程中的 `ProcessTrace` 调用。
+3. 使用 `EVENT_TRACE_CONTROL_STOP` 调用 `ControlTraceW` 终止 ETW 会话。
+4. 加入后台处理线程。
+5. 清除全局 `ETW_SENDER` 以丢弃通道发送者，这将使接收器检测到通道断开。
+
+### stop_existing_session
 
 ```rust
 fn stop_existing_session(wide_name: &[u16])
 ```
 
-尝试停止任何具有给定名称的已存在 ETW 会话。此方法在启动新会话之前调用，以处理应用程序先前实例崩溃而未清理其 ETW 会话的情况。失败会被静默忽略，因为会话可能不存在。
+尝试停止给定名称的任何预存在的 ETW 会话。这是一个不需要 `EtwProcessMonitor` 实例的静态辅助函数。
+
+**参数**
+
+| 参数 | 类型 | 描述 |
+|-----------|------|-------------|
+| `wide_name` | `&[u16]` | 要停止的以 null 结尾的 UTF-16 会话名称。 |
+
+**备注**
+
+分配一个临时的 `EVENT_TRACE_PROPERTIES` 缓冲区，并使用 `EVENT_TRACE_CONTROL_STOP` 调用 `ControlTraceW`。错误被静默忽略，因为会话可能不存在。
+
+## 特质实现
+
+### Drop
+
+```rust
+impl Drop for EtwProcessMonitor {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+```
+
+`Drop` 实现调用 `stop()`，确保即使提前返回或 panic 时，当监视器超出范围时 ETW 会话总是被清理。
 
 ## 备注
 
-- **RAII 清理。** `EtwProcessMonitor` 实现了 `Drop`，其委托给 `stop()`。这保证了即使监控器在没有显式调用 `stop()` 的情况下被析构，ETW 会话也会被正确销毁，防止留下孤立的系统级跟踪会话。
-
-- **单实例约束。** 在同一系统上同时只能存在一个具有给定名称的 ETW 会话。`start()` 中的 `stop_existing_session` 调用处理了残留会话的情况，但尝试同时运行两个 AffinityServiceRust 实例将导致第二个 `StartTraceW` 失败。
-
-- **全局回调桥接。** 由于 ETW 事件回调必须是 `extern "system"` 函数指针（不支持闭包或捕获状态），模块使用全局 [ETW_SENDER](ETW_SENDER.md) 静态变量将事件从回调桥接到 Rust 的 `mpsc` 通道。回调从 `UserData` 的前 4 个字节提取进程 ID，并发送一个 [EtwProcessEvent](EtwProcessEvent.md)，对于事件 ID 1（ProcessStart）设置 `is_start = true`，对于事件 ID 2（ProcessStop）设置 `is_start = false`。
-
-- **提供程序详情。** `Microsoft-Windows-Kernel-Process` 提供程序 GUID 为 `{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}`。关键字 `WINEVENT_KEYWORD_PROCESS` (`0x10`) 将事件过滤为仅包含进程生命周期事件（启动/停止），排除来自同一提供程序的线程和镜像加载事件。
-
-- **线程命名。** 后台线程命名为 `"etw-process-trace"`，以便在调试器和线程分析器中进行诊断识别。
-
-### 平台说明
-
-- **仅限 Windows。** 依赖于 ETW 基础设施：`StartTraceW`、`EnableTraceEx2`、`OpenTraceW`、`ProcessTrace`、`CloseTrace`、`ControlTraceW`。
-- 创建实时内核跟踪会话需要管理员权限。
-- 会话使用 QPC（查询性能计数器）时间戳（`Wnode.ClientContext = 1`）以获得高精度事件计时。
+- 一次只应该有一个 `EtwProcessMonitor` 处于活动状态，因为回调通过单个全局发送者（`ETW_SENDER`）通信。启动第二个监视器会替换发送者，使第一个监视器的接收者脱离关系。
+- 会话名称 `"AffinityServiceRust_EtwProcessMonitor"` 是一个固定常量。如果服务崩溃而没有调用 `stop()`，陈旧的会话会保留在内核中，直到下一次调用 `start()` 通过 `stop_existing_session` 清理它。
+- `ProcessTrace` 是一个阻塞的 Win32 调用，仅在跟踪句柄关闭时才返回。这就是为什么它在专用后台线程上运行，而不是在主线程上。
+- `properties_buf` 必须在整个会话生命周期内保持有效并且地址相同，因为 `ControlTraceW` 在停止时会写回到同一个缓冲区。
 
 ## 要求
 
-| 要求 | 值 |
-|------|-----|
-| **模块** | `event_trace.rs` |
-| **创建者** | `EtwProcessMonitor::start()` |
-| **依赖** | [ETW_SENDER](ETW_SENDER.md)、[ETW_ACTIVE](ETW_ACTIVE.md)、[EtwProcessEvent](EtwProcessEvent.md)、[`error_from_code_win32`](../error_codes.rs/error_from_code_win32.md) |
-| **Win32 API** | `StartTraceW`、`EnableTraceEx2`、`OpenTraceW`、`ProcessTrace`、`CloseTrace`、`ControlTraceW` |
-| **ETW 提供程序** | `Microsoft-Windows-Kernel-Process` (`{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}`) |
-| **权限** | 需要管理员（提升）权限以创建内核跟踪会话 |
-| **平台** | Windows |
+| | |
+|---|---|
+| **模块** | `src/event_trace.rs` |
+| **调用方** | 主服务循环（`src/main.rs`），调度器（`src/scheduler.rs`） |
+| **被调用方** | [etw_event_callback](README.md)（注册为 OS 回调） |
+| **Win32 API** | [StartTraceW](https://learn.microsoft.com/zh-cn/windows/win32/api/evntrace/nf-evntrace-starttracew), [EnableTraceEx2](https://learn.microsoft.com/zh-cn/windows/win32/api/evntrace/nf-evntrace-enabletraceex2), [OpenTraceW](https://learn.microsoft.com/zh-cn/windows/win32/api/evntrace/nf-evntrace-opentracew), [ProcessTrace](https://learn.microsoft.com/zh-cn/windows/win32/api/evntrace/nf-evntrace-processtrace), [CloseTrace](https://learn.microsoft.com/zh-cn/windows/win32/api/evntrace/nf-evntrace-closetrace), [ControlTraceW](https://learn.microsoft.com/zh-cn/windows/win32/api/evntrace/nf-evntrace-controltracew) |
+| **权限** | 管理员或 `SeSystemProfilePrivilege`（ETW 内核级提供者所需） |
 
 ## 另请参阅
 
 | 主题 | 链接 |
-|------|------|
-| EtwProcessEvent 结构体 | [EtwProcessEvent](EtwProcessEvent.md) |
-| ETW_SENDER 静态变量 | [ETW_SENDER](ETW_SENDER.md) |
-| ETW_ACTIVE 静态变量 | [ETW_ACTIVE](ETW_ACTIVE.md) |
-| error_from_code_win32 | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
-| process 模块 | [process.rs](../process.rs/README.md) |
-| event_trace 模块概览 | [README](README.md) |
+|-------|------|
+| 模块概述 | [event_trace.rs](README.md) |
+| 事件负载 | [EtwProcessEvent](EtwProcessEvent.md) |
+| 错误代码辅助 | [error_from_code_win32](../error_codes.rs/README.md) |
+| 调度器集成 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档记录于提交：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

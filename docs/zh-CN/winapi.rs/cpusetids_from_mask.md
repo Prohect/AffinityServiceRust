@@ -1,6 +1,6 @@
 # cpusetids_from_mask 函数 (winapi.rs)
 
-将亲和性位掩码转换为 Windows CPU Set ID 列表。掩码中每个置位的比特对应一个逻辑处理器索引；该函数从系统 CPU 集合信息缓存中查找匹配的 CPU Set ID。
+将 CPU 亲和性位掩码转换为 Windows CPU 集合 ID 列表。掩码中的每个设置位对应一个逻辑处理器索引，该索引通过缓存的系统 CPU 集合拓扑映射到其不透明的 CPU 集合 ID。
 
 ## 语法
 
@@ -12,48 +12,46 @@ pub fn cpusetids_from_mask(mask: usize) -> List<[u32; CONSUMER_CPUS]>
 
 | 参数 | 类型 | 描述 |
 |-----------|------|-------------|
-| `mask` | `usize` | 一个位掩码，其中每个置位的比特代表一个逻辑处理器索引（比特 0 = CPU 0，比特 1 = CPU 1，以此类推）。最多支持 64 个逻辑处理器。 |
+| `mask` | `usize` | 位掩码，其中位 *N* 表示逻辑处理器 *N*。例如，`0x15`（二进制 `10101`）表示处理器 0、2 和 4。仅低 64 位有意义；索引 ≥ 64 的处理器被静默跳过。 |
 
 ## 返回值
 
-返回一个 `List<[u32; CONSUMER_CPUS]>`（`SmallVec`），包含与掩码中置位比特对应的 CPU Set ID。如果 `mask` 为 `0`，则返回空列表。
+`List<[u32; CONSUMER_CPUS]>` — 栈分配的 CPU 集合 ID 列表，对应于掩码中设置位指示的逻辑处理器。如果 `mask` 为 `0`，返回空列表。
 
 ## 备注
 
-- 此函数是 [cpusetids_from_indices](cpusetids_from_indices.md) 的位掩码版本，后者接受显式的索引切片。
-- Windows CPU Set ID 是不透明的标识符，与逻辑处理器索引不直接对应。此函数通过查询系统 CPU 集合信息缓存（[CPU_SET_INFORMATION](CPU_SET_INFORMATION.md)）来桥接这一差异。
-- 该函数获取全局 `CPU_SET_INFORMATION` 静态变量的互斥锁，并遍历所有 CPU Set 条目，检查每个条目的 `logical_processor_index` 是否与位掩码匹配。
-- 仅考虑小于 64 的逻辑处理器索引，因为 64 位 Windows 上的 `usize` 为 64 位宽。
-- 此函数标记为 `#[allow(dead_code)]`，表示它可能保留供将来使用或有条件地使用。
+- 函数获取 [CPU_SET_INFORMATION](README.md) 缓存的锁，并遍历所有 [CpuSetData](CpuSetData.md) 条目。对于每个 `logical_processor_index` 对应于掩码中设置位的条目，条目的 `id` 被追加到结果中。
+- 位测试执行方式为 `(1usize << logical_processor_index) & mask != 0`，这将函数限制为组内的处理器 0-63。具有 `logical_processor_index >= 64` 的条目通过显式边界检查排除。
+- 此函数是基于掩码的版本，与 [cpusetids_from_indices](cpusetids_from_indices.md) 相对应，后者接受显式的处理器索引列表而不是位掩码。
+- 当前标记为 `#[allow(dead_code)]` — 可供使用但当前代码库中未调用。
 
-### 算法
+### 与亲和性掩码的关系
 
-1. 如果 `mask` 为 `0`，立即返回空列表。
-2. 锁定 `CPU_SET_INFORMATION` 缓存。
-3. 对于缓存中的每个 `CpuSetData` 条目：
-   - 如果该条目的 `logical_processor_index` 小于 64 **且**对应的比特在 `mask` 中已置位，则将该条目的 `id` 推入结果列表。
-4. 返回收集到的 CPU Set ID。
+Windows 亲和性掩码（如 `GetProcessAffinityMask` 返回的）使用与此函数接受的相同每处理器位编码。这使 `cpusetids_from_mask` 成为旧亲和性 API 与新 CPU 集合 API 之间的自然桥梁。
 
-## 要求
+### 性能
 
-| 要求 | 值 |
-|------|-----|
-| **模块** | `winapi.rs` |
-| **依赖** | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md)、[CpuSetData](CpuSetData.md) |
-| **类型** | `List<[u32; CONSUMER_CPUS]>`，来自 [collections](../collections.rs/README.md) |
-| **平台** | Windows（使用 `GetSystemCpuSetInformation` 数据） |
+函数遍历缓存的 CPU 集合数据一次（每个逻辑处理器一个条目），使其时间复杂度为 O(n)，其中 n 是系统上的逻辑处理器数量。`Mutex` 锁在迭代期间保持锁定状态。
 
-## 另请参阅
+## 需求
+
+| | |
+|---|---|
+| **模块** | `src/winapi.rs` |
+| **调用方** | 当前未使用（`#[allow(dead_code)]`） |
+| **被调用方** | [get_cpu_set_information](README.md) |
+| **Win32 API** | 无直接调用；从 [GetSystemCpuSetInformation](https://learn.microsoft.com/zh-cn/windows/win32/api/systemcpusetinformation/nf-systemcpusetinformation-getsystemcpusetinformation) 消耗缓存数据 |
+| **特权** | 无 |
+
+## 参见
 
 | 主题 | 链接 |
 |-------|------|
-| cpusetids_from_indices | [cpusetids_from_indices](cpusetids_from_indices.md) |
-| indices_from_cpusetids | [indices_from_cpusetids](indices_from_cpusetids.md) |
-| mask_from_cpusetids | [mask_from_cpusetids](mask_from_cpusetids.md) |
-| filter_indices_by_mask | [filter_indices_by_mask](filter_indices_by_mask.md) |
-| CPU_SET_INFORMATION 静态变量 | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
-| CpuSetData 结构体 | [CpuSetData](CpuSetData.md) |
-| collections 模块 | [collections.rs](../collections.rs/README.md) |
+| 基于索引的转换 | [cpusetids_from_indices](cpusetids_from_indices.md) |
+| 反向：CPU 集合 ID → 索引 | [indices_from_cpusetids](indices_from_cpusetids.md) |
+| 反向：CPU 集合 ID → 掩码 | [mask_from_cpusetids](mask_from_cpusetids.md) |
+| 按掩码过滤索引 | [filter_indices_by_mask](filter_indices_by_mask.md) |
+| CPU 集合拓扑缓存 | [CpuSetData](CpuSetData.md) |
+| 模块概述 | [winapi.rs](README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档版本：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

@@ -1,6 +1,6 @@
 # log_process_find function (logging.rs)
 
-Logs a discovered process name from `-find` mode, deduplicated per session. Uses the `FINDS_SET` static to ensure each unique process name is logged only once during the current application run, preventing log spam from repeatedly discovered processes across scheduling loop iterations.
+Logs a discovered process name to the find log file, deduplicated so that each process name is recorded at most once per session.
 
 ## Syntax
 
@@ -11,9 +11,9 @@ pub fn log_process_find(process_name: &str)
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `process_name` | `&str` | The name of the discovered process to log. This value is used both as the deduplication key (inserted into `FINDS_SET`) and as the log message payload. |
+`process_name: &str`
+
+The executable name of the discovered process (e.g., `"notepad.exe"`).
 
 ## Return value
 
@@ -21,58 +21,46 @@ This function does not return a value.
 
 ## Remarks
 
-### Deduplication mechanism
+This function is the public entry point for find-mode process logging. It acquires a lock on the global `FINDS_SET` and attempts to insert `process_name`. If the insertion succeeds (the name was not already present), the function delegates to [log_to_find](log_to_find.md) with the formatted message `"find {process_name}"`. If the name was already recorded, the call is a no-op.
 
-The function locks the global [FINDS_SET](statics.md#finds_set) (`Mutex<HashSet<String>>`) and attempts to insert the given `process_name`. Because `HashSet::insert` returns `true` only when the value was not already present, the log write via [`log_to_find`](log_to_find.md) is executed only on the first occurrence of each process name per session.
+### Deduplication scope
 
-### Algorithm
+The `FINDS_SET` static is initialized once at program start and is never cleared during the lifetime of the process. This means deduplication spans the entire service session — a process name discovered at minute 1 will not be logged again at minute 60, even if the process was restarted in between. The set resets only when the service itself restarts, which also rotates the log file by date.
 
-1. Lock `FINDS_SET`.
-2. Call `insert(process_name.to_string())` on the set.
-3. If `insert` returned `true` (the name was new), call [`log_to_find`](log_to_find.md) with the message `"find <process_name>"`.
-4. If `insert` returned `false` (the name was already in the set), do nothing.
+### Output format
 
-### Log output format
+The message written to the find log has the form:
 
-When a new process name is logged, the output line has the form:
-
-```text
-[HH:MM:SS]find <process_name>
+```
+[HH:MM:SS]find notepad.exe
 ```
 
-The timestamp prefix is added by [`log_to_find`](log_to_find.md). The message is written to either the `.find` log file or stdout, depending on the value of [USE_CONSOLE](statics.md#use_console).
+The timestamp prefix is added by [log_to_find](log_to_find.md), not by this function.
 
-### Performance
+### Thread safety
 
-The function is marked `#[inline]`, allowing the compiler to inline the call at the call site. The deduplication check is O(1) amortized (hash-set lookup), making it cheap to call on every scheduling cycle for every discovered process.
+The function acquires `FINDS_SET`'s `Mutex` lock. The lock is held only for the duration of the `HashSet::insert` call; the subsequent [log_to_find](log_to_find.md) call occurs after the lock is released (implicit drop at the end of the `if` condition).
 
-### Session scope
+### Console mode
 
-The `FINDS_SET` is never cleared during normal operation — it accumulates process names for the entire lifetime of the application. This means that if a process exits and restarts, it will **not** be re-logged in the same session. A new session (application restart) begins with an empty set.
-
-### Relationship to `-find` mode
-
-The `-find` CLI mode scans for processes whose CPU affinity has not been explicitly configured (i.e., whose affinity matches the system default). For each such process, `log_process_find` is called so the user can see which processes are "unconfigured" without being flooded by repeated entries on every polling cycle.
+When `USE_CONSOLE` is `true`, find log output is redirected to stdout via [log_to_find](log_to_find.md). This is typically the case when the tool is run interactively with the `-find` CLI flag.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `logging.rs` |
-| **Callers** | `apply.rs`, `scheduler.rs` — find-mode scanning logic |
-| **Callees** | [`log_to_find`](log_to_find.md) |
-| **Statics** | [FINDS_SET](statics.md#finds_set) |
-| **Platform** | Cross-platform (no direct Windows API calls) |
+| | |
+|---|---|
+| **Module** | `src/logging.rs` |
+| **Callers** | Main polling loop (find-mode path), [scheduler](../scheduler.rs/README.md) |
+| **Callees** | [log_to_find](log_to_find.md) |
+| **Statics** | `FINDS_SET` (`Lazy<Mutex<HashSet<String>>>`) |
+| **Privileges** | None |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| log_to_find function | [log_to_find](log_to_find.md) |
-| log_message function | [log_message](log_message.md) |
-| FINDS_SET static | [statics](statics.md#finds_set) |
-| is_affinity_unset function | [is_affinity_unset](../winapi.rs/is_affinity_unset.md) |
-| logging module overview | [README](README.md) |
+| Module overview | [logging.rs](README.md) |
+| Find log writer | [log_to_find](log_to_find.md) |
+| General log function | [log_message](log_message.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

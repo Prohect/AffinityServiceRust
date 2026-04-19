@@ -1,34 +1,42 @@
 # event_trace 模块 (AffinityServiceRust)
 
-`event_trace` 模块提供了一个精简的 ETW（Windows 事件跟踪）消费者，用于实时监控进程的启动和停止。它使用 `Microsoft-Windows-Kernel-Process` 提供程序（GUID `{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}`）来接收进程创建或终止的通知，从而无需轮询即可实现响应式的规则应用。
-
-该模块在后台线程上管理一个 ETW 实时跟踪会话。全局通道（`ETW_SENDER`）通过 `mpsc::Sender` 将操作系统级别的 `extern "system"` 回调与安全的 Rust 代码桥接起来。`EtwProcessMonitor` 结构体拥有会话的生命周期，并在销毁时自动清理资源。
-
-## 函数
-
-本模块不直接公开公共函数。所有功能均通过 `EtwProcessMonitor` 结构体的方法访问。
-
-## 结构体
-
-| 结构体 | 描述 |
-|--------|------|
-| [EtwProcessEvent](EtwProcessEvent.md) | 从 ETW 接收的进程事件，包含进程 ID 以及该事件是启动事件还是停止事件。 |
-| [EtwProcessMonitor](EtwProcessMonitor.md) | 管理用于进程监控的 ETW 实时跟踪会话，包括会话设置、后台线程生命周期和清理。 |
+`event_trace` 模块实现了最小的 ETW（Windows 事件跟踪）消费者，用于实时进程启动/停止监控。它订阅 **Microsoft-Windows-Kernel-Process** 提供程序（`{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}`），并通过标准 `mpsc` 通道交付 `EtwProcessEvent` 消息，使主服务循环能够在进程创建或终止时立即响应并应用配置规则——无需轮询。
 
 ## 静态变量
 
-| 静态变量 | 描述 |
-|----------|------|
-| [ETW_SENDER](ETW_SENDER.md) | 全局 `Mutex<Option<Sender<EtwProcessEvent>>>`，供 ETW 回调向消费者发送事件。之所以需要全局静态变量，是因为 ETW 回调是一个 `extern "system"` 函数指针，无法捕获状态。 |
-| [ETW_ACTIVE](ETW_ACTIVE.md) | `AtomicBool` 标志，指示 ETW 会话当前是否处于活动状态。用于防止冗余的停止操作。 |
+| 名称 | 类型 | 描述 |
+|------|------|-------------|
+| `ETW_SENDER` | `Lazy<Mutex<Option<Sender<EtwProcessEvent>>>>` | 全局通道发送者，由操作系统调用的 [etw_event_callback](#etw_event_callback) 使用，用于转发事件。由于回调是一个 `extern "system"` 函数指针，因此需要全局变量来桥接到 Rust 的通道基础设施。 |
+| `ETW_ACTIVE` | `AtomicBool` | 指示当前是否有 ETW 会话活动的标志。[stop](EtwProcessMonitor.md#stop) 通过检查此标志来避免重复清理。 |
 
-## 另请参阅
+## 函数
 
-| 链接 | 描述 |
+| 名称 | 描述 |
 |------|------|
-| [process.rs 模块](../process.rs/README.md) | 与 ETW 配合使用的进程快照枚举，用于进程数据查找。 |
-| [logging.rs 模块](../logging.rs/README.md) | 用于诊断和错误报告的日志工具。 |
-| [error_codes.rs 模块](../error_codes.rs/README.md) | ETW API 调用失败时使用的 Win32 错误码翻译。 |
+| <a id="etw_event_callback"></a>`etw_event_callback` | `unsafe extern "system"` 回调，由操作系统为每个 ETW 事件记录调用。从 `UserData` 的前 4 个字节中提取进程 ID，将事件 ID 1 映射为启动，事件 ID 2 映射为停止，并通过 `ETW_SENDER` 发送 [EtwProcessEvent](EtwProcessEvent.md)。非进程事件和空记录被静默丢弃。 |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+## 结构体
+
+| 名称 | 描述 |
+|------|------|
+| [EtwProcessEvent](EtwProcessEvent.md) | 轻量级值，表示从 ETW 接收的进程启动或停止事件。 |
+| [EtwProcessMonitor](EtwProcessMonitor.md) | RAII 句柄，负责 ETW 会话的生命周期——创建、后台处理和清理。 |
+
+## 常量
+
+| 名称 | 值 | 描述 |
+|------|-----|------|
+| `KERNEL_PROCESS_GUID` | `{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}` | Microsoft-Windows-Kernel-Process ETW 提供程序的 GUID。 |
+| `WINEVENT_KEYWORD_PROCESS` | `0x10` | 选择进程生命周期事件的关键词掩码位。 |
+| `SESSION_NAME` | `"AffinityServiceRust_EtwProcessMonitor"` | 在 ETW 子系统注册的跟踪会话名称。用于检测和在启动时清理残留的会话。 |
+
+## 参见
+
+| 主题 | 链接 |
+|-------|------|
+| 主服务循环（ETW 消费者） | [main.rs](../main.rs/README.md) |
+| 错误代码格式化 | [error_codes.rs](../error_codes.rs/README.md) |
+| Microsoft-Windows-Kernel-Process 提供程序 | [Microsoft 文档](https://learn.microsoft.com/zh-cn/windows/win32/etw/event-tracing-portal) |
+| EVENT_TRACE_PROPERTIES | [Microsoft 文档](https://learn.microsoft.com/zh-cn/windows/win32/api/evntrace/ns-evntrace-event_trace_properties) |
+
+*文档记录于提交：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

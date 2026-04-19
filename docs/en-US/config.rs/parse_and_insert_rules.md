@@ -1,10 +1,10 @@
 # parse_and_insert_rules function (config.rs)
 
-Parses the rule fields from a configuration line and inserts both process-level and thread-level config entries into the [`ConfigResult`](ConfigResult.md) for every member in the provided list. This is the central rule-interpretation function that converts raw colon-separated field strings into fully resolved [`ProcessLevelConfig`](ProcessLevelConfig.md) and [`ThreadLevelConfig`](ThreadLevelConfig.md) instances.
+The primary rule field parser and insertion function. Takes an array of process names (either a single name or members of a group block) and a colon-split array of rule fields, validates each field, constructs [ProcessLevelConfig](ProcessLevelConfig.md) and/or [ThreadLevelConfig](ThreadLevelConfig.md) instances, and inserts them into the appropriate grade-keyed maps in [ConfigResult](ConfigResult.md).
 
 ## Syntax
 
-```AffinityServiceRust/src/config.rs#L424-741
+```rust
 fn parse_and_insert_rules(
     members: &[String],
     rule_parts: &[&str],
@@ -16,112 +16,116 @@ fn parse_and_insert_rules(
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `members` | `&[String]` | A slice of lowercase process names that this rule applies to. For a single-process line this contains one element; for a `{ }` group block it contains all collected member names. |
-| `rule_parts` | `&[&str]` | The colon-split fields **after** the process name (or after the closing `}:` of a group). Expected field order is: `priority`, `affinity`, `cpuset`, `prime_cpus`, `io_priority`, `memory_priority`, `ideal_processor`, `grade`. At least 2 fields are required. |
-| `line_number` | `usize` | The 1-based line number in the configuration file, used for error and warning messages. |
-| `cpu_aliases` | `&HashMap<String, List<[u32; CONSUMER_CPUS]>>` | The alias lookup table populated by `*name = cpu_spec` lines that appeared earlier in the config file. |
-| `result` | `&mut ConfigResult` | The mutable configuration result accumulator. Parsed entries are inserted into `result.process_level_configs` and/or `result.thread_level_configs`, and any errors or warnings are appended to the corresponding vectors. |
+`members: &[String]`
+
+A slice of lowercase process names to which the parsed rule should be applied. For a single-line rule, this contains one element (e.g., `["game.exe"]`). For a group rule, this contains all member names extracted from the `{ }` block.
+
+`rule_parts: &[&str]`
+
+A slice of field strings split from the rule portion of a config line. Expected field positions:
+
+| Index | Field | Example | Description |
+|-------|-------|---------|-------------|
+| 0 | priority | `"normal"` | Process priority class |
+| 1 | affinity | `"*pcore"` or `"0-7"` | CPU affinity specification |
+| 2 | cpuset | `"@*ecore"` or `"0"` | CPU set specification; `@` prefix enables ideal processor reset |
+| 3 | prime | `"?8x*p@engine.dll"` | Prime thread spec (CPUs, prefixes, tracking count) |
+| 4 | io_priority | `"low"` | IO priority level |
+| 5 | memory_priority | `"none"` | Memory priority level |
+| 6 | ideal / grade | `"*p@render.dll"` or `"2"` | Ideal processor spec, or grade if numeric |
+| 7 | grade | `"1"` | Application frequency tier (only if field 6 is an ideal spec) |
+
+A minimum of 2 fields (priority and affinity) is required; all subsequent fields are optional with "no change" defaults.
+
+`line_number: usize`
+
+The 1-based line number in the configuration file where this rule originates. Used in all error and warning messages for user diagnostics.
+
+`cpu_aliases: &HashMap<String, List<[u32; CONSUMER_CPUS]>>`
+
+Map of defined CPU aliases, populated by earlier [parse_alias](parse_alias.md) calls. Passed through to [resolve_cpu_spec](resolve_cpu_spec.md) for alias-aware CPU field resolution.
+
+`result: &mut ConfigResult`
+
+**\[in, out\]** The accumulated parsing result. This function reads and writes `errors`, `warnings`, `process_level_configs`, `thread_level_configs`, `process_rules_count`, `redundant_rules_count`, and `thread_level_configs_count`.
 
 ## Return value
 
-This function does not return a value. All output is accumulated in the `result` parameter.
+This function does not return a value. All outputs are communicated through mutations to `result`.
 
 ## Remarks
 
-### Field parsing order
+### Field parsing pipeline
 
-The function interprets `rule_parts` positionally. Fields beyond the minimum of 2 are optional; missing fields receive sensible defaults.
+Each field is parsed independently in order:
 
-| Index | Field | Default | Description |
-|-------|-------|---------|-------------|
-| 0 | `priority` | *(required)* | Process priority class string (e.g., `"normal"`, `"high"`, `"none"`). Resolved via `ProcessPriority::from_str`. Unknown values are treated as `None` with a warning. |
-| 1 | `affinity` | *(required)* | CPU affinity specification. Resolved via [`resolve_cpu_spec`](resolve_cpu_spec.md); supports alias references (`*pcore`) and literal specs (`0-7`). |
-| 2 | `cpuset` | `List::new()` (empty) | CPU set specification. If prefixed with `@`, the `cpu_set_reset_ideal` flag is set to `true` and the `@` is stripped before resolution. |
-| 3 | `prime_cpus` | Empty CPU list, default prefix | Prime-thread CPU specification with optional module-prefix filtering and tracking directives. See **Prime-thread parsing** below. |
-| 4 | `io_priority` | `IOPriority::None` | I/O priority string (e.g., `"low"`, `"normal"`, `"high"`). Unknown values produce a warning and default to `None`. |
-| 5 | `memory_priority` | `MemoryPriority::None` | Memory priority string (e.g., `"very low"`, `"normal"`). Unknown values produce a warning and default to `None`. |
-| 6 | `ideal_processor` or `grade` | `Vec::new()` / `1` | This field is polymorphic. If it starts with `*` or equals `"0"`, it is parsed as an ideal-processor specification via [`parse_ideal_processor_spec`](parse_ideal_processor_spec.md); grade is then read from index 7. If it parses as an integer, it is interpreted as the grade directly. |
-| 7 | `grade` | `1` | Rule application frequency. `1` = every loop, `N` = every Nth loop. Values of `0` are corrected to `1` with a warning. Only used when field 6 is an ideal-processor spec. |
+1. **Priority (field 0):** Parsed via `ProcessPriority::from_str`. Unknown values produce a warning and default to `ProcessPriority::None`.
 
-### Prime-thread parsing (field 3)
+2. **Affinity (field 1):** Resolved via [resolve_cpu_spec](resolve_cpu_spec.md), which handles both `*alias` references and literal CPU specs.
 
-The prime-thread field supports a rich mini-syntax:
+3. **CPU set (field 2):** If the field starts with `@`, the `@` is stripped and `cpu_set_reset_ideal` is set to `true`; the remainder is resolved as a CPU spec. This flag causes thread ideal processors to be redistributed after the CPU set is applied.
 
-- **`"0"`** — No prime-thread scheduling.
-- **`?N`** prefix — Track top N threads **with** prime scheduling (positive `track_top_x_threads`).
-- **`??N`** prefix — Track top N threads **without** prime scheduling (negative `track_top_x_threads`).
-- **`*alias@prefix1;prefix2`** segments — Per-alias CPU sets with module-prefix filters. Multiple `*alias@...` segments can be chained. Each segment produces one or more [`PrimePrefix`](PrimePrefix.md) entries.
-- **`prefix!priority`** suffix — Optional thread priority override for a specific prefix, parsed via `ThreadPriority::from_str`.
-- **Plain `*alias`** — A single alias without prefix filtering; all threads are eligible.
+4. **Prime spec (field 3):** The most complex field. Supports several sub-formats:
+   - `"0"` — No prime thread scheduling.
+   - `"*alias"` — Pin prime threads to the alias's CPUs, matching all threads.
+   - `"?Nx*alias"` — Track top N threads by CPU cycles and prime them to alias CPUs. The `?` prefix with a number sets positive `track_top_x_threads`.
+   - `"??N"` — Track top N threads without prime pinning. The `??` prefix sets negative `track_top_x_threads` (tracking-only mode).
+   - `"*alias@prefix1;prefix2!priority"` — Per-prefix CPU routing with optional thread priority boost. Each `*alias@` segment produces [PrimePrefix](PrimePrefix.md) entries. The `!` separator within a prefix sets a [ThreadPriority](../priority.rs/ThreadPriority.md) override.
 
-When `@` is present, the parser splits on `*` to extract segments, resolves each alias from `cpu_aliases`, and builds a `Vec<PrimePrefix>`. A `!` within a prefix string separates the module name from an optional thread priority override.
+5. **IO priority (field 4):** Parsed via `IOPriority::from_str`. Unknown values produce a warning.
 
-### Split into process-level and thread-level
+6. **Memory priority (field 5):** Parsed via `MemoryPriority::from_str`. Unknown values produce a warning.
 
-After parsing all fields, the function checks which settings are non-default:
+7. **Ideal processor / grade (field 6):** Ambiguous field — if it starts with `*` or is `"0"`, it is parsed as an ideal processor spec via [parse_ideal_processor_spec](parse_ideal_processor_spec.md). If it parses as a plain integer, it is treated as the grade. Otherwise, it is attempted as an ideal processor spec with grade defaulting to 1.
 
-- **Process-level valid**: `priority != None`, `affinity_cpus` non-empty, `cpu_set_cpus` non-empty, `io_priority != None`, or `memory_priority != None`.
-- **Thread-level valid**: `prime_threads_cpus` non-empty, `track_top_x_threads != 0`, or `ideal_processor_rules` non-empty.
+8. **Grade (field 7):** If field 6 was an ideal processor spec and field 7 exists, it is parsed as the grade. Grade must be ≥ 1; a value of 0 produces a warning and defaults to 1.
 
-For each member in `members`:
+### Config insertion logic
 
-1. If process-level settings are valid, a [`ProcessLevelConfig`](ProcessLevelConfig.md) entry is inserted into `result.process_level_configs` under the corresponding grade key.
-2. If thread-level settings are valid, a [`ThreadLevelConfig`](ThreadLevelConfig.md) entry is inserted into `result.thread_level_configs` under the corresponding grade key and `thread_level_configs_count` is incremented.
-3. If neither is valid, a warning is emitted noting that the process has no effective rules.
+For each member name, the function performs two independent validity checks:
 
-### Redundant rule detection
+- **Process-level valid:** At least one of `priority`, `affinity_cpus`, `cpu_set_cpus`, `io_priority`, or `memory_priority` is non-default. If valid, a [ProcessLevelConfig](ProcessLevelConfig.md) is created and inserted into `result.process_level_configs` under the appropriate grade.
 
-Before inserting, the function checks whether the process name already exists in any grade bucket of `process_level_configs` or `thread_level_configs`. If so, it increments `result.redundant_rules_count` and pushes a warning indicating that the previous definition will be overwritten.
+- **Thread-level valid:** At least one of `prime_threads_cpus` (non-empty), `track_top_x_threads` (non-zero), or `ideal_processor_rules` (non-empty) is active. If valid, a [ThreadLevelConfig](ThreadLevelConfig.md) is created and inserted into `result.thread_level_configs`.
 
-### Error conditions
+If neither check passes, a warning is emitted indicating no valid rules exist for that process.
 
-| Condition | Severity | Message pattern |
-|-----------|----------|-----------------|
-| Fewer than 2 rule fields | Error | `"Line {n}: Too few fields ({count}) - expected at least 2"` |
-| Unknown priority string | Warning | `"Line {n}: Unknown priority '...' - will be treated as 'none'"` |
-| Undefined CPU alias | Error | `"Line {n}: Undefined alias '*...' in {field} field"` |
-| Unknown I/O priority | Warning | `"Line {n}: Unknown IO priority '...' - will be treated as 'none'"` |
-| Unknown memory priority | Warning | `"Line {n}: Unknown memory priority '...' - will be treated as 'none'"` |
-| Grade value of 0 | Warning | `"Line {n}: Grade cannot be 0, using 1 instead"` |
-| Invalid grade string | Warning | `"Line {n}: Invalid grade '...', using 1"` |
-| Redundant process-level rule | Warning | `"Line {n}: Redundant process level rule - '...' already defined"` |
-| Redundant thread-level rule | Warning | `"Line {n}: Redundant thread level rule - '...' already defined"` |
-| All fields are none/0 | Warning | `"No valid rules(all none/0) for process '...'"` |
+### Redundancy detection
 
-### Side effects
+Before insertion, the function checks all existing grade maps for an entry with the same process name. If found, `redundant_rules_count` is incremented and a warning is emitted. The new entry overwrites the old one — last definition wins.
 
-- Modifies `result.process_level_configs` and `result.thread_level_configs` by inserting new entries.
-- Modifies `result.errors` and `result.warnings` by appending diagnostic messages.
-- Increments `result.process_rules_count` by `members.len()`.
-- Increments `result.redundant_rules_count` for each duplicate detected.
-- Increments `result.thread_level_configs_count` for each thread-level entry created.
+### Prime prefix construction
+
+When the prime spec contains `@` segments, the parser builds a `Vec<PrimePrefix>` with per-segment CPU lists and optional thread priority overrides. The `prime_threads_cpus` field is set to the union of all segment CPU sets. When no `@` segments are present, a single default [PrimePrefix](PrimePrefix.md) is created with an empty prefix (matching all threads), `None` cpus (inheriting from `prime_threads_cpus`), and `ThreadPriority::None`.
+
+### Default PrimePrefix for no-prefix specs
+
+Even when the prime spec is a simple `*alias` without any `@` prefix filter, the function still creates a `Vec<PrimePrefix>` containing one default entry. This ensures the downstream [apply_prime_threads](../apply.rs/apply_prime_threads.md) function always has at least one prefix entry to iterate over.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `config.rs` |
-| Visibility | Private (`fn`, not `pub fn`) |
-| Callers | [`read_config`](read_config.md), [`sort_and_group_config`](sort_and_group_config.md) (indirectly via `read_config`) |
-| Callees | [`resolve_cpu_spec`](resolve_cpu_spec.md), [`parse_ideal_processor_spec`](parse_ideal_processor_spec.md), `ProcessPriority::from_str`, `IOPriority::from_str`, `MemoryPriority::from_str`, `ThreadPriority::from_str` |
-| Dependencies | [`ProcessLevelConfig`](ProcessLevelConfig.md), [`ThreadLevelConfig`](ThreadLevelConfig.md), [`PrimePrefix`](PrimePrefix.md), [`IdealProcessorRule`](IdealProcessorRule.md), [`ConfigResult`](ConfigResult.md) |
-| Privileges | None |
+| | |
+|---|---|
+| **Module** | `src/config.rs` |
+| **Visibility** | Private (`fn`) |
+| **Callers** | [read_config](read_config.md) (for both single-line rules and group rules) |
+| **Callees** | [resolve_cpu_spec](resolve_cpu_spec.md), [parse_ideal_processor_spec](parse_ideal_processor_spec.md), `ProcessPriority::from_str`, `IOPriority::from_str`, `MemoryPriority::from_str`, `ThreadPriority::from_str` |
+| **Writes to** | [ConfigResult](ConfigResult.md) (`.process_level_configs`, `.thread_level_configs`, `.errors`, `.warnings`, counters) |
+| **Privileges** | None |
 
 ## See Also
 
-| Resource | Link |
-|----------|------|
-| read_config | [read_config](read_config.md) |
-| resolve_cpu_spec | [resolve_cpu_spec](resolve_cpu_spec.md) |
-| parse_ideal_processor_spec | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
-| collect_group_block | [collect_group_block](collect_group_block.md) |
-| ProcessLevelConfig | [ProcessLevelConfig](ProcessLevelConfig.md) |
-| ThreadLevelConfig | [ThreadLevelConfig](ThreadLevelConfig.md) |
-| PrimePrefix | [PrimePrefix](PrimePrefix.md) |
-| ConfigResult | [ConfigResult](ConfigResult.md) |
-| config module overview | [README](README.md) |
+| Topic | Link |
+|-------|------|
+| Module overview | [config.rs](README.md) |
+| Process-level config struct | [ProcessLevelConfig](ProcessLevelConfig.md) |
+| Thread-level config struct | [ThreadLevelConfig](ThreadLevelConfig.md) |
+| Prime prefix struct | [PrimePrefix](PrimePrefix.md) |
+| Ideal processor rule struct | [IdealProcessorRule](IdealProcessorRule.md) |
+| CPU alias resolution | [resolve_cpu_spec](resolve_cpu_spec.md) |
+| Ideal processor spec parser | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
+| Config file reader | [read_config](read_config.md) |
+| Config result container | [ConfigResult](ConfigResult.md) |
+| Priority enums | [ProcessPriority](../priority.rs/ProcessPriority.md), [IOPriority](../priority.rs/IOPriority.md), [MemoryPriority](../priority.rs/MemoryPriority.md), [ThreadPriority](../priority.rs/ThreadPriority.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

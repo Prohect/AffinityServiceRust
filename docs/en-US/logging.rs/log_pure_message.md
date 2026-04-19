@@ -1,6 +1,6 @@
 # log_pure_message function (logging.rs)
 
-Writes a message to the main log file or stdout **without** a timestamp prefix. This is used for continuation lines, banners, or structured output where the `[HH:MM:SS]` prefix added by [`log_message`](log_message.md) would be undesirable.
+Writes a message to the log output **without** a timestamp prefix. Used for continuation lines, banners, or pre-formatted blocks where the caller manages its own formatting.
 
 ## Syntax
 
@@ -10,62 +10,54 @@ pub fn log_pure_message(args: &str)
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `args` | `&str` | The message string to write. A trailing newline is appended automatically via `writeln!`. |
+`args: &str`
+
+The message string to write. A newline is appended automatically via `writeln!`.
 
 ## Return value
 
-This function does not return a value. Write errors from `writeln!` are silently ignored.
+This function does not return a value.
 
 ## Remarks
 
-- Unlike [`log_message`](log_message.md), this function does **not** check the [`DUST_BIN_MODE`](statics.md#dust_bin_mode) flag. Messages sent through `log_pure_message` are always written regardless of dust-bin mode.
+Unlike [log_message](log_message.md), this function does **not** prepend a `[HH:MM:SS]` timestamp and does **not** check the `DUST_BIN_MODE` flag. Output is always emitted regardless of dust-bin state.
 
-- The output destination is determined by the [`USE_CONSOLE`](statics.md#use_console) flag:
-  - When `true`, the message is written to `stdout` via `writeln!(stdout(), ...)`.
-  - When `false`, the message is written to the main daily log file via `writeln!(get_logger!(), ...)`.
+### Output routing
 
-- No timestamp is prepended — the raw `args` string is written directly. This is the key difference from [`log_message`](log_message.md), which formats the current time from [`LOCAL_TIME_BUFFER`](statics.md#local_time_buffer) as a `[HH:MM:SS]` prefix.
+| `USE_CONSOLE` | Destination |
+|---------------|-------------|
+| `true` | `stdout` |
+| `false` | `LOG_FILE` (`logs/YYYYMMDD.log`) |
 
-- Write errors (e.g., broken pipe, full disk) are discarded via `let _ = writeln!(...)`. The function does not propagate I/O errors to the caller.
+### Write errors
 
-### Comparison with other logging functions
+Errors from `writeln!` are silently discarded (the return value of `writeln!` is assigned to `_`). This prevents cascading failures when the log file is inaccessible.
 
-| Function | Timestamp | Dust-bin check | Output target |
-|----------|-----------|----------------|---------------|
-| [`log_message`](log_message.md) | `[HH:MM:SS]` prefix | Yes — skips if `DUST_BIN_MODE` is `true` | Main log / stdout |
-| **log_pure_message** | None | No — always writes | Main log / stdout |
-| [`log_to_find`](log_to_find.md) | `[HH:MM:SS]` prefix | No — always writes | Find log / stdout |
+### Comparison with log_message
 
-### Locking behavior
-
-The function acquires up to two mutex locks per call:
-
-1. `USE_CONSOLE` — to check the console mode flag.
-2. Either `LOG_FILE` (via `get_logger!()`) or no additional lock for `stdout`.
-
-Callers should avoid holding other logging-related locks when calling this function to prevent potential deadlocks.
+| Aspect | `log_message` | `log_pure_message` |
+|--------|---------------|-------------------|
+| Timestamp prefix | `[HH:MM:SS]` | None |
+| Respects `DUST_BIN_MODE` | Yes | No |
+| Output destination | Console or file | Console or file |
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `logging.rs` |
-| **Callers** | `main.rs`, `scheduler.rs` — for banner lines and structured output that should not carry a timestamp. |
-| **Callees** | `get_use_console!()` macro, `get_logger!()` macro, `std::io::stdout`, `writeln!` |
-| **Statics read** | [`USE_CONSOLE`](statics.md#use_console), [`LOG_FILE`](statics.md#log_file) |
-| **Platform** | Windows (log file paths assume Windows directory conventions) |
+| | |
+|---|---|
+| **Module** | `src/logging.rs` |
+| **Callers** | Main loop banner output, multi-line log continuations |
+| **Callees** | `get_use_console!`, `get_logger!` |
+| **Statics accessed** | `USE_CONSOLE`, `LOG_FILE` |
+| **Privileges** | None |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| log_message function | [log_message](log_message.md) |
-| log_to_find function | [log_to_find](log_to_find.md) |
-| log_process_find function | [log_process_find](log_process_find.md) |
-| logging statics | [statics](statics.md) |
-| logging module overview | [README](README.md) |
+| Module overview | [logging.rs](README.md) |
+| Timestamped logging | [log_message](log_message.md) |
+| Find-mode logging | [log_to_find](log_to_find.md) |
+| Log file path computation | [get_log_path](get_log_path.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

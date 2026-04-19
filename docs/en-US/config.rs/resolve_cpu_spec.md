@@ -1,10 +1,10 @@
 # resolve_cpu_spec function (config.rs)
 
-Resolves a CPU specification string that may be either a literal CPU spec (ranges, hex masks, individual indices) or an alias reference (`*name`) into a sorted list of CPU indices. This is the internal dispatcher that sits between raw config field values and the parsed CPU index lists stored in configuration structs.
+Resolves a CPU specification string that may contain an alias reference. If the spec begins with `*`, it is treated as an alias lookup; otherwise it is parsed directly as a CPU specification.
 
 ## Syntax
 
-```AffinityServiceRust/src/config.rs#L220-240
+```rust
 fn resolve_cpu_spec(
     spec: &str,
     field_name: &str,
@@ -16,68 +16,67 @@ fn resolve_cpu_spec(
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `spec` | `&str` | The CPU specification string to resolve. Leading/trailing whitespace is trimmed. If the string begins with `*`, it is treated as an alias reference; otherwise it is parsed as a literal CPU spec by [`parse_cpu_spec`](parse_cpu_spec.md). |
-| `field_name` | `&str` | A human-readable name identifying which config field is being resolved (e.g., `"affinity"`, `"cpuset"`, `"prime_cpus"`). Used only in error messages for context. |
-| `line_number` | `usize` | The 1-based line number in the configuration file where this spec appears. Used in error messages to help users locate problems. |
-| `cpu_aliases` | `&HashMap<String, List<[u32; CONSUMER_CPUS]>>` | The alias lookup table populated by earlier `*name = cpu_spec` lines in the config file. Keys are lowercase alias names (without the leading `*`). |
-| `errors` | `&mut Vec<String>` | A mutable reference to the error accumulator. An error is pushed when an alias reference cannot be found in `cpu_aliases`. |
+`spec: &str`
+
+The CPU specification string to resolve. If it starts with `*`, the remainder is treated as an alias name (case-insensitive). Otherwise the string is forwarded to [parse_cpu_spec](parse_cpu_spec.md) for direct parsing.
+
+`field_name: &str`
+
+A human-readable name for the config field being parsed (e.g., `"affinity"`, `"cpuset"`, `"prime_cpus"`). Used in error messages to indicate which field contained the invalid alias.
+
+`line_number: usize`
+
+The 1-based line number in the config file where this specification appears. Included in error messages for user diagnostics.
+
+`cpu_aliases: &HashMap<String, List<[u32; CONSUMER_CPUS]>>`
+
+The map of currently defined CPU aliases, populated by earlier [parse_alias](parse_alias.md) calls. Keys are lowercase alias names (without the `*` prefix).
+
+`errors: &mut Vec<String>`
+
+**[out]** Accumulator for error messages. An error is appended if an alias reference (`*name`) refers to an undefined alias.
 
 ## Return value
 
-Type: `List<[u32; CONSUMER_CPUS]>`
-
-A sorted list of CPU indices. Returns an empty list when:
-- The spec is `"0"` or empty (passed through to [`parse_cpu_spec`](parse_cpu_spec.md)).
-- The spec references an undefined alias (an error is also recorded).
+`List<[u32; CONSUMER_CPUS]>` — A sorted list of CPU indices. Returns the alias's CPU list if the alias exists, an empty list if the alias is undefined, or the result of [parse_cpu_spec](parse_cpu_spec.md) for non-alias specs.
 
 ## Remarks
 
+This function is the central indirection layer between raw config field values and the CPU index lists stored in [ProcessLevelConfig](ProcessLevelConfig.md) and [ThreadLevelConfig](ThreadLevelConfig.md). It is called by [parse_and_insert_rules](parse_and_insert_rules.md) for the affinity, cpuset, and prime CPU fields.
+
 ### Alias resolution
 
-When the trimmed `spec` starts with `*`, the function:
+1. The input `spec` is trimmed of leading/trailing whitespace.
+2. If the trimmed string starts with `*`, the `*` prefix is stripped and the remainder is lowercased to form the alias key.
+3. The alias key is looked up in `cpu_aliases`. If found, the associated CPU list is cloned and returned.
+4. If not found, an error is pushed in the format `"Line {N}: Undefined alias '*{name}' in {field_name} field"` and an empty list is returned.
 
-1. Strips the leading `*` character.
-2. Converts the remainder to lowercase.
-3. Looks up the result in `cpu_aliases`.
-4. If the alias exists, returns a clone of the stored CPU list.
-5. If the alias does not exist, pushes a descriptive error message to `errors` and returns an empty default list.
+### Direct parsing
 
-The error message follows the format:
-
-```/dev/null/example.txt#L1
-Line {line_number}: Undefined alias '*{alias}' in {field_name} field
-```
-
-### Literal spec pass-through
-
-When the spec does not start with `*`, the function delegates directly to [`parse_cpu_spec`](parse_cpu_spec.md), which handles ranges (`0-7`), individual indices (`0;4;8`), hex bitmasks (`0xFF`), and the special value `"0"` (no change).
+If the spec does not start with `*`, it is passed directly to [parse_cpu_spec](parse_cpu_spec.md), which handles ranges (`0-7`), individual CPUs (`0;4;8`), hex masks (`0xFF`), and the special value `"0"` (empty list / no change).
 
 ### Visibility
 
-This function is module-private (`fn`, not `pub fn`). It is called by [`parse_and_insert_rules`](parse_and_insert_rules.md) for the affinity and cpuset fields and is not accessible outside the `config` module.
+This function is module-private (`fn`, not `pub fn`). It is an internal helper used only within `config.rs`.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `config.rs` |
-| Visibility | Private (crate-internal) |
-| Callers | [`parse_and_insert_rules`](parse_and_insert_rules.md) |
-| Callees | [`parse_cpu_spec`](parse_cpu_spec.md), `HashMap::get`, `HashMap::contains_key` |
-| API | None |
-| Privileges | None |
+| | |
+|---|---|
+| **Module** | `src/config.rs` |
+| **Visibility** | Private |
+| **Callers** | [parse_and_insert_rules](parse_and_insert_rules.md) (affinity, cpuset, prime CPU fields) |
+| **Callees** | [parse_cpu_spec](parse_cpu_spec.md) |
+| **Privileges** | None |
 
 ## See Also
 
-| Resource | Link |
-|----------|------|
-| parse_cpu_spec | [parse_cpu_spec](parse_cpu_spec.md) |
-| parse_alias | [parse_alias](parse_alias.md) |
-| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| ConfigResult | [ConfigResult](ConfigResult.md) |
-| config module overview | [README](README.md) |
+| Topic | Link |
+|-------|------|
+| CPU spec parser | [parse_cpu_spec](parse_cpu_spec.md) |
+| Alias definition | [parse_alias](parse_alias.md) |
+| Rule insertion | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| Config reader | [read_config](read_config.md) |
+| Module overview | [config.rs](README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

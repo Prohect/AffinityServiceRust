@@ -1,10 +1,10 @@
 # hotreload_blacklist function (config.rs)
 
-Watches the blacklist file for modifications by comparing its filesystem modification timestamp against a cached value, and reloads the file contents when a change is detected. This function is called on each polling iteration to support live updates to the blacklist without restarting the service.
+Checks whether the blacklist file has been modified on disk and reloads it if the modification timestamp has changed. This function is called every polling iteration to support live updates to the process exclusion list without restarting the service.
 
 ## Syntax
 
-```AffinityServiceRust/src/config.rs#L1279-1301
+```rust
 pub fn hotreload_blacklist(
     cli: &CliArgs,
     blacklist: &mut Vec<String>,
@@ -14,74 +14,76 @@ pub fn hotreload_blacklist(
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `cli` | `&CliArgs` | A reference to the parsed command-line arguments. The function reads `cli.blacklist_file_name` to determine the path to the blacklist file. If `blacklist_file_name` is `None`, the function returns immediately without performing any work. |
-| `blacklist` | `&mut Vec<String>` | A mutable reference to the in-memory blacklist vector. When the blacklist file is reloaded, this vector is replaced with the new contents. When the blacklist file becomes inaccessible, this vector is cleared. |
-| `last_blacklist_mod_time` | `&mut Option<std::time::SystemTime>` | A mutable reference to the cached modification timestamp of the blacklist file from the last successful check. Used to detect changes. Set to `None` initially and when the file becomes inaccessible; set to `Some(mod_time)` after a successful reload. |
+`cli: &CliArgs`
+
+Reference to the parsed command-line arguments. The `blacklist_file_name` field (`Option<String>`) specifies the path to the blacklist file. If `None`, the function returns immediately without action.
+
+`blacklist: &mut Vec<String>`
+
+**\[in, out\]** The current in-memory blacklist of lowercase process names. On successful reload, this vector is replaced with the newly parsed contents. If the blacklist file becomes inaccessible (deleted, moved, or permissions changed), the vector is cleared.
+
+`last_blacklist_mod_time: &mut Option<std::time::SystemTime>`
+
+**\[in, out\]** Tracks the last-known modification timestamp of the blacklist file. Used to detect changes:
+
+- `None` indicates no previous successful read (initial state or file became inaccessible).
+- `Some(time)` holds the `modified()` timestamp from the most recent successful reload.
+
+The function compares the file's current modification time against this stored value. If they differ, a reload is triggered and this value is updated. If the file becomes inaccessible, this is reset to `None`.
 
 ## Return value
 
-This function does not return a value. All results are communicated through mutations to `blacklist` and `last_blacklist_mod_time`.
+This function does not return a value. Side effects are communicated through the `blacklist` and `last_blacklist_mod_time` out-parameters.
 
 ## Remarks
 
-### Change detection algorithm
+### Reload logic
 
-1. If `cli.blacklist_file_name` is `None`, the function returns immediately — no blacklist file is configured.
-2. The function calls `std::fs::metadata` on the blacklist file path:
-   - **Metadata call fails** (file deleted, permissions changed, etc.): If `last_blacklist_mod_time` was previously `Some` (meaning the file was loaded at least once), the blacklist is cleared, `last_blacklist_mod_time` is reset to `None`, and a log message is emitted: `"Blacklist file '{path}' no longer accessible, clearing blacklist."`. If it was already `None`, no action is taken (avoids repeated log spam).
-   - **Metadata call succeeds**: The file's modification time is compared against `last_blacklist_mod_time`. If the timestamps differ (or if `last_blacklist_mod_time` is `None`, indicating first load), the file is reloaded.
+The function follows this decision tree:
 
-3. On reload, the function calls [`read_bleack_list`](read_bleack_list.md) to parse the file contents into a vector of lowercase, non-empty, non-comment strings. If `read_bleack_list` returns an error, an empty vector is used as a fallback via `unwrap_or_default()`.
-4. The cached timestamp is updated to the file's current modification time.
-5. Log messages are emitted:
-   - `"Blacklist file '{path}' changed, reloading..."` — before the reload.
-   - `"Blacklist reload complete: {n} items loaded."` — after the reload.
+1. **No blacklist file configured:** If `cli.blacklist_file_name` is `None`, the function returns immediately.
+2. **File inaccessible:** If `std::fs::metadata()` fails for the blacklist path:
+   - If a previous modification time was recorded (`last_blacklist_mod_time.is_some()`), the blacklist is cleared and the timestamp is reset to `None`.
+   - If no previous timestamp existed, no action is taken (avoids repeated logging on startup when no file exists).
+3. **File unchanged:** If the file's `modified()` timestamp matches `*last_blacklist_mod_time`, the function returns without reloading.
+4. **File changed:** If the timestamps differ, the file is reloaded via [read_bleack_list](read_bleack_list.md). On success, `*blacklist` is replaced and `*last_blacklist_mod_time` is updated. On failure, the previous blacklist and timestamp are retained.
 
 ### File disappearance handling
 
-When a previously accessible blacklist file is deleted or becomes inaccessible:
+When a previously accessible blacklist file becomes inaccessible (e.g., deleted by the user), the function proactively clears the in-memory blacklist. This ensures that processes previously excluded by the blacklist are no longer blocked. A log message is emitted: `"Blacklist file '{path}' no longer accessible, clearing blacklist."`.
 
-- The in-memory blacklist is **cleared** (all entries removed).
-- `last_blacklist_mod_time` is set to `None`.
-- A single log message is emitted. Subsequent polling iterations will not log again as long as the file remains inaccessible (because `last_blacklist_mod_time` is already `None`).
+### Logging
 
-If the file reappears later, the next metadata check will succeed, detect a timestamp mismatch (since the cached time is `None`), and trigger a fresh reload.
-
-### First-load behavior
-
-On the first call with `last_blacklist_mod_time` set to `None` and a valid blacklist file present, the function detects a timestamp mismatch (`Some(mod_time) != None`) and loads the file. This handles both the initial startup load and the recovery-after-disappearance case uniformly.
+- On reload: `"Blacklist file '{path}' changed, reloading..."`
+- After reload: `"Blacklist reload complete: {N} items loaded."`
+- On file disappearance: `"Blacklist file '{path}' no longer accessible, clearing blacklist."`
 
 ### Polling frequency
 
-This function is designed to be called once per polling loop iteration. The cost of each call is a single `std::fs::metadata` syscall when the file exists and has not changed, making it lightweight for frequent invocation.
+This function is called once per main service polling iteration. The overhead is minimal — a single `metadata()` syscall per iteration when the file hasn't changed. No file I/O occurs unless the modification timestamp differs.
 
 ### Thread safety
 
-This function is not thread-safe and must be called from a single thread (the main polling loop). The mutable references to `blacklist` and `last_blacklist_mod_time` enforce this at the language level through Rust's borrow checker.
+This function is not thread-safe. It is designed to be called from the single-threaded main polling loop. The mutable references to `blacklist` and `last_blacklist_mod_time` enforce exclusive access at compile time.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `config.rs` |
-| Visibility | `pub` |
-| Callers | `main.rs` (main polling loop) |
-| Callees | [`read_bleack_list`](read_bleack_list.md), `std::fs::metadata`, `log!` macro |
-| Dependencies | [`CliArgs`](../cli.rs/CliArgs.md) (for `blacklist_file_name`), `std::time::SystemTime` |
-| I/O | Filesystem metadata query + optional file read via [`read_bleack_list`](read_bleack_list.md) |
-| Privileges | Filesystem read access to the blacklist file path |
+| | |
+|---|---|
+| **Module** | [`src/config.rs`](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf/src/config.rs) |
+| **Callers** | Main polling loop in `main.rs` |
+| **Callees** | [read_bleack_list](read_bleack_list.md), `std::fs::metadata` |
+| **Dependencies** | [CliArgs](../cli.rs/CliArgs.md) |
+| **Privileges** | File system read access to the blacklist file |
 
 ## See Also
 
-| Resource | Link |
-|----------|------|
-| hotreload_config | [hotreload_config](hotreload_config.md) |
-| read_bleack_list | [read_bleack_list](read_bleack_list.md) |
-| CliArgs | [CliArgs](../cli.rs/CliArgs.md) |
-| read_config | [read_config](read_config.md) |
-| config module overview | [README](README.md) |
+| Topic | Link |
+|-------|------|
+| Module overview | [config.rs](README.md) |
+| Blacklist file reader | [read_bleack_list](read_bleack_list.md) |
+| Config hot-reload counterpart | [hotreload_config](hotreload_config.md) |
+| CLI arguments struct | [CliArgs](../cli.rs/CliArgs.md) |
+| Main service loop | [main.rs](../main.rs/README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

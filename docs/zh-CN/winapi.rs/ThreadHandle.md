@@ -1,6 +1,6 @@
-# ThreadHandle 结构体 (winapi.rs)
+# ThreadHandle 结构体（winapi.rs）
 
-用于一组具有不同访问级别的线程句柄的 RAII 包装器。`r_limited_handle` 字段始终有效（构造此结构体时为必需）。其他句柄（`r_handle`、`w_limited_handle`、`w_handle`）会尝试获取，但如果相应的 `OpenThread` 调用失败，则可能持有无效的 `HANDLE` 值。当结构体被销毁时，所有有效句柄会自动关闭。
+RAII 包装器，用于在多个访问级别上打开 Windows 线程句柄集。在丢弃时自动关闭所有有效的句柄。`r_limited_handle` 在结构体存在时始终有效；其他句柄可能无效，如果相应的 `OpenThread` 调用因权限不足而失败。
 
 ## 语法
 
@@ -16,58 +16,75 @@ pub struct ThreadHandle {
 
 ## 成员
 
-| 字段 | 类型 | 描述 |
-|-------|------|-------------|
-| `r_limited_handle` | `HANDLE` | 以 `THREAD_QUERY_LIMITED_INFORMATION` 访问权限打开的线程句柄。始终有效。 |
-| `r_handle` | `HANDLE` | 以 `THREAD_QUERY_INFORMATION` 访问权限打开的线程句柄。如果打开调用失败，可能是无效句柄。 |
-| `w_limited_handle` | `HANDLE` | 以 `THREAD_SET_LIMITED_INFORMATION` 访问权限打开的线程句柄。如果打开调用失败，可能是无效句柄。 |
-| `w_handle` | `HANDLE` | 以 `THREAD_SET_INFORMATION` 访问权限打开的线程句柄。如果打开调用失败，可能是无效句柄。 |
+| 成员 | 类型 | 访问权限 | 描述 |
+|--------|------|-------------|-------------|
+| `r_limited_handle` | `HANDLE` | `THREAD_QUERY_LIMITED_INFORMATION` | 始终有效的读取句柄，用于基本线程查询，如周期时间检索。这是最低访问级别，对于结构体构造是必需的。 |
+| `r_handle` | `HANDLE` | `THREAD_QUERY_INFORMATION` | 用于高级查询的完整读取句柄，如 [get_thread_start_address](get_thread_start_address.md)（通过 `NtQueryInformationThread`）。如果访问被拒绝，可能是无效句柄 (`HANDLE::default()`)。使用前请用 `is_invalid()` 检查。 |
+| `w_limited_handle` | `HANDLE` | `THREAD_SET_LIMITED_INFORMATION` | 用于设置线程 CPU 集合分配等操作的限制写入句柄。如果访问被拒绝，可能无效。 |
+| `w_handle` | `HANDLE` | `THREAD_SET_INFORMATION` | 用于设置线程理想处理器 [set_thread_ideal_processor_ex](set_thread_ideal_processor_ex.md) 和线程优先级更改等操作的全写入句柄。如果访问被拒绝，可能无效。 |
 
-## 备注
+## Drop
 
-与 [ProcessHandle](ProcessHandle.md) 使用 `Option<HANDLE>` 表示可选句柄不同，`ThreadHandle` 将所有句柄存储为原始 `HANDLE` 值。调用者在使用 `r_handle`、`w_limited_handle` 或 `w_handle` 之前必须检查 `HANDLE::is_invalid()`。
-
-`Drop` 实现无条件关闭 `r_limited_handle`（因为它保证有效），并且仅在其他三个句柄不是无效时才有条件地关闭它们。这确保不会发生重复关闭或关闭无效句柄的情况。
-
-`ThreadHandle` 派生了 `Debug` 以用于诊断输出。
-
-### 句柄访问权限映射
-
-| 字段 | Win32 访问权限 |
-|-------|--------------------|
-| `r_limited_handle` | `THREAD_QUERY_LIMITED_INFORMATION` |
-| `r_handle` | `THREAD_QUERY_INFORMATION` |
-| `w_limited_handle` | `THREAD_SET_LIMITED_INFORMATION` |
-| `w_handle` | `THREAD_SET_INFORMATION` |
-
-### Drop 行为
-
-```text
-Drop 顺序：
-  1. CloseHandle(r_limited_handle)           — 始终关闭
-  2. CloseHandle(r_handle)                   — 仅在非无效时关闭
-  3. CloseHandle(w_limited_handle)           — 仅在非无效时关闭
-  4. CloseHandle(w_handle)                   — 仅在非无效时关闭
+```rust
+impl Drop for ThreadHandle {
+    fn drop(&mut self);
+}
 ```
+
+关闭结构体持有的所有句柄。`r_limited_handle` 始终无条件关闭（保证有效）。其余三个句柄（`r_handle`、`w_limited_handle`、`w_handle`）仅在它们不是无效句柄时才关闭，这通过 `HANDLE::is_invalid()` 确定。
+
+### 句柄关闭顺序
+
+1. `r_limited_handle` — 始终关闭
+2. `r_handle` — 如果不是无效则关闭
+3. `w_limited_handle` — 如果不是无效则关闭
+4. `w_handle` — 如果不是无效则关闭
+
+每次关闭调用 `CloseHandle` 并丢弃结果。
+
+## 说明
+
+### 与 ProcessHandle 的区别
+
+与使用 `Option<HANDLE>` 作为可选句柄的 [ProcessHandle](ProcessHandle.md) 不同，`ThreadHandle` 使用原始 `HANDLE` 值并通过 `is_invalid()` 区分有效和失败的句柄。这种设计差异是因为线程句柄在循环中被更频繁地访问（每个线程、每次迭代），避免 `Option` 解包可以减少开销。
+
+### 访问级别策略
+
+四个句柄代表读取/写入 × 限制/完整访问的矩阵：
+
+|  | 限制 | 完整 |
+|--|---------|------|
+| **读取** | `r_limited_handle` | `r_handle` |
+| **写入** | `w_limited_handle` | `w_handle` |
+
+受限访问权限的成功率更高（例如，对于受保护进程），但支持的操作较少。调用方应优先使用受限句柄，并在必要时在完整句柄上使用 `is_invalid()` 检查结果。
+
+### ThreadStats 中的缓存
+
+`ThreadHandle` 实例缓存在 [ThreadStats](../scheduler.rs/ThreadStats.md)`.handle` 中，以避免每次轮询迭代时重新打开句柄。句柄在线程生命周期内或直到父进程退出且 [PrimeThreadScheduler::drop_process_by_pid](../scheduler.rs/PrimeThreadScheduler.md) 丢弃统计条目时持续存在。
+
+### Send 安全性
+
+`ThreadHandle` 是 `Send` 的，因为 `HANDLE` 是围绕指针大小值的薄包装，Windows 句柄可以在同一进程内的任何线程中使用。
 
 ## 要求
 
-| 要求 | 值 |
-|-------------|-------|
-| 模块 | `winapi.rs` |
-| 创建者 | [get_thread_handle](get_thread_handle.md) |
-| 使用者 | [set_thread_ideal_processor_ex](set_thread_ideal_processor_ex.md)、[get_thread_ideal_processor_ex](get_thread_ideal_processor_ex.md)、[get_thread_start_address](get_thread_start_address.md) |
-| 平台 | Windows |
-| 权限 | 访问其他用户会话中的线程需要 `SeDebugPrivilege` |
+| | |
+|---|---|
+| **模块** | `src/winapi.rs` |
+| **调用方** | [get_thread_handle](get_thread_handle.md)、[ThreadStats](../scheduler.rs/ThreadStats.md)、[prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md)、[apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md)、[apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
+| **被调用方** | `CloseHandle`（Win32） |
+| **Win32 API** | [CloseHandle](https://learn.microsoft.com/zh-cn/windows/win32/api/handleapi/nf-handleapi-closehandle) |
+| **权限** | Drop 时不需要；创建需要适当的线程访问权限（参见 [get_thread_handle](get_thread_handle.md)） |
 
-## 另请参阅
+## 参见
 
 | 主题 | 链接 |
 |-------|------|
-| get_thread_handle | [get_thread_handle](get_thread_handle.md) |
-| ProcessHandle | [ProcessHandle](ProcessHandle.md) |
-| try_open_thread | [try_open_thread](try_open_thread.md) |
-| winapi 模块概述 | [README](README.md) |
+| 模块概述 | [winapi.rs](README.md) |
+| 线程句柄工厂 | [get_thread_handle](get_thread_handle.md) |
+| 低级线程打开器 | [try_open_thread](try_open_thread.md) |
+| 进程句柄对应物 | [ProcessHandle](ProcessHandle.md) |
+| 线程统计缓存 | [ThreadStats](../scheduler.rs/ThreadStats.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档化于提交：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

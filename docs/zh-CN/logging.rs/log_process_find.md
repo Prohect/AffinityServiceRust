@@ -1,6 +1,6 @@
 # log_process_find 函数 (logging.rs)
 
-记录从 `-find` 模式中发现的进程名称，每个会话内进行去重。使用 `FINDS_SET` 静态变量确保每个唯一的进程名称在当前应用程序运行期间只记录一次，防止在调度循环迭代中重复发现的进程造成日志泛滥。
+将发现的进程名记录到查找日志文件中，进行去重处理，使得每个进程名在每次会话中最多记录一次。
 
 ## 语法
 
@@ -11,68 +11,56 @@ pub fn log_process_find(process_name: &str)
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `process_name` | `&str` | 要记录的已发现进程的名称。此值既用作去重键（插入 `FINDS_SET`），也用作日志消息载荷。 |
+`process_name: &str`
+
+发现的进程的可执行文件名（例如 `"notepad.exe"`）。
 
 ## 返回值
 
-此函数不返回值。
+该函数不返回值。
 
 ## 备注
 
-### 去重机制
+此函数是查找模式进程日志记录的公共入口点。它获取全局 `FINDS_SET` 的锁，并尝试插入 `process_name`。如果插入成功（名称尚不存在），函数将使用格式化消息 `"find {process_name}"` 委托给 [log_to_find](log_to_find.md)。如果名称已被记录，则该调用为无操作。
 
-该函数锁定全局 [FINDS_SET](statics.md#finds_set)（`Mutex<HashSet<String>>`）并尝试插入给定的 `process_name`。由于 `HashSet::insert` 仅在值之前不存在时返回 `true`，因此通过 [`log_to_find`](log_to_find.md) 执行的日志写入仅在每个会话中每个进程名称的首次出现时执行。
+### 去重范围
 
-### 算法
+`FINDS_SET` 静态变量在程序启动时初始化一次，并且在进程生命周期内永远不会被清除。这意味着去重跨越整个服务会话——在 1 分钟时发现的一个进程名，在 60 分钟时不会再次被记录，即使进程在此期间重新启动。该集合仅在服务本身重启时重置，届时也会按日期轮转日志文件。
 
-1. 锁定 `FINDS_SET`。
-2. 对集合调用 `insert(process_name.to_string())`。
-3. 如果 `insert` 返回 `true`（名称是新的），则调用 [`log_to_find`](log_to_find.md) 写入消息 `"find <process_name>"`。
-4. 如果 `insert` 返回 `false`（名称已在集合中），则不执行任何操作。
+### 输出格式
 
-### 日志输出格式
+写入查找日志的消息格式为：
 
-当记录新的进程名称时，输出行的格式为：
-
-```text
-[HH:MM:SS]find <process_name>
+```
+[HH:MM:SS]find notepad.exe
 ```
 
-时间戳前缀由 [`log_to_find`](log_to_find.md) 添加。消息根据 [USE_CONSOLE](statics.md#use_console) 的值写入 `.find` 日志文件或 stdout。
+时间戳前缀由 [log_to_find](log_to_find.md) 添加，而不是由此函数添加。
 
-### 性能
+### 线程安全
 
-该函数标记为 `#[inline]`，允许编译器在调用点内联。去重检查为摊销 O(1)（哈希集查找），使其在每个调度周期中对每个已发现的进程调用时开销很低。
+该函数获取 `FINDS_SET` 的 `Mutex` 锁。锁仅持有 `HashSet::insert` 调用期间；后续的 [log_to_find](log_to_find.md) 调用发生在锁释放之后（在 `if` 条件结束时隐式 drop）。
 
-### 会话作用域
+### 控制台模式
 
-`FINDS_SET` 在正常运行期间永远不会被清除——它在应用程序的整个生命周期中累积进程名称。这意味着如果一个进程退出并重新启动，它在同一会话中**不会**被重新记录。新的会话（应用程序重启）从空集合开始。
-
-### 与 `-find` 模式的关系
-
-`-find` CLI 模式扫描 CPU 亲和性尚未被显式配置（即其亲和性与系统默认值匹配）的进程。对于每个这样的进程，会调用 `log_process_find`，以便用户可以看到哪些进程是"未配置的"，同时不会在每个轮询周期被重复条目淹没。
+当 `USE_CONSOLE` 为 `true` 时，查找日志输出通过 [log_to_find](log_to_find.md) 重定向到 stdout。这通常在工具使用 `-find` CLI 标志交互式运行时发生。
 
 ## 要求
 
-| 要求 | 值 |
-|------|-----|
-| **模块** | `logging.rs` |
-| **调用方** | `apply.rs`、`scheduler.rs` — find 模式扫描逻辑 |
-| **被调用方** | [`log_to_find`](log_to_find.md) |
-| **静态变量** | [FINDS_SET](statics.md#finds_set) |
-| **平台** | 跨平台（无直接 Windows API 调用） |
+| | |
+|---|---|
+| **模块** | `src/logging.rs` |
+| **调用方** | 主轮询循环（查找模式路径），[scheduler](../scheduler.rs/README.md) |
+| **被调用方** | [log_to_find](log_to_find.md) |
+| **静态变量** | `FINDS_SET` (`Lazy<Mutex<HashSet<String>>>`) |
+| **权限** | 无 |
 
 ## 另请参阅
 
 | 主题 | 链接 |
-|------|------|
-| log_to_find 函数 | [log_to_find](log_to_find.md) |
-| log_message 函数 | [log_message](log_message.md) |
-| FINDS_SET 静态变量 | [statics](statics.md#finds_set) |
-| is_affinity_unset 函数 | [is_affinity_unset](../winapi.rs/is_affinity_unset.md) |
-| logging 模块概述 | [README](README.md) |
+|-------|------|
+| 模块概述 | [logging.rs](README.md) |
+| 查找日志写入器 | [log_to_find](log_to_find.md) |
+| 通用日志函数 | [log_message](log_message.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*记录于提交：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

@@ -1,10 +1,10 @@
-# ThreadLevelConfig 类型 (config.rs)
+# ThreadLevelConfig 结构体 (config.rs)
 
-`ThreadLevelConfig` 结构体保存单个进程规则的所有线程级调度设置。它定义了主线程 CPU 集合、模块前缀过滤器（带可选的每前缀 CPU 覆盖和线程优先级）、要跟踪的顶级线程数量，以及理想处理器分配规则。线程级配置与进程级配置分离，以便调度器可以在每次轮询迭代中独立管理每线程的 CPU 分配。
+每个进程的线程级配置，用于控制 Prime 线程调度和理想处理器分配。与 [ProcessLevelConfig](ProcessLevelConfig.md) 不同（后者在进程首次被看到时应用一次），`ThreadLevelConfig` 规则在每次轮询迭代期间进行评估，以跟踪线程活动并动态重新分配 CPU 资源。
 
 ## 语法
 
-```AffinityServiceRust/src/config.rs#L40-46
+```rust
 #[derive(Debug, Clone)]
 pub struct ThreadLevelConfig {
     pub name: String,
@@ -18,69 +18,82 @@ pub struct ThreadLevelConfig {
 ## 成员
 
 | 成员 | 类型 | 描述 |
-|------|------|------|
-| `name` | `String` | 此规则适用的小写可执行文件名（例如 `"game.exe"`）。当同一进程同时存在进程级和线程级规则时，与对应的 [ProcessLevelConfig](ProcessLevelConfig.md) 条目匹配。 |
-| `prime_threads_cpus` | `List<[u32; CONSUMER_CPUS]>` | 可用于主线程调度的 CPU 索引合集。当进程有 CPU 密集型线程时，调度器会将它们的亲和性设置到这些 CPU。这是配置中 `prime_cpus` 字段指定的所有每段 CPU 别名的并集。空列表表示不激活主线程调度（除非 `track_top_x_threads` 为负值，表示仅跟踪模式）。 |
-| `prime_threads_prefixes` | `Vec<PrimePrefix>` | [PrimePrefix](PrimePrefix.md) 条目列表，根据线程启动模块名称过滤哪些线程有资格进行主线程调度。每个前缀可以可选地覆盖 CPU 集合和线程优先级。当列表只包含一个空前缀字符串的条目时，所有线程均有资格。 |
-| `track_top_x_threads` | `i32` | 控制要跟踪和可选调度的顶级 CPU 消耗线程数量。**正值**（`?N`）：跟踪前 N 个线程并对其应用主线程调度。**负值**（`??N`）：仅出于监控目的跟踪前 N 个线程，不应用主线程调度。**零**：跟踪数量从 `prime_threads_cpus` 中的 CPU 数量推导。 |
-| `ideal_processor_rules` | `Vec<IdealProcessorRule>` | [IdealProcessorRule](IdealProcessorRule.md) 条目列表，根据线程启动模块名称为线程分配理想处理器。调度器使用这些规则为每个符合条件的线程设置首选 CPU，按总 CPU 时间排名将前 N 个线程（N = 规则中的 CPU 数量）分配到指定的 CPU。 |
+|--------|------|-------------|
+| `name` | `String` | 小写进程名（例如 `"game.exe"`），用作线程级配置映射中的查找键。 |
+| `prime_threads_cpus` | `List<[u32; CONSUMER_CPUS]>` | 有资格进行 Prime 线程绑定的所有 CPU 索引的并集。这是所有 [PrimePrefix](PrimePrefix.md) 条目的组合集。当线程被提升为 Prime 线程状态时，其 CPU 集合限制为此列表中的索引（或如果启用了前缀匹配，则为前缀特定的子集）。 |
+| `prime_threads_prefixes` | `Vec<PrimePrefix>` | [PrimePrefix](PrimePrefix.md) 规则列表，控制哪些线程有资格进行 Prime 线程调度，以及每个前缀组获得哪些 CPU 子集。空前缀字符串匹配所有线程。多个条目允许将来自不同模块的线程路由到不同的 CPU 集合。 |
+| `track_top_x_threads` | `i32` | 控制跟踪多少个顶级线程（按 CPU 周期消耗量）。正值启用前 N 个顶级线程的 Prime 线程调度。负值启用仅跟踪模式（收集指标但不进行 CPU 绑定）。零完全禁用线程跟踪。从 prime 字段中的 `?N`（正值）或 `??N`（负值）前缀解析。 |
+| `ideal_processor_rules` | `Vec<IdealProcessorRule>` | [IdealProcessorRule](IdealProcessorRule.md) 条目列表，根据线程的起始模块前缀分配理想处理器提示。独立于 Prime 线程调度进行评估。 |
 
 ## 备注
 
 ### 与 ProcessLevelConfig 的关系
 
-一条配置行可以同时为同一进程名称生成一个 [ProcessLevelConfig](ProcessLevelConfig.md) 和一个 `ThreadLevelConfig`。当任何进程级设置（优先级、亲和性、CPU 集合、I/O 优先级、内存优先级）非默认时，会创建进程级条目。当任何线程级设置（主线程 CPU、跟踪数量、理想处理器规则）非默认时，会创建线程级条目。这两种配置分别存储在 [ConfigResult](ConfigResult.md) 中按等级索引的独立 `HashMap` 集合中。
+单行配置规则可以为同一进程生成 [ProcessLevelConfig](ProcessLevelConfig.md) 和 `ThreadLevelConfig`。[parse_and_insert_rules](parse_and_insert_rules.md) 函数确定线程级字段是否处于活动状态（非零主 CPUs、非零跟踪计数或非空理想处理器规则），并且仅当至少使用一个线程级功能时才创建 `ThreadLevelConfig`。
 
-### 基于等级的调度
+### Prime 线程调度
 
-线程级配置按等级（轮询频率）组织。等级为 `1` 的规则在每次迭代中运行；等级为 `2` 的规则每隔一次迭代运行，以此类推。这允许开销较大的线程级分析以低于进程级设置的频率执行。
+Prime 线程系统识别进程中 CPU 消耗最高的线程，并将它们固定到高性能核心。选择使用由 [ConfigConstants](ConfigConstants.md) 控制的迟滞，以避免频繁切换：
 
-### 主线程调度流程
+1. 每次迭代，按 CPU 周期增量对线程进行排名。
+2. 相对份额超过 `entry_threshold` 的线程开始积累活动 streak。
+3. 一旦线程的 streak 达到 `min_active_streak`，它会被提升为 Prime 线程状态并绑定到 `prime_threads_cpus`。
+4. 仅当 Prime 线程的份额降至 `keep_threshold` 以下时才会被降级。
 
-1. 调度器通过将 `name` 与运行中的进程可执行文件匹配来识别进程。
-2. 它枚举进程的线程，并通过将每个线程的启动模块名称与 `prime_threads_prefixes` 匹配来进行过滤。
-3. 线程按总 CPU 时间排名，选择前 N 个（N 由 `track_top_x_threads` 或 CPU 数量确定）。
-4. 每个选中线程的亲和性被设置到 `prime_threads_cpus` 中的适当 CPU（或匹配的 `PrimePrefix` 中的每前缀 CPU 覆盖）。
-5. 如果定义了 `ideal_processor_rules`，则使用类似的排名机制（按规则前缀过滤）单独应用理想处理器分配。
+`track_top_x_threads` 字段限制参与此排名的线程数量。在具有许多线程的系统上，这避免了测量每个线程的周期。
 
-### track_top_x_threads 符号约定
+### 仅跟踪模式
 
-| 值 | 配置语法 | 行为 |
-|----|---------|------|
-| 正值（`> 0`） | `?Nx*alias` | 跟踪前 N 个线程**并**应用主线程调度 |
-| 负值（`< 0`） | `??N` | **仅**跟踪前 N 个线程用于监控（不应用主线程调度） |
-| 零（`0`） | （默认） | 从 `prime_threads_cpus.len()` 推导跟踪数量 |
+当 `track_top_x_threads` 为负数时（从 `??N` 语法解析），调度器收集线程周期统计信息并记录它们，但不执行任何 CPU 集合更改。这用于在承诺主配置之前分析线程行为。
 
-### 有效性检查
+### 基于前缀的 CPU 路由
 
-仅当以下条件至少满足一个时，`ThreadLevelConfig` 才会被插入到结果中：
-- `prime_threads_cpus` 非空
-- `track_top_x_threads` 非零
-- `ideal_processor_rules` 非空
+`prime_threads_prefixes` 列表允许基于线程的起始模块将不同线程路由到不同的 CPU 子集。例如，游戏的渲染线程（从 `d3d11.dll` 开始）可以绑定到 P 核，而音频线程（从 `xaudio2.dll` 开始）可以进入 E 核。每个 [PrimePrefix](PrimePrefix.md) 还可以携带可选的 [ThreadPriority](../priority.rs/ThreadPriority.md) 提升。
 
-如果以上条件均不满足，即使配置行在其他方面有效，也不会创建线程级条目。
+### 理想处理器分配
 
-## 要求
+`ideal_processor_rules` 字段独立于 Prime 线程调度运行。它为匹配特定模块前缀的线程设置理想处理器提示，Windows 调度器将其用作偏好（而非硬约束）。这是 Prime 线程绑定的轻量级替代方案。
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `config.rs` |
-| 构造方式 | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| 存储位置 | [ConfigResult](ConfigResult.md)`.thread_level_configs` |
-| 使用方 | `scheduler.rs`（主线程调度器）、`apply.rs` |
-| 相关类型 | [PrimePrefix](PrimePrefix.md)、[IdealProcessorRule](IdealProcessorRule.md) |
+### 配置字段格式
 
-## 另请参阅
+线程级设置从配置规则行的字段 4（Prime 线程）和字段 7（理想处理器）解析：
 
-| 资源 | 链接 |
-|------|------|
-| PrimePrefix | [PrimePrefix](PrimePrefix.md) |
-| IdealProcessorRule | [IdealProcessorRule](IdealProcessorRule.md) |
-| ProcessLevelConfig | [ProcessLevelConfig](ProcessLevelConfig.md) |
-| ConfigResult | [ConfigResult](ConfigResult.md) |
-| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| scheduler 模块 | [scheduler.rs 概述](../scheduler.rs/README.md) |
-| config 模块概述 | [README](README.md) |
+```
+process.exe:priority:affinity:cpuset:prime_spec:io:memory:ideal_spec:grade
+                                      ^字段 4                ^字段 7
+```
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+Prime 线程规格支持几种形式：
+- `*alias` — 将 Prime 线程固定到别名 CPUs
+- `?8x*alias` — 跟踪前 8 个，固定到别名
+- `??16` — 跟踪前 16 个，无绑定
+- `*p@engine.dll;render.dll*e@audio.dll` — 基于前缀的路由，带有每前缀的 CPU 集合
+
+### 存储结构
+
+`ThreadLevelConfig` 实例存储在 `ConfigResult.thread_level_configs` 中，这是一个 `HashMap<u32, HashMap<String, ThreadLevelConfig>>`，其中外层键是等级（轮询频率层），内层键是小写进程名。
+
+## 需求
+
+| | |
+|---|---|
+| **模块** | `src/config.rs` |
+| **由...构建** | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| **由...使用** | [apply_prime_threads](../apply.rs/apply_prime_threads.md), [apply_ideal_processors](../apply.rs/apply_ideal_processors.md), 主轮询循环 |
+| **依赖项** | [PrimePrefix](PrimePrefix.md), [IdealProcessorRule](IdealProcessorRule.md), [List](../collections.rs/README.md) |
+| **权限** | 无（数据结构） |
+
+## 参见
+
+| 主题 | 链接 |
+|-------|------|
+| 模块概述 | [config.rs](README.md) |
+| 进程级对应物 | [ProcessLevelConfig](ProcessLevelConfig.md) |
+| Prime 线程前缀规则 | [PrimePrefix](PrimePrefix.md) |
+| 理想处理器规则 | [IdealProcessorRule](IdealProcessorRule.md) |
+| 迟滞常量 | [ConfigConstants](ConfigConstants.md) |
+| Prime 线程调度器状态 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
+| 规则解析器 | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| 配置文件读取器 | [read_config](read_config.md) |
+
+*文档针对 Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

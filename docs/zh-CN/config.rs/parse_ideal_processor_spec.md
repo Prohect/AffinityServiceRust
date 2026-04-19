@@ -1,10 +1,10 @@
 # parse_ideal_processor_spec 函数 (config.rs)
 
-将理想处理器规格字符串解析为 [`IdealProcessorRule`](IdealProcessorRule.md) 条目列表。每条规则将一组 CPU 索引（从别名解析）映射到可选的模块名称前缀，这些前缀用于过滤哪些线程接收理想处理器分配。该规格支持链接多个段，以根据线程的启动模块将不同的 CPU 集合分配给不同的线程。
+解析理想处理器规格字符串，生成 [IdealProcessorRule](IdealProcessorRule.md) 条目列表。每个规则将一组 CPU 索引（从别名解析）映射到线程起始模块前缀列表，实现在单个进程内按模块分配理想处理器。
 
 ## 语法
 
-```AffinityServiceRust/src/config.rs#L323-384
+```rust
 fn parse_ideal_processor_spec(
     spec: &str,
     line_number: usize,
@@ -15,116 +15,109 @@ fn parse_ideal_processor_spec(
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `spec` | `&str` | 理想处理器规格字符串。必须以 `*` 开头以表示基于别名的规则。特殊值 `"0"` 或空字符串表示不进行理想处理器分配。前后空白将被修剪。 |
-| `line_number` | `usize` | 配置文件中从 1 开始的行号。用于错误消息，帮助用户定位问题。 |
-| `cpu_aliases` | `&HashMap<String, List<[u32; CONSUMER_CPUS]>>` | 由先前的 `*name = cpu_spec` 行填充的别名查找表。键为不含前导 `*` 的小写别名名称。 |
-| `errors` | `&mut Vec<String>` | 错误累加器的可变引用。当规格不以 `*` 开头、别名名称为空或引用的别名未定义时，会推送错误。 |
+`spec: &str`
+
+配置规则行字段 7 中的理想处理器规格字符串。格式由一个或多个段组成，每个段以 `*` 开头，后跟 CPU 别名名称，以及可选的 `@` 分隔符和分号分隔的模块前缀。示例：
+
+- `"0"` — 无理想处理器规则（返回空向量）。
+- `"*pcore"` — 将所有线程分配给别名 `pcore` 的 CPU。
+- `"*pcore@engine.dll;render.dll"` — 仅将来自 `engine.dll` 或 `render.dll` 的线程分配给 `pcore` CPU。
+- `"*pcore@engine.dll*ecore@audio.dll"` — 两条规则：引擎线程到 P 核，音频线程到 E 核。
+
+`line_number: usize`
+
+规格出现的配置文件中的基于 1 的行号。包含在错误消息中，用于用户诊断。
+
+`cpu_aliases: &HashMap<String, List<[u32; CONSUMER_CPUS]>>`
+
+当前定义的 CPU 别名映射，由早期的 [parse_alias](parse_alias.md) 调用填充。键是小写别名名称（不带 `*` 前缀）。
+
+`errors: &mut Vec<String>`
+
+**\[out\]** 错误消息累加器。当规格不以 `*` 开头、别名名称为空或别名未在 `cpu_aliases` 中找到时，追加错误。
 
 ## 返回值
 
-类型：`Vec<IdealProcessorRule>`
-
-一个 [`IdealProcessorRule`](IdealProcessorRule.md) 条目的向量。每条规则包含：
-- `cpus`：从别名解析的 CPU 索引列表。
-- `prefixes`：限制规则适用于哪些线程的小写模块名称前缀列表。空向量表示规则适用于所有线程。
-
-在以下情况下返回空向量：
-- `spec` 为空或 `"0"`（未请求理想处理器分配）。
-- `spec` 不以 `*` 开头（记录错误）。
-- 所有段解析为空 CPU 集合（具有空 CPU 集合的段被静默跳过）。
+`Vec<IdealProcessorRule>` — [IdealProcessorRule](IdealProcessorRule.md) 条目列表，每个条目包含 CPU 索引列表和前缀过滤器列表。如果规格为 `"0"`、空或完全无效，则返回空向量。
 
 ## 备注
 
-### 规格格式
-
-一般格式为一个或多个 `*` 分隔的段：
-
-```/dev/null/syntax.txt#L1-3
-*alias[@prefix1;prefix2;...]
-*alias1[@prefix1]*alias2[@prefix2;prefix3]
-```
-
-| 组成部分 | 是否必需 | 描述 |
-|----------|----------|------|
-| `*` | 是 | 前缀标记，标志每个规则段的开始。 |
-| `alias` | 是 | CPU 别名名称（不区分大小写），必须在配置文件的 `[ALIAS]` 部分中定义。 |
-| `@` | 否 | 别名名称与前缀过滤列表之间的分隔符。 |
-| `prefix1;prefix2` | 否 | 以分号分隔的模块名称前缀列表。存在时，仅启动模块以这些字符串之一开头的线程有资格从此规则获得理想处理器分配。 |
-
 ### 解析算法
 
-1. 对输入进行修剪。如果为空或 `"0"`，则立即返回空向量。
-2. 如果字符串不以 `*` 开头，则推送错误并返回空向量。
-3. 按 `*` 拆分字符串（跳过前导 `*` 产生的第一个空元素）。
-4. 对每个非空段：
-   a. 如果段包含 `@`，则拆分为别名部分（`@` 之前）和前缀部分（`@` 之后）。
-   b. 如果没有 `@`，则整个段为别名名称，前缀列表为空。
-   c. 别名名称被修剪、转为小写，并在 `cpu_aliases` 中查找。
-   d. 如果别名为空，则推送错误并跳过该段。
-   e. 如果在映射中找不到别名，则推送错误并使用空 CPU 列表。
-   f. 如果解析的 CPU 列表为空，则静默跳过该段（不创建规则）。
-   g. 前缀字符串按 `;` 拆分，修剪、转为小写，并过滤掉空条目。
-   h. 创建 `IdealProcessorRule { cpus, prefixes }` 并推入结果向量。
+1. **修剪和提前退出：** 修剪规格。如果为空或等于 `"0"`，则立即返回空向量。
+2. **前缀验证：** 如果规格不以 `*` 开头，则推送错误并返回空向量。
+3. **段分割：** 在 `*` 处分割规格（第一个空段来自前导 `*` 被跳过）。每个非空段代表一条规则。
+4. **别名和前缀提取：** 在每个段内：
+   - 如果存在 `@`，则 `@` 之前部分是别名名称，`@` 之后部分是分号分隔的模块前缀列表。
+   - 如果不存在 `@`，则整个段是别名名称，前缀列表为空（匹配所有线程）。
+5. **别名解析：** 别名名称转为小写并在 `cpu_aliases` 中查找。如果别名不存在，推送错误并跳过该段。
+6. **空 CPU 检查：** 如果解析的 CPU 列表为空（别名映射到无 CPU），则完全跳过该段——不生成任何规则。
+7. **前缀规范化：** 每个前缀字符串被修剪、转为小写，空字符串被过滤掉。
+8. **规则构建：** 创建 [IdealProcessorRule](IdealProcessorRule.md) 条目，带有解析后的 CPU 和前缀列表，然后推送到结果向量。
 
-### 多段链接
+### 与 Prime 线程前缀的关系
 
-可以链接多个段，将不同的 CPU 集合分配给不同组的线程。例如：
+理想处理器规格语法与 [parse_and_insert_rules](parse_and_insert_rules.md) 中字段 4 解析的 Prime 线程前缀语法相似——但独立。两者都使用 `*alias@prefix` 模式，但它们服务于不同的目的：
 
-```/dev/null/example.ini#L1
-*p@engine.dll;render.dll*e@helper.dll
+| 功能 | Prime 线程（字段 4） | 理想处理器（字段 7） |
+|---------|------------------------|---------------------------|
+| **目的** | 通过 CPU 集合将高活动性线程固定到专用 CPU | 为所有匹配线程设置理想处理器提示 |
+| **强制执行** | 硬（CPU 集合限制） | 软（调度器提示） |
+| **需要跟踪** | 是 (`track_top_x_threads`) | 否 |
+| **每前缀优先级提升** | 是 (`!priority` 后缀) | 否 |
+| **生成的结构** | [PrimePrefix](PrimePrefix.md) | [IdealProcessorRule](IdealProcessorRule.md) |
+
+### 字段位置歧义
+
+规则格式中的字段 7 可以包含理想处理器规格（以 `*` 开头）或等级数字。调用方 [parse_and_insert_rules](parse_and_insert_rules.md) 进行消歧：如果字段以 `*` 开头或等于 `"0"`，则视为理想处理器规格，等级从字段 8 读取（默认为 1）。如果字段解析为普通整数，则视为等级，不创建理想处理器规则。
+
+### 错误报告
+
+此函数的错误被附加到 `errors` 向量，最终出现在 [ConfigResult](ConfigResult.md) 的错误列表中。以下条件会产生错误：
+
+- **缺少 `*` 前缀：** `"Line {N}: Ideal processor spec must start with '*', got '{spec}'"` — 整个规格被拒绝。
+- **空别名名称：** `"Line {N}: Empty alias in ideal processor rule '*{segment}'"` — 单个段被跳过；其他段仍可能成功。
+- **未知别名：** `"Line {N}: Unknown CPU alias '*{alias}' in ideal processor specification"` — 段被跳过。
+
+### 配置语法示例
+
+```
+*pcore = 0-7
+*ecore = 8-19
+
+# 所有线程在 P 核上获得理想处理器提示
+game.exe:normal:0:0:0:none:none:*pcore:1
+
+# 按模块的理想处理器提示
+game2.exe:normal:0:0:0:none:none:*pcore@engine.dll;render.dll*ecore@audio.dll:1
 ```
 
-这会产生两条规则：
-1. 启动模块以 `engine.dll` 或 `render.dll` 开头的线程 → 使用别名 `p` 的 CPU。
-2. 启动模块以 `helper.dll` 开头的线程 → 使用别名 `e` 的 CPU。
+在第二个示例中，创建两个 [IdealProcessorRule](IdealProcessorRule.md) 条目：
 
-### 通配规则
+1. `cpus: [0, 1, 2, 3, 4, 5, 6, 7], prefixes: ["engine.dll", "render.dll"]`
+2. `cpus: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19], prefixes: ["audio.dll"]`
 
-不带 `@` 前缀过滤的段会创建一条适用于所有线程的通配规则：
+## 需求
 
-```/dev/null/example.ini#L1
-*pN01
-```
+| | |
+|---|---|
+| **模块** | `src/config.rs` |
+| **可见性** | 私有 (`fn`) — config 模块内部 |
+| **调用方** | [parse_and_insert_rules](parse_and_insert_rules.md)（规则行的字段 7） |
+| **被调用方** | CPU 别名映射查找（无函数调用；内联别名解析） |
+| **依赖项** | [IdealProcessorRule](IdealProcessorRule.md), [HashMap](../collections.rs/README.md), [List](../collections.rs/README.md) |
+| **权限** | 无 |
 
-这会产生一条 `prefixes` 向量为空的规则，意味着进程中的所有线程均有资格。
+## 参见
 
-### 边界情况
+| 主题 | 链接 |
+|-------|------|
+| 模块概述 | [config.rs](README.md) |
+| 理想处理器规则结构体 | [IdealProcessorRule](IdealProcessorRule.md) |
+| 规则插入函数 | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| CPU 别名定义 | [parse_alias](parse_alias.md) |
+| 运行时理想处理器应用 | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
+| Prime 线程前缀（相关概念） | [PrimePrefix](PrimePrefix.md) |
+| 其他字段的别名解析 | [resolve_cpu_spec](resolve_cpu_spec.md) |
 
-| 输入 | 结果 | 说明 |
-|------|------|------|
-| `""` 或 `"0"` | `[]` | 不进行理想处理器分配。 |
-| `"7"`（无前导 `*`） | `[]` + 错误 | 规格必须以 `*` 开头。 |
-| `"*undefined_alias"` | `[]` | 推送错误；别名未找到，空 CPU 集合，段被跳过。 |
-| `"**"` | `[]` | 两个段的别名名称均为空；推送错误，段被跳过。 |
-| `"*p@"` | 规则包含来自 `p` 的 `cpus`，空 `prefixes` | `@` 存在但后面没有前缀；前缀过滤实际上为空（通配）。 |
-
-### 可见性
-
-此函数是模块私有的（`fn`，非 `pub fn`），仅在 `config.rs` 内部被调用。
-
-## 要求
-
-| 要求 | 值 |
-|------|-----|
-| 模块 | `config.rs` |
-| 可见性 | 私有（crate 内部） |
-| 调用方 | [`parse_and_insert_rules`](parse_and_insert_rules.md) |
-| 被调用方 | `HashMap::get`、`str::split`、`str::find`、`str::trim`、`str::to_lowercase` |
-| 依赖 | [`IdealProcessorRule`](IdealProcessorRule.md)、[`collections.rs`](../collections.rs/README.md) 中的 `List` 和 `CONSUMER_CPUS` |
-| 权限 | 无 |
-
-## 另请参阅
-
-| 资源 | 链接 |
-|------|------|
-| IdealProcessorRule | [IdealProcessorRule](IdealProcessorRule.md) |
-| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| resolve_cpu_spec | [resolve_cpu_spec](resolve_cpu_spec.md) |
-| parse_alias | [parse_alias](parse_alias.md) |
-| ThreadLevelConfig | [ThreadLevelConfig](ThreadLevelConfig.md) |
-| config 模块概述 | [README](README.md) |
-
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档针对 Commit：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

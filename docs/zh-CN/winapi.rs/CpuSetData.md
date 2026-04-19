@@ -1,6 +1,6 @@
 # CpuSetData 结构体 (winapi.rs)
 
-持有一个 CPU Set ID 及其对应的逻辑处理器索引。这是从 Windows `SYSTEM_CPU_SET_INFORMATION` 结构体中提取的数据的内部表示，用于在面向用户的逻辑处理器索引和 Windows CPU Set API 所需的不透明 CPU Set ID 之间进行转换。
+轻量级缓存记录，保存 `SYSTEM_CPU_SET_INFORMATION` 项中的关键字段。服务在启动时通过 `GetSystemCpuSetInformation` 枚举 CPU 集合拓扑，并将结果存储为 `Vec<CpuSetData>`，保存在静态 [CPU_SET_INFORMATION](README.md) 缓存中。所有后续的 CPU 索引 ↔ CPU 集合 ID 转换都在此缓存数据上执行，而不是重新查询操作系统。
 
 ## 语法
 
@@ -14,43 +14,54 @@ pub struct CpuSetData {
 
 ## 成员
 
-| 字段 | 类型 | 描述 |
-|-------|------|-------------|
-| `id` | `u32` | 由 Windows 分配的不透明 CPU Set ID。此值传递给 `SetProcessDefaultCpuSets` 和 `SetThreadSelectedCpuSets` 等 API。 |
-| `logical_processor_index` | `u8` | 与此 CPU Set 对应的从零开始的逻辑处理器索引。这是面向用户的索引（0、1、2、……），映射到物理或逻辑核心。 |
+| 成员 | 类型 | 描述 |
+|--------|------|-------------|
+| `id` | `u32` | 由 Windows 分配的不透明 CPU 集合 ID（来自 `SYSTEM_CPU_SET_INFORMATION.CpuSet.Id`）。此值传递给 `SetProcessDefaultCpuSets` 和 `SetThreadSelectedCpuSets` 等 API。CPU 集合 ID **不是**连续的，也不对应于逻辑处理器索引。 |
+| `logical_processor_index` | `u8` | 此 CPU 集合条目的从零开始的逻辑处理器索引（来自 `SYSTEM_CPU_SET_INFORMATION.CpuSet.LogicalProcessorIndex`）。这是亲和性掩码中使用的相同索引——亲和性掩码中的位 *N* 对应于 `logical_processor_index == N`。存储为 `u8`，支持每组最多 256 个逻辑处理器。 |
 
 ## 备注
 
-- 两个字段均为**模块私有**（没有 `pub` 可见性）。外部代码仅通过转换函数 [cpusetids_from_indices](cpusetids_from_indices.md)、[cpusetids_from_mask](cpusetids_from_mask.md)、[indices_from_cpusetids](indices_from_cpusetids.md) 和 [mask_from_cpusetids](mask_from_cpusetids.md) 间接访问 `CpuSetData`。
+- `CpuSetData` 派生 `Clone` 和 `Copy`，因为它是小型的（5 字节）、仅堆栈的值类型，没有堆分配或资源所有权。
+- 结构体字段是**模块私有的**（没有 `pub` 可见性）。所有访问都通过转换函数进行，这些函数遍历缓存的 `Vec<CpuSetData>`：
+  - [cpusetids_from_indices](cpusetids_from_indices.md) — 逻辑索引 → CPU 集合 ID
+  - [cpusetids_from_mask](cpusetids_from_mask.md) — 亲和性掩码 → CPU 集合 ID
+  - [indices_from_cpusetids](indices_from_cpusetids.md) — CPU 集合 ID → 逻辑索引
+  - [mask_from_cpusetids](mask_from_cpusetids.md) — CPU 集合 ID → 亲和性掩码
+  - [filter_indices_by_mask](filter_indices_by_mask.md) — 按亲和性掩码过滤索引
+- `SYSTEM_CPU_SET_INFORMATION` 联合包含许多其他字段（例如 `Group`、`NumaNodeIndex`、`LastLevelCacheIndex`、`CoreIndex`、`EfficiencyClass`），这些字段未保存在 `CpuSetData` 中。只有 `Id` 和 `LogicalProcessorIndex` 对服务的 CPU 集合和亲和性操作是必要的。
 
-- 该结构体派生了 `Clone` 和 `Copy`，使其可以低成本地按值传递并存储在 `Vec<CpuSetData>` 中，无需担心引用生命周期问题。
+### 拓扑缓存
 
-- 实例由 `extract_cpu_set_data` 辅助函数创建，该函数在 `unsafe` 块中从原始 `SYSTEM_CPU_SET_INFORMATION` 结构体的联合体字段中读取数据。
+静态 `CPU_SET_INFORMATION` 是一个 `Lazy<Mutex<Vec<CpuSetData>>>`，在首次访问时初始化一次。初始化调用 `GetSystemCpuSetInformation` 两次——首先确定所需缓冲区大小，然后填充它——并使用每个条目的 `Size` 字段作为步幅遍历变长条目。生成的 `Vec<CpuSetData>` 被 `Mutex` 锁定，初始化后永不修改。
 
-- 全局静态变量 [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) 存储一个 `Vec<CpuSetData>`，在初始化时填充一次，随后的所有 CPU Set 查找都复用该数据。
+### CPU 集合 ID 与逻辑索引
 
-- `logical_processor_index` 字段存储为 `u8`，最多支持 256 个逻辑处理器。这涵盖了单个处理器组内绝大多数消费级和服务器级系统。
+| 概念 | 示例 | 由...使用 |
+|---------|---------|---------|
+| 逻辑处理器索引 | `0`, `1`, `2`, … | 亲和性掩码、配置文件 `affinity_cpus` 列表 |
+| CPU 集合 ID | `256`, `257`, `258`, …（不透明） | `SetProcessDefaultCpuSets`、`SetThreadSelectedCpuSets` |
+
+配置文件使用对人类友好的逻辑索引。Windows CPU 集合 API 需要不透明 ID。`CpuSetData` 桥接了这个差距。
 
 ## 要求
 
-| 要求 | 值 |
-|-------------|-------|
-| 模块 | `winapi.rs` |
-| 填充者 | `extract_cpu_set_data`（unsafe，模块私有） |
-| 存储于 | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) 静态变量 |
-| 平台 | 仅限 Windows |
-| 底层 API | `GetSystemCpuSetInformation`（通过 `SYSTEM_CPU_SET_INFORMATION`） |
+| | |
+|---|---|
+| **模块** | `src/winapi.rs` |
+| **调用方** | [cpusetids_from_indices](cpusetids_from_indices.md)、[cpusetids_from_mask](cpusetids_from_mask.md)、[indices_from_cpusetids](indices_from_cpusetids.md)、[mask_from_cpusetids](mask_from_cpusetids.md)、[get_cpu_set_information](README.md) |
+| **依赖** | `SYSTEM_CPU_SET_INFORMATION` (windows crate) |
+| **Win32 API** | [GetSystemCpuSetInformation](https://learn.microsoft.com/zh-cn/windows/win32/api/systeminformationapi/nf-systeminformationapi-getsystemcpusetinformation)（在缓存初始化时） |
+| **特权** | 无 |
 
 ## 另请参阅
 
 | 主题 | 链接 |
 |-------|------|
-| CPU_SET_INFORMATION 静态变量 | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
-| cpusetids_from_indices | [cpusetids_from_indices](cpusetids_from_indices.md) |
-| cpusetids_from_mask | [cpusetids_from_mask](cpusetids_from_mask.md) |
-| indices_from_cpusetids | [indices_from_cpusetids](indices_from_cpusetids.md) |
-| mask_from_cpusetids | [mask_from_cpusetids](mask_from_cpusetids.md) |
-| collections 模块 | [collections.rs](../collections.rs/README.md) |
+| 模块概览 | [winapi.rs](README.md) |
+| 索引 → CPU 集合 ID 转换 | [cpusetids_from_indices](cpusetids_from_indices.md) |
+| 掩码 → CPU 集合 ID 转换 | [cpusetids_from_mask](cpusetids_from_mask.md) |
+| CPU 集合 ID → 索引转换 | [indices_from_cpusetids](indices_from_cpusetids.md) |
+| CPU 集合 ID → 掩码转换 | [mask_from_cpusetids](mask_from_cpusetids.md) |
+| CPU 集合应用到进程 | [apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档记录于 Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

@@ -1,10 +1,10 @@
 # apply_priority function (apply.rs)
 
-Reads the current process priority class and, if it differs from the configured target, sets it to the desired value. In dry-run mode the change is recorded without calling the Windows API. Errors are deduplicated via `log_error_if_new` so that repeated failures for the same process/operation/error-code combination do not generate duplicate log entries.
+Reads the current process priority class and, if it differs from the configured value, sets it to the desired level. Changes and errors are recorded in the provided [`ApplyConfigResult`](ApplyConfigResult.md).
 
 ## Syntax
 
-```AffinityServiceRust/src/apply.rs#L85-131
+```AffinityServiceRust/src/apply.rs#L85-91
 pub fn apply_priority(
     pid: u32,
     config: &ProcessLevelConfig,
@@ -16,50 +16,69 @@ pub fn apply_priority(
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `pid` | `u32` | The process identifier of the target process. Used for error deduplication and log messages. |
-| `config` | `&ProcessLevelConfig` | The process-level configuration containing the desired `priority` value (a `ProcessPriority` enum). If `config.priority` does not map to a Windows constant (i.e., `as_win_const()` returns `None`), the function returns immediately without action. |
-| `dry_run` | `bool` | When `true`, the function records what *would* change in `apply_config_result` without calling `SetPriorityClass`. When `false`, the Windows API is called to apply the change. |
-| `process_handle` | `&ProcessHandle` | A handle wrapper providing read and write access to the target process. The function extracts a read handle (for `GetPriorityClass`) and a write handle (for `SetPriorityClass`) via [`get_handles`](get_handles.md). If either handle is unavailable, the function returns immediately. |
-| `apply_config_result` | `&mut ApplyConfigResult` | Accumulator for change descriptions and error messages. On success (or dry-run), a change string of the form `"Priority: <old> -> <new>"` is appended. On failure, an error string is appended (subject to deduplication). |
+`pid: u32`
+
+The process identifier of the target process.
+
+`config: &ProcessLevelConfig`
+
+The [`ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) containing the desired [`ProcessPriority`](../priority.rs/ProcessPriority.md) value. If `config.priority` does not map to a valid Windows constant (`as_win_const()` returns `None`), the function returns immediately with no effect.
+
+`dry_run: bool`
+
+When **true**, the function records what *would* change in `apply_config_result` without calling any Windows API. When **false**, the change is applied to the live process.
+
+`process_handle: &ProcessHandle`
+
+A [`ProcessHandle`](../winapi.rs/ProcessHandle.md) for the target process. Both a read handle (to query current priority) and a write handle (to set new priority) are extracted via [`get_handles`](get_handles.md).
+
+`apply_config_result: &mut ApplyConfigResult`
+
+Accumulator for change descriptions and error messages. See [`ApplyConfigResult`](ApplyConfigResult.md).
 
 ## Return value
 
-This function does not return a value. All outcomes are communicated through the `apply_config_result` parameter.
+This function does not return a value. Results are communicated through `apply_config_result`.
 
 ## Remarks
 
-- The function first calls `GetPriorityClass` with the read handle to obtain the current priority class. If the current value already matches the configured target, no action is taken and nothing is recorded.
-- The current priority class is decoded back to a human-readable string via `ProcessPriority::from_win_const` for the change message.
-- On failure of `SetPriorityClass`, the Win32 error code is retrieved with `GetLastError` and passed to [`log_error_if_new`](log_error_if_new.md), which records the error only if this specific `pid`/`Operation::SetPriorityClass`/error-code triple has not been seen before.
-- The Windows priority class constants are standard values such as `IDLE_PRIORITY_CLASS`, `BELOW_NORMAL_PRIORITY_CLASS`, `NORMAL_PRIORITY_CLASS`, `ABOVE_NORMAL_PRIORITY_CLASS`, `HIGH_PRIORITY_CLASS`, and `REALTIME_PRIORITY_CLASS`.
-- If `config.priority` is `ProcessPriority::None` (or any variant whose `as_win_const()` returns `None`), the function exits without querying or modifying the process.
+The function follows a read-compare-write pattern:
+
+1. **Extract handles** — Calls [`get_handles`](get_handles.md) to obtain read and write `HANDLE` values. If either is `None`, the function returns silently (the process handle was not successfully opened).
+2. **Check config** — If `config.priority` is `ProcessPriority::None` (i.e., `as_win_const()` returns `None`), no action is taken.
+3. **Read current** — Calls `GetPriorityClass` with the read handle to obtain the current priority class.
+4. **Compare** — If the current value already matches the configured value, no change is needed.
+5. **Write new** — In dry-run mode, the change message is recorded without calling any API. Otherwise, `SetPriorityClass` is called with the write handle.
+6. **Log outcome** — On success, a change message of the form `"Priority: <old> -> <new>"` is added. On failure, [`log_error_if_new`](log_error_if_new.md) records the error only if this specific (pid, operation, error_code) combination has not been logged before.
+
+### Error handling
+
+Errors from `SetPriorityClass` are captured via `GetLastError` and passed through [`log_error_if_new`](log_error_if_new.md) with operation `Operation::SetPriorityClass`. Duplicate errors for the same process and error code are suppressed to avoid log spam.
+
+### Platform notes
+
+- `GetPriorityClass` and `SetPriorityClass` are Win32 Thread API functions. The write handle typically requires `PROCESS_SET_INFORMATION` access right.
+- Priority class values are defined by Windows (e.g., `IDLE_PRIORITY_CLASS`, `NORMAL_PRIORITY_CLASS`, `HIGH_PRIORITY_CLASS`, `REALTIME_PRIORITY_CLASS`, etc.).
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `apply.rs` |
-| Crate | `AffinityServiceRust` |
-| Windows APIs | `GetPriorityClass`, `SetPriorityClass`, `GetLastError` |
-| Callers | Orchestrator code in `scheduler.rs` / `main.rs` that iterates matched processes |
-| Callees | [`get_handles`](get_handles.md), [`log_error_if_new`](log_error_if_new.md), `ProcessPriority::as_win_const`, `ProcessPriority::from_win_const`, `error_from_code_win32` |
-| Privileges | Requires a process handle with `PROCESS_QUERY_INFORMATION` or `PROCESS_QUERY_LIMITED_INFORMATION` (read) and `PROCESS_SET_INFORMATION` (write). |
+| | |
+|---|---|
+| **Module** | `src/apply.rs` |
+| **Callers** | Main enforcement loop (via `src/main.rs`) |
+| **Callees** | [`get_handles`](get_handles.md), [`log_error_if_new`](log_error_if_new.md), `GetPriorityClass`, `SetPriorityClass`, `GetLastError` |
+| **Win32 API** | [`GetPriorityClass`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getpriorityclass), [`SetPriorityClass`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setpriorityclass) |
+| **Privileges** | `PROCESS_QUERY_LIMITED_INFORMATION` (read), `PROCESS_SET_INFORMATION` (write) |
 
 ## See Also
 
-| Reference | Link |
-|-----------|------|
-| apply module overview | [`README`](README.md) |
-| ApplyConfigResult | [`ApplyConfigResult`](ApplyConfigResult.md) |
-| get_handles | [`get_handles`](get_handles.md) |
-| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
-| apply_affinity | [`apply_affinity`](apply_affinity.md) |
-| apply_io_priority | [`apply_io_priority`](apply_io_priority.md) |
-| apply_memory_priority | [`apply_memory_priority`](apply_memory_priority.md) |
-| ProcessLevelConfig | [`config.rs/ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
-| ProcessPriority | [`priority.rs/ProcessPriority`](../priority.rs/ProcessPriority.md) |
+| Topic | Description |
+|---|---|
+| [`ApplyConfigResult`](ApplyConfigResult.md) | Accumulator for changes and errors |
+| [`ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) | Configuration struct containing the target priority |
+| [`ProcessPriority`](../priority.rs/ProcessPriority.md) | Enum mapping friendly names to Windows priority class constants |
+| [`apply_affinity`](apply_affinity.md) | Companion function that applies CPU affinity masks |
+| [`apply_io_priority`](apply_io_priority.md) | Companion function that applies IO priority |
+| [`apply_memory_priority`](apply_memory_priority.md) | Companion function that applies memory priority |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

@@ -1,6 +1,6 @@
 # set_timer_resolution 函数 (winapi.rs)
 
-通过 NT 原生 API `NtSetTimerResolution` 将系统定时器分辨率设置为调用者指定的值。这允许 AffinityServiceRust 通过请求比默认 ~15.6 ms 更小的定时器间隔来提高系统范围内的计时精度（例如 `Sleep`、可等待定时器）。
+通过未公开的 `NtSetTimerResolution` NT API 将 Windows 全局计时器分辨率设置为用户指定的间隔。这允许服务请求更高频率的系统计时器 tick，从而减少时间敏感工作负载的调度延迟。
 
 ## 语法
 
@@ -11,77 +11,82 @@ pub fn set_timer_resolution(cli: &CliArgs)
 ## 参数
 
 | 参数 | 类型 | 描述 |
-|------|------|------|
-| `cli` | `&CliArgs` | 对已解析的命令行参数的引用。`cli.time_resolution` 字段（`u32`）指定所需的定时器分辨率，单位为 100 纳秒（例如 `5000` = 0.5 ms）。 |
+|-----------|------|-------------|
+| `cli` | `&CliArgs` | 解析后的命令行参数引用。`time_resolution` 字段指定期望的计时器分辨率，单位为 100 纳秒。值为 `0` 时禁用该功能（无操作）。 |
 
 ## 返回值
 
-此函数不返回值。成功或失败通过 `log!` 宏写入的日志消息进行通信。
+此函数不返回值。成功或失败通过日志输出传达。
 
-## 备注
+## 说明
 
-### 机制
+### 分辨率单位
 
-该函数调用 `NtSetTimerResolution(desired_resolution, true, &mut current_resolution)`，其中：
+`cli.time_resolution` 值以 100 纳秒 (100ns) 为单位表示，与 `NtSetTimerResolution` 的原生单位匹配。常见值：
 
-- `desired_resolution` 为 `cli.time_resolution`（单位为 100 纳秒）。
-- 第二个参数（`set_resolution: true`）请求**设置**分辨率而非查询。
-- `current_resolution` 接收更改**之前**生效的定时器分辨率（"先前"分辨率）。
+| 期望分辨率 | 值 (100ns 单位) | 等效值 |
+|--------------------|---------------------|------------|
+| 0.5 毫秒 | `5000` | 0.5000 毫秒 |
+| 1.0 毫秒 | `10000` | 1.0000 毫秒 |
+| 15.6 毫秒 (默认) | `156250` | 15.6250 毫秒 |
 
-### 零分辨率保护
+### 行为
 
-如果 `cli.time_resolution` 为 `0`，函数立即返回而不调用 `NtSetTimerResolution`。
+1. 如果 `cli.time_resolution == 0`，函数立即返回，不调用任何 API。
+2. 否则，使用 `set_resolution = true` 调用 `NtSetTimerResolution` 请求指定的间隔。
+3. API 在其 `p_current_resolution` 输出参数中返回*先前*（"elder"）计时器分辨率。
+4. 成功时（`NTSTATUS >= 0`），请求的分辨率和先前的分辨率都以毫秒为单位记录（值 ÷ 10,000）。
+5. 失败时（`NTSTATUS < 0`），NTSTATUS 代码以十六进制格式记录。
 
-### NTSTATUS 处理
+### 系统级影响
 
-| 条件 | 行为 |
-|------|------|
-| `NTSTATUS < 0`（失败） | 记录 `"Failed to set timer resolution: 0x{NTSTATUS}"`。 |
-| `NTSTATUS >= 0`（成功） | 记录请求的分辨率（毫秒，4 位小数）和先前（"elder"）分辨率。 |
+`NtSetTimerResolution` 影响全局 Windows 计时器分辨率，而不仅仅是调用进程。系统使用任何进程请求的*最小*（最精确）分辨率。当请求进程退出时，其分辨率请求会自动释放，系统可能会恢复到更粗糙的间隔。
 
-分辨率值通过除以 `10000.0` 转换为毫秒显示（因为单位是 100 纳秒）。
+### 日志输出示例
 
-### 分辨率值示例
+**成功:**
+```
+Succeed to set timer resolution: 0.5000ms
+elder timer resolution: 156250
+```
 
-| `time_resolution` 值 | 等效间隔 |
-|----------------------|----------|
-| `156250` | 15.6250 ms（Windows 默认值） |
-| `10000` | 1.0000 ms |
-| `5000` | 0.5000 ms（500 µs） |
+**失败:**
+```
+Failed to set timer resolution: 0xC0000022
+```
 
-### 重要副作用
+### NtSetTimerResolution 签名
 
-- **系统范围影响。** `NtSetTimerResolution` 影响整个操作系统的全局定时器分辨率，而不仅仅是调用进程。当分辨率被提高时，所有进程都受益于更高精度的计时，但功耗可能会增加。
-- **持续生效直到恢复。** 提高的分辨率在调用进程运行期间持续有效，直到调用 `NtSetTimerResolution` 并将 `set_resolution` 设为 `false`。当进程退出时，Windows 自动将分辨率恢复为任何剩余进程请求的次高分辨率。
-- **最小分辨率。** 操作系统强制执行依赖于硬件的最小定时器间隔（通常为 0.5 ms）。低于此下限的请求会成功，但会被钳制到支持的最小值。
+```c
+NTSTATUS NtSetTimerResolution(
+    ULONG   DesiredResolution,  // 单位为 100ns
+    BOOLEAN SetResolution,      // TRUE 设置，FALSE 重置
+    PULONG  CurrentResolution   // 接收先前的分辨率
+);
+```
 
-### 平台说明
+这是从 `ntdll.dll` 直接导入的未公开 NT API，通过 winapi.rs 中的 `#[link(name = "ntdll")]` FFI 块。
 
-- **仅限 Windows。** `NtSetTimerResolution` 是由 `ntdll.dll` 导出的未公开 NT 原生 API，通过 `winapi.rs` 顶部的 `#[link(name = "ntdll")]` extern 块链接。
-- 此 API 与 `winmm.dll` 中的 `timeBeginPeriod` / `timeEndPeriod` 使用相同的机制，但无需多媒体库。
+### 与多媒体定时器的关系
 
-### 不安全代码
+这实现了与 `winmm.dll` 的已文档化 `timeBeginPeriod`/`timeEndPeriod` API 相同的效果，但直接使用更底层的 NT 接口。NT API 提供更高的粒度（100ns 单位 vs `timeBeginPeriod` 的 1ms 单位）。
 
-函数体包裹在 `unsafe` 块中，因为 `NtSetTimerResolution` 是通过原始 `ntdll` FFI 绑定的外部函数调用。
+## 需求
 
-## 要求
+| | |
+|---|---|
+| **模块** | `src/winapi.rs` |
+| **调用方** | `src/main.rs` 中的主启动逻辑 |
+| **被调用方** | `NtSetTimerResolution` (ntdll.dll FFI) |
+| **NT API** | `NtSetTimerResolution`（未公开，通过 `ntdll.dll` 链接） |
+| **特权** | 无需任何特权；任何进程都可以请求更高的计时器分辨率 |
 
-| 要求 | 值 |
-|------|-----|
-| **模块** | `winapi.rs` |
-| **调用者** | `main.rs` — 现在在启动期间无条件调用；零分辨率检查在内部处理。 |
-| **被调用者** | `NtSetTimerResolution` (ntdll)、`log!` 宏 → [`log_message`](../logging.rs/log_message.md) |
-| **API** | NT 原生 API — `NtSetTimerResolution` |
-| **权限** | 无明确要求，但在安全策略严格的系统上可能受组策略限制。 |
-| **平台** | Windows |
-
-## 另请参阅
+## 参见
 
 | 主题 | 链接 |
-|------|------|
-| logging 模块 | [logging.rs](../logging.rs/README.md) |
-| enable_debug_privilege | [enable_debug_privilege](enable_debug_privilege.md) |
-| winapi 模块概述 | [README](README.md) |
+|-------|------|
+| 模块概述 | [winapi.rs](README.md) |
+| CLI 参数解析 | [cli.rs](../cli.rs/README.md) |
+| NT FFI 声明 | [winapi.rs](README.md)（外部 FFI 部分） |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档版本：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

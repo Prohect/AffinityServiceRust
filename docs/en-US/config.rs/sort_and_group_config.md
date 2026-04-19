@@ -1,120 +1,119 @@
 # sort_and_group_config function (config.rs)
 
-Auto-groups processes that share identical rule settings into named group blocks to reduce configuration file duplication. The function reads an existing config file, identifies processes whose rule fields (priority, affinity, cpuset, etc.) are identical, merges them into `{ }` group blocks with generated names, and writes a compact, deduplicated output file.
+Auto-groups processes that share identical rule settings into named group blocks, producing a compact configuration file with reduced duplication. This is a command-line utility function invoked via the `-autogroup` flag.
 
 ## Syntax
 
-```AffinityServiceRust/src/config.rs#L1070-1277
+```rust
 pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>)
 ```
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `in_file` | `Option<String>` | The path to the input configuration file to read and analyze. The file must be a valid AffinityServiceRust config in UTF-8 encoding. If `None`, the function logs an error and returns immediately. Corresponds to the `-in <file>` CLI argument. |
-| `out_file` | `Option<String>` | The path to the output file where the grouped configuration will be written. If `None`, the function logs an error and returns immediately. Corresponds to the `-out <file>` CLI argument. |
+`in_file: Option<String>`
+
+Path to the input configuration file. Must be `Some`; if `None`, the function logs an error and returns immediately.
+
+`out_file: Option<String>`
+
+Path to the output file where the grouped configuration will be written. Must be `Some`; if `None`, the function logs an error and returns immediately.
 
 ## Return value
 
-This function does not return a value. Output is written to the file specified by `out_file`. Diagnostic messages and summary statistics are emitted via the `log!` macro.
+This function does not return a value. Results are written to the output file and diagnostic messages are logged.
 
 ## Remarks
 
-### Algorithm overview
+### Algorithm
 
-1. **Read and partition lines** — The input file is read line by line and partitioned into two sections:
-   - **Preamble**: Comment lines (`#`-prefixed), blank lines, constant definitions (`@`-prefixed), and alias definitions (`*`-prefixed). These are preserved verbatim in the output.
-   - **Rules section**: Everything else — individual process rule lines and `{ }` group blocks.
+The function performs a multi-pass transformation:
 
-2. **Extract rule keys** — For each process rule (whether standalone or inside a group block), the process name is separated from the rule string (everything after the first `:`). The rule string becomes a grouping key.
+1. **Preamble extraction:** Lines at the top of the file that are comments (`#`), blank lines, constants (`@`), or aliases (`*`) are collected into a preamble section that is preserved verbatim in the output.
 
-3. **Group by rule** — A `HashMap<String, Vec<String>>` maps each unique rule string to the list of process names that share it. A separate `rule_order` vector preserves the insertion order so that the output maintains a stable ordering based on first occurrence.
+2. **Rule collection:** Each rule line and group block is decomposed into its member process names and rule string (everything after the first colon for single-line rules, or after the closing `}:` for groups). The rule string serves as the grouping key.
 
-4. **Emit grouped output** — For each unique rule string (in insertion order):
-   - If only **one** process uses the rule, it is emitted as a single-line rule: `name:rule_string`.
-   - If **multiple** processes share the rule, they are emitted as a named group block. The group name is auto-generated as `grp_0`, `grp_1`, etc.
+3. **Merging:** Rules with identical rule strings have their member lists concatenated. This merges both individual rules and existing group blocks that happen to share the same settings.
 
-5. **Format groups** — For multi-process groups:
-   - If the single-line representation (`grp_N { a: b: c }:rule`) is shorter than 128 characters, it is emitted on one line.
-   - Otherwise, a multi-line format is used with 4-space indentation and line wrapping at 128 characters:
-     ```/dev/null/example.ini#L1-4
-     grp_0 {
-         process1.exe: process2.exe: process3.exe
-         process4.exe: process5.exe
-     }:priority:affinity:cpuset:prime:io:mem:ideal:grade
-     ```
+4. **Deduplication and sorting:** Within each merged group, member names are sorted alphabetically and deduplicated.
 
-6. **Deduplication** — Within each group, member names are sorted alphabetically and deduplicated via `sort()` and `dedup()` before output.
+5. **Output generation:** For each unique rule string:
+   - If only one process has that rule, it is emitted as a single-line rule: `process.exe:rule_string`
+   - If multiple processes share the rule, they are emitted as a named group block. Groups are named sequentially as `grp_0`, `grp_1`, etc.
+
+### Group formatting
+
+Groups are formatted in one of two styles depending on length:
+
+- **Inline style** (when the full line is under 128 characters):
+  ```
+  grp_0 { proc1.exe: proc2.exe: proc3.exe }:normal:*ecore:0:0:low:none:0:1
+  ```
+
+- **Multi-line style** (when the inline representation exceeds 128 characters):
+  ```
+  grp_1 {
+      proc1.exe: proc2.exe: proc3.exe
+      proc4.exe: proc5.exe
+  }:normal:*pcore:0:0:none:none:0:1
+  ```
+
+  In multi-line mode, members are packed into lines up to 128 characters wide with 4-space indentation (`const INDENT: &str = "    "`). Members within a line are colon-separated.
 
 ### Preamble preservation
 
-All non-rule lines (comments, blanks, constants, aliases) are collected into the preamble and written to the output before any rules. Trailing blank lines at the end of the preamble are trimmed to a single separator. This ensures that alias definitions remain available for `*alias` references in the rule section.
+Constants (`@MIN_ACTIVE_STREAK = 3`), aliases (`*pcore = 0-7`), and leading comments are preserved in their original order and form. Only rule lines and group blocks are reorganized. Trailing blank lines in the preamble are trimmed to a single separator line.
 
-### Group block re-parsing
+### Rule order stability
 
-When the input file already contains `{ }` group blocks, the function re-parses them using [`collect_group_block`](collect_group_block.md) and [`collect_members`](collect_members.md) to extract member names and rule suffixes. The existing group names are discarded — all groups in the output receive fresh auto-generated names (`grp_0`, `grp_1`, …).
+Unique rule strings are emitted in the order they are first encountered in the input file. This preserves the general organization of the original config while consolidating duplicates.
 
-### Line length threshold
+### Typical usage
 
-The constant `128` is used as the maximum line length for single-line group output. Groups whose single-line representation exceeds this threshold are formatted as multi-line blocks with `const INDENT: &str = "    "` (4 spaces) for readability.
-
-### Output statistics
-
-On completion, the function logs a summary message:
-
-```/dev/null/example.txt#L1-2
-Auto-grouped: {total} total process rules → {single} individual + {grouped} processes merged into {groups} groups
-Written to {out_path}
+```
+AffinityServiceRust.exe -autogroup -in config.txt -out config_grouped.txt
 ```
 
-Where:
-- `total` = `single_count + grouped_member_count`
-- `single` = number of processes with unique rules (no grouping needed)
-- `grouped` = total number of processes that were merged into groups
-- `groups` = number of group blocks created
+This is a one-shot transformation tool — the output file is not automatically used by the service. The user should review the output and replace the original config file manually.
+
+### Logging
+
+Upon completion, the function logs a summary:
+
+```
+Auto-grouped: 42 total process rules → 10 individual + 32 processes merged into 8 groups
+Written to config_grouped.txt
+```
 
 ### Error handling
 
-| Condition | Behavior |
-|-----------|----------|
-| `in_file` is `None` | Logs `"Error: -in <file> is required for -autogroup"` and returns. |
-| `out_file` is `None` | Logs `"Error: -out <file> is required for -autogroup"` and returns. |
-| Input file cannot be read | Logs `"Failed to read {path}: {error}"` and returns. |
-| Output file cannot be created | Logs `"Failed to create {path}: {error}"` and returns. |
-| Write failure during output | Logs `"Failed to write to {path}"` and returns. |
+- If either `-in` or `-out` is missing, an error message is logged and the function returns.
+- If the input file cannot be read, the error is logged and the function returns.
+- If the output file cannot be created or written, the error is logged and the function returns.
+- Unclosed group blocks in the input are silently skipped.
 
-### CLI usage
+### Interaction with config parser
 
-```/dev/null/example.sh#L1
-AffinityServiceRust.exe -autogroup -in config.ini -out config_grouped.ini
-```
-
-### Idempotency
-
-Running `sort_and_group_config` on its own output produces an equivalent file (modulo group names and formatting), since the function re-parses any existing groups. However, group names will be renumbered starting from `grp_0` on each run.
+The function reuses [collect_members](collect_members.md) and [collect_group_block](collect_group_block.md) to parse the input, ensuring consistent treatment of group syntax and member names. It does **not** call [parse_and_insert_rules](parse_and_insert_rules.md) or validate rule fields — the output preserves rule strings exactly as they appear in the input.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `config.rs` |
-| Visibility | `pub` |
-| Callers | `main.rs` (when `cli.autogroup_mode` is `true`) |
-| Callees | [`collect_group_block`](collect_group_block.md), [`collect_members`](collect_members.md), `std::fs::read_to_string`, `File::create`, `writeln!`, `log!` |
-| Dependencies | `HashMap` from [`collections.rs`](../collections.rs/README.md); `std::fs::File`, `std::io::Write` |
-| Privileges | File system read/write access to the specified paths |
+| | |
+|---|---|
+| **Module** | [`src/config.rs`](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf/src/config.rs) |
+| **Callers** | CLI dispatch in `main.rs` (invoked by `-autogroup` flag) |
+| **Callees** | [collect_members](collect_members.md), [collect_group_block](collect_group_block.md), `std::fs::read_to_string`, `std::fs::File::create`, `std::io::Write` |
+| **Dependencies** | [HashMap](../collections.rs/README.md) |
+| **Privileges** | File system read/write access to input and output paths |
 
 ## See Also
 
-| Resource | Link |
-|----------|------|
-| convert | [convert](convert.md) |
-| read_config | [read_config](read_config.md) |
-| collect_group_block | [collect_group_block](collect_group_block.md) |
-| collect_members | [collect_members](collect_members.md) |
-| CliArgs | [CliArgs](../cli.rs/CliArgs.md) |
-| config module overview | [README](README.md) |
+| Topic | Link |
+|-------|------|
+| Module overview | [config.rs](README.md) |
+| Process Lasso converter (related utility) | [convert](convert.md) |
+| Group block parser | [collect_group_block](collect_group_block.md) |
+| Member collector | [collect_members](collect_members.md) |
+| Config file reader | [read_config](read_config.md) |
+| CLI arguments | [CliArgs](../cli.rs/CliArgs.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

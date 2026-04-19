@@ -1,10 +1,10 @@
 # apply_affinity function (apply.rs)
 
-The `apply_affinity` function reads the current process affinity mask via `GetProcessAffinityMask` and, if it differs from the configured target mask, sets the new mask via `SetProcessAffinityMask`. On a successful affinity change, it also calls [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) to redistribute thread ideal processors across the new set of CPUs. As a side effect, the function writes the current (or newly applied) affinity mask into the caller-provided `current_mask` output parameter.
+Sets the CPU affinity mask for a process, restricting it to run only on specified logical processors.
 
 ## Syntax
 
-```AffinityServiceRust/src/apply.rs#L134-145
+```AffinityServiceRust/src/apply.rs#L134-142
 pub fn apply_affinity<'a>(
     pid: u32,
     config: &ProcessLevelConfig,
@@ -18,52 +18,83 @@ pub fn apply_affinity<'a>(
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `pid` | `u32` | The process ID of the target process. Used for error logging and passed through to `reset_thread_ideal_processors`. |
-| `config` | `&ProcessLevelConfig` | The process-level configuration that contains `affinity_cpus` (a list of CPU indices) and the process `name` used in log messages. If `affinity_cpus` is empty, the function returns immediately without making any changes. |
-| `dry_run` | `bool` | When `true`, the function records what *would* change in `apply_config_result` without calling any Windows APIs to modify state. Read operations are also skipped in dry-run mode (errors from `GetProcessAffinityMask` are suppressed). |
-| `current_mask` | `&mut usize` | An output parameter. On successful query or set, `*current_mask` is updated to reflect the process's affinity mask. This value is consumed by downstream functions such as [`apply_prime_threads_promote`](apply_prime_threads_promote.md) to filter prime CPU indices against the current affinity. |
-| `process_handle` | `&ProcessHandle` | A handle wrapper providing read and write access to the process. The function extracts `r_handle` (for `GetProcessAffinityMask`) and `w_handle` (for `SetProcessAffinityMask`) via [`get_handles`](get_handles.md). If either handle is unavailable, the function returns early. |
-| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A lazy closure that returns a map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots. The closure is only invoked when `reset_thread_ideal_processors` needs to redistribute ideal processors after a successful affinity change. This deferred evaluation avoids the cost of building the thread map when no affinity change occurs. |
-| `apply_config_result` | `&mut ApplyConfigResult` | Accumulator for change descriptions and error messages produced during execution. |
+`pid: u32`
+
+The process identifier of the target process.
+
+`config: &ProcessLevelConfig`
+
+The process-level configuration containing `affinity_cpus`, the list of CPU indices the process should be restricted to. If `affinity_cpus` is empty, the function returns immediately without action.
+
+`dry_run: bool`
+
+If `true`, records the intended change in *apply_config_result* without calling any Windows APIs.
+
+`current_mask: &mut usize`
+
+**\[out\]** Receives the process's current affinity mask on successful query. Updated to the new mask on successful set. This value is consumed downstream by functions like [apply_prime_threads_promote](apply_prime_threads_promote.md), which uses it to filter prime CPU indices to only those within the process affinity.
+
+`process_handle: &ProcessHandle`
+
+Handle wrapper for the target process. Both read and write handles are required; the function returns early if either is unavailable.
+
+`threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>`
+
+Lazy accessor for the thread map of the target process. Passed through to [reset_thread_ideal_processors](reset_thread_ideal_processors.md) when affinity is successfully changed.
+
+`apply_config_result: &mut ApplyConfigResult`
+
+Accumulator for change messages and errors produced during the operation.
 
 ## Return value
 
-This function does not return a value. All results are communicated through the `current_mask` output parameter and the `apply_config_result` accumulator.
+This function does not return a value. Results are communicated through `current_mask` (side effect) and `apply_config_result`.
 
 ## Remarks
 
-- The target affinity mask is computed from `config.affinity_cpus` using `cpu_indices_to_mask`. If the resulting mask is `0` or matches the current process affinity mask, no change is applied.
-- When the affinity mask is changed successfully, `*current_mask` is updated to the new target mask, and [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) is called with `dry_run: false` and `config.affinity_cpus` as the CPU list. This redistributes thread ideal processors across the new affinity set to prevent Windows from concentrating threads on a single CPU after a mask change.
-- The function queries both the process affinity mask and the system affinity mask via `GetProcessAffinityMask`, but only the process mask is used for comparison. The system mask is discarded.
-- Errors from `GetProcessAffinityMask` are logged through [`log_error_if_new`](log_error_if_new.md) only when `dry_run` is `false`. In dry-run mode, query failures are silently ignored and a synthetic change message is generated based on the configured target.
-- Errors from `SetProcessAffinityMask` are logged through [`log_error_if_new`](log_error_if_new.md) with `Operation::SetProcessAffinityMask`. The `current_mask` is **not** updated when the set operation fails.
-- Change messages are formatted as `"Affinity: {current:#X} -> {target:#X}"` showing the hexadecimal affinity masks.
+The function converts the configured CPU indices to a bitmask via `cpu_indices_to_mask`. It then queries the current process affinity mask using **GetProcessAffinityMask** and compares it to the target. If they differ, it calls **SetProcessAffinityMask** to apply the new mask.
+
+### Side effects
+
+- **Fills `current_mask`:** Even when the configured affinity already matches, the current mask is written to `*current_mask` via the `GetProcessAffinityMask` out-parameter. This is consumed by later prime-thread logic.
+- **Resets thread ideal processors:** On a successful affinity change, the function immediately calls [reset_thread_ideal_processors](reset_thread_ideal_processors.md) with `config.affinity_cpus`. This redistributes thread ideal processors across the new CPU set to prevent stale assignments that would cluster threads on CPUs no longer in the affinity mask.
+- **Updates `current_mask` to new value:** After a successful set, `*current_mask` is overwritten with the new affinity mask.
+
+### Error handling
+
+- If **GetProcessAffinityMask** fails, the error is logged once per unique (pid, operation, error\_code) via [log_error_if_new](log_error_if_new.md) and the function exits without attempting to set.
+- If **SetProcessAffinityMask** fails, the error is similarly logged and the mask is not updated.
+- Both error paths are suppressed in `dry_run` mode (get-path errors are skipped entirely).
+
+### Affinity mask format
+
+The affinity mask is a `usize` bitmask where bit *N* represents logical processor *N*. For example, CPUs `[0, 2, 4]` produce mask `0x15`. A zero mask after conversion causes the function to skip the set operation, as Windows rejects a zero affinity mask.
+
+### Change message format
+
+```/dev/null/example.txt#L1
+Affinity: 0xFF -> 0x15
+```
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `apply.rs` |
-| Crate | `AffinityServiceRust` |
-| Windows APIs | `GetProcessAffinityMask`, `SetProcessAffinityMask`, `GetLastError` |
-| Callers | Orchestrator code in `scheduler.rs` / `main.rs` |
-| Callees | [`get_handles`](get_handles.md), [`log_error_if_new`](log_error_if_new.md), [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md), `cpu_indices_to_mask` (config module), `error_from_code_win32` (error_codes module) |
-| Privileges | Requires `PROCESS_QUERY_INFORMATION` or `PROCESS_QUERY_LIMITED_INFORMATION` for reading, and `PROCESS_SET_INFORMATION` for writing. These are encapsulated in the `ProcessHandle` handles. |
+| | |
+|---|---|
+| **Module** | `src/apply.rs` |
+| **Callers** | Main polling loop (via process-level config application) |
+| **Callees** | [get_handles](get_handles.md), [log_error_if_new](log_error_if_new.md), [reset_thread_ideal_processors](reset_thread_ideal_processors.md), `cpu_indices_to_mask` |
+| **Win32 API** | [GetProcessAffinityMask](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask), [SetProcessAffinityMask](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setprocessaffinitymask) |
+| **Privileges** | `PROCESS_QUERY_LIMITED_INFORMATION` (read), `PROCESS_SET_INFORMATION` (write) |
 
 ## See Also
 
-| Reference | Link |
-|-----------|------|
-| apply module overview | [`README`](README.md) |
-| ApplyConfigResult | [`ApplyConfigResult`](ApplyConfigResult.md) |
-| get_handles | [`get_handles`](get_handles.md) |
-| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
-| reset_thread_ideal_processors | [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) |
-| apply_process_default_cpuset | [`apply_process_default_cpuset`](apply_process_default_cpuset.md) |
-| apply_priority | [`apply_priority`](apply_priority.md) |
-| ProcessLevelConfig | [`config.rs/ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
+| Topic | Description |
+|---|---|
+| [ApplyConfigResult](ApplyConfigResult.md) | Accumulator for changes and errors |
+| [apply_process_default_cpuset](apply_process_default_cpuset.md) | Soft CPU preference via CPU Sets (alternative to hard affinity) |
+| [reset_thread_ideal_processors](reset_thread_ideal_processors.md) | Redistributes thread ideal processors after affinity change |
+| [apply_prime_threads_promote](apply_prime_threads_promote.md) | Uses `current_mask` to filter prime CPU indices |
+| [ProcessLevelConfig](../config.rs/ProcessLevelConfig.md) | Configuration struct containing `affinity_cpus` |
+| [ProcessHandle](../winapi.rs/ProcessHandle.md) | Process handle wrapper with read/write access levels |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

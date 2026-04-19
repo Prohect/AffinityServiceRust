@@ -1,6 +1,6 @@
 # log_message 函数 (logging.rs)
 
-向主日志文件或标准输出写入带时间戳的日志消息，具体取决于当前的控制台模式设置。如果垃圾箱模式处于活动状态，消息将被静默丢弃。此函数是主要的日志入口点，通常通过 `log!` 宏间接调用。
+将带时间戳的日志行写入控制台或每日日志文件。这是服务中使用的主要日志函数，通常通过 [`log!`](README.md) 宏调用。
 
 ## 语法
 
@@ -10,9 +10,9 @@ pub fn log_message(args: &str)
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `args` | `&str` | 要记录的消息字符串。通过 `log!` 宏调用时，通常是 `format!(...)` 的输出。 |
+`args: &str`
+
+要记录的日志消息主体。该字符串在 `[HH:MM:SS]` 时间戳前缀之后附加，无分隔空格 — 调用方负责根据需要包含任何前导空格或标点符号。
 
 ## 返回值
 
@@ -20,84 +20,64 @@ pub fn log_message(args: &str)
 
 ## 备注
 
-### 行为
-
-1. **垃圾箱模式检查。** 函数首先通过 `get_dust_bin_mod!()` 获取 `DUST_BIN_MODE` 互斥锁。如果值为 `true`，函数立即返回，不写入任何内容。此模式用于在某些操作阶段抑制所有日志输出。
-
-2. **时间戳格式化。** 通过 `get_local_time!()` 从 `LOCAL_TIME_BUFFER` 静态变量读取当前时间，并使用 `chrono` 的 `format` 方法格式化为 `HH:MM:SS`。
-
-3. **输出路由。** 函数检查 `USE_CONSOLE` 静态变量（通过 `get_use_console!()`）：
-   - 如果为 `true`，消息通过 `writeln!(stdout(), "[{}]{}", time_prefix, args)` 写入**标准输出**。
-   - 如果为 `false`，消息通过锁定 `LOG_FILE` 静态变量（通过 `get_logger!()`）并调用 `writeln!` 写入**主日志文件**。
-
-4. **错误抑制。** 写入错误通过 `let _ = writeln!(...)` 被静默忽略。这防止日志失败传播并导致应用程序崩溃。
-
 ### 输出格式
 
-```text
-[HH:MM:SS]<消息>
+每行日志格式如下：
+
+```
+[HH:MM:SS]此处为消息文本
 ```
 
-例如，如果 `args` 是 `" Starting scheduler loop"`，输出将为：
+时间戳从全局 [`LOCAL_TIME_BUFFER`](README.md) 静态变量通过 `get_local_time!()` 宏获取。由于此缓冲区由主循环外部更新，因此单个应用周期内的所有日志行共享相同的时间戳，这在视觉上对相关信息进行了分组。
 
-```text
-[14:32:07] Starting scheduler loop
-```
+### 禁用模式抑制
 
-注意时间戳右括号 `]` 和消息开始之间**没有空格**。如果需要间距，调用者必须在 `args` 字符串中包含它。
+当 [`DUST_BIN_MODE`](README.md) 为 `true` 时，函数立即返回而不写入任何内容。此模式在 UAC 提升期间激活，以防止非提升实例在提升实例启动期间产生输出。
 
-### 与 `log!` 宏的关系
+### 控制台与文件路由
 
-`log!` 宏是调用此函数的首选方式：
+目的地由 [`USE_CONSOLE`](README.md) 标志决定：
+
+| `USE_CONSOLE` | 目标 |
+|---------------|-------------|
+| `true` | 通过 `writeln!` 写入 `stdout` |
+| `false` | 通过 [`LOG_FILE`](README.md) 静态变量写入每日日志文件 `logs/YYYYMMDD.log` |
+
+控制台模式用于交互式 CLI 执行（例如 `--find`、`--apply-once`）。文件模式用于作为 Windows 服务运行时。
+
+### 错误处理
+
+写入失败（例如磁盘已满、管道断裂）会被静默忽略 — `writeln!` 的结果使用 `let _ = ...` 丢弃。这可以防止日志记录失败导致服务崩溃。
+
+### 通过宏的典型用法
+
+`log!` 宏是调用此函数的首选方式，因为它支持 `format!` 风格的参数：
 
 ```rust
-log!("Processing {} threads for PID {}", thread_count, pid);
+log!(" applied affinity mask 0x{:X} to pid {}", mask, pid);
 ```
 
-这将展开为：
+这展开为：
 
 ```rust
-crate::logging::log_message(format!("Processing {} threads for PID {}", thread_count, pid).as_str())
+crate::logging::log_message(format!(" applied affinity mask 0x{:X} to pid {}", mask, pid).as_str());
 ```
-
-宏处理 `format!` 风格的参数插值，并将结果 `String` 作为 `&str` 传递给 `log_message`。
-
-### 加锁顺序
-
-此函数按以下顺序获取最多三个互斥锁：
-
-1. `DUST_BIN_MODE` — 首先检查，用于提前退出。
-2. `LOCAL_TIME_BUFFER` — 读取用于时间戳格式化。
-3. `USE_CONSOLE`，然后是标准输出或 `LOG_FILE` — 用于输出路由。
-
-每个锁独立获取和释放（不会同时持有），因此死锁风险很小。但是，与其他日志函数（[`log_pure_message`](log_pure_message.md)、[`log_to_find`](log_to_find.md)）在并发线程上的交错可能导致日志行乱序。
-
-### 平台说明
-
-- 在 Windows 上，如果已附加控制台窗口，标准输出写入将发送到控制台；如果进程没有控制台，则被丢弃。
-- 日志文件由 `LOG_FILE` 静态变量以追加模式打开，因此消息在会话期间累积，不会覆盖之前的条目。
-- `LOCAL_TIME_BUFFER` 静态变量缓存当前时间，必须由调度循环在外部更新以使时间戳推进。如果未更新，同一周期内的所有日志消息将共享相同的时间戳。
 
 ## 要求
 
-| 要求 | 值 |
-|------|-----|
-| **模块** | `logging.rs` |
-| **调用方** | 所有模块通过 `log!` 宏调用 |
-| **被调用方** | `get_dust_bin_mod!`、`get_local_time!`、`get_use_console!`、`get_logger!`、`std::io::stdout`、`writeln!` |
-| **依赖** | `chrono::DateTime`、`std::io::Write`、`std::io::stdout` |
-| **访问的静态变量** | [`DUST_BIN_MODE`](statics.md#dust_bin_mode)、[`LOCAL_TIME_BUFFER`](statics.md#local_time_buffer)、[`USE_CONSOLE`](statics.md#use_console)、[`LOG_FILE`](statics.md#log_file) |
-| **平台** | Windows（标准输出行为）、跨平台文件 I/O |
+| | |
+|---|---|
+| **模块** | `src/logging.rs` |
+| **调用方** | `log!` 宏（在所有模块中使用） |
+| **被调用方** | `get_dust_bin_mod!()`，`get_local_time!()`，`get_use_console!()`，`get_logger!()` |
+| **权限** | 无 |
 
 ## 另请参阅
 
 | 主题 | 链接 |
-|------|------|
-| log_pure_message 函数 | [log_pure_message](log_pure_message.md) |
-| log_to_find 函数 | [log_to_find](log_to_find.md) |
-| log_process_find 函数 | [log_process_find](log_process_find.md) |
-| 日志静态变量 | [statics](statics.md) |
-| logging 模块概述 | [README](README.md) |
+|-------|------|
+| 模块概述 | [logging.rs](README.md) |
+| 无时间戳变体 | [log_pure_message](log_pure_message.md) |
+| 查找模式日志 | [log_to_find](log_to_find.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*记录于提交：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

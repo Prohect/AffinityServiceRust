@@ -1,6 +1,6 @@
 # EtwProcessMonitor struct (event_trace.rs)
 
-Manages an ETW (Event Tracing for Windows) real-time trace session for process start/stop monitoring. `EtwProcessMonitor` owns the session lifecycle — including the control handle, trace handle, properties buffer, and background processing thread — and automatically cleans up all resources when dropped.
+Manages the lifecycle of an ETW (Event Tracing for Windows) real-time trace session that monitors process start and stop events. The monitor subscribes to the **Microsoft-Windows-Kernel-Process** provider and delivers [EtwProcessEvent](EtwProcessEvent.md) values through a standard `mpsc` channel.
 
 ## Syntax
 
@@ -15,100 +15,114 @@ pub struct EtwProcessMonitor {
 
 ## Members
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `control_handle` | `CONTROLTRACE_HANDLE` | Handle returned by `StartTraceW`, used to control (stop) the trace session via `ControlTraceW`. |
-| `trace_handle` | `PROCESSTRACE_HANDLE` | Handle returned by `OpenTraceW`, used to consume events in real time and to close the trace via `CloseTrace`. |
-| `properties_buf` | `Vec<u8>` | Backing buffer for the `EVENT_TRACE_PROPERTIES` structure, including the appended session name. Kept alive for the duration of the session because `ControlTraceW` (stop) requires a valid properties pointer. |
-| `process_thread` | `Option<thread::JoinHandle<()>>` | Handle to the background thread running `ProcessTrace`. `Some` while the session is active; taken (`None`) when `stop()` is called and the thread is joined. |
-
-All fields are **private**. External code interacts with `EtwProcessMonitor` exclusively through its public methods.
+| Member | Type | Description |
+|--------|------|-------------|
+| `control_handle` | `CONTROLTRACE_HANDLE` | Handle returned by `StartTraceW`, used to control (stop) the ETW session. |
+| `trace_handle` | `PROCESSTRACE_HANDLE` | Handle returned by `OpenTraceW`, used to close the trace consumer and unblock the processing thread. |
+| `properties_buf` | `Vec<u8>` | Heap-allocated buffer backing the `EVENT_TRACE_PROPERTIES` structure and the appended session name. Kept alive for the duration of the session because `ControlTraceW` requires it at stop time. |
+| `process_thread` | `Option<thread::JoinHandle<()>>` | Join handle for the background thread running `ProcessTrace`. Set to `None` after the thread is joined during `stop()`. |
 
 ## Methods
 
-### `EtwProcessMonitor::start`
+### start
 
 ```rust
 pub fn start() -> Result<(Self, Receiver<EtwProcessEvent>), String>
 ```
 
-Starts a new ETW trace session monitoring process start/stop events from the `Microsoft-Windows-Kernel-Process` provider. Returns a tuple of the monitor instance and an `mpsc::Receiver<EtwProcessEvent>` from which the caller can read events.
+Creates and starts a new ETW real-time trace session for process monitoring.
 
-#### Steps performed
+**Return value**
 
-1. **Create the channel** — An `mpsc::channel` is created and the sender is installed into the global [ETW_SENDER](ETW_SENDER.md) static so the `extern "system"` callback can reach it.
-2. **Prepare properties** — Allocates an `EVENT_TRACE_PROPERTIES` buffer with the session name `"AffinityServiceRust_EtwProcessMonitor"` appended, configured for real-time mode with QPC timestamps.
-3. **Stop stale sessions** — Calls `stop_existing_session` to tear down any leftover session with the same name (e.g., from a previous crash).
-4. **Start the trace** — Calls `StartTraceW` to create the session and obtain the `control_handle`.
-5. **Enable the provider** — Calls `EnableTraceEx2` to subscribe to the `Microsoft-Windows-Kernel-Process` provider at `TRACE_LEVEL_INFORMATION` with the `WINEVENT_KEYWORD_PROCESS` keyword (0x10).
-6. **Open the trace** — Calls `OpenTraceW` in real-time + event-record mode, registering the module-level `etw_event_callback` function as the event record callback.
-7. **Spawn the background thread** — Sets [ETW_ACTIVE](ETW_ACTIVE.md) to `true` and spawns a thread named `"etw-process-trace"` that calls `ProcessTrace`, which blocks until the trace is closed.
+`Result<(EtwProcessMonitor, Receiver<EtwProcessEvent>), String>` — On success, returns the monitor instance and a channel receiver that yields [EtwProcessEvent](EtwProcessEvent.md) values. On failure, returns a human-readable error string.
 
-If any step fails, all previously acquired resources are cleaned up and an `Err(String)` is returned with a descriptive message that includes the translated Win32 error code via [`error_from_code_win32`](../error_codes.rs/error_from_code_win32.md).
+**Remarks**
 
-### `EtwProcessMonitor::stop`
+The startup sequence performs six steps in order:
+
+1. **Create channel** — Allocates an `mpsc` channel and installs the sender into the global [ETW_SENDER](README.md) static so the OS callback can reach it.
+2. **Prepare `EVENT_TRACE_PROPERTIES`** — Allocates a buffer large enough for the properties struct plus the UTF-16 session name `"AffinityServiceRust_EtwProcessMonitor"`. Configures real-time mode with QPC timestamps.
+3. **Stop existing session** — Calls `stop_existing_session` to clean up any stale session with the same name (e.g., from a previous crash).
+4. **Start trace** — Calls `StartTraceW` to create the ETW session and obtain the control handle.
+5. **Enable provider** — Calls `EnableTraceEx2` with the `Microsoft-Windows-Kernel-Process` provider GUID (`{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}`) and the `WINEVENT_KEYWORD_PROCESS` (`0x10`) keyword at `TRACE_LEVEL_INFORMATION`.
+6. **Open and process trace** — Calls `OpenTraceW` with `PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD` and the [etw_event_callback](README.md) function pointer. Spawns a background thread named `"etw-process-trace"` that calls `ProcessTrace`, which blocks until the trace is closed.
+
+If any step fails, all previously acquired resources are released (session stopped, sender cleared) before returning the error.
+
+### stop
 
 ```rust
 pub fn stop(&mut self)
 ```
 
-Stops the ETW trace session and releases all associated resources:
+Stops the ETW trace session and releases all resources.
 
-1. Checks [ETW_ACTIVE](ETW_ACTIVE.md); if already `false`, returns immediately (idempotent).
-2. Sets `ETW_ACTIVE` to `false`.
-3. Calls `CloseTrace(trace_handle)` to unblock the `ProcessTrace` call on the background thread.
-4. Calls `ControlTraceW` with `EVENT_TRACE_CONTROL_STOP` to stop the trace session.
-5. Joins the background thread (`process_thread.take().join()`).
-6. Clears the global [ETW_SENDER](ETW_SENDER.md) to drop the channel sender.
+**Remarks**
 
-### `EtwProcessMonitor::stop_existing_session` (private)
+The shutdown sequence is:
+
+1. Checks and clears the global `ETW_ACTIVE` flag. If already inactive, returns immediately (idempotent).
+2. Calls `CloseTrace` on `trace_handle` to unblock the `ProcessTrace` call in the background thread.
+3. Calls `ControlTraceW` with `EVENT_TRACE_CONTROL_STOP` to terminate the ETW session.
+4. Joins the background processing thread.
+5. Clears the global `ETW_SENDER` to drop the channel sender, which causes the receiver to observe a hangup.
+
+### stop_existing_session
 
 ```rust
 fn stop_existing_session(wide_name: &[u16])
 ```
 
-Attempts to stop any pre-existing ETW session with the given name. This is called before starting a new session to handle the case where a previous instance of the application crashed without cleaning up its ETW session. Failures are silently ignored since the session may not exist.
+Attempts to stop any pre-existing ETW session with the given name. This is a static helper that does not require an `EtwProcessMonitor` instance.
+
+**Parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `wide_name` | `&[u16]` | Null-terminated UTF-16 session name to stop. |
+
+**Remarks**
+
+Allocates a temporary `EVENT_TRACE_PROPERTIES` buffer and calls `ControlTraceW` with `EVENT_TRACE_CONTROL_STOP`. Errors are silently ignored because the session may not exist.
+
+## Trait Implementations
+
+### Drop
+
+```rust
+impl Drop for EtwProcessMonitor {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+```
+
+The `Drop` implementation calls `stop()`, ensuring that the ETW session is always cleaned up when the monitor goes out of scope, even on early returns or panics.
 
 ## Remarks
 
-- **RAII cleanup.** `EtwProcessMonitor` implements `Drop`, which delegates to `stop()`. This guarantees that the ETW session is torn down even if the monitor is dropped without an explicit `stop()` call, preventing orphaned system-wide trace sessions.
-
-- **Single-instance constraint.** Only one ETW session with a given name can exist on a system at a time. The `stop_existing_session` call in `start()` handles stale sessions, but attempting to run two instances of AffinityServiceRust concurrently will cause the second `StartTraceW` to fail.
-
-- **Global callback bridge.** Because the ETW event callback must be an `extern "system"` function pointer (no closures or captured state), the module uses the global [ETW_SENDER](ETW_SENDER.md) static to bridge events from the callback into the Rust `mpsc` channel. The callback extracts the process ID from the first 4 bytes of `UserData` and sends an [EtwProcessEvent](EtwProcessEvent.md) with `is_start = true` for event ID 1 (ProcessStart) and `is_start = false` for event ID 2 (ProcessStop).
-
-- **Provider details.** The `Microsoft-Windows-Kernel-Process` provider GUID is `{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}`. The keyword `WINEVENT_KEYWORD_PROCESS` (`0x10`) filters events to only process lifecycle events (start/stop), excluding thread and image-load events from the same provider.
-
-- **Thread naming.** The background thread is named `"etw-process-trace"` for diagnostic visibility in debuggers and thread profilers.
-
-### Platform notes
-
-- **Windows only.** Relies on the ETW infrastructure: `StartTraceW`, `EnableTraceEx2`, `OpenTraceW`, `ProcessTrace`, `CloseTrace`, `ControlTraceW`.
-- Requires administrator privileges to create a real-time kernel trace session.
-- The session uses QPC (Query Performance Counter) timestamps (`Wnode.ClientContext = 1`) for high-resolution event timing.
+- Only one `EtwProcessMonitor` should be active at a time because the callback communicates through a single global sender (`ETW_SENDER`). Starting a second monitor replaces the sender, orphaning the first monitor's receiver.
+- The session name `"AffinityServiceRust_EtwProcessMonitor"` is a fixed constant. If the service crashes without calling `stop()`, the stale session persists in the kernel until the next call to `start()` cleans it up via `stop_existing_session`.
+- `ProcessTrace` is a blocking Win32 call that only returns when the trace handle is closed. This is why it runs on a dedicated background thread rather than the main thread.
+- The `properties_buf` must remain valid and at the same address for the entire session lifetime because `ControlTraceW` at stop time writes back into the same buffer.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `event_trace.rs` |
-| **Created by** | `EtwProcessMonitor::start()` |
-| **Depends on** | [ETW_SENDER](ETW_SENDER.md), [ETW_ACTIVE](ETW_ACTIVE.md), [EtwProcessEvent](EtwProcessEvent.md), [`error_from_code_win32`](../error_codes.rs/error_from_code_win32.md) |
-| **Win32 API** | `StartTraceW`, `EnableTraceEx2`, `OpenTraceW`, `ProcessTrace`, `CloseTrace`, `ControlTraceW` |
-| **ETW Provider** | `Microsoft-Windows-Kernel-Process` (`{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}`) |
-| **Privileges** | Administrator (elevated) required for kernel trace sessions |
-| **Platform** | Windows |
+| | |
+|---|---|
+| **Module** | `src/event_trace.rs` |
+| **Callers** | Main service loop (`src/main.rs`), scheduler (`src/scheduler.rs`) |
+| **Callees** | [etw_event_callback](README.md) (registered as OS callback) |
+| **Win32 API** | [StartTraceW](https://learn.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-starttracew), [EnableTraceEx2](https://learn.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-enabletraceex2), [OpenTraceW](https://learn.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-opentracew), [ProcessTrace](https://learn.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-processtrace), [CloseTrace](https://learn.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-closetrace), [ControlTraceW](https://learn.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-controltracew) |
+| **Privileges** | Administrator or `SeSystemProfilePrivilege` (required by ETW kernel-level providers) |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| EtwProcessEvent struct | [EtwProcessEvent](EtwProcessEvent.md) |
-| ETW_SENDER static | [ETW_SENDER](ETW_SENDER.md) |
-| ETW_ACTIVE static | [ETW_ACTIVE](ETW_ACTIVE.md) |
-| error_from_code_win32 | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
-| process module | [process.rs](../process.rs/README.md) |
-| event_trace module overview | [README](README.md) |
+| Module overview | [event_trace.rs](README.md) |
+| Event payload | [EtwProcessEvent](EtwProcessEvent.md) |
+| Error code helper | [error_from_code_win32](../error_codes.rs/README.md) |
+| Scheduler integration | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

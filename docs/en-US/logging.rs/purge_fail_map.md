@@ -1,6 +1,6 @@
 # purge_fail_map function (logging.rs)
 
-Removes stale entries from the per-PID apply-failure tracking map ([`PID_MAP_FAIL_ENTRY_SET`](statics.md#pid_map_fail_entry_set)). This function implements a mark-and-sweep garbage collection strategy: it marks all entries as dead, re-marks entries belonging to currently running processes as alive, and then removes any entries that remain dead. This prevents the failure tracking map from growing unboundedly as processes start and stop over time.
+Removes stale entries from the apply-failure tracking map to prevent unbounded memory growth. Called periodically by the main polling loop after enumerating running processes.
 
 ## Syntax
 
@@ -10,67 +10,52 @@ pub fn purge_fail_map(pids_and_names: &[(u32, &str)])
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `pids_and_names` | `&[(u32, &str)]` | A slice of `(pid, process_name)` tuples representing the currently running processes that should be retained in the failure tracking map. Entries not matching any tuple in this slice are considered stale and will be removed. |
+`pids_and_names: &[(u32, &str)]`
+
+A slice of `(pid, process_name)` tuples representing the currently running processes. Only entries whose PID **and** process name match a tuple in this slice survive the purge.
 
 ## Return value
 
-This function does not return a value.
+This function does not return a value. It mutates the global `PID_MAP_FAIL_ENTRY_SET` in place.
 
 ## Remarks
 
 ### Algorithm
 
-The function implements a three-phase mark-and-sweep approach:
+The purge follows a mark-and-sweep pattern:
 
-1. **Mark all dead.** Iterate over every entry in every PID's failure set and set its `alive` flag to `false`.
+1. **Mark all dead:** Iterates every entry in the global `PID_MAP_FAIL_ENTRY_SET` map and sets every `alive` flag to `false`.
+2. **Re-mark living:** For each `(pid, name)` in `pids_and_names`, if the PID exists in the map and at least one entry's `process_name` matches `name`, the first entry's `alive` flag is set back to `true`.
+3. **Sweep:** Calls `retain` on the outer map, removing any PID whose inner map contains no entries with `alive == true`.
 
-2. **Re-mark alive.** For each `(pid, name)` in `pids_and_names`:
-   - Look up the PID in the failure map.
-   - If a failure set exists for that PID **and** at least one entry in the set has a `process_name` matching the provided `name`, mark the first entry in the set as alive (`true`). The name check ensures that PID reuse (where a new process gets the same PID as a terminated one with a different name) does not incorrectly keep stale entries alive.
+### PID reuse awareness
 
-3. **Sweep.** Call `HashMap::retain` to remove all PID entries where **no** failure entry has its `alive` flag set to `true`. This removes entries for PIDs that are no longer running or whose process names have changed.
-
-### Locking
-
-The function acquires the `PID_MAP_FAIL_ENTRY_SET` mutex via the `get_pid_map_fail_entry_set!()` macro and holds the lock for the entire duration of the purge operation. This ensures consistency between the mark and sweep phases.
-
-### Interaction with is_new_error
-
-This function complements [`is_new_error`](is_new_error.md). While `is_new_error` **adds** entries to the failure map when new failures are encountered, `purge_fail_map` **removes** entries that are no longer relevant. Together, they implement a bounded error-deduplication system:
-
-- `is_new_error` ensures each unique failure is logged only once.
-- `purge_fail_map` ensures the tracking data does not accumulate indefinitely.
+Because Windows PIDs can be recycled, the re-mark step checks the `process_name` field in addition to the PID. If a PID has been reused by a different process, none of its entries will match the new name, and the stale entries will be swept away. This prevents error deduplication from incorrectly suppressing errors for a new process that happens to receive a recycled PID.
 
 ### Call frequency
 
-This function is typically called once per scheduling loop iteration, after the process snapshot has been taken, with the list of currently active processes that match configuration rules. This ensures that failure tracking data for exited processes is cleaned up promptly.
+This function is called once per main-loop iteration after the full process list has been enumerated. It acquires the `PID_MAP_FAIL_ENTRY_SET` mutex for the duration of the operation, so it should not be called from within a context that already holds this lock.
 
-### Edge cases
+### Relationship with is_new_error
 
-- If `pids_and_names` is empty, all entries in the failure map are marked dead and subsequently removed during the sweep phase.
-- If a PID exists in the failure map but the process name does not match the name in `pids_and_names` (e.g., PID reuse), the entries for that PID are **not** re-marked as alive and will be swept. When `is_new_error` is called later for the new process occupying that PID, it will clear any stale entries with mismatched names and start fresh.
+While [is_new_error](is_new_error.md) adds entries and handles per-PID process-name changes (clearing the inner map when a name mismatch is detected), `purge_fail_map` handles the complementary case of removing entries for processes that have exited entirely. Together they ensure the map stays bounded by the number of currently running monitored processes.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `logging.rs` |
-| **Callers** | `scheduler.rs` — main scheduling loop cleanup phase |
-| **Callees** | `get_pid_map_fail_entry_set!()` macro → `PID_MAP_FAIL_ENTRY_SET.lock()` |
-| **Statics** | [`PID_MAP_FAIL_ENTRY_SET`](statics.md#pid_map_fail_entry_set) |
-| **Platform** | Platform-independent logic (data structures are Windows-specific in context) |
+| | |
+|---|---|
+| **Module** | `src/logging.rs` |
+| **Callers** | Main polling loop (after process enumeration) |
+| **Callees** | `get_pid_map_fail_entry_set!()` macro |
+| **Privileges** | None |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| is_new_error function | [is_new_error](is_new_error.md) |
-| ApplyFailEntry struct | [ApplyFailEntry](ApplyFailEntry.md) |
-| Operation enum | [Operation](Operation.md) |
-| PID_MAP_FAIL_ENTRY_SET static | [statics](statics.md#pid_map_fail_entry_set) |
-| logging module overview | [README](README.md) |
+| Module overview | [logging.rs](README.md) |
+| Error deduplication check | [is_new_error](is_new_error.md) |
+| Failure entry key | [ApplyFailEntry](ApplyFailEntry.md) |
+| Operations enum | [Operation](Operation.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

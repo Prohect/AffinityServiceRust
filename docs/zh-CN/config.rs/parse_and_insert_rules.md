@@ -1,10 +1,10 @@
 # parse_and_insert_rules 函数 (config.rs)
 
-解析配置行中的规则字段，并为提供的列表中的每个成员将进程级和线程级配置条目插入到 [`ConfigResult`](ConfigResult.md) 中。这是核心的规则解释函数，将原始的冒号分隔字段字符串转换为完全解析的 [`ProcessLevelConfig`](ProcessLevelConfig.md) 和 [`ThreadLevelConfig`](ThreadLevelConfig.md) 实例。
+主要的规则字段解析器和插入函数。接收进程名称数组（单个名称或组块成员）和冒号分割的规则字段数组，验证每个字段，构造 [ProcessLevelConfig](ProcessLevelConfig.md) 和/或 [ThreadLevelConfig](ThreadLevelConfig.md) 实例，并将它们插入到 [ConfigResult](ConfigResult.md) 中适当的等级键控映射里。
 
 ## 语法
 
-```AffinityServiceRust/src/config.rs#L424-741
+```rust
 fn parse_and_insert_rules(
     members: &[String],
     rule_parts: &[&str],
@@ -16,112 +16,116 @@ fn parse_and_insert_rules(
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `members` | `&[String]` | 此规则适用的小写进程名称切片。对于单进程行，其中包含一个元素；对于 `{ }` 分组块，包含所有收集到的成员名称。 |
-| `rule_parts` | `&[&str]` | 进程名称之后（或分组的 `}:` 之后）按冒号拆分的字段。预期的字段顺序为：`priority`、`affinity`、`cpuset`、`prime_cpus`、`io_priority`、`memory_priority`、`ideal_processor`、`grade`。至少需要 2 个字段。 |
-| `line_number` | `usize` | 配置文件中从 1 开始的行号，用于错误和警告消息。 |
-| `cpu_aliases` | `&HashMap<String, List<[u32; CONSUMER_CPUS]>>` | 由配置文件中先前出现的 `*name = cpu_spec` 行填充的别名查找表。 |
-| `result` | `&mut ConfigResult` | 可变的配置结果累加器。解析后的条目被插入到 `result.process_level_configs` 和/或 `result.thread_level_configs` 中，任何错误或警告被追加到相应的向量中。 |
+`members: &[String]`
+
+要应用已解析规则的小写进程名称切片。对于单行规则，它包含一个元素（例如 `["game.exe"]`）。对于组规则，它包含从 `{ }` 块中提取的所有成员名称。
+
+`rule_parts: &[&str]`
+
+从配置行规则部分分割的字段字符串切片。期望的字段位置：
+
+| 索引 | 字段 | 示例 | 描述 |
+|-------|-------|---------|-------------|
+| 0 | priority | `"normal"` | 进程优先级类 |
+| 1 | affinity | `"*pcore"` 或 `"0-7"` | CPU 亲和性规格 |
+| 2 | cpuset | `"@*ecore"` 或 `"0"` | CPU 集合规格；`@` 前缀启用理想处理器重置 |
+| 3 | prime | `"?8x*p@engine.dll"` | Prime 线程规格（CPU、前缀、跟踪计数） |
+| 4 | io_priority | `"low"` | IO 优先级级别 |
+| 5 | memory_priority | `"none"` | 内存优先级级别 |
+| 6 | ideal / grade | `"*p@render.dll"` 或 `"2"` | 理想处理器规格，或等级（如果为数字） |
+| 7 | grade | `"1"` | 应用频率等级（仅在字段 6 为理想处理器规格时） |
+
+至少需要 2 个字段（优先级和亲和性）；所有后续字段都是可选的，默认值为"不更改"。
+
+`line_number: usize`
+
+此规则所在的配置文件中的 1-based 行号。用于用户诊断中的所有错误和警告消息。
+
+`cpu_aliases: &HashMap<String, List<[u32; CONSUMER_CPUS]>>`
+
+已定义的 CPU 别名映射，由之前的 [parse_alias](parse_alias.md) 调用填充。传递给 [resolve_cpu_spec](resolve_cpu_spec.md) 以进行别名感知的 CPU 字段解析。
+
+`result: &mut ConfigResult`
+
+**\[in, out\]** 累积的解析结果。此函数读取并写入 `errors`、`warnings`、`process_level_configs`、`thread_level_configs`、`process_rules_count`、`redundant_rules_count` 和 `thread_level_configs_count`。
 
 ## 返回值
 
-此函数不返回值。所有输出通过 `result` 参数累积。
+此函数不返回值。所有输出通过 `result` 的变异进行通信。
 
 ## 备注
 
-### 字段解析顺序
+### 字段解析流程
 
-函数按位置解释 `rule_parts`。超出最少 2 个的字段是可选的；缺失的字段接收合理的默认值。
+每个字段按顺序独立解析：
 
-| 索引 | 字段 | 默认值 | 描述 |
-|------|------|--------|------|
-| 0 | `priority` | *（必需）* | 进程优先级类别字符串（例如 `"normal"`、`"high"`、`"none"`）。通过 `ProcessPriority::from_str` 解析。未知值被视为 `None` 并发出警告。 |
-| 1 | `affinity` | *（必需）* | CPU 亲和性规格。通过 [`resolve_cpu_spec`](resolve_cpu_spec.md) 解析；支持别名引用（`*pcore`）和字面规格（`0-7`）。 |
-| 2 | `cpuset` | `List::new()`（空） | CPU 集合规格。如果以 `@` 为前缀，则 `cpu_set_reset_ideal` 标志设为 `true`，并在解析前去除 `@`。 |
-| 3 | `prime_cpus` | 空 CPU 列表，默认前缀 | 带有可选模块前缀过滤和跟踪指令的主线程 CPU 规格。参见下方**主线程解析**。 |
-| 4 | `io_priority` | `IOPriority::None` | I/O 优先级字符串（例如 `"low"`、`"normal"`、`"high"`）。未知值产生警告并默认为 `None`。 |
-| 5 | `memory_priority` | `MemoryPriority::None` | 内存优先级字符串（例如 `"very low"`、`"normal"`）。未知值产生警告并默认为 `None`。 |
-| 6 | `ideal_processor` 或 `grade` | `Vec::new()` / `1` | 此字段具有多态性。如果以 `*` 开头或等于 `"0"`，则通过 [`parse_ideal_processor_spec`](parse_ideal_processor_spec.md) 解析为理想处理器规格；等级随后从索引 7 读取。如果可解析为整数，则直接解释为等级。 |
-| 7 | `grade` | `1` | 规则应用频率。`1` = 每次循环，`N` = 每第 N 次循环。仅在字段 6 为理想处理器规格时使用。 |
+1. **优先级（字段 0）：** 通过 `ProcessPriority::from_str` 解析。未知值产生警告并默认为 `ProcessPriority::None`。
 
-### 主线程解析（字段 3）
+2. **亲和性（字段 1）：** 通过 [resolve_cpu_spec](resolve_cpu_spec.md) 解析，该函数处理 `*alias` 引用和原始 CPU 规格。
 
-主线程字段支持丰富的迷你语法：
+3. **CPU 集合（字段 2）：** 如果字段以 `@` 开头，则去除 `@` 并设置 `cpu_set_reset_ideal` 为 `true`；其余部分作为 CPU 规格解析。此标志会在应用 CPU 集合后重新分布线程理想处理器。
 
-- **`"0"`** — 不进行主线程调度。
-- **`?N`** 前缀 — 跟踪前 N 个线程**并**进行主线程调度（正 `track_top_x_threads`）。
-- **`??N`** 前缀 — 跟踪前 N 个线程但**不**进行主线程调度（负 `track_top_x_threads`）。
-- **`*alias@prefix1;prefix2`** 段 — 带模块前缀过滤的每别名 CPU 集合。可以链接多个 `*alias@...` 段。每段产生一个或多个 [`PrimePrefix`](PrimePrefix.md) 条目。
-- **`prefix!priority`** 后缀 — 特定前缀的可选线程优先级覆盖，通过 `ThreadPriority::from_str` 解析。
-- **纯 `*alias`** — 不带前缀过滤的单个别名；所有线程均有资格。
+4. **Prime 规格（字段 3）：** 最复杂的字段。支持几种子格式：
+   - `"0"` — 无 Prime 线程调度。
+   - `"*alias"` — 将 Prime 线程固定到别名的 CPU，匹配所有线程。
+   - `"?Nx*alias"` — 按 CPU 周期跟踪前 N 个线程并将其 Prime 到别名 CPU。`?` 前缀加数字设置正的 `track_top_x_threads`。
+   - `"??N"` — 跟踪前 N 个线程，无 Prime 固定。`??` 前缀设置负的 `track_top_x_threads`（仅跟踪模式）。
+   - `"*alias@prefix1;prefix2!priority"` — 每前缀 CPU 路由，带可选的线程优先级提升。每个 `*alias@` 段生成 [PrimePrefix](PrimePrefix.md) 条目。`!` 分隔符在 prefix 内设置 [ThreadPriority](../priority.rs/ThreadPriority.md) 覆盖。
 
-当存在 `@` 时，解析器按 `*` 拆分以提取段，从 `cpu_aliases` 解析每个别名，并构建一个 `Vec<PrimePrefix>`。前缀字符串中的 `!` 将模块名称与可选的线程优先级覆盖分隔开。
+5. **IO 优先级（字段 4）：** 通过 `IOPriority::from_str` 解析。未知值产生警告。
 
-### 拆分为进程级和线程级
+6. **内存优先级（字段 5）：** 通过 `MemoryPriority::from_str` 解析。未知值产生警告。
 
-解析所有字段后，函数检查哪些设置为非默认值：
+7. **理想处理器 / 等级（字段 6）：** 模糊字段——如果以 `*` 开头或为 `"0"`，则通过 [parse_ideal_processor_spec](parse_ideal_processor_spec.md) 解析为理想处理器规格。如果解析为纯整数，则视为等级。否则尝试作为理想处理器规格，等级默认为 1。
 
-- **进程级有效**：`priority != None`、`affinity_cpus` 非空、`cpu_set_cpus` 非空、`io_priority != None` 或 `memory_priority != None`。
-- **线程级有效**：`prime_threads_cpus` 非空、`track_top_x_threads != 0` 或 `ideal_processor_rules` 非空。
+8. **等级（字段 7）：** 如果字段 6 是理想处理器规格且字段 7 存在，则解析为等级。等级必须 ≥ 1；值为 0 产生警告并默认为 1。
 
-对于 `members` 中的每个成员：
+### 配置插入逻辑
 
-1. 如果进程级设置有效，则将 [`ProcessLevelConfig`](ProcessLevelConfig.md) 条目插入到 `result.process_level_configs` 中对应的等级键下。
-2. 如果线程级设置有效，则将 [`ThreadLevelConfig`](ThreadLevelConfig.md) 条目插入到 `result.thread_level_configs` 中对应的等级键下，并递增 `thread_level_configs_count`。
-3. 如果两者都无效，则发出警告，指出该进程没有有效规则。
+对于每个成员名称，函数执行两个独立的验证检查：
 
-### 重复规则检测
+- **进程级有效：** `priority`、`affinity_cpus`、`cpu_set_cpus`、`io_priority` 或 `memory_priority` 中至少有一个非默认值。如果有效，创建 [ProcessLevelConfig](ProcessLevelConfig.md) 并插入到适当等级下的 `result.process_level_configs`。
 
-在插入之前，函数检查进程名称是否已存在于 `process_level_configs` 或 `thread_level_configs` 的任何等级桶中。如果是，则递增 `result.redundant_rules_count` 并推送一条警告，指出先前的定义将被覆盖。
+- **线程级有效：** `prime_threads_cpus`（非空）、`track_top_x_threads`（非零）或 `ideal_processor_rules`（非空）中至少有一个激活。如果有效，创建 [ThreadLevelConfig](ThreadLevelConfig.md) 并插入到 `result.thread_level_configs`。
 
-### 错误条件
+如果两者都不通过，则发出警告，表明该进程没有有效规则。
 
-| 条件 | 严重性 | 消息格式 |
-|------|--------|---------|
-| 规则字段少于 2 个 | 错误 | `"Line {n}: Too few fields ({count}) - expected at least 2"` |
-| 未知优先级字符串 | 警告 | `"Line {n}: Unknown priority '...' - will be treated as 'none'"` |
-| 未定义的 CPU 别名 | 错误 | `"Line {n}: Undefined alias '*...' in {field} field"` |
-| 未知 I/O 优先级 | 警告 | `"Line {n}: Unknown IO priority '...' - will be treated as 'none'"` |
-| 未知内存优先级 | 警告 | `"Line {n}: Unknown memory priority '...' - will be treated as 'none'"` |
-| 等级值为 0 | 警告 | `"Line {n}: Grade cannot be 0, using 1 instead"` |
-| 无效的等级字符串 | 警告 | `"Line {n}: Invalid grade '...', using 1"` |
-| 重复的进程级规则 | 警告 | `"Line {n}: Redundant process level rule - '...' already defined"` |
-| 重复的线程级规则 | 警告 | `"Line {n}: Redundant thread level rule - '...' already defined"` |
-| 所有字段均为 none/0 | 警告 | `"No valid rules(all none/0) for process '...'"` |
+### 冗余检测
 
-### 副作用
+插入之前，函数检查所有现有等级映射中是否有具有相同进程名的条目。如果找到，则 `redundant_rules_count` 递增并发出警告。新条目覆盖旧条目——最后定义生效。
 
-- 通过插入新条目修改 `result.process_level_configs` 和 `result.thread_level_configs`。
-- 通过追加诊断消息修改 `result.errors` 和 `result.warnings`。
-- 将 `result.process_rules_count` 递增 `members.len()`。
-- 对每个检测到的重复项递增 `result.redundant_rules_count`。
-- 对每个创建的线程级条目递增 `result.thread_level_configs_count`。
+### Prime 前缀构造
 
-## 要求
+当 prime 规格包含 `@` 段时，解析器构建 `Vec<PrimePrefix>`，具有每段 CPU 列表和可选的线程优先级覆盖。`prime_threads_cpus` 字段设置为所有段 CPU 集合的并集。当没有 `@` 段时，创建单个默认 [PrimePrefix](PrimePrefix.md)，其 prefix 为空（匹配所有线程），cpus 为 `None`（继承自 `prime_threads_cpus`），`thread_priority` 为 `ThreadPriority::None`。
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `config.rs` |
-| 可见性 | 私有（`fn`，非 `pub fn`） |
-| 调用方 | [`read_config`](read_config.md)、[`sort_and_group_config`](sort_and_group_config.md)（通过 `read_config` 间接调用） |
-| 被调用方 | [`resolve_cpu_spec`](resolve_cpu_spec.md)、[`parse_ideal_processor_spec`](parse_ideal_processor_spec.md)、`ProcessPriority::from_str`、`IOPriority::from_str`、`MemoryPriority::from_str`、`ThreadPriority::from_str` |
-| 依赖 | [`ProcessLevelConfig`](ProcessLevelConfig.md)、[`ThreadLevelConfig`](ThreadLevelConfig.md)、[`PrimePrefix`](PrimePrefix.md)、[`IdealProcessorRule`](IdealProcessorRule.md)、[`ConfigResult`](ConfigResult.md) |
-| 权限 | 无 |
+### 无前缀规格的默认 PrimePrefix
 
-## 另请参阅
+即使 prime 规格是简单的 `*alias` 而没有任何 `@` 前缀过滤器，函数仍然创建一个包含一个默认条目的 `Vec<PrimePrefix>`。这确保下游 [apply_prime_threads](../apply.rs/apply_prime_threads.md) 函数总是至少有一个前缀条目要迭代。
 
-| 资源 | 链接 |
-|------|------|
-| read_config | [read_config](read_config.md) |
-| resolve_cpu_spec | [resolve_cpu_spec](resolve_cpu_spec.md) |
-| parse_ideal_processor_spec | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
-| collect_group_block | [collect_group_block](collect_group_block.md) |
-| ProcessLevelConfig | [ProcessLevelConfig](ProcessLevelConfig.md) |
-| ThreadLevelConfig | [ThreadLevelConfig](ThreadLevelConfig.md) |
-| PrimePrefix | [PrimePrefix](PrimePrefix.md) |
-| ConfigResult | [ConfigResult](ConfigResult.md) |
-| config 模块概述 | [README](README.md) |
+## 需求
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+| | |
+|---|---|
+| **模块** | `src/config.rs` |
+| **可见性** | 私有 (`fn`) |
+| **调用方** | [read_config](read_config.md)（对于单行规则和组规则） |
+| **被调用方** | [resolve_cpu_spec](resolve_cpu_spec.md), [parse_ideal_processor_spec](parse_ideal_processor_spec.md), `ProcessPriority::from_str`, `IOPriority::from_str`, `MemoryPriority::from_str`, `ThreadPriority::from_str` |
+| **写入到** | [ConfigResult](ConfigResult.md) (`.process_level_configs`, `.thread_level_configs`, `.errors`, `.warnings`, 计数器) |
+| **权限** | 无 |
+
+## 参见
+
+| 主题 | 链接 |
+|-------|------|
+| 模块概述 | [config.rs](README.md) |
+| 进程级配置结构体 | [ProcessLevelConfig](ProcessLevelConfig.md) |
+| 线程级配置结构体 | [ThreadLevelConfig](ThreadLevelConfig.md) |
+| Prime 前缀结构体 | [PrimePrefix](PrimePrefix.md) |
+| 理想处理器规则结构体 | [IdealProcessorRule](IdealProcessorRule.md) |
+| CPU 别名解析 | [resolve_cpu_spec](resolve_cpu_spec.md) |
+| 理想处理器规格解析器 | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
+| 配置文件读取器 | [read_config](read_config.md) |
+| 配置结果容器 | [ConfigResult](ConfigResult.md) |
+| 优先级枚举 | [ProcessPriority](../priority.rs/ProcessPriority.md), [IOPriority](../priority.rs/IOPriority.md), [MemoryPriority](../priority.rs/MemoryPriority.md), [ThreadPriority](../priority.rs/ThreadPriority.md) |
+
+*文档针对 Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

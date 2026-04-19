@@ -1,45 +1,42 @@
 # apply module (AffinityServiceRust)
 
-The `apply` module is responsible for applying process- and thread-level configuration policies to running Windows processes. It provides functions that read current process/thread attributes (priority, affinity, CPU sets, I/O priority, memory priority), compare them against a desired configuration, and issue the appropriate Windows API calls to bring the process into compliance. The module also implements a "prime thread" scheduling algorithm that identifies the most CPU-intensive threads in a process and pins them to designated high-performance cores using CPU Sets and ideal processor assignments, with hysteresis-based promotion and demotion to avoid rapid oscillation.
-
-## Functions
-
-| Function | Description |
-|----------|-------------|
-| [`get_handles`](get_handles.md) | Extracts read and write `HANDLE` values from a `ProcessHandle`, preferring full-access handles over limited ones. |
-| [`log_error_if_new`](log_error_if_new.md) | Logs an error to `ApplyConfigResult` only if the same pid/operation/error-code combination has not been logged before. |
-| [`apply_priority`](apply_priority.md) | Reads the current process priority class and sets it to the configured value if different. |
-| [`apply_affinity`](apply_affinity.md) | Reads the current process affinity mask and sets it to the configured CPU mask, redistributing thread ideal processors on change. |
-| [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) | Redistributes thread ideal processors across a set of CPUs after an affinity or CPU-set change, ordered by CPU time with a random shift. |
-| [`apply_process_default_cpuset`](apply_process_default_cpuset.md) | Queries and sets the default CPU Set IDs for a process, optionally resetting thread ideal processors afterward. |
-| [`apply_io_priority`](apply_io_priority.md) | Reads the current process I/O priority via `NtQueryInformationProcess` and sets it to the configured value via `NtSetInformationProcess`. |
-| [`apply_memory_priority`](apply_memory_priority.md) | Reads the current process memory priority via `GetProcessInformation` and sets it to the configured value via `SetProcessInformation`. |
-| [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md) | Opens handles to the top CPU-consuming threads and queries their cycle counters to establish baseline measurements for prime-thread selection. |
-| [`apply_prime_threads`](apply_prime_threads.md) | Orchestrates the prime-thread scheduling pipeline: sorts threads by CPU delta, selects candidates, promotes winners, and demotes losers. |
-| [`apply_prime_threads_select`](apply_prime_threads_select.md) | Selects the top threads for prime status using hysteresis thresholds to prevent rapid flipping. |
-| [`apply_prime_threads_promote`](apply_prime_threads_promote.md) | Pins newly-selected prime threads to designated CPUs via `SetThreadSelectedCpuSets` and optionally boosts their priority. |
-| [`apply_prime_threads_demote`](apply_prime_threads_demote.md) | Removes CPU-set pinning and restores original thread priority for threads that no longer qualify as prime. |
-| [`apply_ideal_processors`](apply_ideal_processors.md) | Assigns ideal processors to threads based on module-prefix matching rules, selecting top N threads by cycle count per rule. |
-| [`update_thread_stats`](update_thread_stats.md) | Commits cached cycle and time measurements into `last_cycles`/`last_total_time` and resets the cached values to zero. |
+The `apply` module is the core enforcement engine of AffinityServiceRust. It applies configured settings — process priority, CPU affinity, CPU sets, IO priority, memory priority, prime thread scheduling, and ideal processor hints — to running Windows processes. Each function reads the current state of a target process or thread via Windows API, compares it against the desired configuration, and makes changes only when a difference is detected. All changes and errors are accumulated into an [ApplyConfigResult](ApplyConfigResult.md) for structured logging.
 
 ## Structs
 
-| Struct | Description |
-|--------|-------------|
-| [`ApplyConfigResult`](ApplyConfigResult.md) | Accumulates human-readable change descriptions and error messages produced during a single configuration-apply pass. |
+| Name | Description |
+|------|-------------|
+| [ApplyConfigResult](ApplyConfigResult.md) | Accumulator for change messages and error messages produced during a single apply pass. |
+
+## Functions
+
+| Name | Description |
+|------|-------------|
+| [get_handles](get_handles.md) | Extracts read and write `HANDLE`s from a [ProcessHandle](../winapi.rs/ProcessHandle.md), preferring full-access over limited. |
+| [log_error_if_new](log_error_if_new.md) | Logs an error only the first time a unique (pid, operation, error_code) combination is seen. |
+| [apply_priority](apply_priority.md) | Reads and optionally sets the process priority class. |
+| [apply_affinity](apply_affinity.md) | Reads and optionally sets the process CPU affinity mask. Resets thread ideal processors on change. |
+| [reset_thread_ideal_processors](reset_thread_ideal_processors.md) | Redistributes thread ideal processors across a set of CPUs after an affinity or CPU set change. |
+| [apply_process_default_cpuset](apply_process_default_cpuset.md) | Reads and optionally sets the process default CPU set via the Windows CPU Sets API. |
+| [apply_io_priority](apply_io_priority.md) | Reads and optionally sets process IO priority via `NtQueryInformationProcess`/`NtSetInformationProcess`. |
+| [apply_memory_priority](apply_memory_priority.md) | Reads and optionally sets process memory priority via `GetProcessInformation`/`SetProcessInformation`. |
+| [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) | Queries thread cycle times and computes deltas for prime thread selection. |
+| [apply_prime_threads](apply_prime_threads.md) | Top-level orchestrator for prime thread scheduling: select, promote, and demote. |
+| [apply_prime_threads_select](apply_prime_threads_select.md) | Selects which threads earn prime status using hysteresis thresholds. |
+| [apply_prime_threads_promote](apply_prime_threads_promote.md) | Pins prime threads to dedicated CPUs via CPU sets and optionally boosts thread priority. |
+| [apply_prime_threads_demote](apply_prime_threads_demote.md) | Unpins non-prime threads and restores their original thread priority. |
+| [apply_ideal_processors](apply_ideal_processors.md) | Assigns ideal processor hints to threads based on module-prefix matching rules. |
+| [update_thread_stats](update_thread_stats.md) | Caches current cycle/time measurements as "last" values for the next iteration's delta calculation. |
 
 ## See Also
 
-| Reference | Link |
-|-----------|------|
-| config module | [`config.rs`](../config.rs/README.md) |
-| priority module | [`priority.rs`](../priority.rs/README.md) |
-| process module | [`process.rs`](../process.rs/README.md) |
-| scheduler module | [`scheduler.rs`](../scheduler.rs/README.md) |
-| winapi module | [`winapi.rs`](../winapi.rs/README.md) |
-| logging module | [`logging.rs`](../logging.rs/README.md) |
-| error_codes module | [`error_codes.rs`](../error_codes.rs/README.md) |
-| collections module | [`collections.rs`](../collections.rs/README.md) |
+| Topic | Link |
+|-------|------|
+| Configuration types | [ProcessLevelConfig](../config.rs/ProcessLevelConfig.md), [ThreadLevelConfig](../config.rs/ThreadLevelConfig.md) |
+| Process handle management | [ProcessHandle](../winapi.rs/ProcessHandle.md) |
+| Prime thread scheduler | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
+| Process snapshot data | [ProcessEntry](../process.rs/ProcessEntry.md) |
+| Error deduplication | [is_new_error](../logging.rs/is_new_error.md) |
+| Priority enums | [ProcessPriority](../priority.rs/ProcessPriority.md), [IOPriority](../priority.rs/IOPriority.md), [MemoryPriority](../priority.rs/MemoryPriority.md), [ThreadPriority](../priority.rs/ThreadPriority.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

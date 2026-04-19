@@ -1,6 +1,6 @@
 # ApplyFailEntry struct (logging.rs)
 
-Composite key struct representing a unique operation failure event. Each `ApplyFailEntry` identifies a specific combination of thread ID, process name, Windows API operation, and error code. It is used as a key in the per-PID failure tracking map ([`PID_MAP_FAIL_ENTRY_SET`](statics.md#pid_map_fail_entry_set)) to deduplicate error log messages — ensuring that repeated failures for the same operation on the same thread are logged only once.
+Composite key representing a unique process/thread operation failure. Used as a hash-map key inside the per-PID error deduplication map (`PID_MAP_FAIL_ENTRY_SET`) so that repeated identical failures are logged only once.
 
 ## Syntax
 
@@ -9,77 +9,44 @@ Composite key struct representing a unique operation failure event. Each `ApplyF
 pub struct ApplyFailEntry {
     tid: u32,
     process_name: String,
-    error_code: u32,
     operation: Operation,
+    error_code: u32,
 }
 ```
 
 ## Members
 
-| Field | Type | Visibility | Description |
-|-------|------|------------|-------------|
-| `tid` | `u32` | Private | The thread identifier associated with the failure. For process-level operations (where no specific thread is involved), this is typically `0`. |
-| `process_name` | `String` | Private | The name of the process that the operation was attempted on. Used to detect when a PID has been reused by a different process (see Remarks). |
-| `operation` | [`Operation`](Operation.md) | Private | The Windows API operation that failed (e.g., `OpenProcess2processQueryLimitedInformation`, `SetPriorityClass`, `SetThreadIdealProcessorEx`). |
-| `error_code` | `u32` | Private | The Win32 error code returned by the failed operation. When no contextual error code is available, this is set to `0` or a custom discriminator value to differentiate failure modes. |
+| Member | Type | Description |
+|--------|------|-------------|
+| `tid` | `u32` | The thread identifier associated with the failure. For process-level operations that have no specific thread, callers typically pass `0`. |
+| `process_name` | `String` | The executable name of the process that failed (e.g. `"chrome.exe"`). Also used as a staleness indicator — when the PID is reused by a different process, the name mismatch triggers a clear of all prior entries for that PID. |
+| `operation` | [Operation](Operation.md) | The Windows API operation that failed (e.g. `SetProcessAffinityMask`, `SetThreadPriority`). |
+| `error_code` | `u32` | The Win32 or NTSTATUS error code returned by the failing call. A value of `0` is used when no OS error code is available and the caller needs a custom sentinel. |
 
 ## Remarks
 
-### Derives
-
-The struct derives `PartialEq`, `Eq`, and `Hash`, which are required for use as a key in `HashMap` and for equality comparisons in the [`is_new_error`](is_new_error.md) deduplication logic. Two `ApplyFailEntry` instances are considered equal if **all four fields** match.
-
-### PID reuse detection
-
-The `process_name` field serves a dual purpose:
-
-1. **Key identity** — It is part of the composite key used for deduplication.
-2. **PID reuse guard** — In [`is_new_error`](is_new_error.md), when a failure entry set for a given PID contains entries whose `process_name` differs from the incoming entry's `process_name`, the entire set is cleared before inserting the new entry. This handles the case where the OS has recycled a PID for a new process — stale failure entries from the old process are discarded so that the new process's failures are properly logged.
-
-### Alive flag
-
-In the `PID_MAP_FAIL_ENTRY_SET` map, each `ApplyFailEntry` is paired with a `bool` alive flag (`HashMap<ApplyFailEntry, bool>`). This flag is used by [`purge_fail_map`](purge_fail_map.md) to implement mark-and-sweep garbage collection:
-
-- All entries are marked as dead (`false`) at the start of each purge cycle.
-- Entries matching currently running processes are re-marked as alive (`true`).
-- Dead entries (processes that have exited) are removed from the map.
-
-### Field visibility
-
-All fields are **private** (no `pub` modifier). `ApplyFailEntry` instances are only created and inspected within the `logging` module — specifically in the [`is_new_error`](is_new_error.md) and [`purge_fail_map`](purge_fail_map.md) functions. External callers interact with the failure tracking system exclusively through those functions.
-
-### Typical construction
-
-```rust
-let entry = ApplyFailEntry {
-    tid,
-    process_name: process_name.to_string(),
-    operation,
-    error_code,
-};
-```
-
-The `process_name` is cloned into an owned `String` because the entry must outlive the borrowed `&str` passed to `is_new_error`.
+- The struct derives `PartialEq`, `Eq`, and `Hash` so it can be used as a key in `HashMap<ApplyFailEntry, bool>`. The `bool` value in the map tracks liveness — `true` means the entry was seen during the current apply cycle, `false` means it is a candidate for removal during [purge_fail_map](purge_fail_map.md).
+- The `process_name` field serves a dual purpose: it is part of the equality key **and** it is used by [is_new_error](is_new_error.md) to detect PID reuse. If the incoming `process_name` does not match any existing entry's `process_name` for that PID, the entire sub-map is cleared before inserting the new entry.
+- All fields are private; instances are constructed exclusively inside [is_new_error](is_new_error.md).
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `logging.rs` |
-| **Created by** | [`is_new_error`](is_new_error.md) |
-| **Stored in** | [`PID_MAP_FAIL_ENTRY_SET`](statics.md#pid_map_fail_entry_set) |
-| **Dependencies** | [`Operation`](Operation.md) enum |
-| **Platform** | Platform-independent struct; used in the context of Windows API error tracking |
+| | |
+|---|---|
+| **Module** | `src/logging.rs` |
+| **Callers** | [is_new_error](is_new_error.md) (sole constructor) |
+| **Callees** | None |
+| **Dependencies** | [Operation](Operation.md) |
+| **Privileges** | None |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
+| Module overview | [logging.rs](README.md) |
+| Error deduplication logic | [is_new_error](is_new_error.md) |
+| Stale entry cleanup | [purge_fail_map](purge_fail_map.md) |
 | Operation enum | [Operation](Operation.md) |
-| is_new_error function | [is_new_error](is_new_error.md) |
-| purge_fail_map function | [purge_fail_map](purge_fail_map.md) |
-| PID_MAP_FAIL_ENTRY_SET static | [statics](statics.md#pid_map_fail_entry_set) |
-| logging module overview | [README](README.md) |
+| Consumer of dedup results | [log_error_if_new](../apply.rs/log_error_if_new.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

@@ -1,6 +1,6 @@
 # log_apply_results 函数 (main.rs)
 
-格式化并输出单次配置应用过程中对一个进程所产生的变更和错误的日志。错误会被转发到 find-log 接收器，而成功应用的变更则以对齐的多行格式写入主日志。
+格式化并记录在单个进程的配置应用过程中，[`ApplyConfigResult`](../apply.rs/ApplyConfigResult.md) 所收集的变更和错误。错误被路由到 find 日志；变更则以右对齐的多行格式写入主日志。
 
 ## 语法
 
@@ -10,43 +10,66 @@ fn log_apply_results(pid: &u32, name: &String, result: ApplyConfigResult)
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `pid` | `&u32` | 刚刚完成配置的 Windows 进程 ID。用作日志前缀的一部分以进行标识。 |
-| `name` | `&String` | 进程的可执行文件名（例如 `"game.exe"`）。与 PID 一起显示在日志前缀中。 |
-| `result` | `ApplyConfigResult` | 由 `apply_process_level` 和/或 `apply_thread_level` 产生的累积结果结构体，包含人类可读的变更描述和错误字符串的向量。该结构体由本函数消费。 |
+`pid: &u32`
+
+目标进程的进程标识符。在格式化输出中右对齐填充至 5 个字符。
+
+`name: &String`
+
+匹配此进程的配置规则中的进程名称（例如 `"game.exe"`）。用作日志行前缀的中间部分。
+
+`result: ApplyConfigResult`
+
+[`ApplyConfigResult`](../apply.rs/ApplyConfigResult.md) 累加器，包含当前应用周期的变更和错误。该值被此函数消费。
 
 ## 返回值
 
-本函数不返回值。
+此函数不返回值。
 
 ## 备注
 
-- 当 `result.is_empty()` 返回 `true` 时（即未记录任何变更和错误），本函数不执行任何操作。
-- `result.errors` 中的所有字符串都会被转发到 `log_to_find`，该函数将其写入 `.find.log` 文件，以供 `-processLogs` 模式后续分析。
-- 第一条变更字符串以 `"{pid}::{name}::{change}"` 的格式化前缀进行记录。后续的变更字符串会缩进对齐到第一条变更文本的位置，同时考虑前缀宽度和日志子系统预置的 10 字符时间戳前缀（例如 `[04:55:16]`）。
-- 对齐逻辑将填充计算为 `prefix_length - first_change_length + 10`，确保单个进程的多行输出在日志文件中形成视觉上分组的块。
-- 本函数获取 `result` 的所有权，并在处理完成后将其丢弃。
+如果 `result.is_empty()` 返回 `true`，函数会立即退出，对于不需要变更且未遇到错误的进程不产生任何日志输出。
+
+### 错误日志
+
+`result.errors` 中的所有条目通过 `log_to_find` 写入 find 日志。这将错误输出与正常的变更跟踪分离，允许错误被独立审查（例如在 `-process_logs` 后处理期间）。
+
+### 变更日志
+
+变更以对齐的多行布局进行格式化：
+
+1. **第一条**变更以单行格式记录：
+
+   `{pid:>5}::{name}::{change}`
+
+   例如：`" 1234::game.exe::Priority: normal -> high"`
+
+2. **后续**变更以计算好的填充前缀记录，使其直接对齐到第一条变更文本的下方。填充考虑了日志基础设施预置的 `[HH:MM:SS]` 时间前缀（10 个字符）。
+
+这种对齐确保单个进程的所有变更在日志文件中以视觉分组的形式呈现，在同时应用多个设置时提高可读性。
+
+### 日志基础设施
+
+- `log_message` 以带时间戳前缀的方式写入主日志文件。
+- `log_pure_message` 写入主日志文件但不添加自己的时间戳，依赖调用方提供的填充进行对齐。
+- `log_to_find` 写入 `.find.log` 文件，供 find 模式后处理使用。
 
 ## 要求
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `main.rs` |
-| 调用者 | [apply_config](apply_config.md)、[main](main.md) 中的线程级应用循环 |
-| 被调用者 | `logging::log_to_find`、`logging::log_message`、`logging::log_pure_message`、`ApplyConfigResult::is_empty` |
-| API | 无（仅内部日志） |
-| 权限 | 无 |
+| | |
+|---|---|
+| **模块** | `src/main.rs` |
+| **调用方** | [apply_config](apply_config.md)、[main](main.md) 中仅线程级别的应用路径 |
+| **被调用方** | `log_to_find`、`log_message`、`log_pure_message` |
+| **Win32 API** | 无 |
+| **权限** | 无 |
 
 ## 另请参阅
 
-| 参考 | 链接 |
-|------|------|
-| apply_config | [apply_config](apply_config.md) |
-| apply_process_level | [apply_process_level](apply_process_level.md) |
-| apply_thread_level | [apply_thread_level](apply_thread_level.md) |
-| main | [main](main.md) |
-| logging 模块 | [logging](../logging.rs/README.md) |
+| 主题 | 链接 |
+|-------|------|
+| 结果累加器 | [ApplyConfigResult](../apply.rs/ApplyConfigResult.md) |
+| 组合应用入口点 | [apply_config](apply_config.md) |
+| 日志基础设施 | [logging.rs](../logging.rs/README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*为提交 [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf) 记录*

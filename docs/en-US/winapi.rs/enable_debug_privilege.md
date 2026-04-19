@@ -1,6 +1,6 @@
 # enable_debug_privilege function (winapi.rs)
 
-Enables the `SeDebugPrivilege` privilege on the current process token. This privilege allows the process to open handles to other processes (including system and elevated processes) that would otherwise be denied, which is essential for AffinityServiceRust to manage CPU affinity and priority settings across all running processes.
+Enables the `SeDebugPrivilege` privilege on the current process token. This privilege allows the service to open handles to protected and system processes that would otherwise deny access, enabling full process/thread inspection and modification across all running processes.
 
 ## Syntax
 
@@ -12,72 +12,60 @@ pub fn enable_debug_privilege(no_debug_priv: bool)
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `no_debug_priv` | `bool` | If `true`, the function logs a message indicating the privilege is disabled and returns immediately without modifying the process token. This flag is typically set by the `-noDebugPriv` CLI argument. |
+| `no_debug_priv` | `bool` | If `true`, the function logs a message and returns immediately without attempting to enable the privilege. Controlled by the `-noDebugPriv` CLI flag. |
 
 ## Return value
 
-This function does not return a value. Success or failure is reported via [`log_message`](../logging.rs/log_message.md) (through the `log!` macro).
+This function does not return a value. Success or failure is communicated via log messages.
 
 ## Remarks
 
-### Early-return when disabled
+The function performs the following sequence of Win32 API calls to enable the privilege:
 
-When `no_debug_priv` is `true`, the function logs `"SeDebugPrivilege disabled by -noDebugPriv flag"` and returns immediately without opening the process token or calling any Win32 privilege APIs.
+1. **OpenProcessToken** — Opens the current process token (`GetCurrentProcess()`) with `TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY` access.
+2. **LookupPrivilegeValueW** — Resolves the `SE_DEBUG_NAME` string constant to a `LUID` that identifies `SeDebugPrivilege` on the local system.
+3. **AdjustTokenPrivileges** — Enables the privilege by passing a `TOKEN_PRIVILEGES` structure with `SE_PRIVILEGE_ENABLED` set on the resolved LUID.
+4. **CloseHandle** — Closes the token handle after the adjustment, regardless of success or failure.
 
-### Privilege enablement steps
+### Failure behavior
 
-The function performs the following steps:
+Each API call is checked individually. If any call fails, the function logs a descriptive error message and returns early. The token handle is always closed if it was successfully opened. Failures are not fatal — the service continues to operate with reduced capability (unable to open handles to some protected processes).
 
-1. **Open the process token** — Calls `OpenProcessToken` on the current process (`GetCurrentProcess()`) with `TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY` access. If this fails, the function logs an error and returns early.
+### Early exit on CLI flag
 
-2. **Look up the privilege LUID** — Calls `LookupPrivilegeValueW` with `SE_DEBUG_NAME` to obtain the locally unique identifier (LUID) for `SeDebugPrivilege`. If the lookup fails, the function logs an error, closes the token handle, and returns.
+When `no_debug_priv` is `true` (the user passed `-noDebugPriv` on the command line), the function logs `"SeDebugPrivilege disabled by -noDebugPriv flag"` and returns without touching the token. This allows the user to run the service with reduced privileges for testing or in restricted environments where the privilege cannot be granted.
 
-3. **Adjust the token privileges** — Calls `AdjustTokenPrivileges` with a `TOKEN_PRIVILEGES` structure containing a single `LUID_AND_ATTRIBUTES` entry with `SE_PRIVILEGE_ENABLED`. The result is logged as either success or failure.
+### When is this privilege needed?
 
-4. **Close the token handle** — The token handle is closed via `CloseHandle` regardless of the outcome.
+Without `SeDebugPrivilege`, `OpenProcess` and `OpenThread` calls targeting processes owned by other users, system processes, or protected processes will fail with `ERROR_ACCESS_DENIED` (5). Enabling the privilege allows the service to:
 
-### Important side effects
+- Open handles to all processes (including `csrss.exe`, `lsass.exe`, `System`, etc.)
+- Query and modify thread scheduling parameters for any thread on the system
+- Enumerate modules in protected processes for address resolution
 
-- This function modifies the **current process token** in-place. Once `SeDebugPrivilege` is enabled, it remains enabled for the lifetime of the process (unless explicitly disabled).
-- The privilege must already be **assigned** to the process token by the operating system. Typically, this means the process must be running under an administrator account. Enabling the privilege merely activates it — it does not grant it if it was never assigned.
-- If the process is not running as administrator, `AdjustTokenPrivileges` will likely fail with `ERROR_NOT_ALL_ASSIGNED` (1300) or `PRIVILEGE_NOT_HELD` (1314).
+### Privilege vs. elevation
 
-### Platform notes
-
-- **Windows only.** Relies on Win32 Security APIs: `OpenProcessToken`, `LookupPrivilegeValueW`, and `AdjustTokenPrivileges`.
-- The `SE_DEBUG_NAME` constant resolves to the string `"SeDebugPrivilege"`.
-- This function is typically called once at process startup, after [is_running_as_admin](is_running_as_admin.md) confirms that the process has administrator privileges.
-
-### Logging output
-
-| Condition | Log message |
-|-----------|-------------|
-| `no_debug_priv` is `true` | `SeDebugPrivilege disabled by -noDebugPriv flag` |
-| `OpenProcessToken` fails | `enable_debug_privilege: self OpenProcessToken failed` |
-| `LookupPrivilegeValueW` fails | `enable_debug_privilege: LookupPrivilegeValueW failed` |
-| `AdjustTokenPrivileges` fails | `enable_debug_privilege: AdjustTokenPrivileges failed` |
-| `AdjustTokenPrivileges` succeeds | `enable_debug_privilege: AdjustTokenPrivileges succeeded` |
+`SeDebugPrivilege` is typically present in the token of an elevated administrator process but is disabled by default. This function *enables* an already-present privilege — it does not grant a privilege that the token does not have. Running as a non-administrator without the privilege in the token will cause `AdjustTokenPrivileges` to succeed but the privilege will not actually be enabled (a condition detectable via `GetLastError() == ERROR_NOT_ALL_ASSIGNED`, though this check is not performed here).
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `winapi.rs` |
-| **Callers** | `main.rs` — called during startup initialization |
-| **Callees** | `OpenProcessToken`, `LookupPrivilegeValueW`, `AdjustTokenPrivileges`, `CloseHandle` (Win32 API); `log!` macro |
-| **Win32 API** | `OpenProcessToken`, `GetCurrentProcess`, `LookupPrivilegeValueW`, `AdjustTokenPrivileges`, `CloseHandle` |
-| **Privileges** | Must be running as administrator for the privilege to be present in the token. |
-| **Platform** | Windows |
+| | |
+|---|---|
+| **Module** | `src/winapi.rs` |
+| **Callers** | Main startup logic in `src/main.rs` |
+| **Callees** | None (leaf function) |
+| **Win32 API** | [OpenProcessToken](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocesstoken), [LookupPrivilegeValueW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-lookupprivilegevaluew) (`SE_DEBUG_NAME`), [AdjustTokenPrivileges](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-adjusttokenprivileges), [GetCurrentProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getcurrentprocess), [CloseHandle](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-closehandle) |
+| **Privileges** | Requires the calling process token to already contain `SeDebugPrivilege` (standard for elevated administrator tokens). The function enables it; it cannot add it. |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| enable_inc_base_priority_privilege | [enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md) |
-| is_running_as_admin | [is_running_as_admin](is_running_as_admin.md) |
-| request_uac_elevation | [request_uac_elevation](request_uac_elevation.md) |
-| get_process_handle | [get_process_handle](get_process_handle.md) |
-| get_thread_handle | [get_thread_handle](get_thread_handle.md) |
+| Module overview | [winapi.rs](README.md) |
+| Companion privilege enablement | [enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md) |
+| Elevation check | [is_running_as_admin](is_running_as_admin.md) |
+| UAC elevation request | [request_uac_elevation](request_uac_elevation.md) |
+| Process handle opening (benefits from this privilege) | [get_process_handle](get_process_handle.md) |
+| Thread handle opening (benefits from this privilege) | [get_thread_handle](get_thread_handle.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

@@ -1,6 +1,6 @@
 # log_pure_message 函数 (logging.rs)
 
-将消息写入主日志文件或标准输出，**不带**时间戳前缀。用于续行、横幅或结构化输出等场景，在这些场景中 [`log_message`](log_message.md) 添加的 `[HH:MM:SS]` 前缀是不合适的。
+将消息写入日志输出，**不带**时间戳前缀。用于续行、横幅或预格式化块，其中调用方管理自己的格式化。
 
 ## 语法
 
@@ -10,62 +10,54 @@ pub fn log_pure_message(args: &str)
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `args` | `&str` | 要写入的消息字符串。通过 `writeln!` 自动追加尾部换行符。 |
+`args: &str`
+
+要写入的消息字符串。通过 `writeln!` 自动追加换行符。
 
 ## 返回值
 
-此函数不返回值。来自 `writeln!` 的写入错误会被静默忽略。
+此函数不返回值。
 
 ## 备注
 
-- 与 [`log_message`](log_message.md) 不同，此函数**不会**检查 [`DUST_BIN_MODE`](statics.md#dust_bin_mode) 标志。通过 `log_pure_message` 发送的消息始终会被写入，不受丢弃模式的影响。
+与 [log_message](log_message.md) 不同，此函数**不会**在前面添加 `[HH:MM:SS]` 时间戳，也**不会**检查 `DUST_BIN_MODE` 标志。无论禁用模式状态如何，总是输出内容。
 
-- 输出目标由 [`USE_CONSOLE`](statics.md#use_console) 标志决定：
-  - 当为 `true` 时，消息通过 `writeln!(stdout(), ...)` 写入 `stdout`。
-  - 当为 `false` 时，消息通过 `writeln!(get_logger!(), ...)` 写入主日志文件。
+### 输出路由
 
-- 不会添加时间戳前缀——原始 `args` 字符串直接写入。这是与 [`log_message`](log_message.md) 的关键区别，后者会从 [`LOCAL_TIME_BUFFER`](statics.md#local_time_buffer) 格式化当前时间作为 `[HH:MM:SS]` 前缀。
+| `USE_CONSOLE` | 目标 |
+|---------------|-------------|
+| `true` | `stdout` |
+| `false` | `LOG_FILE`（`logs/YYYYMMDD.log`） |
 
-- 写入错误（例如管道断开、磁盘已满）通过 `let _ = writeln!(...)` 丢弃。此函数不会将 I/O 错误传播给调用者。
+### 写入错误
 
-### 与其他日志函数的比较
+`writeln!` 的错误被静默丢弃（`writeln!` 的返回值被赋值给 `_`）。这防止了当日志文件不可访问时的级联失败。
 
-| 函数 | 时间戳 | 丢弃模式检查 | 输出目标 |
-|------|--------|-------------|----------|
-| [`log_message`](log_message.md) | `[HH:MM:SS]` 前缀 | 是 — 当 `DUST_BIN_MODE` 为 `true` 时跳过 | 主日志 / stdout |
-| **log_pure_message** | 无 | 否 — 始终写入 | 主日志 / stdout |
-| [`log_to_find`](log_to_find.md) | `[HH:MM:SS]` 前缀 | 否 — 始终写入 | find 日志 / stdout |
+### 与 log_message 的比较
 
-### 锁定行为
-
-此函数每次调用最多获取两个互斥锁：
-
-1. `USE_CONSOLE` — 检查控制台模式标志。
-2. `LOG_FILE`（通过 `get_logger!()`）或 `stdout`（无需额外锁）。
-
-调用者应避免在调用此函数时持有其他日志相关的锁，以防止潜在的死锁。
+| 方面 | `log_message` | `log_pure_message` |
+|--------|---------------|-------------------|
+| 时间戳前缀 | `[HH:MM:SS]` | 无 |
+| 遵循 `DUST_BIN_MODE` | 是 | 否 |
+| 输出目标 | 控制台或文件 | 控制台或文件 |
 
 ## 要求
 
-| 要求 | 值 |
-|------|-----|
-| **模块** | `logging.rs` |
-| **调用方** | `main.rs`、`scheduler.rs` — 用于不应带时间戳的横幅行和结构化输出。 |
-| **被调用方** | `get_use_console!()` 宏、`get_logger!()` 宏、`std::io::stdout`、`writeln!` |
-| **读取的静态变量** | [`USE_CONSOLE`](statics.md#use_console)、[`LOG_FILE`](statics.md#log_file) |
-| **平台** | Windows（日志文件路径采用 Windows 目录约定） |
+| | |
+|---|---|
+| **模块** | `src/logging.rs` |
+| **调用方** | 主循环横幅输出、多行日志续行 |
+| **被调用方** | `get_use_console!`、`get_logger!` |
+| **访问的静态变量** | `USE_CONSOLE`、`LOG_FILE` |
+| **权限** | 无 |
 
 ## 另请参阅
 
 | 主题 | 链接 |
-|------|------|
-| log_message 函数 | [log_message](log_message.md) |
-| log_to_find 函数 | [log_to_find](log_to_find.md) |
-| log_process_find 函数 | [log_process_find](log_process_find.md) |
-| 日志静态变量 | [statics](statics.md) |
-| logging 模块概述 | [README](README.md) |
+|-------|------|
+| 模块概述 | [logging.rs](README.md) |
+| 带时间戳的日志记录 | [log_message](log_message.md) |
+| 查找模式日志记录 | [log_to_find](log_to_find.md) |
+| 日志文件路径计算 | [get_log_path](get_log_path.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*记录于提交：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

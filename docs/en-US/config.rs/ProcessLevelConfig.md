@@ -1,10 +1,10 @@
-# ProcessLevelConfig type (config.rs)
+# ProcessLevelConfig struct (config.rs)
 
-The `ProcessLevelConfig` struct holds all process-level settings for a single process rule. Each instance represents the complete set of OS-level attributes that AffinityServiceRust will apply to a matched process, including priority class, hard CPU affinity, soft CPU set preference, I/O priority, and memory priority.
+Represents a complete set of process-level tuning parameters for a single Windows process. Each instance captures the desired priority class, CPU affinity mask, CPU set assignment, IO priority, and memory priority. These settings are applied once when a matching process is first discovered by the service and are not re-applied on subsequent polling iterations unless the configuration is hot-reloaded.
 
 ## Syntax
 
-```AffinityServiceRust/src/config.rs#L30-38
+```rust
 #[derive(Debug, Clone)]
 pub struct ProcessLevelConfig {
     pub name: String,
@@ -21,48 +21,70 @@ pub struct ProcessLevelConfig {
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `name` | `String` | The lowercase executable name (e.g., `"game.exe"`) that this rule matches against. This is the key used for lookup in the `ConfigResult.process_level_configs` hash map. |
-| `priority` | `ProcessPriority` | The Windows process priority class to apply (e.g., `Idle`, `BelowNormal`, `Normal`, `AboveNormal`, `High`, `RealTime`). A value of `ProcessPriority::None` means the priority is left unchanged. |
-| `affinity_cpus` | `List<[u32; CONSUMER_CPUS]>` | A sorted list of CPU indices that form the hard affinity mask for the process. When non-empty, the process (and its child threads) are restricted to these logical processors via `SetProcessAffinityMask`. An empty list means no affinity change is applied. |
-| `cpu_set_cpus` | `List<[u32; CONSUMER_CPUS]>` | A sorted list of CPU indices that define the soft CPU preference via the Windows CPU Sets API (`SetProcessDefaultCpuSets`). Unlike hard affinity, CPU Sets are advisory — the OS may schedule threads on other cores under load. An empty list means no CPU set is configured. |
-| `cpu_set_reset_ideal` | `bool` | When `true`, the ideal processor assignment for all threads in the process is reset after applying the CPU set. This is triggered by prefixing the cpuset field with `@` in the configuration file (e.g., `@*ecore`). |
-| `io_priority` | `IOPriority` | The I/O priority level to apply to the process (e.g., `VeryLow`, `Low`, `Normal`, `High`). `IOPriority::None` means no change. Note that `High` typically requires administrator privileges. |
-| `memory_priority` | `MemoryPriority` | The memory page priority to apply to the process (e.g., `VeryLow`, `Low`, `Medium`, `BelowNormal`, `Normal`). `MemoryPriority::None` means no change. Lower memory priority causes the process's pages to be reclaimed more aggressively by the working set manager. |
+| `name` | `String` | Lowercase process name (e.g., `"game.exe"`) used as the lookup key in the config hash map. Matches are performed case-insensitively against running process names. |
+| `priority` | [ProcessPriority](../priority.rs/ProcessPriority.md) | Desired Windows priority class for the process. When set to `ProcessPriority::None`, the service does not modify the process's priority. Valid values include `Idle`, `BelowNormal`, `Normal`, `AboveNormal`, `High`, and `RealTime`. |
+| `affinity_cpus` | `List<[u32; CONSUMER_CPUS]>` | Sorted list of logical processor indices defining the hard CPU affinity mask. An empty list means no affinity change is applied. When set, the service calls `SetProcessAffinityMask` and immediately redistributes thread ideal processors across the new CPU set. |
+| `cpu_set_cpus` | `List<[u32; CONSUMER_CPUS]>` | Sorted list of logical processor indices for the process default CPU set (soft affinity). An empty list means no CPU set change is applied. Uses the Windows CPU Sets API (`SetProcessDefaultCpuSets`) which provides a softer scheduling hint than hard affinity. |
+| `cpu_set_reset_ideal` | `bool` | When `true`, resets all thread ideal processor assignments after applying the CPU set. Triggered by prefixing the CPU set specification with `@` in the config file (e.g., `@*ecore`). Useful when combining CPU sets with ideal processor rules to ensure threads are redistributed after the CPU set change. |
+| `io_priority` | [IOPriority](../priority.rs/IOPriority.md) | Desired IO priority for the process. Set via `NtSetInformationProcess` with `ProcessIoPriority`. When set to `IOPriority::None`, no IO priority change is applied. Valid values include `VeryLow`, `Low`, `Normal`, and `High`. |
+| `memory_priority` | [MemoryPriority](../priority.rs/MemoryPriority.md) | Desired memory priority for the process. Set via `SetProcessInformation` with `ProcessMemoryPriority`. When set to `MemoryPriority::None`, no memory priority change is applied. Valid values include `VeryLow`, `Low`, `Medium`, `BelowNormal`, and `Normal`. |
 
 ## Remarks
 
-- A `ProcessLevelConfig` instance is created by [`parse_and_insert_rules`](parse_and_insert_rules.md) only when at least one process-level field has a non-default value. If all fields evaluate to `None` or empty, no `ProcessLevelConfig` is inserted (though a [`ThreadLevelConfig`](ThreadLevelConfig.md) may still be created for the same process if thread-level fields are present).
+### Config file format
 
-- The struct is stored inside `ConfigResult.process_level_configs`, which is a two-level `HashMap<u32, HashMap<String, ProcessLevelConfig>>`. The outer key is the **grade** (rule application frequency), and the inner key is the lowercase process name. A grade of `1` means the rule runs every polling loop; a grade of `N` means the rule runs every Nth loop.
+A `ProcessLevelConfig` is constructed from a config rule line with the following positional fields:
 
-- Hard affinity (`affinity_cpus`) and soft CPU sets (`cpu_set_cpus`) serve different purposes and can be used independently or together:
-  - **Affinity** is a strict constraint inherited by child processes.
-  - **CPU sets** are a scheduling hint that is not inherited and can be overridden by the OS.
+```
+process.exe:priority:affinity:cpuset:prime:io_priority:memory_priority:ideal:grade
+```
 
-- The `cpu_set_reset_ideal` flag addresses a specific Windows scheduling behavior where setting a CPU set does not automatically clear previously assigned ideal processors. Enabling this flag ensures that threads are redistributed across the new CPU set rather than remaining pinned to their prior ideal processor.
+Only the first two fields after the process name (`priority` and `affinity`) are required. Omitted fields default to their "no change" values (`None` / empty list / `false`).
 
-- The struct derives `Debug` and `Clone`. Cloning is necessary because the same rule may be applied to multiple processes within a group block.
+### Validation during parsing
+
+The [parse_and_insert_rules](parse_and_insert_rules.md) function creates a `ProcessLevelConfig` only when at least one process-level field has a non-default value. If all process-level fields are at their defaults (e.g., the rule only specifies thread-level settings like prime CPUs), no `ProcessLevelConfig` is inserted, and only a [ThreadLevelConfig](ThreadLevelConfig.md) is created.
+
+### Affinity vs. CPU set
+
+Both `affinity_cpus` and `cpu_set_cpus` control which processors a process can use, but they differ in enforcement:
+
+| Feature | Affinity (`affinity_cpus`) | CPU Set (`cpu_set_cpus`) |
+|---------|---------------------------|--------------------------|
+| **API** | `SetProcessAffinityMask` | `SetProcessDefaultCpuSets` |
+| **Enforcement** | Hard — threads cannot run on excluded CPUs | Soft — scheduler prefers listed CPUs but may spill |
+| **Scope** | Limits the entire process | Sets default hint; individual threads can override |
+| **Max CPUs** | 64 (single processor group) | Supports >64 CPUs across processor groups |
+
+### Grade-based organization
+
+`ProcessLevelConfig` instances are stored in a two-level `HashMap<u32, HashMap<String, ProcessLevelConfig>>` within [ConfigResult](ConfigResult.md). The outer key is the *grade* (application frequency), and the inner key is the process name. Grade 1 rules are checked every polling iteration; higher grades are checked less frequently, reducing overhead for low-priority processes.
+
+### Redundancy detection
+
+If multiple rules define a `ProcessLevelConfig` for the same process name, the parser emits a warning and the later definition overwrites the earlier one. The `redundant_rules_count` counter in [ConfigResult](ConfigResult.md) tracks how many such overwrites occurred.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `config.rs` |
-| Constructed by | [`parse_and_insert_rules`](parse_and_insert_rules.md) |
-| Stored in | [`ConfigResult`](ConfigResult.md)`.process_level_configs` |
-| Consumed by | `apply.rs` (process-level application logic) |
-| Dependencies | `ProcessPriority`, `IOPriority`, `MemoryPriority` from [`priority.rs`](../priority.rs/README.md); `List` and `CONSUMER_CPUS` from [`collections.rs`](../collections.rs/README.md) |
+| | |
+|---|---|
+| **Module** | [`src/config.rs`](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf/src/config.rs) |
+| **Created by** | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| **Consumed by** | [apply_priority](../apply.rs/apply_priority.md), [apply_affinity](../apply.rs/apply_affinity.md), [apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md), [apply_io_priority](../apply.rs/apply_io_priority.md), [apply_memory_priority](../apply.rs/apply_memory_priority.md) |
+| **Dependencies** | [ProcessPriority](../priority.rs/ProcessPriority.md), [IOPriority](../priority.rs/IOPriority.md), [MemoryPriority](../priority.rs/MemoryPriority.md), [List](../collections.rs/README.md) |
+| **Privileges** | `PROCESS_SET_INFORMATION` (write), `PROCESS_QUERY_LIMITED_INFORMATION` (read) |
 
 ## See Also
 
-| Resource | Link |
-|----------|------|
-| ThreadLevelConfig | [ThreadLevelConfig](ThreadLevelConfig.md) |
-| ConfigResult | [ConfigResult](ConfigResult.md) |
-| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| read_config | [read_config](read_config.md) |
-| priority module | [priority.rs overview](../priority.rs/README.md) |
-| config module overview | [README](README.md) |
+| Topic | Link |
+|-------|------|
+| Module overview | [config.rs](README.md) |
+| Thread-level counterpart | [ThreadLevelConfig](ThreadLevelConfig.md) |
+| Rule parser | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| Config file reader | [read_config](read_config.md) |
+| Aggregated parse result | [ConfigResult](ConfigResult.md) |
+| CPU spec parser | [parse_cpu_spec](parse_cpu_spec.md) |
+| CPU alias resolution | [resolve_cpu_spec](resolve_cpu_spec.md) |
+| Priority enums | [ProcessPriority](../priority.rs/ProcessPriority.md), [IOPriority](../priority.rs/IOPriority.md), [MemoryPriority](../priority.rs/MemoryPriority.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

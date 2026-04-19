@@ -1,6 +1,6 @@
 # enable_inc_base_priority_privilege 函数 (winapi.rs)
 
-在当前进程令牌上启用 `SeIncreaseBasePriorityPrivilege` 权限。此权限是将进程或线程的调度优先级类提升到 `NORMAL_PRIORITY_CLASS` 以上（例如提升到 `HIGH_PRIORITY_CLASS` 或 `REALTIME_PRIORITY_CLASS`）所必需的。如果没有此权限，使用提升的优先级值调用 `SetPriorityClass` 可能会失败，返回 `ERROR_PRIVILEGE_NOT_HELD`。
+在进程令牌中启用 `SeIncreaseBasePriorityPrivilege` 特权，允许服务将线程和进程的优先级类提升到 `Normal` 之上。没有此特权时，设置 `High` 或 `Realtime` 优先级类的尝试将因 `ERROR_PRIVILEGE_NOT_HELD` 而失败。
 
 ## 语法
 
@@ -11,77 +11,66 @@ pub fn enable_inc_base_priority_privilege(no_inc_base_priority: bool)
 ## 参数
 
 | 参数 | 类型 | 描述 |
-|------|------|------|
-| `no_inc_base_priority` | `bool` | 如果为 `true`，函数记录一条消息表示该权限已禁用，并立即返回而不修改进程令牌。此标志通常由 `-noIncBasePriority` CLI 参数设置。 |
+|-----------|------|-------------|
+| `no_inc_base_priority` | `bool` | 如果为 `true`，函数记录一条消息，表明特权已被 `-noIncBasePriority` CLI 标志禁用，并立即返回，不修改进程令牌。如果为 `false`，则函数继续执行特权启用操作。 |
 
 ## 返回值
 
-此函数不返回值。成功或失败通过 [`log_message`](../logging.rs/log_message.md)（通过 `log!` 宏）报告。
+此函数不返回值。成功或失败通过日志消息传达。
 
-## 备注
+## 说明
 
-### 禁用时提前返回
+函数遵循与 [enable_debug_privilege](enable_debug_privilege.md) 相同的三步特权启用模式：
 
-当 `no_inc_base_priority` 为 `true` 时，函数记录 `"SeIncreaseBasePriorityPrivilege disabled by -noIncBasePriority flag"` 并立即返回，不执行任何令牌操作。
+1. **OpenProcessToken** — 使用 `TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY` 访问权限打开当前进程令牌。
+2. **LookupPrivilegeValueW** — 将 `SE_INC_BASE_PRIORITY_NAME` 特权名称解析为 `LUID`。
+3. **AdjustTokenPrivileges** — 通过构建具有 `SE_PRIVILEGE_ENABLED` 的 `TOKEN_PRIVILEGES` 结构并将其传递给 API 来启用特权。
 
-该函数遵循标准的 Windows 权限启用模式：
+每个操作后，令牌句柄都通过 `CloseHandle` 关闭，包括错误路径。
 
-1. **打开进程令牌** — 对当前进程（`GetCurrentProcess()`）调用 `OpenProcessToken`，请求 `TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY` 访问权限。如果失败，函数记录消息并提前返回。
+### 提前退出
 
-2. **查找权限 LUID** — 使用 `SE_INC_BASE_PRIORITY_NAME` 调用 `LookupPrivilegeValueW`，以获取 `SeIncreaseBasePriorityPrivilege` 的本地唯一标识符 (LUID)。如果查找失败，关闭令牌句柄并返回。
+当 `no_inc_base_priority` 为 `true` 时，函数记录 `"SeIncreaseBasePriorityPrivilege disabled by -noIncBasePriority flag"` 并返回，不打开令牌。这允许用户在受限上下文中运行服务时选择不进行优先级提升。
 
-3. **调整令牌权限** — 构造一个 `TOKEN_PRIVILEGES` 结构体，包含一个设置了 `SE_PRIVILEGE_ENABLED` 的 `LUID_AND_ATTRIBUTES` 条目，然后调用 `AdjustTokenPrivileges`。结果（成功或失败）会被记录。
+### 错误处理
 
-4. **关闭令牌句柄** — 无论成功或失败，令牌句柄在函数返回前都会被无条件关闭。
+每个步骤在失败时记录描述性消息并提前返回：
 
-### 与 enable_debug_privilege 的关系
+| 失败点 | 日志消息 |
+|---|---|
+| `OpenProcessToken` | `"enable_inc_base_priority_privilege: self OpenProcessToken failed"` |
+| `LookupPrivilegeValueW` | `"enable_inc_base_priority_privilege: LookupPrivilegeValueW failed"` |
+| `AdjustTokenPrivileges` | `"enable_inc_base_priority_privilege: AdjustTokenPrivileges failed"` |
+| 成功 | `"enable_inc_base_priority_privilege: AdjustTokenPrivileges succeeded"` |
 
-此函数在结构上与 [`enable_debug_privilege`](enable_debug_privilege.md) 完全相同，但针对不同的权限常量（`SE_INC_BASE_PRIORITY_NAME` 与 `SE_DEBUG_NAME`）。两者通常在应用程序启动时调用。
+当 `LookupPrivilegeValueW` 失败时，在前一步打开的令牌句柄在返回前被关闭。
 
-### 何时需要此权限
+### 何时需要此特权
 
-- 将进程设置为 `HIGH_PRIORITY_CLASS` 或更高。
-- 将线程优先级设置为 `THREAD_PRIORITY_TIME_CRITICAL`。
-- 为延迟敏感的工作负载配置 `REALTIME_PRIORITY_CLASS`。
+Windows 需要 `SeIncreaseBasePriorityPrivilege` 来将进程优先级类设置为 `HIGH_PRIORITY_CLASS` 或 `REALTIME_PRIORITY_CLASS`，或在某些情况下将线程优先级提升到 `THREAD_PRIORITY_NORMAL` 之上。服务在启动时调用此函数，以便后续的 [apply_priority](../apply.rs/apply_priority.md) 调用可以根据配置设置提升的优先级类。
 
-如果没有启用此权限，操作系统会静默限制有效优先级或返回错误，具体取决于所使用的 API。
+### 与 SeDebugPrivilege 的关系
 
-### 平台说明
+此权限独立于 [SeDebugPrivilege](enable_debug_privilege.md)。`SeDebugPrivilege` 控制打开由其他用户拥有的进程或受保护进程的句柄的能力，而 `SeIncreaseBasePriorityPrivilege` 控制提升调度优先级的能力。两者通常在启动时启用，但可以通过 CLI 标志独立禁用。
 
-- **仅限 Windows。** `SeIncreaseBasePriorityPrivilege` 是 Windows 安全权限。
-- 该权限必须已经**分配**给运行进程的用户或组（通常通过本地安全策略或组策略）。此函数只能**启用**已分配的权限；它无法授予未被分配的权限。
-- 以管理员身份运行通常默认包含此权限。
+## 需求
 
-### 日志输出
+| | |
+|---|---|
+| **模块** | `src/winapi.rs` |
+| **调用方** | `src/main.rs` 中的主启动逻辑 |
+| **被调用方** | 无（直接调用 Win32 API 的叶函数） |
+| **Win32 API** | [OpenProcessToken](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocesstoken), [LookupPrivilegeValueW](https://learn.microsoft.com/zh-cn/windows/win32/api/winbase/nf-winbase-lookupprivilegevaluew), [AdjustTokenPrivileges](https://learn.microsoft.com/zh-cn/windows/win32/api/securitybaseapi/nf-securitybaseapi-adjusttokenprivileges), [GetCurrentProcess](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-getcurrentprocess), [CloseHandle](https://learn.microsoft.com/zh-cn/windows/win32/api/handleapi/nf-handleapi-closehandle) |
+| **特权** | 要求进程在持有 `SeIncreaseBasePriorityPrivilege` 的账户下运行（通常是管理员）。该函数*启用*特权；如果账户不具备该特权，它不能*授予*它。 |
 
-| 条件 | 日志消息 |
-|------|----------|
-| `no_inc_base_priority` 为 `true` | `SeIncreaseBasePriorityPrivilege disabled by -noIncBasePriority flag` |
-| `OpenProcessToken` 失败 | `enable_inc_base_priority_privilege: self OpenProcessToken failed` |
-| `LookupPrivilegeValueW` 失败 | `enable_inc_base_priority_privilege: LookupPrivilegeValueW failed` |
-| `AdjustTokenPrivileges` 失败 | `enable_inc_base_priority_privilege: AdjustTokenPrivileges failed` |
-| `AdjustTokenPrivileges` 成功 | `enable_inc_base_priority_privilege: AdjustTokenPrivileges succeeded` |
-
-## 要求
-
-| 要求 | 值 |
-|------|-----|
-| **模块** | `winapi.rs` |
-| **调用者** | 应用程序启动 (`main.rs`) |
-| **被调用者** | `OpenProcessToken`、`GetCurrentProcess`、`LookupPrivilegeValueW`、`AdjustTokenPrivileges`、`CloseHandle`（Win32 API）；`log!` 宏 |
-| **Win32 API** | `advapi32.dll` — `OpenProcessToken`、`LookupPrivilegeValueW`、`AdjustTokenPrivileges` |
-| **权限** | `SeIncreaseBasePriorityPrivilege` 必须已分配给当前用户/组。 |
-| **平台** | Windows |
-
-## 另请参阅
+## 参见
 
 | 主题 | 链接 |
-|------|------|
-| enable_debug_privilege | [enable_debug_privilege](enable_debug_privilege.md) |
-| is_running_as_admin | [is_running_as_admin](is_running_as_admin.md) |
-| request_uac_elevation | [request_uac_elevation](request_uac_elevation.md) |
-| logging 模块 | [logging.rs](../logging.rs/README.md) |
-| winapi 模块概述 | [README](README.md) |
+|-------|------|
+| 模块概述 | [winapi.rs](README.md) |
+| 调试特权启用 | [enable_debug_privilege](enable_debug_privilege.md) |
+| 提升检查 | [is_running_as_admin](is_running_as_admin.md) |
+| UAC 提升请求 | [request_uac_elevation](request_uac_elevation.md) |
+| 优先级应用 | [apply_priority](../apply.rs/apply_priority.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档记录于提交：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

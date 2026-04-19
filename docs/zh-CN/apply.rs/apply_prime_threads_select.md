@@ -1,10 +1,10 @@
 # apply_prime_threads_select 函数 (apply.rs)
 
-`apply_prime_threads_select` 函数使用基于滞后（hysteresis）的算法选择最优线程作为 prime 线程。它委托给 `PrimeThreadScheduler::select_top_threads_with_hysteresis`，该方法对进入和保持阈值进行差异化处理，以防止线程在连续的应用周期中快速地在 prime 和非 prime 状态之间翻转。已经固定到 CPU 集合的线程（即当前为 prime 状态）使用更宽松的保持阈值进行评估，而非 prime 线程必须超过更严格的进入阈值并满足最低活跃连续次数要求才能被提升。
+使用基于迟滞的升级逻辑选择最高优先级的线程作为 Prime 线程。此函数是 Prime 线程调度管道的决策层——它根据 CPU 周期差值和连续活跃时长来确定哪些线程有资格获得 Prime CPU 绑定，但不执行任何实际的系统调用。
 
 ## 语法
 
-```AffinityServiceRust/src/apply.rs#L793-802
+```AffinityServiceRust/src/apply.rs#L794-800
 pub fn apply_prime_threads_select(
     pid: u32,
     prime_count: usize,
@@ -15,61 +15,67 @@ pub fn apply_prime_threads_select(
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `pid` | `u32` | 目标进程的进程 ID。传递给调度器用于查找每个进程的线程统计信息。 |
-| `prime_count` | `usize` | 可被选为 prime 的最大线程数。此值等于 `config.prime_threads_cpus` 中的 CPU 数量，即可用于固定的专用高性能核心数量。 |
-| `tid_with_delta_cycles` | `&mut [(u32, u64, bool)]` | 可变的元组切片，每个候选线程对应一个元组。每个元组包含：线程 ID（`u32`）、自上次测量以来的增量周期计数（`u64`）和一个布尔选择标志（`bool`）。输入时，所有元素的布尔值为 `false`。输出时，被选为 prime 的线程的布尔值被设置为 `true`。调用者（[`apply_prime_threads`](apply_prime_threads.md)）应预先按增量周期降序排列该切片。 |
-| `prime_core_scheduler` | `&mut PrimeThreadScheduler` | 维护每个进程、每个线程统计信息（活跃连续次数、固定的 CPU 集合 ID、周期历史记录）的 prime 线程调度器。该函数在此调度器上调用 `select_top_threads_with_hysteresis`，读取并更新线程统计信息。 |
+`pid: u32`
+
+正在评估其线程的进程 ID。
+
+`prime_count: usize`
+
+可以提升为 Prime 线程状态的线程最大数量。通常等于配置的 prime CPUs 数量 (`config.prime_threads_cpus.len()`)。
+
+`tid_with_delta_cycles: &mut [(u32, u64, bool)]`
+
+`(线程 ID、周期差值、是否 Prime 线程)` 元组的可变切片。进入时，所有条目的 `is_prime` 字段为 `false`。退出时，被选为 Prime 线程的线程其 `is_prime` 字段设置为 `true`。该切片应已填充候选线程及其当前调度间隔的周期差值。
+
+`prime_core_scheduler: &mut PrimeThreadScheduler`
+
+[PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) 实例，拥有线程统计信息、迟滞常数和 `select_top_threads_with_hysteresis` 算法。
 
 ## 返回值
 
-此函数不返回值。选择结果通过修改 `tid_with_delta_cycles` 切片中每个元组的 `is_prime` 布尔值（第三个元素）来传达。
+此函数不返回值。结果直接写入 `tid_with_delta_cycles` 中每个元组的 `is_prime` 字段。
 
-## 备注
+## 说明
 
-### 滞后算法
+此函数完全委托给 [`PrimeThreadScheduler::select_top_threads_with_hysteresis`](../scheduler.rs/PrimeThreadScheduler.md)，传递一个谓词，该谓词在 `pinned_cpu_set_ids` 非空时将线程视为"当前已分配"。迟滞算法应用两个阈值：
 
-该函数完全委托给 `PrimeThreadScheduler::select_top_threads_with_hysteresis`，传递闭包 `|thread_stats| !thread_stats.pinned_cpu_set_ids.is_empty()` 作为"当前是否为 prime"的谓词。当线程已经固定了 CPU 集合 ID（即在上一个周期中被提升）时，此闭包返回 `true`，使调度器应用更宽松的**保持阈值**。未被固定的线程必须超过更严格的**进入阈值**，并且其 `active_streak` 计数达到或超过配置的最低值才能被选中。
+- **保持阈值** - 已经是 Prime 线程的线程，如果其周期差值在所有候选线程的最大周期差值中处于或高于此百分比，则保持 Prime 线程状态。
+- **进入阈值** - 当前不是 Prime 线程的线程必须超过此（更高）百分比，并且在被升级前保持至少 `min_active_streak` 个间隔的连续活跃时长。
 
-滞后机制确保：
-- 已经在 prime 核心上运行的线程即使其周期计数暂时低于进入阈值也会留在那里。这避免了不必要的降级后重新提升的抖动。
-- 线程必须展示持续的高 CPU 活动（通过活跃连续次数衡量）才能被提升，防止短暂的峰值触发随即被撤销的提升。
+这种双阈值方法防止了当多个线程具有相似的 CPU 利用率时在 Prime 线程状态和非 Prime 线程状态之间的快速翻转（抖动）。
 
-### 选择限制
+此函数与 `apply_prime_threads_promote` 和 `apply_prime_threads_demote` 明确分离，以在 [`apply_prime_threads`](apply_prime_threads.md) 内维护清晰的 **选择 → 升级 → 降级** 管道。
 
-最多 `prime_count` 个线程被标记为 prime。如果符合条件的线程数超过 prime 槽位数，则只选择增量周期最高的前 `prime_count` 个线程。
+### 谓词：`is_currently_assigned`
 
-### 与提升/降级的交互
+传递给迟滞选择器的闭包为：
 
-此函数是由 [`apply_prime_threads`](apply_prime_threads.md) 编排的 prime 线程管道中三个阶段中的第一个：
+```AffinityServiceRust/src/apply.rs#L801-803
+|thread_stats| {
+    !thread_stats.pinned_cpu_set_ids.is_empty()
+}
+```
 
-1. **选择**（`apply_prime_threads_select`）— 在 `tid_with_delta_cycles` 切片中将线程标记为 prime 或非 prime。
-2. **提升**（[`apply_prime_threads_promote`](apply_prime_threads_promote.md)）— 将新选中的 prime 线程固定到 CPU 并提升其优先级。
-3. **降级**（[`apply_prime_threads_demote`](apply_prime_threads_demote.md)）— 取消固定并恢复失去 prime 状态的线程的优先级。
+如果线程之前已被升级阶段分配到过一个或多个 CPU 集合 ID，则被视为当前已分配（并且有资格享受较低的保持阈值）。
 
 ## 要求
 
 | 要求 | 值 |
-|------|-----|
-| 模块 | `apply.rs` |
-| Crate | `AffinityServiceRust` |
-| 可见性 | `pub` |
-| Windows API | 无（纯逻辑；无操作系统调用） |
-| 调用者 | [`apply_prime_threads`](apply_prime_threads.md) |
-| 被调用者 | `PrimeThreadScheduler::select_top_threads_with_hysteresis` |
-| 权限 | 无 |
+|---|---|
+| **模块** | `src/apply.rs` |
+| **调用方** | [`apply_prime_threads`](apply_prime_threads.md) |
+| **被调用方** | [`PrimeThreadScheduler::select_top_threads_with_hysteresis`](../scheduler.rs/PrimeThreadScheduler.md) |
+| **Win32 API** | 无 |
+| **权限** | 无（无系统调用） |
 
-## 另请参阅
+## 参见
 
-| 参考 | 链接 |
-|------|------|
-| apply 模块概览 | [`README`](README.md) |
-| apply_prime_threads | [`apply_prime_threads`](apply_prime_threads.md) |
-| apply_prime_threads_promote | [`apply_prime_threads_promote`](apply_prime_threads_promote.md) |
-| apply_prime_threads_demote | [`apply_prime_threads_demote`](apply_prime_threads_demote.md) |
-| prefetch_all_thread_cycles | [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md) |
-| PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
+| 主题 | 描述 |
+|---|---|
+| [apply_prime_threads](apply_prime_threads.md) | 调用选择 → 升级 → 降级的编排器 |
+| [apply_prime_threads_promote](apply_prime_threads_promote.md) | 将选定的 Prime 线程绑定到 CPU 并提升优先级 |
+| [apply_prime_threads_demote](apply_prime_threads_demote.md) | 解除绑定并恢复失去 Prime 线程状态的线程 |
+| [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) | 收集选择所消耗的周期数据 |
+| [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) | 拥有迟滞逻辑和线程统计信息的调度器 |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

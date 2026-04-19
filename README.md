@@ -118,7 +118,7 @@ See [`apply_ideal_processors()`](docs/en-US/apply.rs/apply_ideal_processors.md) 
 
 When a process's CPU affinity is changed, AffinityServiceRust automatically resets per-thread ideal processor assignments to prevent Windows from clamping threads to narrow CPU ranges.
 
-This can also be enabled for CPU Set changes by prefixing the cpuset field with `@`:
+This can also be enabled for CPU set changes by prefixing the cpuset field with `@`:
 
 ```ini
 # After setting CPU set to 0-3, redistribute thread ideal processors across CPUs 0-3
@@ -330,7 +330,7 @@ AffinityServiceRust continuously monitors running processes and applies configur
 
 For detailed architecture and implementation, see [docs/main.md](docs/en-US/main.rs/README.md).
 
-## Known Behaviours
+## Known Behaviors
 
 7. **`[SET_AFFINITY][ACCESS_DENIED]` on own child processes**: When this service spawns a child process (e.g. `conhost.exe` attached by a scheduled task runner or a UAC re-launch) that happens to match one of the configured rules, it will attempt to apply affinity and log a line such as:
 

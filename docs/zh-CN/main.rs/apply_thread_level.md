@@ -1,6 +1,6 @@
 # apply_thread_level 函数 (main.rs)
 
-在每次轮询迭代中对单个进程应用线程级设置。包括主线程调度（选择活动最高的线程并将其固定到首选 CPU 核心）、理想处理器分配以及每线程 CPU 周期时间跟踪。该函数在多次迭代中反复调用，以便调度器能够随时间对工作负载变化做出响应。
+在每个轮询周期中对单个进程应用线程级设置。包括预取线程周期时间以进行增量计算、运行 Prime 线程调度算法以及分配理想处理器提示。此函数仅在进程的 [ThreadLevelConfig](../config.rs/ThreadLevelConfig.md) 包含至少一个线程级设置（Prime 线程 CPU、Prime 线程前缀、理想处理器规则或 top-X 线程跟踪）时才会执行。
 
 ## 语法
 
@@ -18,60 +18,78 @@ fn apply_thread_level<'a>(
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `pid` | `u32` | 目标进程的 Windows 进程标识符。 |
-| `config` | `&ThreadLevelConfig` | 该进程的线程级配置块，包含主线程 CPU 列表、线程名称前缀过滤器、理想处理器规则以及 `track_top_x_threads` 调试设置。 |
-| `prime_core_scheduler` | `&mut PrimeThreadScheduler` | 调度器的可变引用，用于跟踪每线程的周期统计信息，并在跨迭代中管理基于滞后的主线程选择。 |
-| `process` | `&'a ProcessEntry` | 进程快照条目的共享引用（具有生命周期 `'a`），在应用主线程规则时用于解析线程信息。 |
-| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | 返回线程映射引用的惰性闭包。该闭包由 `OnceCell` 支持，因此实际的 `get_threads()` 调用会延迟到首次使用时执行并缓存结果。这使得通过 `apply_config` 一起调用时，`apply_process_level` 和 `apply_thread_level` 可以共享单次线程枚举。 |
-| `dry_run` | `bool` | 为 `true` 时，不会发出修改线程状态的 Win32 API 调用；变更仅记录在 `apply_configs` 中用于日志输出。 |
-| `apply_configs` | `&mut ApplyConfigResult` | 应用操作期间产生的变更描述和错误消息的累加器。 |
+`pid: u32`
+
+目标进程的进程标识符。
+
+`config: &ThreadLevelConfig`
+
+匹配进程的 [`ThreadLevelConfig`](../config.rs/ThreadLevelConfig.md)。包含 Prime 线程 CPU 分配、模块前缀匹配规则、理想处理器规则以及 top-X 线程跟踪计数。如果所有这些字段都为空/零，函数将立即返回。
+
+`prime_core_scheduler: &mut PrimeThreadScheduler`
+
+[`PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md)，用于跨迭代跟踪每线程的周期时间增量、活跃连续计数以及 prime/non-prime 状态。调度器会为此 PID 标记为活跃，并使用当前周期数据进行更新。
+
+`process: &'a ProcessEntry`
+
+目标进程的 [`ProcessEntry`](../process.rs/ProcessEntry.md)，当线程缓存尚未填充时用于枚举线程。
+
+`threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>`
+
+延迟求值的闭包，返回进程的线程映射。由 `OnceCell` 支撑，因此线程枚举在每个应用周期最多发生一次，通过 [`apply_config`](apply_config.md) 调用时与进程级应用路径共享。
+
+`dry_run: bool`
+
+当为 **true** 时，所有子函数仅记录*将要*进行的更改而不调用 Windows API。当为 **false** 时，更改将应用到实际线程。
+
+`apply_configs: &mut ApplyConfigResult`
+
+更改描述和错误消息的累加器。参见 [`ApplyConfigResult`](../apply.rs/ApplyConfigResult.md)。
 
 ## 返回值
 
-此函数不返回值。所有结果（成功和错误）均记录在 `apply_configs` 累加器中。
+此函数不返回值。结果通过 `apply_configs` 传达。
 
 ## 备注
 
-如果以下线程级功能均未为该进程配置，函数将立即短路返回：
+此函数按以下顺序执行操作：
 
-- `prime_threads_cpus` — 用于固定主线程的 CPU 核心。
-- `prime_threads_prefixes` — 用于过滤候选线程的线程起始地址模块前缀。
-- `ideal_processor_rules` — 设置线程理想处理器的规则。
-- `track_top_x_threads` — 非零值启用进程退出时顶部线程的诊断日志。
+1. **守卫检查** — 如果 `prime_threads_cpus`、`prime_threads_prefixes`、`ideal_processor_rules` 均为空且 `track_top_x_threads` 为零，则立即返回。
+2. **查询亲和性掩码** — 如果 `prime_threads_cpus` 非空，则打开进程句柄并调用 `GetProcessAffinityMask` 以确定进程允许使用哪些 CPU。此掩码约束 Prime 线程调度器可以分配的核心范围。
+3. **丢弃模块缓存** — 调用 [`drop_module_cache`](../winapi.rs/drop_module_cache.md) 以刷新该 PID 的线程到模块的查找。
+4. **标记活跃** — 调用 `prime_core_scheduler.set_alive(pid)`，使调度器知道此进程仍在运行（死亡进程将在主循环中稍后被清理）。
+5. **预取周期时间** — 调用 [`prefetch_all_thread_cycles`](../apply.rs/prefetch_all_thread_cycles.md) 查询当前线程周期计数，并计算与上一次迭代的增量，为调度器的排名算法提供数据。
+6. **应用 Prime 线程** — 调用 [`apply_prime_threads`](../apply.rs/apply_prime_threads.md) 根据周期时间排名和迟滞阈值选择、提升和降级线程。
+7. **应用理想处理器** — 调用 [`apply_ideal_processors`](../apply.rs/apply_ideal_processors.md) 为匹配模块前缀规则的线程分配理想处理器提示。
+8. **更新统计信息** — 调用 [`update_thread_stats`](../apply.rs/update_thread_stats.md) 将当前周期/时间测量值缓存为下一次迭代的基线值。
 
-当线程级功能处于活动状态时，函数按以下顺序执行步骤：
+### 与 apply_process_level 的区别
 
-1. **亲和性掩码查询** — 如果 `prime_threads_cpus` 非空，则通过 `GetProcessAffinityMask` 获取当前进程亲和性掩码，以便主线程 CPU 过滤尊重进程级掩码。与先前实现不同，此条件中不再检查 `affinity_cpus` 字段，因为亲和性现在是由 `apply_process_level` 独占处理的进程级关注点。
-2. **模块缓存重置** — 调用 `drop_module_cache` 以确保线程起始地址解析使用最新数据。
-3. **调度器存活标记** — `prime_core_scheduler.set_alive(pid)` 将进程在调度器中标记为存活，以便死进程清理跳过它。
-4. **周期预取** — `prefetch_all_thread_cycles` 查询每线程周期时间并填充调度器的 `ThreadStats` 条目。`threads` 闭包被传递进去，以便线程枚举延迟到实际需要时执行。
-5. **主线程应用** — `apply_prime_threads` 使用基于滞后的选择来选择顶部线程并将其固定到配置的 CPU 集合。`process` 和 `threads` 闭包都传递给此函数。
-6. **理想处理器分配** — `apply_ideal_processors` 为匹配配置规则的线程设置理想处理器。此函数直接接收 `threads` 闭包（而非 `process` 引用）。
-7. **统计更新** — `update_thread_stats` 缓存当前周期计数，以便下一次迭代可以计算增量。
+[`apply_process_level`](apply_process_level.md) 对每个进程运行一次（或在未设置 `continuous_process_level_apply` 时每次配置重载运行一次），设置进程级属性。`apply_thread_level` 在**每个**轮询周期中运行，因为线程周期排名会持续变化，Prime 线程选择必须重新评估。
 
-由于此函数在每次轮询迭代中都被调用（而非每个进程仅调用一次），调度器会累积多次迭代的历史记录，用于滞后算法，防止线程提升/降级抖动。
+### 线程缓存共享
+
+通过 [`apply_config`](apply_config.md) 调用时，`threads` 闭包与进程级路径共享同一个 `OnceCell`，避免了对线程枚举的冗余 `NtQuerySystemInformation` 调用。
 
 ## 要求
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `main.rs` |
-| 调用者 | [apply_config](apply_config.md)，[main](main.md) 中的独立线程级应用循环 |
-| 被调用者 | `apply::prefetch_all_thread_cycles`、`apply::apply_prime_threads`、`apply::apply_ideal_processors`、`apply::update_thread_stats`、`winapi::get_process_handle`、`winapi::drop_module_cache`、[PrimeThreadScheduler::set_alive](../scheduler.rs/PrimeThreadScheduler.md) |
-| Win32 API | `GetProcessAffinityMask` |
-| 权限 | `SeDebugPrivilege`（用于打开其他会话的线程/进程句柄） |
+| | |
+|---|---|
+| **模块** | `src/main.rs` |
+| **调用方** | [`apply_config`](apply_config.md)、主循环线程级路径 |
+| **被调用方** | [`get_process_handle`](../winapi.rs/get_process_handle.md)、[`drop_module_cache`](../winapi.rs/drop_module_cache.md)、[`prefetch_all_thread_cycles`](../apply.rs/prefetch_all_thread_cycles.md)、[`apply_prime_threads`](../apply.rs/apply_prime_threads.md)、[`apply_ideal_processors`](../apply.rs/apply_ideal_processors.md)、[`update_thread_stats`](../apply.rs/update_thread_stats.md) |
+| **Win32 API** | [`GetProcessAffinityMask`](https://learn.microsoft.com/zh-cn/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask) |
+| **权限** | `PROCESS_QUERY_LIMITED_INFORMATION`（亲和性查询），线程级访问权限委托给被调用方 |
 
 ## 另请参阅
 
 | 主题 | 链接 |
-|------|------|
-| apply_process_level | [apply_process_level](apply_process_level.md) |
-| apply_config | [apply_config](apply_config.md) |
-| PrimeThreadScheduler | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
-| ThreadLevelConfig | [config 模块](../config.rs/README.md) |
-| main | [main](main.md) |
+|-------|------|
+| 进程级对应函数 | [apply_process_level](apply_process_level.md) |
+| 组合协调器 | [apply_config](apply_config.md) |
+| 线程级配置类型 | [ThreadLevelConfig](../config.rs/ThreadLevelConfig.md) |
+| Prime 线程调度器 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
+| 应用引擎概述 | [apply.rs](../apply.rs/README.md) |
+| 结果累加器 | [ApplyConfigResult](../apply.rs/ApplyConfigResult.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*为提交 [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf) 记录*

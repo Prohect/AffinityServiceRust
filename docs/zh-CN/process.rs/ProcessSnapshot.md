@@ -1,6 +1,6 @@
 # ProcessSnapshot 结构体 (process.rs)
 
-`ProcessSnapshot` 结构体通过调用 `NtQuerySystemInformation` 的 `SystemProcessInformation` 类来捕获系统上所有正在运行的进程及其线程的时间点快照。它持有指向共享缓冲区和 PID 到进程查找映射的可变引用，两者在快照被丢弃时自动清除（RAII 语义）。这确保了过时的进程数据不会在调度周期之间残留。
+RAII 守卫，使用 \`NtQuerySystemInformation(SystemProcessInformation)\` 捕获所有运行中进程及其线程的时间点快照。该结构体持有对共享缓冲区和进程映射的可变引用，当快照被丢弃时，两者都会自动清除。
 
 ## 语法
 
@@ -13,14 +13,14 @@ pub struct ProcessSnapshot<'a> {
 
 ## 成员
 
-| 字段 | 类型 | 描述 |
+| 成员 | 类型 | 描述 |
 |------|------|------|
-| `buffer` | `&'a mut Vec<u8>` | 指向后备字节缓冲区的可变引用，该缓冲区存储 `NtQuerySystemInformation` 返回的原始 `SYSTEM_PROCESS_INFORMATION` 结构。此字段为私有。 |
-| `pid_to_process` | `&'a mut HashMap<u32, ProcessEntry>` | 指向以 PID 为键的已解析 [`ProcessEntry`](ProcessEntry.md) 对象映射的可变引用。为公有字段，允许调用方在获取快照后按 PID 查找进程信息。 |
+| \`buffer\` | \`&'a mut Vec<u8>\` | 对原始字节缓冲区的可变引用，该缓冲区保存 \`SYSTEM_PROCESS_INFORMATION\` 链表（由 \`NtQuerySystemInformation\` 返回）。通过 [SNAPSHOT_BUFFER](README.md) 跨迭代复用。 |
+| \`pid_to_process\` | \`&'a mut HashMap<u32, ProcessEntry>\` | 对在 \`take()\` 期间填充的进程映射的可变引用。以 PID 为键，值为 [ProcessEntry](ProcessEntry.md) 结构体。设为公开以便调用方可迭代和查询进程。 |
 
 ## 方法
 
-### `ProcessSnapshot::take`
+### take
 
 ```rust
 pub fn take(
@@ -29,92 +29,76 @@ pub fn take(
 ) -> Result<Self, i32>
 ```
 
-捕获一个新的进程快照。这是构造 `ProcessSnapshot` 的唯一方式。
+通过调用 \`NtQuerySystemInformation(SystemProcessInformation)\` 捕获系统上所有进程和线程的快照。
 
-#### 参数
+**参数**
 
 | 参数 | 类型 | 描述 |
 |------|------|------|
-| `buffer` | `&'a mut Vec<u8>` | 指向可复用字节缓冲区的可变引用。通常通过锁定 [`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md) 静态变量获得。如果 `NtQuerySystemInformation` 返回 `STATUS_INFO_LENGTH_MISMATCH`，缓冲区会动态调整大小。 |
-| `pid_to_process` | `&'a mut HashMap<u32, ProcessEntry>` | 指向可复用的 PID 到进程映射的可变引用。通常通过锁定 [`PID_TO_PROCESS_MAP`](PID_TO_PROCESS_MAP.md) 静态变量获得。每次调用开始时会先清除，然后重新填充。 |
+| \`buffer\` | \`&'a mut Vec<u8>\` | 用于接收系统信息的字节缓冲区的可变引用。如果缓冲区太小，会动态增长。通常来源于 \`SNAPSHOT_BUFFER\`。 |
+| \`pid_to_process\` | \`&'a mut HashMap<u32, ProcessEntry>\` | 将被填充进程条目的 HashMap 的可变引用。每次调用开始时会被清除。通常来源于 \`PID_TO_PROCESS_MAP\`。 |
 
-#### 返回值
+**返回值**
 
-| 结果 | 描述 |
-|------|------|
-| `Ok(ProcessSnapshot)` | 成功构造的快照。`pid_to_process` 映射已填充所有正在运行的进程。 |
-| `Err(i32)` | 来自 `NtQuerySystemInformation` 的 `NTSTATUS` 错误码（`STATUS_INFO_LENGTH_MISMATCH` 除外，该错误会在内部通过使用更大的缓冲区重试来处理）。 |
+`Result<ProcessSnapshot<'a>, i32>` — 成功时返回 RAII 快照守卫。失败时返回 NTSTATUS 错误码（`i32`）。
+
+**备注**
+
+- 该函数在重试循环中调用 \`NtQuerySystemInformation\`。如果调用返回 \`STATUS_INFO_LENGTH_MISMATCH\`（\`0xC0000004\`），缓冲区将被重新分配为 \`ReturnLength\` 输出参数指示的大小（向上对齐到 8 字节边界），或者在 \`ReturnLength\` 为零时翻倍。
+- 成功调用后，原始缓冲区作为 \`SYSTEM_PROCESS_INFORMATION\` 结构体链表进行遍历。每个条目的 \`NextEntryOffset\` 字段指向下一个条目；偏移量为零表示最后一个条目。
+- 对于每个进程，通过 \`ProcessEntry::new()\` 构造一个 [ProcessEntry](ProcessEntry.md)，它会提取小写进程名并存储线程数组的基指针。
+- 缓冲区和映射在**丢弃时被清除**，因此在快照丢弃后，从 \`pid_to_process\` 派生的所有 [ProcessEntry](ProcessEntry.md) 引用将变为无效。
+
+### Drop
+
+```rust
+impl<'a> Drop for ProcessSnapshot<'a> {
+    fn drop(&mut self);
+}
+```
+
+当快照离开作用域时，清除 \`pid_to_process\` 和 \`buffer\`。这确保了存储在 [ProcessEntry](ProcessEntry.md) 中的过期原始指针（\`threads_base_ptr\` 字段）在底层缓冲区被复用后不会被解引用。
 
 ## 备注
 
-### 快照算法
+`ProcessSnapshot` 遵循 RAII 模式，将已解析的进程数据的生命周期绑定到原始缓冲区的生命周期。由于 \`SYSTEM_PROCESS_INFORMATION.Threads\` 是附加在每个结构体之后的变长数组，线程数据仅在原始缓冲区存活期间有效。\`Drop\` 实现强制执行此不变量。
 
-1. **带重试循环的查询。** 在循环中调用 `NtQuerySystemInformation(SystemProcessInformation, ...)`。如果调用返回 `STATUS_INFO_LENGTH_MISMATCH`（`-1073741820` / `0xC0000004`），则将缓冲区重新分配为 API 的 `return_len` 输出参数所指示的大小（向上取整到 8 字节边界），或者在 `return_len` 为零时将缓冲区大小翻倍。循环重试直到收到非不匹配状态。
+### 典型用法
 
-2. **截断缓冲区。** 成功后，缓冲区被截断为实际返回的字节数（`return_len`），回收未使用的容量。
-
-3. **解析链表。** 原始缓冲区包含通过 `NextEntryOffset` 连接的 `SYSTEM_PROCESS_INFORMATION` 结构链表。函数遍历此链表，为每个进程构造一个 [`ProcessEntry`](ProcessEntry.md) 并以 `UniqueProcessId` 为键将其插入 `pid_to_process`。
-
-4. **返回快照。** 返回填充完毕的 `ProcessSnapshot`，它借用了缓冲区和映射。缓冲区在快照的整个生命周期内必须保持有效，因为 `ProcessEntry` 对象包含指向缓冲区内存的指针（用于线程信息数组和进程名称字符串）。
-
-### Drop 行为
-
-当 `ProcessSnapshot` 被丢弃时：
-- 调用 `pid_to_process.clear()`，移除所有已解析的进程条目。
-- 调用 `buffer.clear()`，将缓冲区长度置零（但不释放其容量，以便下次快照时复用已分配的内存）。
-
-此清理至关重要，因为 [`ProcessEntry`](ProcessEntry.md) 对象存储了指向缓冲区的原始指针（`threads_base_ptr`）。同时清除映射和缓冲区可防止悬垂指针访问。
-
-### 缓冲区大小调整策略
-
-初始缓冲区较小（32 字节，如 [`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md) 中所定义）。首次调用时，`NtQuerySystemInformation` 几乎肯定会返回 `STATUS_INFO_LENGTH_MISMATCH`，导致缓冲区调整大小。新大小计算为 `((return_len / 8) + 1) * 8` 以对齐到 8 字节边界。在后续调用中，缓冲区保留其先前的容量（通过 `Vec::capacity()`），因此仅在系统进程数量显著增长时才需要调整大小。
-
-### 不安全代码
-
-`take` 的整个函数体包裹在 `unsafe` 中，原因是：
-- `NtQuerySystemInformation` 是对 `ntdll.dll` 的 FFI 调用。
-- 原始缓冲区被重新解释为 `SYSTEM_PROCESS_INFORMATION` 指针。
-- 线程信息数组通过从 `SYSTEM_PROCESS_INFORMATION.Threads` 进行原始指针算术来访问。
-
-### 典型使用模式
-
-```text
-let mut buf = SNAPSHOT_BUFFER.lock().unwrap();
+```rust
+let mut buffer = SNAPSHOT_BUFFER.lock().unwrap();
 let mut map = PID_TO_PROCESS_MAP.lock().unwrap();
-let snapshot = ProcessSnapshot::take(&mut buf, &mut map)?;
-
-for (pid, entry) in snapshot.pid_to_process.iter() {
-    // 处理每个条目...
-}
-// snapshot 在此处被丢弃，同时清除 buf 和 map
+let snapshot = ProcessSnapshot::take(&mut buffer, &mut map)?;
+// 使用 snapshot.pid_to_process 迭代进程
+// snapshot 在此处被丢弃，清除缓冲区和映射表
 ```
 
-### 平台说明
+### 缓冲区增长策略
 
-- **仅限 Windows。** 依赖于来自 `ntdll.dll` 的 NT 原生 `NtQuerySystemInformation` API（通过 `ntapi` crate 导入）。
-- `SYSTEM_PROCESS_INFORMATION` 和 `SYSTEM_THREAD_INFORMATION` 类型来自 `ntapi::ntexapi` 模块。
+| 条件 | 操作 |
+|------|------|
+| \`ReturnLength > 0\` | 分配 \`((ReturnLength / 8) + 1) * 8\` 字节（8 字节对齐的上限） |
+| \`ReturnLength == 0\` | 将当前缓冲区容量翻倍 |
+
+初始缓冲区大小为 32 字节（来自 \`SNAPSHOT_BUFFER\`），这在首次调用时总会触发至少一次重新分配。后续调用复用上一次成功调用的容量，因此在第一次迭代之后重新分配变得很少发生。
 
 ## 要求
 
-| 要求 | 值 |
-|------|------|
-| **模块** | `process.rs` |
-| **调用方** | `scheduler.rs` — 主调度循环；`apply.rs` — 规则应用 |
-| **被调用方** | `NtQuerySystemInformation`（ntdll，通过 `ntapi`），[`ProcessEntry::new`](ProcessEntry.md) |
-| **静态变量** | [`SNAPSHOT_BUFFER`](SNAPSHOT_BUFFER.md)、[`PID_TO_PROCESS_MAP`](PID_TO_PROCESS_MAP.md) |
-| **Win32 API** | `NtQuerySystemInformation` 配合 `SystemProcessInformation` |
-| **权限** | 无显式要求，但 `SeDebugPrivilege` 可启用对受保护进程的枚举。 |
+| | |
+|---|---|
+| **模块** | \`src/process.rs\` |
+| **调用方** | \`src/main.rs\` 中的主轮询循环 |
+| **被调用方** | \`NtQuerySystemInformation\` (ntdll), [ProcessEntry::new](ProcessEntry.md) |
+| **NT API** | [NtQuerySystemInformation](https://learn.microsoft.com/zh-cn/windows/win32/api/winternl/nf-winternl-ntquerysysteminformation)，使用 \`SystemProcessInformation\`（类别 5） |
+| **特权** | 基本枚举不需要特殊特权；[SeDebugPrivilege](../winapi.rs/enable_debug_privilege.md) 可扩展对受保护进程的可见性 |
 
 ## 另请参阅
 
 | 主题 | 链接 |
 |------|------|
-| ProcessEntry 结构体 | [ProcessEntry](ProcessEntry.md) |
-| SNAPSHOT_BUFFER 静态变量 | [SNAPSHOT_BUFFER](SNAPSHOT_BUFFER.md) |
-| PID_TO_PROCESS_MAP 静态变量 | [PID_TO_PROCESS_MAP](PID_TO_PROCESS_MAP.md) |
-| collections 模块 | [collections.rs](../collections.rs/README.md) |
-| winapi 模块 | [winapi.rs](../winapi.rs/README.md) |
-| event_trace 模块 | [event_trace.rs](../event_trace.rs/README.md) |
+| 模块概览 | [process.rs](README.md) |
+| 进程数据容器 | [ProcessEntry](ProcessEntry.md) |
+| 线程句柄管理 | [ThreadHandle](../winapi.rs/ThreadHandle.md) |
+| Prime 线程调度器 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档记录自提交：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

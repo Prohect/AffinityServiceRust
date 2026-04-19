@@ -1,6 +1,6 @@
 # ThreadHandle struct (winapi.rs)
 
-RAII wrapper for a set of thread handles with varying access levels. The `r_limited_handle` field is always valid (required when constructing this struct). Other handles (`r_handle`, `w_limited_handle`, `w_handle`) are attempted but may hold invalid `HANDLE` values if the corresponding `OpenThread` call failed. All valid handles are automatically closed when the struct is dropped.
+RAII wrapper for a set of Windows thread handles opened at multiple access levels. Automatically closes all valid handles when dropped. The `r_limited_handle` is always valid when the struct exists; other handles may be invalid if the corresponding `OpenThread` call failed due to insufficient privileges.
 
 ## Syntax
 
@@ -16,58 +16,75 @@ pub struct ThreadHandle {
 
 ## Members
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `r_limited_handle` | `HANDLE` | Thread handle opened with `THREAD_QUERY_LIMITED_INFORMATION` access. Always valid. |
-| `r_handle` | `HANDLE` | Thread handle opened with `THREAD_QUERY_INFORMATION` access. May be an invalid handle if the open call failed. |
-| `w_limited_handle` | `HANDLE` | Thread handle opened with `THREAD_SET_LIMITED_INFORMATION` access. May be an invalid handle if the open call failed. |
-| `w_handle` | `HANDLE` | Thread handle opened with `THREAD_SET_INFORMATION` access. May be an invalid handle if the open call failed. |
+| Member | Type | Access Right | Description |
+|--------|------|-------------|-------------|
+| `r_limited_handle` | `HANDLE` | `THREAD_QUERY_LIMITED_INFORMATION` | Always-valid read handle for basic thread queries such as cycle time retrieval. This is the minimum access level and is required for the struct to be constructed. |
+| `r_handle` | `HANDLE` | `THREAD_QUERY_INFORMATION` | Full read handle for advanced queries such as [get_thread_start_address](get_thread_start_address.md) (via `NtQueryInformationThread`). May be an invalid handle (`HANDLE::default()`) if access was denied. Check with `is_invalid()` before use. |
+| `w_limited_handle` | `HANDLE` | `THREAD_SET_LIMITED_INFORMATION` | Limited write handle for operations like setting thread CPU set assignment. May be invalid if access was denied. |
+| `w_handle` | `HANDLE` | `THREAD_SET_INFORMATION` | Full write handle for operations like [set_thread_ideal_processor_ex](set_thread_ideal_processor_ex.md) and thread priority changes. May be invalid if access was denied. |
+
+## Drop
+
+```rust
+impl Drop for ThreadHandle {
+    fn drop(&mut self);
+}
+```
+
+Closes all handles held by the struct. `r_limited_handle` is always closed unconditionally (it is guaranteed valid). The remaining three handles (`r_handle`, `w_limited_handle`, `w_handle`) are only closed if they are not invalid, as determined by `HANDLE::is_invalid()`.
+
+### Handle closure order
+
+1. `r_limited_handle` — always closed
+2. `r_handle` — closed if not invalid
+3. `w_limited_handle` — closed if not invalid
+4. `w_handle` — closed if not invalid
+
+Each closure calls `CloseHandle` and discards the result.
 
 ## Remarks
 
-Unlike [ProcessHandle](ProcessHandle.md), which uses `Option<HANDLE>` for its optional handles, `ThreadHandle` stores all handles as raw `HANDLE` values. Callers must check `HANDLE::is_invalid()` before using `r_handle`, `w_limited_handle`, or `w_handle`.
+### Difference from ProcessHandle
 
-The `Drop` implementation unconditionally closes `r_limited_handle` (since it is guaranteed valid) and conditionally closes each of the other three handles only if they are not invalid. This ensures no double-close or invalid-handle-close occurs.
+Unlike [ProcessHandle](ProcessHandle.md), which uses `Option<HANDLE>` for its optional handles, `ThreadHandle` uses raw `HANDLE` values and relies on `is_invalid()` to distinguish valid from failed handles. This design difference exists because thread handles are more frequently accessed in tight loops (per-thread, per-iteration), and avoiding `Option` unwrapping reduces overhead.
 
-`ThreadHandle` derives `Debug` for diagnostic output.
+### Access level strategy
 
-### Handle access rights mapping
+The four handles represent a matrix of read/write × limited/full access:
 
-| Field | Win32 Access Right |
-|-------|--------------------|
-| `r_limited_handle` | `THREAD_QUERY_LIMITED_INFORMATION` |
-| `r_handle` | `THREAD_QUERY_INFORMATION` |
-| `w_limited_handle` | `THREAD_SET_LIMITED_INFORMATION` |
-| `w_handle` | `THREAD_SET_INFORMATION` |
+|  | Limited | Full |
+|--|---------|------|
+| **Read** | `r_limited_handle` | `r_handle` |
+| **Write** | `w_limited_handle` | `w_handle` |
 
-### Drop behavior
+Limited access rights succeed more often (e.g., for protected processes) but support fewer operations. The caller should prefer limited handles when possible and fall back to checking `is_invalid()` on full handles before use.
 
-```text
-Drop order:
-  1. CloseHandle(r_limited_handle)           — always closed
-  2. CloseHandle(r_handle)                   — closed only if not invalid
-  3. CloseHandle(w_limited_handle)           — closed only if not invalid
-  4. CloseHandle(w_handle)                   — closed only if not invalid
-```
+### Caching in ThreadStats
+
+`ThreadHandle` instances are cached in [ThreadStats](../scheduler.rs/ThreadStats.md)`.handle` to avoid re-opening handles on every polling iteration. The handle persists for the lifetime of the thread or until the parent process exits and [PrimeThreadScheduler::drop_process_by_pid](../scheduler.rs/PrimeThreadScheduler.md) drops the stats entry.
+
+### Send safety
+
+`ThreadHandle` is `Send` because `HANDLE` is a thin wrapper around a pointer-sized value and Windows handles can be used from any thread within the same process.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `winapi.rs` |
-| Created by | [get_thread_handle](get_thread_handle.md) |
-| Used by | [set_thread_ideal_processor_ex](set_thread_ideal_processor_ex.md), [get_thread_ideal_processor_ex](get_thread_ideal_processor_ex.md), [get_thread_start_address](get_thread_start_address.md) |
-| Platform | Windows |
-| Privileges | Requires `SeDebugPrivilege` for threads in other user sessions |
+| | |
+|---|---|
+| **Module** | `src/winapi.rs` |
+| **Callers** | [get_thread_handle](get_thread_handle.md), [ThreadStats](../scheduler.rs/ThreadStats.md), [prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md), [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md), [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
+| **Callees** | `CloseHandle` (Win32) |
+| **Win32 API** | [CloseHandle](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-closehandle) |
+| **Privileges** | None for drop; creation requires appropriate thread access rights (see [get_thread_handle](get_thread_handle.md)) |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| get_thread_handle | [get_thread_handle](get_thread_handle.md) |
-| ProcessHandle | [ProcessHandle](ProcessHandle.md) |
-| try_open_thread | [try_open_thread](try_open_thread.md) |
-| winapi module overview | [README](README.md) |
+| Module overview | [winapi.rs](README.md) |
+| Thread handle factory | [get_thread_handle](get_thread_handle.md) |
+| Lower-level thread opener | [try_open_thread](try_open_thread.md) |
+| Process handle counterpart | [ProcessHandle](ProcessHandle.md) |
+| Thread stats cache | [ThreadStats](../scheduler.rs/ThreadStats.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

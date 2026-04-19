@@ -1,6 +1,6 @@
-# IdealProcessorState 类型 (scheduler.rs)
+# IdealProcessorState 结构体 (scheduler.rs)
 
-跟踪单个线程的当前和先前理想处理器分配。理想处理器是 Windows 调度提示，告知内核线程应优先在哪个逻辑处理器上运行。此结构体同时记录当前分配和先前分配，以便应用引擎能够检测变更并避免冗余的 `SetThreadIdealProcessorEx` 调用。
+跟踪单个线程的理想处理器分配状态。存储当前和先前的处理器组/编号对，使服务能够检测变化并避免在轮询迭代之间进行冗余的 `SetThreadIdealProcessorEx` 调用。
 
 ## 语法
 
@@ -17,40 +17,66 @@ pub struct IdealProcessorState {
 
 ## 成员
 
-| 字段 | 类型 | 描述 |
-|------|------|------|
-| `current_group` | `u16` | 当前分配的理想处理器所在的处理器组编号。在具有 64 个或更少逻辑处理器的系统上，只有组 0。 |
-| `current_number` | `u8` | `current_group` 中从零开始的处理器编号，即线程当前的理想处理器。 |
-| `previous_group` | `u16` | 先前分配的理想处理器所在的处理器组。用于检测自上次迭代以来是否发生了重新分配。 |
-| `previous_number` | `u8` | `previous_group` 中在最近一次更改之前线程的理想处理器编号。 |
-| `is_assigned` | `bool` | 指示服务是否曾为此线程分配过理想处理器。当为 `false` 时，`current_*` 和 `previous_*` 字段包含默认值（全部为零），不代表实际分配。 |
+| 成员 | 类型 | 描述 |
+|--------|------|-------------|
+| `current_group` | `u16` | 当前分配的理想处理器所在的处理器组。在只有单个处理器组的系统上（≤64 个逻辑处理器），此值始终为 `0`。 |
+| `current_number` | `u8` | `current_group` 中当前设置为线程理想处理器的逻辑处理器编号。 |
+| `previous_group` | `u16` | 上一次轮询迭代中理想处理器所在的处理器组。用于检测分配是否发生了变化。 |
+| `previous_number` | `u8` | 上一次轮询迭代中 `previous_group` 内的逻辑处理器编号。 |
+| `is_assigned` | `bool` | 如果该线程已被服务显式分配了理想处理器，则为 `true`。当为 `false` 时，线程保留其操作系统默认的理想处理器。由 [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) 用于区分受管理线程和未受管理线程。 |
+
+## 方法
+
+### new
+
+```rust
+pub fn new() -> Self
+```
+
+创建一个新的 `IdealProcessorState`，所有字段清零，`is_assigned` 设置为 `false`。
+
+**返回值**
+
+`IdealProcessorState` — 表示未分配线程的默认初始化状态。
+
+### Default
+
+```rust
+impl Default for IdealProcessorState {
+    fn default() -> Self
+}
+```
+
+委托给 `IdealProcessorState::new()`。
 
 ## 备注
 
-- 所有字段通过 `IdealProcessorState::new()` 和 `Default` 实现初始化为零/`false`。
-- 该结构体派生了 `Clone` 和 `Copy`，使得跨迭代的快照和比较操作成本很低。
-- previous/current 对使应用引擎能够实现变更检测：如果 `(current_group, current_number)` 等于 `(previous_group, previous_number)` 且 `is_assigned` 为 `true`，则无需进行 Win32 调用，因为分配没有变化。
-- 处理器组在具有超过 64 个逻辑处理器的系统上相关（例如双路服务器硬件或高核心数工作站）。在典型的消费级硬件上，`current_group` 和 `previous_group` 始终为 `0`。
-- 此结构体作为 `ideal_processor` 字段嵌入在 [`ThreadStats`](ThreadStats.md) 中。
+- `current_*` / `previous_*` 的分离设计使得无需查询操作系统即可进行变更检测。在每个应用周期中，调用方将新值写入 `current_group` 和 `current_number`，然后与 `previous_group` 和 `previous_number` 进行比较，以决定是否需要调用 `SetThreadIdealProcessorEx`。
+- 成功更新后，调用方将 `current_*` 复制到 `previous_*` 以供下一次迭代使用。
+- 该结构体派生了 `Copy`，因为它是一个小型的、仅栈分配的值类型（10 字节），没有堆分配或资源所有权。
+- `is_assigned` 标志由 `select_top_threads_with_hysteresis` 通过其 `is_currently_assigned` 回调进行检查，以确定线程是否已经占用了一个 Prime 槽位。这是防止提升/降级抖动的迟滞逻辑的关键输入。
+
+### 与 Windows PROCESSOR_NUMBER 的关系
+
+`current_group`/`current_number` 对直接映射到 [SetThreadIdealProcessorEx](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadidealprocessorex) 和 [GetThreadIdealProcessorEx](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-getthreadidealprocessorex) 使用的 Windows `PROCESSOR_NUMBER` 结构体。服务对这些 API 的封装位于 [set_thread_ideal_processor_ex](../winapi.rs/set_thread_ideal_processor_ex.md) 和 [get_thread_ideal_processor_ex](../winapi.rs/get_thread_ideal_processor_ex.md)。
 
 ## 要求
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `scheduler.rs` |
-| 使用者 | [`ThreadStats`](ThreadStats.md)、`apply::apply_ideal_processors` |
-| Win32 API | 对应 `SetThreadIdealProcessorEx` / `GetThreadIdealProcessorEx` 使用的 `PROCESSOR_NUMBER` 结构体 |
-| 权限 | 无（纯数据结构体） |
+| | |
+|---|---|
+| **模块** | `src/scheduler.rs` |
+| **调用方** | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md)、[apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md)、[apply_prime_threads_demote](../apply.rs/apply_prime_threads_demote.md) |
+| **依赖** | 无（纯数据结构体） |
+| **权限** | 无 |
 
 ## 另请参阅
 
-| 参考 | 链接 |
-|------|------|
-| ThreadStats | [ThreadStats](ThreadStats.md) |
-| PrimeThreadScheduler | [PrimeThreadScheduler](PrimeThreadScheduler.md) |
-| ProcessStats | [ProcessStats](ProcessStats.md) |
-| apply_thread_level | [apply_thread_level](../main.rs/apply_thread_level.md) |
-| scheduler 模块概述 | [README](README.md) |
+| 主题 | 链接 |
+|-------|------|
+| 模块概览 | [scheduler.rs](README.md) |
+| 父结构体 | [ThreadStats](ThreadStats.md) |
+| 理想处理器设置封装 | [set_thread_ideal_processor_ex](../winapi.rs/set_thread_ideal_processor_ex.md) |
+| 理想处理器获取封装 | [get_thread_ideal_processor_ex](../winapi.rs/get_thread_ideal_processor_ex.md) |
+| 带迟滞机制的线程选择 | [PrimeThreadScheduler](PrimeThreadScheduler.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

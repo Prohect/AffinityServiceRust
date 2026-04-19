@@ -1,13 +1,11 @@
 # print_cli_help function (cli.rs)
 
-Prints a detailed help message to the log output that covers every command-line argument, operating mode, and debug/testing option supported by AffinityServiceRust. This is the extended counterpart to [print_help](print_help.md) and is invoked when the user passes `-helpall`.
+Prints the detailed CLI help message to the console or log, covering all command-line options including basic arguments, operating modes, and debug/testing options.
 
 ## Syntax
 
-```AffinityServiceRust/src/cli.rs#L139-141
-pub fn print_cli_help() {
-    // ...
-}
+```rust
+pub fn print_cli_help()
 ```
 
 ## Parameters
@@ -16,49 +14,44 @@ This function takes no parameters.
 
 ## Return value
 
-This function does not return a value. Output is written to the current log target via the `log!` macro.
+This function does not return a value.
 
 ## Remarks
 
-Unlike [print_help](print_help.md), this function does **not** force console mode by setting `get_use_console!()`. It is expected that the caller has already enabled console output before invoking this function (as [print_help_all](print_help_all.md) does).
+Unlike [print_help](print_help.md), which displays only the most common options, `print_cli_help` outputs the complete reference for every supported command-line flag and argument. The output is organized into three sections:
 
-The detailed help text is organized into the following sections:
+1. **Basic Arguments** — General-purpose flags such as `-help`, `-console`, `-noUAC`, `-config`, `-find`, `-blacklist`, `-interval`, and `-resolution`.
+2. **Operating Modes** — Task-specific modes including `-validate`, `-processlogs`, `-dryrun`, `-convert`, `-autogroup`, and the `-in` / `-out` file arguments they consume.
+3. **Debug & Testing Options** — Flags intended for development and troubleshooting: `-loop`, `-logloop`, `-noDebugPriv`, `-noIncBasePriority`, `-no_etw`, and `-continuous_process_level_apply`.
 
-| Section | Content |
-|---------|---------|
-| **Basic Arguments** | `-help`, `-console`, `-noUAC`, `-config`, `-find`, `-blacklist`, `-interval`, `-resolution` |
-| **Operating Modes** | `-validate`, `-processlogs`, `-dryrun`, `-convert`, `-autogroup`, `-in`, `-out` |
-| **Debug & Testing Options** | `-loop`, `-logloop`, `-noDebugPriv`, `-noIncBasePriority`, `-no_etw`, `-continuous_process_level_apply` |
-| **Debugging** | Quick-start debug commands for both non-admin and admin scenarios, including a note about UAC and console session limitations |
+The output also includes a **Debugging** section with ready-to-paste example command lines for both non-admin (console) and admin (log-file) testing scenarios, along with a note explaining that `-console` output is lost when UAC elevation spawns a new session.
 
-Each argument entry documents:
-- The flag name(s) and any accepted aliases (e.g., `-noUAC | -nouac`)
-- Whether the flag requires a subsequent value argument
-- The default value when not specified
-- Valid ranges or constraints (e.g., interval minimum of 16 ms)
+### Console side effect
 
-### Platform notes
+This function does **not** set the console output flag itself. It is the caller's responsibility to ensure console output is enabled before calling this function. In practice, [print_help_all](print_help_all.md) sets the console flag before delegating to `print_cli_help`.
 
-The note at the end of the help text warns that when the process elevates via UAC, a new logon session is created. Console output from the elevated session cannot be displayed in the original terminal window, so log files should be used instead.
+### Output mechanism
+
+All output is written through the project's `log!` macro, which routes to either the console or the log file depending on the current `use_console` global state.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `cli.rs` |
-| Callers | [print_help_all](print_help_all.md) |
-| Callees | `log!` macro (see [logging.rs](../logging.rs/README.md)) |
-| Privileges | None |
+| | |
+|---|---|
+| **Module** | `src/cli.rs` |
+| **Callers** | [print_help_all](print_help_all.md) |
+| **Callees** | `log!` macro |
+| **Privileges** | None |
 
 ## See Also
 
-| Resource | Link |
-|----------|------|
-| print_help | [print_help](print_help.md) |
-| print_help_all | [print_help_all](print_help_all.md) |
-| print_config_help | [print_config_help](print_config_help.md) |
-| parse_args | [parse_args](parse_args.md) |
-| CliArgs | [CliArgs](CliArgs.md) |
+| Topic | Link |
+|-------|------|
+| Module overview | [cli.rs](README.md) |
+| Basic help | [print_help](print_help.md) |
+| Config format help | [print_config_help](print_config_help.md) |
+| Combined help | [print_help_all](print_help_all.md) |
+| Argument parser | [parse_args](parse_args.md) |
+| CLI state struct | [CliArgs](CliArgs.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

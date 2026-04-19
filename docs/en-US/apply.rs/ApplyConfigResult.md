@@ -1,10 +1,10 @@
-# ApplyConfigResult type (apply.rs)
+# ApplyConfigResult struct (apply.rs)
 
-The `ApplyConfigResult` struct accumulates human-readable change descriptions and error messages produced during a single configuration-apply pass for one process. Each function in the `apply` module receives a mutable reference to an `ApplyConfigResult` and appends entries to record what was changed or what failed. After all apply functions have run, the caller inspects the result to emit log output or take corrective action.
+Accumulator for collecting changes and errors that occur during configuration application. Every `apply_*` function in the module receives a mutable reference to this struct and appends human-readable messages describing what was changed or what failed.
 
 ## Syntax
 
-```AffinityServiceRust/src/apply.rs#L32-35
+```AffinityServiceRust/src/apply.rs#L31-35
 #[derive(Debug, Default)]
 pub struct ApplyConfigResult {
     pub changes: Vec<String>,
@@ -16,47 +16,79 @@ pub struct ApplyConfigResult {
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `changes` | `Vec<String>` | A list of human-readable strings describing each configuration change that was successfully applied (or would be applied in dry-run mode). Each entry follows the format `"$operation details"` and is intended to be prefixed by the caller with the process ID and config name. |
-| `errors` | `Vec<String>` | A list of human-readable strings describing each error that occurred during the apply pass. Each entry follows the format `"$fn_name: [$operation][$error_message] details"`. Errors are deduplicated at the call site via [`log_error_if_new`](log_error_if_new.md) so that repeated failures for the same pid/operation/error-code are not re-added. |
+| `changes` | `Vec<String>` | Descriptions of settings that were successfully applied or would be applied in dry-run mode. Format: `"$operation details"`, automatically prefixed by the caller with `"{pid:>5}::{config.name}::"`. |
+| `errors` | `Vec<String>` | Descriptions of failures encountered during application. Format: `"$fn_name: [$operation][$error_message] details"`. Only unique errors are recorded (see [log_error_if_new](log_error_if_new.md)). |
 
 ## Methods
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `new` | `pub fn new() -> Self` | Creates a new, empty `ApplyConfigResult`. Delegates to `Default::default()`. |
-| `add_change` | `pub fn add_change(&mut self, change: String)` | Appends a change description string to the `changes` vector. Marked `#[inline(always)]`. |
-| `add_error` | `pub fn add_error(&mut self, error: String)` | Appends an error description string to the `errors` vector. Marked `#[inline(always)]`. |
-| `is_empty` | `pub fn is_empty(&self) -> bool` | Returns `true` if both `changes` and `errors` are empty, indicating no work was performed and no failures occurred. |
+### new
+
+```AffinityServiceRust/src/apply.rs#L38-40
+pub fn new() -> Self
+```
+
+Creates a new `ApplyConfigResult` with empty `changes` and `errors` vectors. Delegates to `Default::default()`.
+
+### add_change
+
+```AffinityServiceRust/src/apply.rs#L45-47
+pub fn add_change(&mut self, change: String)
+```
+
+Appends a change description to the `changes` vector.
+
+**Parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `change` | `String` | A human-readable description of the applied (or dry-run) change. |
+
+### add_error
+
+```AffinityServiceRust/src/apply.rs#L51-53
+pub fn add_error(&mut self, error: String)
+```
+
+Appends an error description to the `errors` vector.
+
+**Parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `error` | `String` | A human-readable description of the failure, including operation tag and Win32/NTSTATUS error text. |
+
+### is_empty
+
+```AffinityServiceRust/src/apply.rs#L55-57
+pub fn is_empty(&self) -> bool
+```
+
+Returns `true` if both `changes` and `errors` are empty, indicating that no observable action occurred for this process during the current apply cycle.
+
+**Return value**
+
+`bool` — `true` when neither changes nor errors were recorded.
 
 ## Remarks
 
-- `ApplyConfigResult` derives `Debug` and `Default`. The `Default` implementation produces an instance with two empty `Vec`s, which is identical to calling `new()`.
-- The struct is not thread-safe on its own; callers pass it as `&mut ApplyConfigResult` through the sequential apply pipeline for a single process.
-- Change strings are designed to be concatenated with a process-identifying prefix (e.g., `"{pid:>5}::{config.name}::"`) by the caller. The `apply` functions themselves do **not** include the prefix.
-- Error strings are self-contained and include the originating function name, the Windows API operation that failed, and the decoded error code for direct logging.
-- The `is_empty` method is used by callers to avoid emitting empty log entries when a process was already in the desired state.
+- All `apply_*` functions take `&mut ApplyConfigResult` as their last parameter, following a consistent convention throughout the module.
+- The caller (in `main.rs`) uses `is_empty()` to skip log output for processes that required no changes.
+- `add_change` and `add_error` are marked `#[inline(always)]` because they are called on every hot path in the apply loop.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `apply.rs` |
-| Crate | `AffinityServiceRust` |
-| Dependencies | Standard library only (`Vec<String>`) |
-| Callers | All `apply_*` functions in the module; orchestrator code in `scheduler.rs` and `main.rs` |
-| Platform | Windows (content is platform-specific, but the struct itself is platform-independent) |
+| | |
+|---|---|
+| **Module** | `src/apply.rs` |
+| **Callers** | All `apply_*` functions, [log_error_if_new](log_error_if_new.md), main apply loop |
+| **Dependencies** | None (plain data struct) |
+| **Privileges** | None |
 
 ## See Also
 
-| Reference | Link |
-|-----------|------|
-| apply module overview | [`README`](README.md) |
-| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
-| apply_priority | [`apply_priority`](apply_priority.md) |
-| apply_affinity | [`apply_affinity`](apply_affinity.md) |
-| apply_io_priority | [`apply_io_priority`](apply_io_priority.md) |
-| apply_memory_priority | [`apply_memory_priority`](apply_memory_priority.md) |
-| ProcessLevelConfig | [`config.rs/ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
+| Topic | Link |
+|-------|------|
+| Module overview | [apply.rs](README.md) |
+| Error deduplication helper | [log_error_if_new](log_error_if_new.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

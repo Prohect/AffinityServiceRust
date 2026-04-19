@@ -1,50 +1,80 @@
 # config module (AffinityServiceRust)
 
-The `config` module is the configuration engine for AffinityServiceRust. It is responsible for parsing, validating, and hot-reloading the INI-style configuration file that defines CPU affinity, process priority, CPU set, I/O priority, memory priority, prime-thread scheduling, and ideal-processor rules for Windows processes. The module also provides utilities for converting Process Lasso configurations and auto-grouping duplicate rules.
-
-## Functions
-
-| Function | Description |
-|----------|-------------|
-| [parse_cpu_spec](parse_cpu_spec.md) | Parses a CPU specification string (ranges, hex masks, individual indices) into a sorted list of CPU indices. |
-| [mask_to_cpu_indices](mask_to_cpu_indices.md) | Converts a 64-bit bitmask into a list of CPU index positions where bits are set. |
-| [cpu_indices_to_mask](cpu_indices_to_mask.md) | Converts a slice of CPU indices into a `usize` bitmask (≤64 cores). |
-| [format_cpu_indices](format_cpu_indices.md) | Formats a slice of CPU indices into a human-readable compact range string. |
-| [resolve_cpu_spec](resolve_cpu_spec.md) | Resolves a CPU specification that may reference a `*alias` or a literal spec into CPU indices. |
-| [collect_members](collect_members.md) | Splits a colon-delimited string of process names into a list of lowercase member names. |
-| [parse_constant](parse_constant.md) | Parses and applies a `@NAME = value` constant definition to the configuration result. |
-| [parse_alias](parse_alias.md) | Parses and registers a `*name = cpu_spec` alias definition. |
-| [parse_ideal_processor_spec](parse_ideal_processor_spec.md) | Parses an ideal-processor specification string with optional module-prefix filtering into a list of rules. |
-| [collect_group_block](collect_group_block.md) | Collects process names from a multi-line `{ … }` group block until the closing brace. |
-| [parse_and_insert_rules](parse_and_insert_rules.md) | Parses rule fields from a config line and inserts process-level and thread-level config entries for all group members. |
-| [read_config](read_config.md) | Reads and parses an entire configuration file, returning a fully populated `ConfigResult`. |
-| [read_bleack_list](read_bleack_list.md) | Reads a text file and returns non-empty, non-comment lines as a list of lowercase strings, and logs the count of loaded items. |
-| [read_utf16le_file](read_utf16le_file.md) | Reads a file encoded as UTF-16 LE and returns its content as a Rust `String`. |
-| [parse_mask](parse_mask.md) | Convenience function that parses a CPU spec string and returns the corresponding `usize` bitmask. |
-| [convert](convert.md) | Converts a Process Lasso configuration file into AffinityServiceRust's native format. |
-| [sort_and_group_config](sort_and_group_config.md) | Auto-groups processes that share identical rule settings to reduce configuration duplication. |
-| [hotreload_blacklist](hotreload_blacklist.md) | Watches the blacklist file for modifications and reloads it when changed. |
-| [hotreload_config](hotreload_config.md) | Watches the configuration file for modifications and hot-reloads it when changed. |
+The `config` module handles parsing, validation, and management of configuration files for AffinityServiceRust. It defines rule structures for process-level and thread-level scheduling policies and implements a multi-section INI-like config parser with support for CPU aliases (`*name = spec`), named groups (`name { members }`), tuning constants (`@NAME = value`), and complex CPU specifications (ranges, hex masks, semicolon-separated indices). The module also provides hot-reload capability for both config and blacklist files, a converter from Process Lasso format, and an auto-grouping utility that merges processes sharing identical rules.
 
 ## Structs
 
-| Struct | Description |
-|--------|-------------|
-| [PrimePrefix](PrimePrefix.md) | Associates a thread start-module prefix with optional CPU affinity and thread priority for prime-thread scheduling. |
-| [IdealProcessorRule](IdealProcessorRule.md) | Maps a set of CPUs to optional module-name prefixes for ideal-processor assignment. |
-| [ProcessLevelConfig](ProcessLevelConfig.md) | Holds all process-level settings for a single process rule: priority, affinity, CPU set, I/O priority, and memory priority. |
-| [ThreadLevelConfig](ThreadLevelConfig.md) | Holds all thread-level settings for a single process rule: prime-thread CPUs, prefixes, tracking count, and ideal-processor rules. |
-| [ConfigConstants](ConfigConstants.md) | Tunable numeric constants that control the prime-thread scheduler's behavior. |
-| [ConfigResult](ConfigResult.md) | Aggregated output of the configuration parser, containing all parsed rules, constants, statistics, errors, and warnings. |
+| Name | Description |
+|------|-------------|
+| [PrimePrefix](PrimePrefix.md) | Associates a module name prefix with a CPU set and optional thread priority boost for prime thread matching. |
+| [IdealProcessorRule](IdealProcessorRule.md) | Maps thread start module prefixes to ideal CPU assignments. |
+| [ProcessLevelConfig](ProcessLevelConfig.md) | Per-process rule applied once: priority, affinity, CPU set, IO priority, memory priority. |
+| [ThreadLevelConfig](ThreadLevelConfig.md) | Per-process thread-level rule applied every polling iteration: prime threads, ideal processors, tracking. |
+| [ConfigConstants](ConfigConstants.md) | Tuning constants for hysteresis in prime thread selection (streak, thresholds). |
+| [ConfigResult](ConfigResult.md) | Aggregate result of config parsing: rule maps by grade, counters, errors, and warnings. |
+
+## Functions
+
+| Name | Description |
+|------|-------------|
+| [parse_cpu_spec](parse_cpu_spec.md) | Parses CPU specification strings (ranges, hex masks, semicolons) into a sorted list of CPU indices. |
+| [mask_to_cpu_indices](mask_to_cpu_indices.md) | Converts a 64-bit bitmask to a sorted list of CPU indices. |
+| [cpu_indices_to_mask](cpu_indices_to_mask.md) | Converts a CPU index slice to a `usize` bitmask. |
+| [format_cpu_indices](format_cpu_indices.md) | Formats a CPU index slice as a compact range string like `"0-7,12-19"`. |
+| [parse_mask](parse_mask.md) | Convenience wrapper: parses a CPU spec string directly to a bitmask. |
+| [resolve_cpu_spec](resolve_cpu_spec.md) | Resolves a CPU spec that may be a `*alias` reference or a literal spec. |
+| [collect_members](collect_members.md) | Splits colon-separated process names into a member list. |
+| [parse_constant](parse_constant.md) | Parses `@NAME = value` constant definitions (MIN_ACTIVE_STREAK, KEEP_THRESHOLD, ENTRY_THRESHOLD). |
+| [parse_alias](parse_alias.md) | Parses `*name = cpu_spec` alias definitions. |
+| [parse_ideal_processor_spec](parse_ideal_processor_spec.md) | Parses ideal processor specifications like `*alias@prefix1;prefix2`. |
+| [collect_group_block](collect_group_block.md) | Collects multi-line group block members between `{` and `}`. |
+| [parse_and_insert_rules](parse_and_insert_rules.md) | Main rule parser: splits fields, validates, creates configs, inserts into [ConfigResult](ConfigResult.md) by grade. |
+| [read_config](read_config.md) | Main config file reader. Handles constants, aliases, groups, and single-line rules. |
+| [read_bleack_list](read_bleack_list.md) | Reads a blacklist file (one process name per line, `#` comments). |
+| [read_utf16le_file](read_utf16le_file.md) | Reads a UTF-16LE encoded file and returns it as a Rust `String`. |
+| [convert](convert.md) | Converts Process Lasso config format to AffinityServiceRust format. |
+| [sort_and_group_config](sort_and_group_config.md) | Auto-groups rules with identical settings into named group blocks. |
+| [hotreload_blacklist](hotreload_blacklist.md) | Hot-reloads the blacklist file if it has been modified on disk. |
+| [hotreload_config](hotreload_config.md) | Hot-reloads the config file if modified, resetting scheduler state on success. |
+
+## Config File Format
+
+The configuration file uses a line-oriented format with several section types:
+
+```
+# Comments start with #
+
+# Constants (tuning parameters)
+@MIN_ACTIVE_STREAK = 3
+@KEEP_THRESHOLD = 0.05
+@ENTRY_THRESHOLD = 0.1
+
+# CPU aliases
+*pcore = 0-7
+*ecore = 8-19
+
+# Single-line rule
+process.exe:priority:affinity:cpuset:prime_cpus:io_priority:memory_priority:ideal_processor:grade
+
+# Named group rule
+group_name { proc1.exe: proc2.exe: proc3.exe }:normal:*ecore:0:0:low:none:0:1
+
+# Multi-line group
+group_name {
+    proc1.exe: proc2.exe
+    proc3.exe
+}:normal:*ecore:0:0:low:none:0:1
+```
 
 ## See Also
 
-| Resource | Link |
-|----------|------|
-| cli module | [cli.rs overview](../cli.rs/README.md) |
-| scheduler module | [scheduler.rs overview](../scheduler.rs/README.md) |
-| priority module | [priority.rs overview](../priority.rs/README.md) |
-| apply module | [apply.rs overview](../apply.rs/README.md) |
+| Topic | Link |
+|-------|------|
+| Enforcement engine | [apply.rs](../apply.rs/README.md) |
+| Priority enums | [ProcessPriority](../priority.rs/ProcessPriority.md), [IOPriority](../priority.rs/IOPriority.md), [MemoryPriority](../priority.rs/MemoryPriority.md), [ThreadPriority](../priority.rs/ThreadPriority.md) |
+| Prime thread scheduler | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
+| CLI arguments | [CliArgs](../cli.rs/CliArgs.md) |
+| Collection types | [List / HashMap](../collections.rs/README.md) |
+| Main service loop | [main.rs](../main.rs/README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

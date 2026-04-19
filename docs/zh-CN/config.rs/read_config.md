@@ -1,120 +1,112 @@
 # read_config 函数 (config.rs)
 
-读取并解析整个 AffinityServiceRust 配置文件，返回完整填充的 [`ConfigResult`](ConfigResult.md)，其中包含所有进程级规则、线程级规则、常量、别名、分组展开，以及解析过程中产生的所有错误和警告。这是从磁盘加载配置的主要入口点。
+主配置文件读取器。打开指定的文件，逐行迭代，并根据前缀字符将每行分派给适当的子解析器。返回完全填充的 [ConfigResult](ConfigResult.md)，包含所有已解析的规则、别名、常量、组、错误和警告。
 
 ## 语法
 
-```AffinityServiceRust/src/config.rs#L743-875
+```rust
 pub fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult
 ```
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `path` | `P: AsRef<Path>` | 要读取的配置文件的文件系统路径（例如 `"config.ini"`）。接受任何实现 `AsRef<Path>` 的类型，包括 `&str`、`String` 和 `PathBuf`。 |
+`path: P`
+
+配置文件的路径。接受任何实现 `AsRef<Path>` 的类型，包括 `&str`、`String` 和 `PathBuf`。文件应为 UTF-8 编码，每行一个指令。
 
 ## 返回值
 
-类型：[`ConfigResult`](ConfigResult.md)
+[ConfigResult](ConfigResult.md) — 包含以下内容的结构体：
 
-完整填充的配置结果结构体，包含：
+- `process_level_configs` 和 `thread_level_configs` 映射，按等级和进程名填充已解析的规则。
+- 从 `@CONSTANT = value` 指令填充的 `constants`（如果未指定则使用默认值）。
+- 别名、组、组成员、进程规则、冗余规则和线程级配置的计数器。
+- `errors` — 致命解析错误，使配置无效。
+- `warnings` — 非致命问题，会被记录但不会阻止配置被使用。
 
-- `process_level_configs` — 按等级组织的所有已解析的进程级规则。
-- `thread_level_configs` — 按等级组织的所有已解析的线程级规则。
-- `constants` — 从 `@NAME = value` 行解析的可调调度器常量（或默认值）。
-- 别名、分组和规则计数，用于诊断报告。
-- `errors` — 致命错误列表。当非空时，配置被视为无效（`is_valid()` 返回 `false`）。
-- `warnings` — 非致命警告列表。
-
-如果文件无法打开，函数返回的 `ConfigResult` 的 `errors` 向量中包含一条错误消息，其他所有字段为默认值。
+如果文件无法打开，函数返回带有单条错误消息且无规则的 `ConfigResult`。
 
 ## 备注
 
-### 文件格式概述
+### 行分派
 
-配置文件是面向行的文本格式。每一行是以下之一：
+函数将所有行读入内存，然后使用基于索引的循环进行迭代（以支持多行组块，这些组块会将索引推进超过一行）。每行非空、非注释行根据其前导字符进行分派：
 
-| 行类型 | 前缀 | 处理程序 | 描述 |
-|--------|------|---------|------|
-| 注释 | `#` | 跳过 | 注释和空行被忽略。 |
-| 常量 | `@` | [`parse_constant`](parse_constant.md) | 调度器调优常量（例如 `@MIN_ACTIVE_STREAK = 3`）。 |
-| 别名 | `*` | [`parse_alias`](parse_alias.md) | 命名 CPU 规格（例如 `*pcore = 0-7`）。 |
-| 分组块 | `{` | [`collect_group_block`](collect_group_block.md) + [`parse_and_insert_rules`](parse_and_insert_rules.md) | 用花括号括起来的多进程分组规则。 |
-| 进程规则 | *（其他）* | [`parse_and_insert_rules`](parse_and_insert_rules.md) | 单独的 `name:priority:affinity:...` 规则行。 |
+| 前缀 | 处理器 | 描述 |
+|--------|---------|-------------|
+| `#` | (跳过) | 注释行 — 完全忽略。 |
+| `@` | [parse_constant](parse_constant.md) | 期望 `@NAME = value`。解析调优常量，如 `MIN_ACTIVE_STREAK`、`KEEP_THRESHOLD`、`ENTRY_THRESHOLD`。 |
+| `*` | [parse_alias](parse_alias.md) | 期望 `*name = cpu_spec`。定义命名 CPU 别名，供后续规则行引用。 |
+| 包含 `{` | 组块 | 行包含组定义。如果同一行上有 `}`，则为内联组；否则 [collect_group_block](collect_group_block.md) 读取后续行直到找到 `}`。 |
+| (其他) | 单行规则 | 行按 `:` 分割，第一段是进程名。其余段转发给 [parse_and_insert_rules](parse_and_insert_rules.md)。 |
 
-### 解析算法
+### 解析顺序
 
-1. 打开文件并读入缓冲读取器。所有行被收集到 `Vec<String>` 中。
-2. 初始化一个本地 `cpu_aliases` 哈希映射，用于存储解析过程中遇到的别名定义。
-3. 解析器使用索引变量 `i` 顺序遍历各行：
-   - **空行和注释**（以 `#` 为前缀）被跳过。
-   - **常量**（以 `@` 为前缀）按 `=` 拆分并分派给 [`parse_constant`](parse_constant.md)。
-   - **别名**（以 `*` 为前缀）按 `=` 拆分并分派给 [`parse_alias`](parse_alias.md)。解析后的别名存储在 `cpu_aliases` 中，供后续规则行使用。
-   - **分组块**（包含 `{` 的行）有两种子情况处理：
-     - *单行分组*：`{` 和 `}` 都出现在同一行。成员在行内提取。
-     - *多行分组*：`{` 在本行但 `}` 不在。解析器调用 [`collect_group_block`](collect_group_block.md) 向前扫描后续行直到找到 `}`，将 `i` 推进到右花括号之后。
-     - 在两种情况下，分组名称（`{` 之前的文本）被捕获用于诊断。空名称会生成标签 `"anonymous@L{line_number}"`。
-     - 收集到的成员和规则后缀被传递给 [`parse_and_insert_rules`](parse_and_insert_rules.md)。
-   - **单独规则**：不匹配以上任何模式的行按 `:` 拆分，第一个元素作为进程名称，其余作为规则字段。至少需要 3 个冒号分隔的部分（名称、优先级、亲和性）。名称被转为小写并传递给 [`parse_and_insert_rules`](parse_and_insert_rules.md)。
-4. 处理完所有行后，返回填充好的 `ConfigResult`。
+指令按文件顺序处理。这意味着：
 
-### 错误处理策略
+1. **常量** (`@`) 应出现在依赖调优行为的任何规则之前，尽管它们可以出现在任何位置。
+2. **别名** (`*`) 必须在引用它们的任何规则行之前定义。对未定义别名的前向引用会产生错误。
+3. **组和规则** 可以以任何顺序出现；同一进程名的后面定义会覆盖前面的定义，并带有警告。
 
-解析器被设计为**弹性的**——它收集所有错误和警告，而不是在第一个问题时中止。这允许用户在一次验证遍历中看到配置文件中的所有问题。致命错误（例如，未闭合的分组、字段太少、无效的常量语法）追加到 `result.errors`。非致命问题（例如，未知优先级字符串、空分组、重复规则）追加到 `result.warnings`。
+### 组处理
 
-### 关键错误条件
+组块有两种形式：
 
-| 条件 | 严重性 | 消息格式 |
-|------|--------|---------|
-| 文件无法打开 | 错误 | `"Cannot open config file: {io_error}"` |
-| 常量行缺少 `=` | 错误 | `"Line {n}: Invalid constant - expected '@NAME = value'"` |
-| 别名行缺少 `=` | 错误 | `"Line {n}: Invalid alias - expected '*name = cpu_spec'"` |
-| 未闭合的分组块 | 错误 | `"Line {n}: Unclosed group '{label}' - missing }"` |
-| 没有成员的分组 | 警告 | `"Line {n}: Group '{label}' has no members"` |
-| 分组没有规则后缀 | 错误 | `"Line {n}: Group '{label}' missing rule - use }:priority:affinity,..."` |
-| 单独行的字段少于 3 个 | 错误 | `"Line {n}: Too few fields - expected name:priority:affinity,..."` |
-| 空进程名称 | 错误 | `"Line {n}: Empty process name"` |
+**内联组**（单行）：
+```
+group_name { proc1.exe: proc2.exe }:normal:*ecore:0:0:low:none:0:1
+```
 
-### 行号
+**多行组**：
+```
+group_name {
+    proc1.exe: proc2.exe
+    proc3.exe
+}:normal:*ecore:0:0:low:none:0:1
+```
 
-错误和警告消息中的行号从 1 开始（`line_number = i + 1`），与用户在文本编辑器中看到的一致。
+两种情况下，组名从 `{` 之前的文本中提取。如果名称为空，则从行号生成匿名标签 `"anonymous@L{N}"`。成员由 [collect_members](collect_members.md) 收集，`}:` 后的规则后缀被分割并转发给 [parse_and_insert_rules](parse_and_insert_rules.md)。未闭合的组（缺少 `}`）会产生致命错误。
 
-### 顺序约束
+### 单行规则处理
 
-- **别名必须在使用前定义。**解析器顺序处理各行，因此如果对应的 `*alias = cpu_spec` 定义出现在文件的更后面位置，规则中的 `*alias` 引用将无法解析。
-- **常量**可以出现在任何位置并立即应用；它们不影响规则解析。
-- **规则**可以以任何顺序出现。重复定义会覆盖先前的定义并发出警告。
+非组、非指令行应具有以下格式：
 
-### 热重载使用
+```
+process.exe:priority:affinity:cpuset:prime:io:memory:ideal:grade
+```
 
-`read_config` 在启动时和 [`hotreload_config`](hotreload_config.md) 进行热重载时都会被调用。在热重载期间，函数将修改后的文件解析为新的 `ConfigResult`。如果 `is_valid()` 为 `true`，则新配置替换活跃配置；否则保留先前的配置并记录错误。
+必需的字段最少为 3 个（名称、优先级、亲和性）。少于该数量的字段会产生致命错误。进程名（字段 0）转为小写，作为单元素成员列表传递给 [parse_and_insert_rules](parse_and_insert_rules.md)。
 
-## 要求
+### 错误处理
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `config.rs` |
-| 可见性 | `pub` |
-| 调用方 | `main.rs`（启动时）、[`hotreload_config`](hotreload_config.md)（运行时重载） |
-| 被调用方 | [`parse_constant`](parse_constant.md)、[`parse_alias`](parse_alias.md)、[`collect_group_block`](collect_group_block.md)、[`collect_members`](collect_members.md)、[`parse_and_insert_rules`](parse_and_insert_rules.md) |
-| 依赖 | [`ConfigResult`](ConfigResult.md)、`HashMap`、`List`、[`collections.rs`](../collections.rs/README.md) 中的 `CONSUMER_CPUS` |
-| I/O | 通过 `std::fs::File` 和 `std::io::BufReader` 读取文件 |
-| 权限 | 配置文件路径的文件系统读取权限 |
+- 如果配置文件无法打开（权限、文件缺失），添加单条错误并立即返回。
+- 来自子解析器（常量、别名、规则）的解析错误累积在 `ConfigResult.errors` 和 `ConfigResult.warnings` 中。调用方应在使用结果之前检查 [is_valid](ConfigResult.md)。
 
-## 另请参阅
+### CPU 别名范围
 
-| 资源 | 链接 |
-|------|------|
-| ConfigResult | [ConfigResult](ConfigResult.md) |
-| parse_constant | [parse_constant](parse_constant.md) |
-| parse_alias | [parse_alias](parse_alias.md) |
-| collect_group_block | [collect_group_block](collect_group_block.md) |
-| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| hotreload_config | [hotreload_config](hotreload_config.md) |
-| convert | [convert](convert.md) |
-| cli 模块 | [cli.rs 概述](../cli.rs/README.md) |
-| config 模块概述 | [README](README.md) |
+别名存储在局限于 `read_config` 调用的本地 `HashMap<String, List<[u32; CONSUMER_CPUS]>>` 中。它们不会保留在返回的 `ConfigResult` 中——只保留 `aliases_count`。这意味着别名是解析时的概念，在存储到规则结构体之前完全解析为具体的 CPU 索引列表。
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+## 需求
+
+| | |
+|---|---|
+| **模块** | [`src/config.rs`](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf/src/config.rs) |
+| **调用方** | [hotreload_config](hotreload_config.md), 主服务启动 |
+| **被调用方** | [parse_constant](parse_constant.md), [parse_alias](parse_alias.md), [collect_members](collect_members.md), [collect_group_block](collect_group_block.md), [parse_and_insert_rules](parse_and_insert_rules.md) |
+| **依赖项** | `std::fs::File`, `std::io::BufReader`, [ConfigResult](ConfigResult.md), [HashMap](../collections.rs/README.md) |
+| **权限** | 对配置文件路径的文件系统读取访问 |
+
+## 参见
+
+| 主题 | 链接 |
+|-------|------|
+| 模块概述 | [config.rs](README.md) |
+| 聚合解析结果 | [ConfigResult](ConfigResult.md) |
+| 规则插入逻辑 | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| 别名定义 | [parse_alias](parse_alias.md) |
+| 常量定义 | [parse_constant](parse_constant.md) |
+| 组块收集器 | [collect_group_block](collect_group_block.md) |
+| 包装热重载 | [hotreload_config](hotreload_config.md) |
+| Process Lasso 转换器 | [convert](convert.md) |
+
+*文档针对 Commit：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

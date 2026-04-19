@@ -1,6 +1,6 @@
 # process_find function (main.rs)
 
-Enumerates all running processes using the Windows Toolhelp32 snapshot API and logs any process that is not already covered by the loaded configuration, not present in the blacklist, and whose affinity mask has not been explicitly set. This function implements the `-find` CLI mode, which helps administrators discover processes that may benefit from affinity or priority tuning.
+Enumerates all running processes via a Win32 toolhelp snapshot and logs any process that has a default (full) CPU affinity mask and is not already covered by the loaded configuration or blacklist. This is the per-iteration companion to `-find` mode, called at the end of each main loop iteration.
 
 ## Syntax
 
@@ -14,49 +14,62 @@ fn process_find(
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `cli` | `&CliArgs` | Parsed command-line arguments. The function checks `cli.find_mode`; if `false`, the function returns immediately without enumerating processes. |
-| `configs` | `&ConfigResult` | The fully-parsed configuration result containing both `process_level_configs` and `thread_level_configs` keyed by grade and process name. Used to determine whether a discovered process is already managed. |
-| `blacklist` | `&[String]` | A slice of lowercase process-name strings that should be silently ignored during discovery. |
+`cli: &CliArgs`
+
+The parsed [CLI arguments](../cli.rs/CliArgs.md). Only the `find_mode` flag is inspected — if `false`, the function returns `Ok(())` immediately with no work performed.
+
+`configs: &ConfigResult`
+
+The loaded [ConfigResult](../config.rs/ConfigResult.md). Both `process_level_configs` and `thread_level_configs` are searched across all grades to determine whether a process name is already managed.
+
+`blacklist: &[String]`
+
+A list of lowercase process names that should be silently ignored during discovery. Processes in this list are never logged even if they have default affinity.
 
 ## Return value
 
-Returns `Ok(())` on success. Returns `Err(windows::core::Error)` if the call to `CreateToolhelp32Snapshot` fails.
+`Result<(), windows::core::Error>` — Returns `Ok(())` on success. Returns an error only if `CreateToolhelp32Snapshot` fails.
 
 ## Remarks
 
-- The function only executes its body when `cli.find_mode` is `true`. Otherwise it is a no-op that returns `Ok(())`.
-- Internally the function calls `CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)` to obtain a snapshot of all running processes, then iterates with `Process32FirstW` / `Process32NextW`.
-- Each process name is converted to lowercase via `String::from_utf16_lossy` and truncated at the first null character in the `szExeFile` buffer.
-- A process is logged (via `log_process_find`) only if **all** of the following conditions are met:
-  1. The process name is **not** in the internal fail-find set (a set of names that previously failed discovery and are suppressed to reduce log noise).
-  2. The process name does **not** appear in any grade of `configs.process_level_configs` or `configs.thread_level_configs`.
-  3. The process name is **not** contained in `blacklist`.
-  4. `is_affinity_unset(pid, name)` returns `true`, meaning the process still has the system-default affinity mask and has not been modified by another tool.
-- The snapshot handle is closed with `CloseHandle` after iteration completes.
-- This function is called once per main-loop iteration regardless of grade, so discovery output can appear at every polling interval.
-- All Win32 calls within this function are made inside an `unsafe` block.
+The function performs the following steps when `cli.find_mode` is `true`:
+
+1. **Snapshot** — Calls `CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)` to capture a point-in-time list of all processes.
+2. **Iterate** — Walks through each `PROCESSENTRY32W` entry using `Process32FirstW` / `Process32NextW`.
+3. **Normalize** — Converts the process name from the null-terminated UTF-16 `szExeFile` field to a lowercase `String`.
+4. **Filter — already managed** — Checks whether the process name exists in any grade of `configs.process_level_configs` or `configs.thread_level_configs`. If found, the process is skipped.
+5. **Filter — blacklisted** — Checks whether the process name appears in the `blacklist` vector. If found, the process is skipped.
+6. **Filter — already logged** — Checks the global `fail_find_set` to avoid logging the same process name repeatedly within a session.
+7. **Filter — affinity check** — Calls [`is_affinity_unset`](../winapi.rs/is_affinity_unset.md) to determine whether the process has a full (default) affinity mask. Only processes with unmodified affinity are considered "unmanaged" and worth logging.
+8. **Log** — Calls [`log_process_find`](../logging.rs/log_process_find.md) to write the discovered process name to the `.find.log` file.
+9. **Cleanup** — Closes the snapshot handle via `CloseHandle`.
+
+### Deduplication
+
+The `fail_find_set` global prevents the same process name from being logged on every polling iteration. A process name is added to this set the first time it is logged and is not removed until the service restarts. This keeps `.find.log` files concise for later analysis by [`process_logs`](process_logs.md).
+
+### Affinity heuristic
+
+The assumption is that any process still running with the system-default full affinity mask has not been managed by any external tool or by AffinityServiceRust itself. This is a simple heuristic; processes that intentionally use full affinity will also be flagged.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `main.rs` |
-| Callers | [main](main.md) (called once per polling iteration) |
-| Callees | `CreateToolhelp32Snapshot`, `Process32FirstW`, `Process32NextW`, `CloseHandle`, [is_affinity_unset](../winapi.rs/is_affinity_unset.md), [log_process_find](../logging.rs/log_process_find.md) |
-| Privileges | `SeDebugPrivilege` is recommended for full process enumeration visibility |
-| Platform | Windows only (`windows` crate, `Win32::System::Diagnostics::ToolHelp`) |
+| | |
+|---|---|
+| **Module** | `src/main.rs` |
+| **Callers** | [main](main.md) (end of each loop iteration) |
+| **Callees** | `CreateToolhelp32Snapshot`, `Process32FirstW`, `Process32NextW`, `CloseHandle`, [`is_affinity_unset`](../winapi.rs/is_affinity_unset.md), [`log_process_find`](../logging.rs/log_process_find.md) |
+| **Win32 API** | [`CreateToolhelp32Snapshot`](https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-createtoolhelp32snapshot), [`Process32FirstW`](https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-process32firstw), [`Process32NextW`](https://learn.microsoft.com/en-us/windows/win32/api/tlhelp32/nf-tlhelp32-process32nextw) |
+| **Privileges** | None beyond what was already acquired at startup (debug privilege enables broader process visibility) |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| main entry point | [main](main.md) |
-| process_logs (companion discovery mode) | [process_logs](process_logs.md) |
-| apply_config | [apply_config](apply_config.md) |
-| scheduler module | [scheduler.rs README](../scheduler.rs/README.md) |
-| priority module | [priority.rs README](../priority.rs/README.md) |
+| Post-session log analysis | [process_logs](process_logs.md) |
+| Affinity check helper | [is_affinity_unset](../winapi.rs/is_affinity_unset.md) |
+| Find-mode logger | [log_process_find](../logging.rs/log_process_find.md) |
+| CLI flags | [CliArgs](../cli.rs/CliArgs.md) |
+| Module overview | [main.rs](README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

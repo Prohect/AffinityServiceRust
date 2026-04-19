@@ -1,10 +1,10 @@
 # apply_process_default_cpuset 函数 (apply.rs)
 
-`apply_process_default_cpuset` 函数通过 `GetProcessDefaultCpuSets` 查询当前分配给进程的默认 CPU Set ID，如果与配置的目标不同，则通过 `SetProcessDefaultCpuSets` 应用新的集合。当启用 `cpu_set_reset_ideal` 配置标志时，该函数还会调用 [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) 在应用更改之前将线程理想处理器重新分配到新的 CPU 集合上。此函数操作的是 CPU Set ID（而非亲和性掩码），这是 Windows 用于控制进程到 CPU 分配的现代机制，没有传统亲和性掩码的限制。
+使用 Windows CPU 集合 API 为进程设置默认 CPU 集合，提供一种软 CPU 偏好设置，调度程序会遵循这种偏好而不会硬性限制线程执行。
 
 ## 语法
 
-```AffinityServiceRust/src/apply.rs#L297-308
+```AffinityServiceRust/src/apply.rs#L298-308
 pub fn apply_process_default_cpuset<'a>(
     pid: u32,
     config: &ProcessLevelConfig,
@@ -17,56 +17,78 @@ pub fn apply_process_default_cpuset<'a>(
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `pid` | `u32` | 目标进程的进程 ID。用于错误去重和日志消息。 |
-| `config` | `&ProcessLevelConfig` | 进程级配置，包含 `cpu_set_cpus`（要转换为 CPU Set ID 的 CPU 索引列表）、`cpu_set_reset_ideal`（控制是否在更改时重新分配线程理想处理器的布尔值）和 `name`（日志消息中使用的人类可读的配置规则名称）。如果 `cpu_set_cpus` 为空，函数将立即返回，不做任何更改。 |
-| `dry_run` | `bool` | 当为 `true` 时，函数将在 `apply_config_result` 中记录*将要*进行的更改，而不调用任何 Windows API 来修改状态。当为 `false` 时，将调用 Windows API 来应用更改。 |
-| `process_handle` | `&ProcessHandle` | 提供对进程读写访问权限的句柄包装器。函数通过 [`get_handles`](get_handles.md) 提取 `r_handle`（用于 `GetProcessDefaultCpuSets`）和 `w_handle`（用于 `SetProcessDefaultCpuSets`）。如果任一句柄不可用，函数将提前返回。 |
-| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | 一个惰性闭包，返回线程 ID 到其 `SYSTEM_THREAD_INFORMATION` 快照的映射。该闭包仅在 [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) 需要线程数据时才会被求值（即当 `cpu_set_reset_ideal` 启用且正在应用更改时）。这种延迟求值避免了在不需要时构建线程映射的开销。 |
-| `apply_config_result` | `&mut ApplyConfigResult` | 执行期间产生的变更描述和错误消息的累加器。 |
+`pid: u32`
+
+目标进程的进程 ID。
+
+`config: &ProcessLevelConfig`
+
+包含 `cpu_set_cpus`（所需的 CPU 索引列表）和 `cpu_set_reset_ideal`（应用 CPU 集合后是否重置理想处理器的标志）的进程级配置。
+
+`dry_run: bool`
+
+如果为 `true`，将记录 `apply_config_result` 中将要进行的更改，而不调用任何 Windows API。
+
+`process_handle: &ProcessHandle`
+
+目标进程的句柄包装器。需要读取和写入句柄。
+
+`threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>`
+
+进程线程映射的延迟访问器。仅当 `cpu_set_reset_ideal` 为 `true` 且应用了更改时才会评估，此时会转发到 [reset_thread_ideal_processors](reset_thread_ideal_processors.md)。
+
+`apply_config_result: &mut ApplyConfigResult`
+
+在操作期间生成的更改消息和错误消息的累加器。
 
 ## 返回值
 
-此函数不返回值。所有结果通过 `apply_config_result` 参数传递。
+无。结果累积到 `apply_config_result` 中。
 
 ## 备注
 
-- 如果 `config.cpu_set_cpus` 为空**或**全局 CPU 集合信息（来自 `get_cpu_set_information()`）为空，函数将提前退出且不执行任何操作。后一条件确保在没有系统 CPU 集合信息可用时，函数不会尝试将 CPU 索引转换为 CPU Set ID。
-- 配置的 CPU 索引通过 `cpusetids_from_indices` 转换为 Windows CPU Set ID。如果转换后的 ID 列表为空，则不应用更改。
-- 查询使用 `GetProcessDefaultCpuSets` 的两次调用模式：
-  1. **第一次调用**使用 `None` 缓冲区：如果成功，表示进程尚未分配默认 CPU 集合，`toset` 被设置为 `true`。
-  2. 如果第一次调用失败并返回 Win32 错误代码 `122`（`ERROR_INSUFFICIENT_BUFFER`），则进行**第二次调用**，使用适当大小的缓冲区来获取当前的 CPU Set ID。然后将获取的 ID 与目标进行比较；仅在不同时 `toset` 为 `true`。
-  3. 如果第一次调用因任何其他错误代码失败，错误将通过 [`log_error_if_new`](log_error_if_new.md) 记录，函数不会尝试设置 CPU 集合。
-- 当 `config.cpu_set_reset_ideal` 为 `true` 且需要更改时，[`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) 会在应用 CPU 集合**之前**被调用，使用 `config.cpu_set_cpus` 作为目标 CPU 列表。这会预先重新分配线程理想处理器，以适应新的 CPU 集合分配。
-- 成功时，变更消息格式为 `"CPU Set: [<old>] -> [<new>]"`，其中 `<old>` 和 `<new>` 是格式化的 CPU 索引列表。当进程之前没有默认 CPU 集合时，`<old>` 为空列表。
-- 当 `SetProcessDefaultCpuSets` 失败时，错误将通过 [`log_error_if_new`](log_error_if_new.md) 以 `Operation::SetProcessDefaultCpuSets` 记录。
-- 当前 CPU Set ID 通过 `indices_from_cpusetids` 解码回 CPU 索引，用于变更消息中的"旧值"。
+与通过 `SetProcessAffinityMask` 设置的硬性亲和性掩码不同，CPU 集合提供的是**软偏好**。Windows 调度程序会优先使用指定的 CPU，但在高负载下也可能在其他 CPU 上调度线程。这使得 CPU 集合成为在现代 Windows 上进行工作负载引导的首选机制。
+
+### 算法
+
+1. **提前退出** — 如果 `config.cpu_set_cpus` 为空或全局 CPU 集合信息缓存为空，则立即返回。
+2. **试运行模式** — 如果 `dry_run` 为 `true`，记录预期的 CPU 集合并返回。
+3. **转换索引** — 通过 `cpusetids_from_indices` 将配置的 CPU 索引转换为 Windows CPU 集合 ID。
+4. **查询当前值** — 首先使用 `None` 缓冲区调用 `GetProcessDefaultCpuSets`：
+   - 如果成功，表示进程未分配默认 CPU 集合，因此需要更改。
+   - 如果以错误代码 **122**（`ERROR_INSUFFICIENT_BUFFER`）失败，表示进程已有 CPU 集合。使用正确大小的缓冲区进行第二次调用以检索当前集 ID 进行比较。
+   - 任何其他错误都通过 [log_error_if_new](log_error_if_new.md) 记录。
+5. **比较** — 如果当前 CPU 集合 ID 与目标匹配，则不采取任何操作。
+6. **重置理想处理器（可选）** — 如果 `config.cpu_set_reset_ideal` 为 `true`，在应用新的 CPU 集合之前调用 [reset_thread_ideal_processors](reset_thread_ideal_processors.md) 并传入 `config.cpu_set_cpus`。这可以防止过时的理想处理器分配覆盖新的 CPU 偏好。
+7. **应用** — 使用目标 CPU 集合 ID 调用 `SetProcessDefaultCpuSets`。
+8. **记录** — 成功时，记录显示从旧索引到新索引过渡的更改消息。失败时，记录错误。
+
+### 两阶段查询模式
+
+`GetProcessDefaultCpuSets` API 使用常见的 Windows 模式，其中第一次调用确定所需缓冲区大小。错误代码 122（`ERROR_INSUFFICIENT_BUFFER`）是预期的条件，而不是真正的错误，会触发第二次调用并使用适当大小的缓冲区。
+
+### 与亲和性掩码的交互
+
+CPU 集合和亲和性掩码是独立的机制。进程可以同时具有硬性亲和性掩码和默认 CPU 集合。有效的调度取决于 Windows 内部逻辑，但通常亲和性掩码作为硬性约束优先，而 CPU 集合作为该约束内的提示。
 
 ## 要求
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `apply.rs` |
-| Crate | `AffinityServiceRust` |
-| Windows API | `GetProcessDefaultCpuSets`、`SetProcessDefaultCpuSets`、`GetLastError` |
-| 调用者 | `scheduler.rs` / `main.rs` 中遍历匹配进程的编排代码 |
-| 被调用者 | [`get_handles`](get_handles.md)、[`log_error_if_new`](log_error_if_new.md)、[`reset_thread_ideal_processors`](reset_thread_ideal_processors.md)、`cpusetids_from_indices`、`indices_from_cpusetids`、`get_cpu_set_information`、`format_cpu_indices`、`error_from_code_win32` |
-| 权限 | 需要具有 `PROCESS_QUERY_LIMITED_INFORMATION`（读取）和 `PROCESS_SET_LIMITED_INFORMATION`（写入）权限的进程句柄。 |
+| | |
+|---|---|
+| **模块** | [apply.rs](README.md) |
+| **调用方** | `main.rs` 强制循环 |
+| **被调用方** | [get_handles](get_handles.md), [log_error_if_new](log_error_if_new.md), [reset_thread_ideal_processors](reset_thread_ideal_processors.md), `cpusetids_from_indices`, `indices_from_cpusetids`, `format_cpu_indices` |
+| **Win32 API** | [GetProcessDefaultCpuSets](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocessdefaultcpusets), [SetProcessDefaultCpuSets](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessdefaultcpusets), [GetLastError](https://learn.microsoft.com/zh-cn/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror) |
+| **权限** | 需要目标进程的 `PROCESS_QUERY_LIMITED_INFORMATION`（读取）和 `PROCESS_SET_LIMITED_INFORMATION`（写入）访问权限 |
+| **最低操作系统** | Windows 10 版本 1607（CPU 集合 API） |
 
 ## 另请参阅
 
-| 参考 | 链接 |
-|------|------|
-| apply 模块概述 | [`README`](README.md) |
-| ApplyConfigResult | [`ApplyConfigResult`](ApplyConfigResult.md) |
-| get_handles | [`get_handles`](get_handles.md) |
-| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
-| reset_thread_ideal_processors | [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) |
-| apply_affinity | [`apply_affinity`](apply_affinity.md) |
-| apply_priority | [`apply_priority`](apply_priority.md) |
-| ProcessLevelConfig | [`config.rs/ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
-| winapi 模块 | [`winapi.rs`](../winapi.rs/README.md) |
+| 主题 | 描述 |
+|---|---|
+| [apply_affinity](apply_affinity.md) | 硬性亲和性掩码的替代方案 |
+| [reset_thread_ideal_processors](reset_thread_ideal_processors.md) | 在 CPU 集合更改后重新分配线程理想处理器 |
+| [ProcessLevelConfig](../config.rs/ProcessLevelConfig.md) | 包含 `cpu_set_cpus` 和 `cpu_set_reset_ideal` 字段的配置结构体 |
+| [ApplyConfigResult](ApplyConfigResult.md) | 更改和错误的累加器 |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

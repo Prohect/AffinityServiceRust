@@ -1,6 +1,6 @@
 # error_from_ntstatus function (error_codes.rs)
 
-Converts an `i32` NTSTATUS value to its well-known symbolic name string. This function provides human-readable translations for common NT-native API status codes encountered during process and thread management operations, such as `STATUS_ACCESS_DENIED`, `STATUS_INVALID_HANDLE`, and `STATUS_PROCESS_IS_TERMINATING`. Unknown status codes are formatted as hexadecimal strings.
+Maps an NTSTATUS code to a human-readable constant name. Used throughout the project to produce meaningful log messages when native API calls (`Nt*` / `Zw*` functions) return failure status codes.
 
 ## Syntax
 
@@ -10,78 +10,74 @@ pub fn error_from_ntstatus(status: i32) -> String
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `status` | `i32` | The NTSTATUS value returned by an NT-native API call (e.g., `NtQueryInformationProcess`, `NtSetInformationProcess`, `NtQueryInformationThread`, `NtQuerySystemInformation`). NTSTATUS values are signed 32-bit integers where negative values indicate errors, zero indicates success, and positive values indicate informational or warning statuses. |
+`status: i32`
+
+The NTSTATUS code returned by a native Windows API function. NTSTATUS values are signed 32-bit integers where the high bit indicates severity: values with bit 31 set (negative when interpreted as `i32`) are error codes, zero is success, and small positive values are informational.
 
 ## Return value
 
-Returns a `String` containing the symbolic name of the status code. If the status code is not recognized, the function returns a hexadecimal string in the format `"NTSTATUS_0x{code:08X}"`.
-
-### Recognized status codes
-
-| NTSTATUS Value | Unsigned Hex | Returned String |
-|----------------|-------------|-----------------|
-| `0` | `0x00000000` | `STATUS_SUCCESS` |
-| `1` | `0x00000001` | `STATUS_WAIT_1` |
-| `-1073741823` | `0xC0000001` | `STATUS_UNSUCCESSFUL` |
-| `-1073741822` | `0xC0000002` | `STATUS_NOT_IMPLEMENTED` |
-| `-1073741821` | `0xC0000003` | `STATUS_INVALID_INFO_CLASS` |
-| `-1073741820` | `0xC0000004` | `STATUS_INFO_LENGTH_MISMATCH` |
-| `-1073741816` | `0xC0000008` | `STATUS_INVALID_HANDLE` |
-| `-1073741811` | `0xC000000D` | `STATUS_INVALID_PARAMETER` |
-| `-1073741801` | `0xC0000017` | `STATUS_NO_MEMORY` |
-| `-1073741800` | `0xC0000018` | `STATUS_CONFLICTING_ADDRESSES` |
-| `-1073741790` | `0xC0000022` | `STATUS_ACCESS_DENIED` |
-| `-1073741789` | `0xC0000023` | `STATUS_BUFFER_TOO_SMALL` |
-| `-1073741772` | `0xC0000034` | `STATUS_OBJECT_NAME_NOT_FOUND` |
-| `-1073741749` | `0xC000004B` | `STATUS_THREAD_IS_TERMINATING` |
-| `-1073741727` | `0xC0000061` | `STATUS_PRIVILEGE_NOT_HELD` |
-| `-1073741637` | `0xC00000BB` | `STATUS_NOT_SUPPORTED` |
-| `-1073741558` | `0xC000010A` | `STATUS_PROCESS_IS_TERMINATING` |
-
-### Fallback format
-
-Unrecognized status codes are formatted as:
-
-```text
-NTSTATUS_0xC0000XXX
-```
-
-The raw `i32` value is cast to `u32` for hexadecimal formatting to produce the conventional unsigned NTSTATUS representation.
+`String` — The symbolic name of the status code (e.g., `"STATUS_ACCESS_DENIED"`). If the code is not in the lookup table, returns a formatted fallback string in the form `"NTSTATUS_0x{code:08X}"` using the unsigned representation.
 
 ## Remarks
 
-- The function uses `i32::cast_unsigned(status)` to convert the signed `i32` to its unsigned `u32` bit-equivalent before matching. This is necessary because NTSTATUS error codes (severity bits `11` in the high two bits) are conventionally written as unsigned hex values (e.g., `0xC0000022`) but are stored as negative `i32` values in Rust bindings.
+### Recognised codes
 
-- The set of recognized codes covers the most common statuses encountered during AffinityServiceRust's operation — particularly those returned by `NtQuerySystemInformation`, `NtQueryInformationProcess`, `NtQueryInformationThread`, `NtSetInformationProcess`, and `NtSetTimerResolution`.
+The function recognises the following NTSTATUS codes via a `match` on the unsigned representation of `status` (obtained via `i32::cast_unsigned`):
 
-- `STATUS_INFO_LENGTH_MISMATCH` (`0xC0000004`) is especially significant in this project: it is the retry signal used by [`ProcessSnapshot::take`](../process.rs/ProcessSnapshot.md) when the buffer passed to `NtQuerySystemInformation` is too small.
+| Code | Name |
+|------|------|
+| `0x00000000` | `STATUS_SUCCESS` |
+| `0x00000001` | `STATUS_WAIT_1` |
+| `0xC0000001` | `STATUS_UNSUCCESSFUL` |
+| `0xC0000002` | `STATUS_NOT_IMPLEMENTED` |
+| `0xC0000003` | `STATUS_INVALID_INFO_CLASS` |
+| `0xC0000004` | `STATUS_INFO_LENGTH_MISMATCH` |
+| `0xC0000008` | `STATUS_INVALID_HANDLE` |
+| `0xC000000D` | `STATUS_INVALID_PARAMETER` |
+| `0xC0000017` | `STATUS_NO_MEMORY` |
+| `0xC0000018` | `STATUS_CONFLICTING_ADDRESSES` |
+| `0xC0000022` | `STATUS_ACCESS_DENIED` |
+| `0xC0000023` | `STATUS_BUFFER_TOO_SMALL` |
+| `0xC0000034` | `STATUS_OBJECT_NAME_NOT_FOUND` |
+| `0xC000004B` | `STATUS_THREAD_IS_TERMINATING` |
+| `0xC0000061` | `STATUS_PRIVILEGE_NOT_HELD` |
+| `0xC00000BB` | `STATUS_NOT_SUPPORTED` |
+| `0xC000010A` | `STATUS_PROCESS_IS_TERMINATING` |
 
-- `STATUS_PROCESS_IS_TERMINATING` (`0xC000010A`) and `STATUS_THREAD_IS_TERMINATING` (`0xC000004B`) are commonly seen when attempting to query or set properties on processes/threads that are in the process of exiting — a normal occurrence in a system-wide process manager.
+### Unsigned conversion
 
-- Unlike [`error_from_code_win32`](error_from_code_win32.md), which handles Win32 error codes (`u32` values from `GetLastError`), this function handles NTSTATUS values (`i32` values returned directly by NT-native APIs). The two code spaces are distinct and should not be mixed.
+The function uses `i32::cast_unsigned(status)` to convert the signed `i32` to its unsigned `u32` bit-equivalent before matching. This avoids the need for negative literal patterns and matches the conventional hexadecimal representation of NTSTATUS codes as used in the Windows SDK headers (e.g., `ntstatus.h`).
 
-- The function allocates a new `String` on each call. For hot paths where the same status code is translated repeatedly, callers should consider caching the result or logging conditionally (as done by [`is_new_error`](../logging.rs/is_new_error.md)).
+### Relationship to error_from_code_win32
+
+This function is the NTSTATUS counterpart to [error_from_code_win32](error_from_code_win32.md), which handles Win32 error codes. The two functions cover different error code spaces:
+
+- **Win32 errors** — returned by functions like `GetLastError()`, typically small positive integers.
+- **NTSTATUS codes** — returned by `Nt*`/`Zw*` native API functions, typically `0xC*` values for errors.
+
+Callers choose the appropriate function based on which API produced the error code.
+
+### Fallback format
+
+Unknown codes are formatted as `"NTSTATUS_0x{code:08X}"` where `code` is cast to `u32` for display, ensuring consistent unsigned hexadecimal output regardless of the sign of the input.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `error_codes.rs` |
-| **Callers** | `winapi.rs`, `process.rs` — anywhere an NT-native API returns an NTSTATUS value that needs to be logged or displayed. |
-| **Callees** | None (pure function, no side effects) |
-| **API** | None — this is a lookup table, not an API wrapper |
-| **Platform** | Platform-independent logic; the status codes it translates are Windows NT-specific. |
+| | |
+|---|---|
+| **Module** | `src/error_codes.rs` |
+| **Callers** | [apply_io_priority](../apply.rs/apply_io_priority.md), [apply_memory_priority](../apply.rs/apply_memory_priority.md), native API wrappers in [winapi.rs](../winapi.rs/README.md) |
+| **Callees** | None |
+| **Win32 API** | None (pure lookup function) |
+| **Privileges** | None |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| error_from_code_win32 function | [error_from_code_win32](error_from_code_win32.md) |
-| ProcessSnapshot::take | [ProcessSnapshot](../process.rs/ProcessSnapshot.md) |
-| error_codes module overview | [README](README.md) |
-| winapi module | [winapi.rs](../winapi.rs/README.md) |
+| Module overview | [error_codes.rs](README.md) |
+| Win32 error lookup | [error_from_code_win32](error_from_code_win32.md) |
+| IO priority application | [apply_io_priority](../apply.rs/apply_io_priority.md) |
+| Memory priority application | [apply_memory_priority](../apply.rs/apply_memory_priority.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

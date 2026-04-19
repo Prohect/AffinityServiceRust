@@ -1,10 +1,10 @@
-# IdealProcessorRule 类型 (config.rs)
+# IdealProcessorRule 结构体 (config.rs)
 
-`IdealProcessorRule` 结构体将一组 CPU 索引映射到可选的线程启动模块名称前缀列表，用于理想处理器分配。当调度器为进程的线程分配理想处理器时，它使用这些规则来确定应优先使用哪些 CPU，并且可以选择性地将分配限制为启动模块与指定前缀之一匹配的线程。
+将一组 CPU 索引映射到线程起始模块前缀列表，形成理想处理器分配的单个规则。当服务遍历进程的线程时，任何起始模块匹配 `prefixes` 中任一前缀的线程都会获得从 `cpus` 中选取的理想处理器提示。如果 `prefixes` 为空，则规则无条件适用于所有线程。
 
 ## 语法
 
-```AffinityServiceRust/src/config.rs#L24-27
+```rust
 #[derive(Debug, Clone)]
 pub struct IdealProcessorRule {
     pub cpus: List<[u32; CONSUMER_CPUS]>,
@@ -15,50 +15,59 @@ pub struct IdealProcessorRule {
 ## 成员
 
 | 成员 | 类型 | 描述 |
-|------|------|------|
-| `cpus` | `List<[u32; CONSUMER_CPUS]>` | 调度器应分配为理想处理器的已排序 CPU 索引列表。列表中的 CPU 数量决定了有多少个排名靠前的线程（按总 CPU 时间排名）会从此规则获得理想处理器分配。 |
-| `prefixes` | `Vec<String>` | 用于过滤此规则适用于哪些线程的小写模块名称前缀列表。当为空时，规则适用于进程的**所有**线程。当非空时，仅考虑启动模块名称以这些前缀之一开头的线程。 |
+|--------|------|-------------|
+| `cpus` | `List<[u32; CONSUMER_CPUS]>` | 用于分配理想处理器提示的逻辑处理器索引排序列表。在解析时从 CPU 别名解析。必须非空，规则才能生效。 |
+| `prefixes` | `Vec<String>` | 用于筛选线程的小写模块名前缀。如果线程的起始模块以任一条目开头，则该线程匹配。空向量意味着规则匹配进程中的每个线程。 |
 
 ## 备注
 
-### 与理想处理器规格的关系
+`IdealProcessorRule` 由 [parse_ideal_processor_spec](parse_ideal_processor_spec.md) 从配置规则行的理想处理器字段（字段 7）生成。该规格格式使用 `*alias@prefix1;prefix2` 段，其中每个段成为单个 `IdealProcessorRule` 实例。多个段可以链接，以便在同一进程中为来自不同模块的线程分配不同的 CPU 集合。
 
-`IdealProcessorRule` 实例由 [`parse_ideal_processor_spec`](parse_ideal_processor_spec.md) 在配置文件包含形如 `*alias[@prefix1;prefix2]` 的理想处理器字段时生成。当存在多个 `*` 分隔的段时（例如 `*p@engine.dll*e@helper.dll`），单个规格字符串可以产生多条规则。
+### 理想处理器与亲和性
 
-### 线程选择算法
+理想处理器提示是一种**软偏好**——Windows 调度器会偏好提示的核，但在高负载下可能将线程调度到其他位置。这与硬亲和性形成对比，硬亲和性将线程严格限制在一组 CPU 上。因此，理想处理器规则可用于指导线程放置，而不会引入饥饿风险。
 
-调度器使用 `cpus` 列表来确定应从此规则获得理想处理器分配的排名靠前的线程数量（N = `cpus.len()`）。线程按其累计 CPU 时间排名。当线程跌出前 N 名时，它会回退到之前的理想处理器值。
+### 线程匹配
 
-### 前缀匹配
+线程到规则的匹配由 [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) 在每次轮询迭代期间执行。对于每个线程，服务通过缓存的事件追踪 for Windows (ETW) 子系统数据查询线程的起始地址模块。`prefixes` 列表包含匹配前缀的第一个规则（或其列表为空）决定理想 CPU。
 
-前缀字符串以小写存储，并与线程启动模块名称的小写形式进行比较。这允许匹配部分模块名称——例如，前缀 `engine` 可匹配 `engine.dll`、`engine_worker.dll` 等。
+### CPU 分布
 
-### 边界情况
+当多个线程匹配同一规则时，服务通过 `cpus` 列表轮询分配理想处理器分配，以均匀分散负载。
 
-- 如果 `cpus` 为空（例如，因为引用的别名解析为空 CPU 集合），则该规则在解析期间会被**跳过**，不会出现在最终的 `Vec<IdealProcessorRule>` 中。
-- 如果 `prefixes` 为空，则该规则是一个通配规则，适用于进程中的每个线程。
-- 如果前缀过滤存在重叠，多条规则可以定位到同一个线程；调度器按顺序处理规则。
+### 配置语法示例
+
+```
+*pcore = 0-7
+*ecore = 8-19
+game.exe:normal:0:0:0:none:none:*pcore@engine.dll;render.dll*ecore@audio.dll
+```
+
+这产生两个 `IdealProcessorRule` 条目：
+
+1. `cpus: [0..7], prefixes: ["engine.dll", "render.dll"]`
+2. `cpus: [8..19], prefixes: ["audio.dll"]`
 
 ## 要求
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `config.rs` |
-| 构造方式 | [`parse_ideal_processor_spec`](parse_ideal_processor_spec.md) |
-| 存储位置 | [`ThreadLevelConfig.ideal_processor_rules`](ThreadLevelConfig.md) |
-| 使用方 | `scheduler.rs`（主线程调度器理想处理器分配） |
-| 依赖 | `collections.rs` 中的 `List`、`CONSUMER_CPUS` 常量 |
+| | |
+|---|---|
+| **模块** | `src/config.rs` |
+| **由...生成** | [parse_ideal_processor_spec](parse_ideal_processor_spec.md), [parse_and_insert_rules](parse_and_insert_rules.md) |
+| **存储在** | [ThreadLevelConfig](ThreadLevelConfig.md)`.ideal_processor_rules` |
+| **由...使用** | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
+| **集合类型** | [List](../collections.rs/README.md) (`SmallVec<[u32; CONSUMER_CPUS]>`) |
+| **权限** | 无（数据结构） |
 
-## 另请参阅
+## 参见
 
-| 资源 | 链接 |
-|------|------|
-| ThreadLevelConfig | [ThreadLevelConfig](ThreadLevelConfig.md) |
-| parse_ideal_processor_spec | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
-| PrimePrefix | [PrimePrefix](PrimePrefix.md) |
-| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| scheduler 模块 | [scheduler.rs 概述](../scheduler.rs/README.md) |
-| config 模块概述 | [README](README.md) |
+| 主题 | 链接 |
+|-------|------|
+| 模块概述 | [config.rs](README.md) |
+| 父配置结构 | [ThreadLevelConfig](ThreadLevelConfig.md) |
+| 规格解析器 | [parse_ideal_processor_spec](parse_ideal_processor_spec.md) |
+| 运行时应用 | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
+| CPU 别名解析 | [parse_alias](parse_alias.md) |
+| Prime 线程前缀（相关概念） | [PrimePrefix](PrimePrefix.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档针对 Commit：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

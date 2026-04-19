@@ -1,6 +1,6 @@
 # get_log_path function (logging.rs)
 
-Builds a date-stamped log file path under the `logs/` directory. The function reads the current local time from the [`LOCAL_TIME_BUFFER`](statics.md#local_time_buffer) static to construct a filename in the format `YYYYMMDD<suffix>.log`, and ensures the `logs/` directory exists before returning the path.
+Constructs a date-stamped log file path under the `logs/` directory, creating the directory if it does not exist.
 
 ## Syntax
 
@@ -10,70 +10,46 @@ fn get_log_path(suffix: &str) -> PathBuf
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `suffix` | `&str` | A string appended to the date portion of the filename before the `.log` extension. Pass `""` for the main log file, or `".find"` for the find-mode log file. |
+`suffix: &str`
+
+A string inserted between the date stamp and the `.log` extension in the filename. Pass `""` for the main log file or `".find"` for the find-mode log file.
+
+| Suffix value | Resulting filename |
+|---|---|
+| `""` | `logs/YYYYMMDD.log` |
+| `".find"` | `logs/YYYYMMDD.find.log` |
 
 ## Return value
 
-Returns a `PathBuf` pointing to the log file. The path is relative to the working directory and takes the form `logs/YYYYMMDD<suffix>.log`.
-
-### Examples
-
-| `suffix` | Date | Resulting path |
-|----------|------|----------------|
-| `""` | 2025-01-15 | `logs/20250115.log` |
-| `".find"` | 2025-01-15 | `logs/20250115.find.log` |
+`PathBuf` — The fully constructed path to the log file, relative to the service's working directory. The path follows the pattern `logs/YYYYMMDD{suffix}.log` where `YYYYMMDD` is the current local date obtained from [LOCAL_TIME_BUFFER](README.md).
 
 ## Remarks
 
-- This function is **module-private** (`fn` without `pub`). It is called during `Lazy` initialization of the [`LOG_FILE`](statics.md#log_file) and [`FIND_LOG_FILE`](statics.md#find_log_file) statics and is not accessible outside the `logging` module.
+- The function reads the current date from the `LOCAL_TIME_BUFFER` static via the `get_local_time!()` macro, then immediately drops the lock before performing filesystem operations.
+- If the `logs/` directory does not exist, the function creates it (and any necessary parents) via `std::fs::create_dir_all`. Directory creation failures are silently ignored; the caller will encounter the error when attempting to open the file.
+- This function is **not** `pub` — it is module-private and called only during lazy initialization of the [LOG_FILE](README.md) and [FIND_LOG_FILE](README.md) statics.
+- Because `LOG_FILE` and `FIND_LOG_FILE` are lazily initialized once per process lifetime, the log file date is determined at first use. The service does **not** rotate to a new file at midnight; a restart is required to begin writing to a new date's log file.
 
-- The function locks the [`LOCAL_TIME_BUFFER`](statics.md#local_time_buffer) mutex to read the cached local time. The lock is explicitly dropped (via `drop(time)`) before proceeding with directory creation, minimizing lock hold time.
+### Date format
 
-- The `logs/` directory is created via `std::fs::create_dir_all` if it does not already exist. If directory creation fails, the error is silently ignored (`let _ = create_dir_all(...)`) and the returned path may point to a non-existent directory. Subsequent file-open operations using this path will fail at that point.
-
-- The date components are extracted using `chrono::Datelike` trait methods (`year()`, `month()`, `day()`) and formatted with zero-padding to ensure consistent 8-digit date strings.
-
-### Algorithm
-
-1. Lock the `LOCAL_TIME_BUFFER` mutex and extract `(year, month, day)`.
-2. Drop the lock.
-3. Construct a `PathBuf` for the `logs/` directory.
-4. If the directory does not exist, attempt to create it (including parent directories).
-5. Join the directory path with the formatted filename `YYYYMMDD<suffix>.log`.
-6. Return the resulting `PathBuf`.
-
-### Call sites
-
-This function is called exactly twice during program initialization:
-
-- `Lazy` initializer for [`LOG_FILE`](statics.md#log_file): `get_log_path("")`
-- `Lazy` initializer for [`FIND_LOG_FILE`](statics.md#find_log_file): `get_log_path(".find")`
-
-Because these statics are lazily initialized, `get_log_path` is not called until the first log message is written or the first find-log entry is recorded.
+The date portion uses zero-padded four-digit year, two-digit month, and two-digit day with no separators: `20250115` for January 15, 2025.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `logging.rs` |
+| | |
+|---|---|
+| **Module** | `src/logging.rs` |
 | **Visibility** | Private (module-internal) |
-| **Callers** | `LOG_FILE` and `FIND_LOG_FILE` `Lazy` initializers |
-| **Callees** | `LOCAL_TIME_BUFFER.lock()`, `chrono::Datelike` methods, `std::fs::create_dir_all`, `PathBuf::join` |
-| **Dependencies** | `chrono`, `std::fs`, `std::path::PathBuf` |
-| **Platform** | Cross-platform (no Windows-specific API calls) |
+| **Callers** | `LOG_FILE` static initializer, `FIND_LOG_FILE` static initializer |
+| **Dependencies** | `LOCAL_TIME_BUFFER`, `chrono::Datelike`, `std::fs::create_dir_all` |
+| **Privileges** | Filesystem write access to the working directory |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| log_message function | [log_message](log_message.md) |
-| log_to_find function | [log_to_find](log_to_find.md) |
-| LOG_FILE static | [statics](statics.md#log_file) |
-| FIND_LOG_FILE static | [statics](statics.md#find_log_file) |
-| LOCAL_TIME_BUFFER static | [statics](statics.md#local_time_buffer) |
-| logging module overview | [README](README.md) |
+| Module overview | [logging.rs](README.md) |
+| Main log output | [log_message](log_message.md) |
+| Find log output | [log_to_find](log_to_find.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

@@ -1,6 +1,6 @@
 # apply_process_level 函数 (main.rs)
 
-对由 PID 标识的单个 Windows 进程应用一次性的进程级设置。此函数获取进程句柄，然后将各设置类别分别委托给专用的 apply 辅助函数处理：优先级类别、处理器亲和性（含线程理想处理器重置）、默认 CPU 集合、I/O 优先级和内存优先级。除非通过 CLI 标志启用了持续进程级应用，否则每个进程仅调用一次。
+为给定的 PID 打开进程句柄，并在单次传递中应用所有进程级设置——优先级类、CPU 亲和性掩码、默认 CPU 集合、IO 优先级和内存优先级。这是进程级包装器，在进程首次匹配配置规则时调用一次（如果启用了持续应用则每次迭代都调用）。
 
 ## 语法
 
@@ -16,47 +16,66 @@ fn apply_process_level<'a>(
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `pid` | `u32` | 目标进程的 Windows 进程标识符。 |
-| `config` | `&ProcessLevelConfig` | 进程级配置块，描述此进程所需的优先级类别、亲和性掩码、CPU 集合 ID、I/O 优先级和内存优先级。 |
-| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | 一个延迟闭包，返回线程 ID 到其 `SYSTEM_THREAD_INFORMATION` 快照的映射引用。该闭包在调用方（`apply_config`）中由 `OnceCell` 支持，因此线程映射仅在首次访问时实际生成，之后复用。被 `apply_affinity` 和 `apply_process_default_cpuset` 用于在进程级变更后重置每线程的理想处理器。 |
-| `dry_run` | `bool` | 当为 `true` 时，函数仅记录其*将要执行*的操作，但不会调用任何 Win32 API 来修改进程状态。 |
-| `apply_configs` | `&mut ApplyConfigResult` | 应用过程中产生的变更和错误的累加器。由各子函数填充，之后由 [`log_apply_results`](log_apply_results.md) 消费。 |
+`pid: u32`
+
+目标进程的进程标识符。
+
+`config: &ProcessLevelConfig`
+
+[`ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md)，包含所需的进程级设置（优先级、亲和性 CPU、CPU 集合 CPU、IO 优先级、内存优先级）。`config.name` 字段在打开进程句柄时用于错误报告。
+
+`threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>`
+
+延迟求值的闭包，返回进程的线程映射（以线程 ID 为键）。通过调用方（[`apply_config`](apply_config.md)）中的 `OnceCell` 与线程级路径共享。线程映射被 [`apply_affinity`](../apply.rs/apply_affinity.md)（在亲和性更改后重置理想处理器）和 [`apply_process_default_cpuset`](../apply.rs/apply_process_default_cpuset.md) 所需要。
+
+`dry_run: bool`
+
+当为 **true** 时，所有下游 `apply_*` 函数记录*将会*更改的内容而不调用任何 Windows API。当为 **false** 时，更改将应用到活动进程。
+
+`apply_configs: &mut ApplyConfigResult`
+
+更改描述和错误消息的累加器。参见 [`ApplyConfigResult`](../apply.rs/ApplyConfigResult.md)。
 
 ## 返回值
 
-此函数不返回值。如果无法获取进程句柄（例如权限不足或进程已退出），函数将提前返回且不应用任何设置。所有结果——成功和失败——均记录在 `apply_configs` 累加器中。
+此函数不返回值。所有结果（已应用的更改、遇到的错误）都记录在 `apply_configs` 中。
 
 ## 备注
 
-- 函数首先调用 `get_process_handle`。如果返回 `None`（访问被拒绝、进程已退出等），则整个函数不执行任何操作。
-- 一个局部变量 `current_mask` 初始化为 `0` 并传递给 `apply_affinity`，后者在请求亲和性变更时将其填充为当前亲和性掩码。此掩码在亲和性辅助函数内部用于确定是否需要重置理想处理器。
-- `threads` 参数是延迟闭包而非直接引用。这避免了在没有子函数实际需要线程映射时（例如仅配置了优先级或 I/O/内存优先级变更时）枚举线程的开销。调用方中由 `OnceCell` 支持的闭包确保即使多个子函数对其解引用，线程快照也最多只获取一次。
-- 应用顺序是确定性的：优先级 → 亲和性 → CPU 集合 → I/O 优先级 → 内存优先级。此顺序确保在亲和性变更的线程级副作用发生之前，进程优先级类别已被设置。
-- 每个子函数（`apply_priority`、`apply_affinity`、`apply_process_default_cpuset`、`apply_io_priority`、`apply_memory_priority`）独立检查其对应的配置字段是否设置为 `None` 哨兵值，在不需要变更时跳过自身。
-- 函数末尾显式调用 `drop(process_handle)` 以释放操作系统句柄。这确保进程句柄的读/写句柄在所有子操作完成后立即关闭，而非等待作用域退出。
-- 默认情况下，此函数**不会**在每次轮询迭代中被调用。一旦某个 PID 出现在 `process_level_applied` 中，除非激活了 `-continuousProcessLevelApply` CLI 标志，否则将被跳过。
+该函数按固定顺序执行操作：
+
+1. **打开句柄** — 调用 [`get_process_handle`](../winapi.rs/get_process_handle.md) 获取 [`ProcessHandle`](../winapi.rs/ProcessHandle.md)。如果无法打开句柄（例如访问被拒绝、进程已退出），函数立即返回，不产生任何效果且不记录错误。
+2. **应用优先级** — 委托给 [`apply_priority`](../apply.rs/apply_priority.md)。
+3. **应用亲和性** — 委托给 [`apply_affinity`](../apply.rs/apply_affinity.md)。传递局部变量 `current_mask` 以捕获进程当前的亲和性掩码供下游使用。
+4. **应用 CPU 集合** — 委托给 [`apply_process_default_cpuset`](../apply.rs/apply_process_default_cpuset.md)。
+5. **应用 IO 优先级** — 委托给 [`apply_io_priority`](../apply.rs/apply_io_priority.md)。
+6. **应用内存优先级** — 委托给 [`apply_memory_priority`](../apply.rs/apply_memory_priority.md)。
+7. **释放句柄** — 在所有操作完成后显式释放 `ProcessHandle`。
+
+每个 `apply_*` 函数独立检查其对应的配置字段是否设置为 `None`，如果是则短路返回。这意味着仅指定优先级和亲和性的配置不会影响 IO 或内存优先级。
+
+### 线程枚举开销
+
+`threads` 闭包仅在 `apply_*` 函数实际需要线程信息时才被调用（例如 `apply_affinity` 重置理想处理器，或 `apply_process_default_cpuset` 重新分配线程）。底层的 `OnceCell` 确保在进程级和线程级应用过程中线程枚举最多只发生一次。
 
 ## 要求
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `main.rs` |
-| 调用方 | [`apply_config`](apply_config.md) |
-| 被调用方 | `winapi::get_process_handle`、`apply::apply_priority`、`apply::apply_affinity`、`apply::apply_process_default_cpuset`、`apply::apply_io_priority`、`apply::apply_memory_priority` |
-| Win32 API | 间接调用——委托给 `apply` 模块中调用 `SetPriorityClass`、`SetProcessAffinityMask`、`SetProcessDefaultCpuSets`、`NtSetInformationProcess` 的函数 |
-| 权限 | `SeDebugPrivilege`（用于打开提升权限/系统进程的句柄） |
+| | |
+|---|---|
+| **模块** | [`src/main.rs`](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf/src/main.rs) |
+| **调用方** | [`apply_config`](apply_config.md) |
+| **被调用方** | [`get_process_handle`](../winapi.rs/get_process_handle.md)、[`apply_priority`](../apply.rs/apply_priority.md)、[`apply_affinity`](../apply.rs/apply_affinity.md)、[`apply_process_default_cpuset`](../apply.rs/apply_process_default_cpuset.md)、[`apply_io_priority`](../apply.rs/apply_io_priority.md)、[`apply_memory_priority`](../apply.rs/apply_memory_priority.md) |
+| **Win32 API** | 无（直接委托给被调用方） |
+| **特权** | `SeDebugPrivilege`（用于打开提升权限进程的句柄） |
 
 ## 另请参阅
 
-| 参考 | 链接 |
-|------|------|
-| apply_thread_level | [apply_thread_level](apply_thread_level.md) |
-| apply_config | [apply_config](apply_config.md) |
-| log_apply_results | [log_apply_results](log_apply_results.md) |
-| ProcessLevelConfig | [config 模块](../config.rs/README.md) |
-| apply 模块 | [apply 模块](../apply.rs/README.md) |
+| 主题 | 链接 |
+|-------|------|
+| 线程级对应函数 | [`apply_thread_level`](apply_thread_level.md) |
+| 组合调用方 | [`apply_config`](apply_config.md) |
+| 应用引擎概述 | [apply.rs](../apply.rs/README.md) |
+| 配置结构体 | [`ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
+| 结果累加器 | [`ApplyConfigResult`](../apply.rs/ApplyConfigResult.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*为提交 [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf) 记录*

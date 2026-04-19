@@ -1,81 +1,97 @@
 # parse_constant function (config.rs)
 
-Parses and applies a `@NAME = value` constant definition from the configuration file to the `ConfigResult`. This function validates the constant name, parses the value into the appropriate type, updates the corresponding field in `ConfigResult.constants`, and records errors for invalid names or unparseable values.
+Parses a `@NAME = value` constant definition from the configuration file and updates the corresponding field in the [ConfigResult](ConfigResult.md)'s [ConfigConstants](ConfigConstants.md). Recognized constants control the hysteresis behavior of prime thread scheduling.
 
 ## Syntax
 
-```AffinityServiceRust/src/config.rs#L251-291
+```rust
 fn parse_constant(name: &str, value: &str, line_number: usize, result: &mut ConfigResult)
 ```
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `name` | `&str` | The constant name (already stripped of the leading `@` and converted to uppercase by the caller). Must match one of the recognized constant names: `MIN_ACTIVE_STREAK`, `KEEP_THRESHOLD`, or `ENTRY_THRESHOLD`. |
-| `value` | `&str` | The string value to parse, trimmed of surrounding whitespace by the caller. The expected type depends on the constant name (`u8` for `MIN_ACTIVE_STREAK`, `f64` for the threshold constants). |
-| `line_number` | `usize` | The 1-based line number in the configuration file where this constant definition appears. Used in error and warning messages. |
-| `result` | `&mut ConfigResult` | A mutable reference to the configuration result being built. On success, the corresponding field in `result.constants` is updated and `result.constants_count` is incremented. On failure, an error is pushed to `result.errors`. |
+`name: &str`
+
+The uppercase constant name extracted from the portion between `@` and `=` in the config line. The caller is responsible for trimming whitespace and converting to uppercase before passing. Recognized names are:
+
+| Name | Expected type | Description |
+|------|---------------|-------------|
+| `MIN_ACTIVE_STREAK` | `u8` | Minimum consecutive iterations a thread must exceed the entry threshold before promotion. |
+| `KEEP_THRESHOLD` | `f64` | CPU cycle share fraction below which a prime thread is demoted. |
+| `ENTRY_THRESHOLD` | `f64` | CPU cycle share fraction a non-prime thread must exceed to begin accumulating an active streak. |
+
+`value: &str`
+
+The string value to the right of the `=` sign, trimmed of whitespace by the caller. Parsed as the type appropriate for the constant name (`u8` for `MIN_ACTIVE_STREAK`, `f64` for thresholds).
+
+`line_number: usize`
+
+The 1-based line number in the config file where the constant definition appears. Included in error and log messages for diagnostics.
+
+`result: &mut ConfigResult`
+
+**\[in, out\]** The parse result accumulator. On success, the appropriate field in `result.constants` is updated and `result.constants_count` is incremented. On failure, an error message is pushed to `result.errors`.
 
 ## Return value
 
-This function does not return a value. Results are communicated through mutations to the `result` parameter.
+This function does not return a value. Results are communicated through mutation of the `result` parameter.
 
 ## Remarks
 
-### Recognized constants
+### Parsing behavior
 
-| Constant Name | Type | Target Field | Description |
-|---------------|------|--------------|-------------|
-| `MIN_ACTIVE_STREAK` | `u8` | `result.constants.min_active_streak` | Minimum consecutive active polling intervals before a thread is eligible for prime-thread promotion. |
-| `KEEP_THRESHOLD` | `f64` | `result.constants.keep_threshold` | CPU utilization fraction a prime thread must maintain to keep its status. |
-| `ENTRY_THRESHOLD` | `f64` | `result.constants.entry_threshold` | CPU utilization fraction a non-prime thread must exceed for promotion consideration. |
+The function uses a `match` on the `name` parameter to determine which constant is being set:
 
-### Error handling
+1. **`MIN_ACTIVE_STREAK`:** The value is parsed as `u8`. On success, `result.constants.min_active_streak` is set and a log message is emitted. On failure, an error is pushed indicating an invalid `u8` value.
 
-- If the `value` string cannot be parsed into the expected numeric type (`u8` for `MIN_ACTIVE_STREAK`, `f64` for thresholds), an error message is pushed to `result.errors` indicating the line number, the invalid value, and the expected type.
-- If `name` does not match any recognized constant, a **warning** (not an error) is pushed to `result.warnings` indicating that the constant is unknown and will be ignored. This allows forward compatibility with future constant names.
+2. **`KEEP_THRESHOLD` / `ENTRY_THRESHOLD`:** The value is parsed as `f64`. On success, the corresponding field (`keep_threshold` or `entry_threshold`) is set and logged. On failure, an error is pushed.
+
+3. **Unknown names:** Any unrecognized constant name produces a warning (not an error) indicating it will be ignored. This allows forward compatibility with future constants without breaking existing configurations.
 
 ### Logging
 
-On successful parse, the function calls `log_message` to emit a diagnostic log entry of the form `Config: NAME = value`. This provides visibility into which constants were loaded during startup or hot-reload.
+Each successfully parsed constant produces a log message in the format `"Config: NAME = value"` via `log_message`. This provides immediate feedback during startup and hot-reload.
 
-### Counting
+### Error messages
 
-Each successful parse increments `result.constants_count` by 1. This counter is used in diagnostic reporting to show how many constants were loaded from the configuration file.
+Error messages follow the format `"Line {N}: Invalid constant value '{value}' for '{name}' (expected type)"` for type mismatches, and `"Line {N}: Unknown constant '{name}' - will be ignored"` for unrecognized names.
 
-### Configuration file syntax
+### Relationship with the config file
 
-Constants are defined using the `@` prefix in the config file:
+Constants appear at the top of the config file using the `@` prefix:
 
-```/dev/null/example.ini#L1-3
+```
 @MIN_ACTIVE_STREAK = 3
-@KEEP_THRESHOLD = 0.75
-@ENTRY_THRESHOLD = 0.50
+@KEEP_THRESHOLD = 0.05
+@ENTRY_THRESHOLD = 0.1
 ```
 
-The `@` prefix and `=` sign are stripped by the caller ([`read_config`](read_config.md)) before invoking `parse_constant`. The name is uppercased and the value is trimmed by the caller.
+The [read_config](read_config.md) function detects lines starting with `@`, extracts the name and value around the `=` sign, uppercases the name, trims the value, and delegates to `parse_constant`.
+
+### Idempotency
+
+If the same constant is defined multiple times in the config file, the last definition wins. Each definition increments `constants_count`, so the count may exceed 3 (the number of recognized constants) if duplicates exist.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `config.rs` |
-| Visibility | Private (`fn`, not `pub fn`) |
-| Callers | [`read_config`](read_config.md) |
-| Callees | `log_message` (from [`logging.rs`](../logging.rs/README.md)), `str::parse` |
-| API | Standard library parsing (`u8::parse`, `f64::parse`) |
-| Privileges | None |
+| | |
+|---|---|
+| **Module** | `src/config.rs` |
+| **Visibility** | Private (`fn`) |
+| **Callers** | [read_config](read_config.md) |
+| **Callees** | `log_message` (logging) |
+| **Dependencies** | [ConfigResult](ConfigResult.md), [ConfigConstants](ConfigConstants.md) |
+| **Privileges** | None |
 
 ## See Also
 
-| Resource | Link |
-|----------|------|
-| ConfigConstants | [ConfigConstants](ConfigConstants.md) |
-| ConfigResult | [ConfigResult](ConfigResult.md) |
-| read_config | [read_config](read_config.md) |
-| parse_alias | [parse_alias](parse_alias.md) |
-| config module overview | [README](README.md) |
+| Topic | Link |
+|-------|------|
+| Module overview | [config.rs](README.md) |
+| Constants struct | [ConfigConstants](ConfigConstants.md) |
+| Config file reader | [read_config](read_config.md) |
+| Alias definition parser | [parse_alias](parse_alias.md) |
+| Hot-reload that propagates constants | [hotreload_config](hotreload_config.md) |
+| Parse result container | [ConfigResult](ConfigResult.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

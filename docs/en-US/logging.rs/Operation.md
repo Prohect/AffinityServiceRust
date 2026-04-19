@@ -1,6 +1,6 @@
 # Operation enum (logging.rs)
 
-Enumerates the Windows API operations whose failures are tracked by the [`is_new_error`](is_new_error.md) deduplication system. Each variant corresponds to a specific Win32 or NT-native API call that may fail when AffinityServiceRust attempts to manage process/thread affinity, priority, or I/O settings. The enum is used as part of the composite key in [`ApplyFailEntry`](ApplyFailEntry.md) to ensure that distinct operation failures for the same process/thread are tracked independently.
+Enumerates every Windows API operation that AffinityServiceRust may invoke on a target process or thread. Used as a component of the [ApplyFailEntry](ApplyFailEntry.md) deduplication key so that distinct failures on the same process are tracked independently.
 
 ## Syntax
 
@@ -38,66 +38,45 @@ pub enum Operation {
 | `OpenProcess2processSetLimitedInformation` | `OpenProcess` called with `PROCESS_SET_LIMITED_INFORMATION` access. |
 | `OpenProcess2processQueryInformation` | `OpenProcess` called with `PROCESS_QUERY_INFORMATION` access. |
 | `OpenProcess2processSetInformation` | `OpenProcess` called with `PROCESS_SET_INFORMATION` access. |
-| `OpenThread` | `OpenThread` called with any thread access right. |
-| `SetPriorityClass` | `SetPriorityClass` — setting the process priority class. |
-| `GetProcessAffinityMask` | `GetProcessAffinityMask` — querying the process affinity bitmask. |
-| `SetProcessAffinityMask` | `SetProcessAffinityMask` — setting the process affinity bitmask. |
-| `GetProcessDefaultCpuSets` | `GetProcessDefaultCpuSets` — querying the process's default CPU set IDs. |
-| `SetProcessDefaultCpuSets` | `SetProcessDefaultCpuSets` — assigning default CPU set IDs to a process. |
-| `QueryThreadCycleTime` | `QueryThreadCycleTime` — reading a thread's cumulative cycle count. |
-| `SetThreadSelectedCpuSets` | `SetThreadSelectedCpuSets` — assigning CPU set IDs to a specific thread. |
-| `SetThreadPriority` | `SetThreadPriority` — setting a thread's scheduling priority level. |
-| `NtQueryInformationProcess2ProcessInformationIOPriority` | `NtQueryInformationProcess` with `ProcessIoPriority` information class. |
-| `NtSetInformationProcess2ProcessInformationIOPriority` | `NtSetInformationProcess` with `ProcessIoPriority` information class. |
-| `GetProcessInformation2ProcessMemoryPriority` | `GetProcessInformation` with `ProcessMemoryPriority` class. |
-| `SetProcessInformation2ProcessMemoryPriority` | `SetProcessInformation` with `ProcessMemoryPriority` class. |
-| `SetThreadIdealProcessorEx` | `SetThreadIdealProcessorEx` — setting a thread's ideal processor hint. |
-| `GetThreadIdealProcessorEx` | `GetThreadIdealProcessorEx` — querying a thread's ideal processor. |
-| `InvalidHandle` | Sentinel variant representing an operation where a handle was obtained but found to be invalid. Used by [`get_process_handle`](../winapi.rs/get_process_handle.md) and [`get_thread_handle`](../winapi.rs/get_thread_handle.md) for internal error-code differentiation. |
+| `OpenThread` | `OpenThread` for thread-level operations. |
+| `SetPriorityClass` | [SetPriorityClass](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setpriorityclass) — sets process priority class. |
+| `GetProcessAffinityMask` | [GetProcessAffinityMask](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask) — queries process CPU affinity. |
+| `SetProcessAffinityMask` | [SetProcessAffinityMask](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setprocessaffinitymask) — sets process CPU affinity. |
+| `GetProcessDefaultCpuSets` | [GetProcessDefaultCpuSets](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocessdefaultcpusets) — queries process default CPU sets. |
+| `SetProcessDefaultCpuSets` | [SetProcessDefaultCpuSets](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessdefaultcpusets) — sets process default CPU sets. |
+| `QueryThreadCycleTime` | [QueryThreadCycleTime](https://learn.microsoft.com/en-us/windows/win32/api/realtimeapiset/nf-realtimeapiset-querythreadcycletime) — reads thread cycle counter for prime thread selection. |
+| `SetThreadSelectedCpuSets` | [SetThreadSelectedCpuSets](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadselectedcpusets) — pins a thread to specific CPU sets. |
+| `SetThreadPriority` | [SetThreadPriority](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadpriority) — sets thread priority level. |
+| `NtQueryInformationProcess2ProcessInformationIOPriority` | `NtQueryInformationProcess` with `ProcessIoPriority` information class — reads IO priority. |
+| `NtSetInformationProcess2ProcessInformationIOPriority` | `NtSetInformationProcess` with `ProcessIoPriority` information class — sets IO priority. |
+| `GetProcessInformation2ProcessMemoryPriority` | [GetProcessInformation](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocessinformation) with `ProcessMemoryPriority` class. |
+| `SetProcessInformation2ProcessMemoryPriority` | [SetProcessInformation](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessinformation) with `ProcessMemoryPriority` class. |
+| `SetThreadIdealProcessorEx` | [SetThreadIdealProcessorEx](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadidealprocessorex) — sets ideal processor hint for a thread. |
+| `GetThreadIdealProcessorEx` | [GetThreadIdealProcessorEx](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getthreadidealprocessorex) — queries ideal processor hint for a thread. |
+| `InvalidHandle` | Sentinel value indicating that a required handle was not available. |
 
 ## Remarks
 
-- The enum derives `PartialEq`, `Eq`, and `Hash`, making it suitable for use as a key component in `HashMap` and `HashSet` collections. Specifically, it is part of the [`ApplyFailEntry`](ApplyFailEntry.md) composite key used by [`is_new_error`](is_new_error.md).
-
-- The variant naming convention follows the pattern `ApiName` or `ApiName2ParameterDescription`, where the `2` separator indicates a specific overload or parameter combination of the underlying Win32 API. For example, `OpenProcess2processQueryLimitedInformation` means "`OpenProcess` called with the `PROCESS_QUERY_LIMITED_INFORMATION` access flag."
-
-- The enum is marked `#[allow(dead_code)]` in the source, indicating that not all variants are currently referenced in the codebase. Some variants are reserved for future use or are used only in commented-out error-reporting paths.
-
-- The `InvalidHandle` variant is a special case — it does not correspond to a specific API call but rather to the scenario where an API call succeeded but returned an invalid handle value. It is used with a secondary `error_code` discriminator (0, 1, 2, 3) to distinguish which specific handle in a multi-handle open operation was invalid.
-
-### Grouping by category
-
-| Category | Variants |
-|----------|----------|
-| **Process handle acquisition** | `OpenProcess2processQueryLimitedInformation`, `OpenProcess2processSetLimitedInformation`, `OpenProcess2processQueryInformation`, `OpenProcess2processSetInformation` |
-| **Thread handle acquisition** | `OpenThread` |
-| **Affinity / CPU sets** | `GetProcessAffinityMask`, `SetProcessAffinityMask`, `GetProcessDefaultCpuSets`, `SetProcessDefaultCpuSets`, `SetThreadSelectedCpuSets` |
-| **Priority** | `SetPriorityClass`, `SetThreadPriority` |
-| **I/O priority** | `NtQueryInformationProcess2ProcessInformationIOPriority`, `NtSetInformationProcess2ProcessInformationIOPriority` |
-| **Memory priority** | `GetProcessInformation2ProcessMemoryPriority`, `SetProcessInformation2ProcessMemoryPriority` |
-| **Ideal processor** | `SetThreadIdealProcessorEx`, `GetThreadIdealProcessorEx` |
-| **Diagnostics** | `QueryThreadCycleTime` |
-| **Sentinel** | `InvalidHandle` |
+- The naming convention `Verb2context` (e.g., `OpenProcess2processQueryLimitedInformation`) encodes both the Win32 function name and the access right or information class that was requested. This allows a single enum to disambiguate calls to the same API with different parameters.
+- The enum derives `PartialEq`, `Eq`, and `Hash` so it can be used as a key inside [ApplyFailEntry](ApplyFailEntry.md) and stored in `HashMap`/`HashSet` collections.
+- `InvalidHandle` is used when the failure occurs before any API call — for example, when a [ProcessHandle](../winapi.rs/ProcessHandle.md) does not carry the required access level.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `logging.rs` |
-| **Used by** | [`is_new_error`](is_new_error.md), [`ApplyFailEntry`](ApplyFailEntry.md), [`get_process_handle`](../winapi.rs/get_process_handle.md), [`get_thread_handle`](../winapi.rs/get_thread_handle.md), `apply.rs` |
-| **Traits** | `PartialEq`, `Eq`, `Hash` |
-| **Platform** | Enum is platform-independent; the operations it names are Windows-specific. |
+| | |
+|---|---|
+| **Module** | `src/logging.rs` |
+| **Callers** | [log_error_if_new](../apply.rs/log_error_if_new.md), all `apply_*` functions in [apply.rs](../apply.rs/README.md) |
+| **Dependencies** | None (fieldless enum) |
+| **Privileges** | None |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| ApplyFailEntry struct | [ApplyFailEntry](ApplyFailEntry.md) |
-| is_new_error function | [is_new_error](is_new_error.md) |
-| purge_fail_map function | [purge_fail_map](purge_fail_map.md) |
-| get_process_handle function | [get_process_handle](../winapi.rs/get_process_handle.md) |
-| get_thread_handle function | [get_thread_handle](../winapi.rs/get_thread_handle.md) |
-| logging module overview | [README](README.md) |
+| Module overview | [logging.rs](README.md) |
+| Error dedup key | [ApplyFailEntry](ApplyFailEntry.md) |
+| First-occurrence check | [is_new_error](is_new_error.md) |
+| Apply module | [apply.rs](../apply.rs/README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

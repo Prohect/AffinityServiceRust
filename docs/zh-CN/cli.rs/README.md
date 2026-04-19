@@ -1,31 +1,31 @@
 # cli 模块 (AffinityServiceRust)
 
-`cli` 模块为 AffinityServiceRust Windows 服务提供命令行参数解析和帮助文本生成功能。它定义了保存所有从命令行参数派生的运行时配置的 `CliArgs` 结构体，并公开用于解析参数、显示用法信息和输出配置文件文档的函数。
-
-## 函数
-
-| 函数 | 描述 |
-|------|------|
-| [parse_args](parse_args.md) | 将命令行参数字符串切片解析为 `CliArgs` 实例。 |
-| [print_help](print_help.md) | 打印简洁的帮助信息，显示常用选项和操作模式。 |
-| [print_cli_help](print_cli_help.md) | 打印详细的帮助信息，包括所有参数、调试选项和使用示例。 |
-| [get_config_help_lines](get_config_help_lines.md) | 返回包含配置文件参考模板的静态字符串切片向量。 |
-| [print_config_help](print_config_help.md) | 将配置文件参考信息打印到当前日志输出。 |
-| [print_help_all](print_help_all.md) | 同时打印详细的 CLI 帮助信息和完整的配置文件参考。 |
+`cli` 模块实现了 AffinityServiceRust 的命令行参数解析和帮助文本打印。它定义了 [CliArgs](CliArgs.md) 结构体，用于捕获所有运行时选项——轮询间隔、运行模式、调试标志、文件路径和权限控制——并提供 [parse_args](parse_args.md) 从进程参数中填充该结构体。该模块还暴露了几个帮助打印函数，用于记录基本用法、详细的 CLI 选项和配置文件格式。
 
 ## 结构体
 
-| 结构体 | 描述 |
-|--------|------|
-| [CliArgs](CliArgs.md) | 保存控制服务运行时行为的所有命令行选项和标志。 |
+| 名称 | 描述 |
+|------|-------------|
+| [CliArgs](CliArgs.md) | 从命令行参数填充的运行时配置。包含轮询间隔、模式标志、文件路径、权限切换和调试选项。 |
+
+## 函数
+
+| 名称 | 描述 |
+|------|-------------|
+| [parse_args](parse_args.md) | 将字符串切片形式的命令行参数解析为 [CliArgs](CliArgs.md) 实例。 |
+| [print_help](print_help.md) | 打印简洁的用法摘要，涵盖最常见的选项和运行模式。 |
+| [print_cli_help](print_cli_help.md) | 打印详细的 CLI 帮助，包括所有基本参数、运行模式、调试和测试选项。 |
+| [get_config_help_lines](get_config_help_lines.md) | 返回一个 `Vec<&'static str>`，包含配置文件格式文档模板。 |
+| [print_config_help](print_config_help.md) | 通过迭代 [get_config_help_lines](get_config_help_lines.md) 来打印配置文件格式帮助。 |
+| [print_help_all](print_help_all.md) | 通过 [print_cli_help](print_cli_help.md) 和 [print_config_help](print_config_help.md) 打印组合的完整帮助——CLI 选项后跟配置文件格式。 |
 
 ## 另请参阅
 
-| 资源 | 链接 |
-|------|------|
-| config 模块 | [config.rs 概述](../config.rs/README.md) |
-| main 模块 | [main.rs 概述](../main.rs/README.md) |
-| logging 模块 | [logging.rs 概述](../logging.rs/README.md) |
+| 主题 | 链接 |
+|-------|------|
+| 配置解析 | [config.rs](../config.rs/README.md) |
+| 主入口点 | [main.rs](../main.rs/README.md) |
+| 日志基础设施 | [logging.rs](../logging.rs/README.md) |
+| 优先级枚举 | [priority.rs](../priority.rs/README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*记录于提交：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

@@ -1,10 +1,10 @@
 # collect_group_block 函数 (config.rs)
 
-从配置文件中的多行 `{ … }` 分组块中收集进程名称成员，从起始行索引开始向前扫描，直到找到右花括号 `}`。返回收集到的成员名称、右花括号之后出现的任何规则后缀，以及继续解析的下一行索引。
+从多行组块定义中收集进程名称，读取行直到遇到闭合的 `}` 大括号。返回累积的成员列表、闭合大括号后的规则后缀，以及要从哪里恢复解析的行索引。
 
 ## 语法
 
-```AffinityServiceRust/src/config.rs#L390-418
+```rust
 fn collect_group_block(
     lines: &[String],
     start_index: usize,
@@ -14,75 +14,84 @@ fn collect_group_block(
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `lines` | `&[String]` | 从配置文件读取的完整行列表。函数从 `start_index` 开始向前读取，寻找右花括号 `}`。 |
-| `start_index` | `usize` | 开始扫描分组成员和右花括号的 `lines` 中从 0 开始的索引。这通常是包含左花括号 `{` 的行之后的下一行。 |
-| `first_line_content` | `&str` | 与左花括号 `{` 出现在同一行上、位于花括号之后的任何内容。如果非空且不是注释，则在扫描后续行之前先从中解析成员名称。 |
+`lines: &[String]`
+
+从配置文件中读取的所有行的完整集合。函数从 `start_index` 开始向后读取，寻找闭合的 `}` 大括号。
+
+`start_index: usize`
+
+从零开始的行索引，用于开始扫描。这应该是包含打开 `{` 大括号的行之后的下一行。函数读取 `lines[start_index]`、`lines[start_index + 1]`，依此类推，直到找到 `}` 或到达文件末尾。
+
+`first_line_content: &str`
+
+出现在打开 `{` 同一行上的任何内容。例如，给定 `group_name { proc1.exe: proc2.exe`，此参数将是 `"proc1.exe: proc2.exe"`。如果打开的大括号是其行上最后一个非空白字符，这将是空字符串或空白。此内容在读取后续行之前用于解析成员名称。
 
 ## 返回值
 
-类型：`Option<(Vec<String>, Option<String>, usize)>`
+`Option<(Vec<String>, Option<String>, usize)>` — 成功时返回 `Some(...)`，如果到达文件末尾而未找到闭合的 `}` 则返回 `None`。
 
-当找到右花括号 `}` 时返回 `Some((members, rule_suffix, next_line_index))`，如果到达文件末尾仍未遇到右花括号（未闭合的分组）则返回 `None`。
+元组元素为：
 
-| 元组元素 | 类型 | 描述 |
-|----------|------|------|
-| `members` | `Vec<String>` | 从花括号内收集的小写进程名称，通过 [`collect_members`](collect_members.md) 提取。 |
-| `rule_suffix` | `Option<String>` | 右花括号行上 `}:` 之后的规则字符串（即 `}` 之后第一个 `:` 后面的所有内容）。如果右花括号之后没有 `:`，则为 `None`。 |
-| `next_line_index` | `usize` | 包含右花括号的行之后的行索引；调用方应从此索引继续解析。 |
+| 索引 | 类型 | 描述 |
+|-------|------|-------------|
+| `.0` | `Vec<String>` | 收集的组成员名称，已小写并修剪。从 `first_line_content` 和所有后续行累积，包括包含 `}` 的行。 |
+| `.1` | `Option<String>` | 闭合 `}` 之后的规则后缀。如果包含 `}` 的行在 `}` 后有 `:rule_fields...`，则 `:` 之后的文本作为 `Some(rule_fields)` 返回。如果 `}` 后没有 `:`，返回 `None`。 |
+| `.2` | `usize` | 包含 `}` 的行之后的行索引。调用方应从该索引恢复解析。 |
 
 ## 备注
 
-### 扫描算法
+### 解析算法
 
-1. 如果 `first_line_content` 非空且不以 `#` 开头，则将其传递给 [`collect_members`](collect_members.md) 以提取与左花括号在同一行上的所有进程名称。
-2. 然后函数从 `start_index` 开始遍历 `lines`：
-   - 如果行中包含 `}`，则收集花括号之前的所有内容作为成员（如果非空且不是注释），提取 `}` 之后的规则后缀，然后返回。
-   - 否则，将非空、非注释行传递给 [`collect_members`](collect_members.md) 以累积更多成员名称。
-3. 如果循环到达 `lines` 末尾仍未找到 `}`，则函数返回 `None`，表示分组块未闭合。
+1. 如果 `first_line_content` 非空且不以 `#` 开头，则将其传递给 [collect_members](collect_members.md) 以提取同一行上打开 `{` 之后出现的任何进程名称。
+2. 然后函数从 `start_index` 开始迭代 `lines`：
+   - 如果一行包含 `}`，则解析 `}` 之前的内容以获取成员，检查 `}` 之后的内容以获取规则后缀（前导 `:` 后的文本），然后函数成功返回。
+   - 否则，整个行（如果非空且不是注释）通过 [collect_members](collect_members.md) 解析为成员。
+3. 如果循环在没有找到 `}` 的情况下耗尽所有行，则函数返回 `None`，表示组块未关闭。
 
 ### 规则后缀提取
 
-在右花括号行上，`}` 之后的文本被修剪并检查是否有前导 `:`。如果找到，冒号被去除，其余部分作为 `Some(rule_string)` 返回。如果没有冒号（例如 `}` 之后仅有空白或无内容），则后缀返回 `None`，这在 [`read_config`](read_config.md) 的调用方中被视为错误。
+闭合 `}` 之后的立即文本确定组是否有关联的规则。解析器期望格式 `}:priority:affinity:...`。去除前导 `:`，剩余文本成为 `.1` 中返回的规则后缀。此后缀稍后由 [parse_and_insert_rules](parse_and_insert_rules.md) 在 `:` 上分割以创建实际配置条目。
+
+如果 `}` 后没有 `:`（例如，闭合大括号单独在一行上），则 [read_config](read_config.md) 中的调用方将其视为错误——没有规则定义的组。
 
 ### 注释处理
 
-修剪后以 `#` 开头的行被视为注释并完全跳过。此外，在行内，由 [`collect_members`](collect_members.md) 产生的以 `#` 开头的令牌也会被过滤掉——这提供了行内注释支持。
+组块内以 `#` 开头的行被静默忽略，不贡献成员。这允许用户在组内注释掉单个进程名称：
 
-### 单行分组
+```
+my_group {
+    active_game.exe
+    # disabled_game.exe
+    another_game.exe
+}:normal:*ecore:0:0:none:none:0:1
+```
 
-左花括号 `{` 和右花括号 `}` 都出现在同一行上的单行分组（例如 `{ a.exe: b.exe }:normal:0-7`）**不**由此函数处理。它们在 [`read_config`](read_config.md) 中被检测并在调用 `collect_group_block` 之前内联解析。此函数仅在左花括号 `{` 所在行不同时包含右花括号 `}` 时才被调用。
+### 单行与多行
 
-### 边界情况
+此函数仅用于多行组——打开 `{` 行不包含闭合 `}` 的情况。单行组（例如，`group { a: b }:rule`）由 [read_config](read_config.md) 内联处理，无需调用此函数。
 
-| 场景 | 行为 |
-|------|------|
-| 左花括号后紧跟下一行的 `}` | 仅返回从 `first_line_content` 收集的成员。 |
-| 空分组块（`{ }` 跨多行，其中只有注释/空行） | 返回空的 `members` 向量；调用方发出警告。 |
-| 嵌套花括号 | 不支持。块内的 `}` 会立即终止收集，不考虑上下文。 |
-| 到达文件末尾仍未遇到 `}` | 返回 `None`。调用方推送一条关于未闭合分组的错误。 |
+### 错误情况
 
-## 要求
+当函数返回 `None` 时，[read_config](read_config.md) 中的调用方将错误推入 [ConfigResult](ConfigResult.md)，格式为 `"Line {N}: Unclosed group '{name}' - missing }"`，然后跳过下一行。
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `config.rs` |
-| 可见性 | 私有（`fn`，非 `pub fn`） |
-| 调用方 | [`read_config`](read_config.md)、[`sort_and_group_config`](sort_and_group_config.md) |
-| 被调用方 | [`collect_members`](collect_members.md)、`str::find`、`str::trim`、`str::starts_with`、`str::strip_prefix` |
-| API | 仅标准库 |
-| 权限 | 无 |
+## 需求
 
-## 另请参阅
+| | |
+|---|---|
+| **模块** | `src/config.rs` |
+| **可见性** | 私有 (`fn`) — config 模块内部 |
+| **调用方** | [read_config](read_config.md)（多行组解析），[sort_and_group_config](sort_and_group_config.md)（自动分组读取器） |
+| **被调用方** | [collect_members](collect_members.md) |
+| **权限** | 无 |
 
-| 资源 | 链接 |
-|------|------|
-| collect_members | [collect_members](collect_members.md) |
-| read_config | [read_config](read_config.md) |
-| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| sort_and_group_config | [sort_and_group_config](sort_and_group_config.md) |
-| config 模块概述 | [README](README.md) |
+## 参见
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+| 主题 | 链接 |
+|-------|------|
+| 模块概述 | [config.rs](README.md) |
+| 成员名称解析器 | [collect_members](collect_members.md) |
+| 收集成员的规则插入 | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| 主配置读取器 | [read_config](read_config.md) |
+| 带错误报告的配置结果 | [ConfigResult](ConfigResult.md) |
+
+*文档针对 Commit：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

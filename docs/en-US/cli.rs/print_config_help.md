@@ -1,15 +1,11 @@
 # print_config_help function (cli.rs)
 
-Prints the full configuration file reference template to the current log output. This function iterates over the lines returned by [get_config_help_lines](get_config_help_lines.md) and writes each one using the `log!` macro.
+Prints the configuration file format documentation to the active output (console or log file). This function iterates over the lines returned by [get_config_help_lines](get_config_help_lines.md) and writes each one using the project's `log!` macro.
 
 ## Syntax
 
-```AffinityServiceRust/src/cli.rs#L262-266
-pub fn print_config_help() {
-    for line in get_config_help_lines() {
-        log!("{}", line);
-    }
-}
+```rust
+pub fn print_config_help()
 ```
 
 ## Parameters
@@ -22,38 +18,36 @@ This function does not return a value.
 
 ## Remarks
 
-`print_config_help` is a thin wrapper around [get_config_help_lines](get_config_help_lines.md) that sends each returned line to the active logging sink via the `log!` macro. Unlike [print_help](print_help.md) and [print_help_all](print_help_all.md), this function does **not** set the console output flag — the caller is responsible for ensuring that output is routed to the desired destination before calling this function.
+`print_config_help` is a thin wrapper around [get_config_help_lines](get_config_help_lines.md). It exists as a separate function so that the help text can be printed independently (e.g., from a future `--help-config` flag) or composed with other help sections as [print_help_all](print_help_all.md) does.
 
-The printed content covers the complete configuration file syntax reference, including:
+Unlike [print_help](print_help.md) and [print_help_all](print_help_all.md), this function does **not** set the console output flag (`get_use_console!()`) itself. When called as part of `print_help_all`, the flag is already set by the caller; when called standalone, the caller is responsible for ensuring the output destination is configured.
 
-- Terminology for P-cores, E-cores, and HyperThreading notation
-- Configuration line format and field descriptions
-- All supported CPU specification formats (ranges, hex masks, individual indices, aliases)
-- Priority level enumerations for process priority, I/O priority, and memory priority
-- Ideal processor syntax with module-prefix filtering
-- Process group syntax using `{ }` blocks
+The configuration help text covers:
 
-This function is called by [print_help_all](print_help_all.md) as the second part of the combined help output, and is also used independently when only the config-file reference is needed.
+- **Terminology** — P-core / E-core naming conventions for Intel hybrid CPUs.
+- **Config format** — Field-by-field breakdown of the colon-delimited rule syntax.
+- **CPU specification formats** — Ranges (`0-7`), individual CPUs (`0;4;8`), hex bitmasks (`0xFF`), and alias references (`*pcore`).
+- **Priority levels** — Valid values for process priority, IO priority, and memory priority.
+- **Ideal processor syntax** — Module-prefix matching rules with multi-segment support.
+- **Process groups** — Named and anonymous `{ }` group blocks.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `cli` |
-| Callers | [print_help_all](print_help_all.md), external entry points |
-| Callees | [get_config_help_lines](get_config_help_lines.md), `log!` macro |
-| API | Internal |
-| Privileges | None |
+| | |
+|---|---|
+| **Module** | `src/cli.rs` |
+| **Callers** | [print_help_all](print_help_all.md) |
+| **Callees** | [get_config_help_lines](get_config_help_lines.md), `log!` macro |
+| **Privileges** | None |
 
 ## See Also
 
-| Resource | Link |
-|----------|------|
-| get_config_help_lines | [get_config_help_lines](get_config_help_lines.md) |
-| print_help_all | [print_help_all](print_help_all.md) |
-| print_help | [print_help](print_help.md) |
-| print_cli_help | [print_cli_help](print_cli_help.md) |
-| cli module overview | [README](README.md) |
+| Topic | Link |
+|-------|------|
+| Module overview | [cli.rs](README.md) |
+| Help text source | [get_config_help_lines](get_config_help_lines.md) |
+| Full help printer | [print_help_all](print_help_all.md) |
+| CLI help printer | [print_cli_help](print_cli_help.md) |
+| Config parser | [read_config](../config.rs/read_config.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

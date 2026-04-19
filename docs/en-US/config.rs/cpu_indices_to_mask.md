@@ -1,73 +1,63 @@
 # cpu_indices_to_mask function (config.rs)
 
-Converts a slice of CPU indices into a `usize` bitmask suitable for use with Windows affinity APIs. Each CPU index sets the corresponding bit in the returned mask. This is the inverse operation of [`mask_to_cpu_indices`](mask_to_cpu_indices.md).
+Converts an array of CPU index numbers into a bitmask representation suitable for use with Windows affinity APIs.
 
 ## Syntax
 
-```AffinityServiceRust/src/config.rs#L119-127
-pub fn cpu_indices_to_mask(cpus: &[u32]) -> usize {
-    let mut mask: usize = 0;
-    for &cpu in cpus {
-        if cpu < 64 {
-            mask |= 1usize << cpu;
-        }
-    }
-    mask
-}
+```rust
+pub fn cpu_indices_to_mask(cpus: &[u32]) -> usize
 ```
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `cpus` | `&[u32]` | A slice of CPU index values. Each value represents a logical processor number (0-based). Values >= 64 are silently ignored because they cannot be represented in a single `usize` bitmask on 64-bit platforms. |
+`cpus: &[u32]`
+
+A slice of CPU index numbers (zero-based). Each value represents a logical processor number. Indices equal to or greater than 64 are silently ignored because a `usize` bitmask on 64-bit Windows can only represent processors 0–63.
 
 ## Return value
 
-Type: `usize`
-
-A bitmask where bit N is set if N appears in the input `cpus` slice. Returns `0` when `cpus` is empty or contains only indices >= 64.
-
-### Examples
-
-| Input | Output (hex) |
-|-------|--------------|
-| `[0, 1, 2, 3]` | `0x0F` |
-| `[0, 15]` | `0x8001` |
-| `[]` | `0x0` |
-| `[0, 2, 4]` | `0x15` |
-| `[64, 65]` | `0x0` (indices >= 64 are dropped) |
+`usize` — A bitmask where bit *N* is set to 1 if CPU index *N* is present in the input slice.
 
 ## Remarks
 
-- **64-core limitation**: The function guards against overflow by checking `cpu < 64` before shifting. On a 64-bit Windows system, `usize` is 64 bits wide, so bits 0-63 are representable. CPU indices >= 64 (which occur on systems with multiple processor groups) are silently dropped. For such systems, the range-based CPU specification format should be used with the full `List<[u32; CONSUMER_CPUS]>` representation rather than bitmasks.
+This function is the inverse of [mask_to_cpu_indices](mask_to_cpu_indices.md). It iterates through the input slice and sets the corresponding bit for each CPU index using a left-shift operation (`1usize << cpu`).
 
-- **Relationship to Windows APIs**: The returned `usize` value can be passed directly to Windows API functions like `SetProcessAffinityMask` (which expects a `ULONG_PTR` affinity mask) after casting.
+### Bitmask format
 
-- **No deduplication**: Duplicate CPU indices in the input do not cause errors -- setting a bit that is already set is a no-op. The result is the same regardless of whether duplicates are present.
+The returned value follows the Windows `DWORD_PTR` affinity mask convention:
 
-- This function is `pub` and is used by [`parse_mask`](parse_mask.md) and by the process-application logic in `apply.rs`.
+| Input CPUs | Output mask | Hex |
+|------------|------------|-----|
+| `[0]` | `0b0001` | `0x1` |
+| `[0, 1, 2, 3]` | `0b1111` | `0xF` |
+| `[0, 2, 4]` | `0b10101` | `0x15` |
+| `[]` | `0b0` | `0x0` |
+
+### 64-core limit
+
+CPU indices ≥ 64 are silently skipped. This means the function only produces valid results for systems with a single processor group (up to 64 logical processors). For systems with more than 64 cores, the CPU Sets API should be used instead of affinity masks — see [apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md).
+
+### Usage in the apply pipeline
+
+This function is called by [apply_affinity](../apply.rs/apply_affinity.md) to convert the `affinity_cpus` list from a [ProcessLevelConfig](ProcessLevelConfig.md) into the bitmask format expected by **SetProcessAffinityMask**. It is also used by [parse_mask](parse_mask.md) as the second step after [parse_cpu_spec](parse_cpu_spec.md).
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `config.rs` |
-| Visibility | `pub` |
-| Callers | [`parse_mask`](parse_mask.md), `apply.rs` (affinity application logic) |
-| Callees | None (bit manipulation only) |
-| API | Standard library only |
-| Privileges | None |
+| | |
+|---|---|
+| **Module** | [`src/config.rs`](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf/src/config.rs) |
+| **Callers** | [apply_affinity](../apply.rs/apply_affinity.md), [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md), [parse_mask](parse_mask.md), [convert](convert.md) |
+| **Callees** | None |
+| **Privileges** | None |
 
 ## See Also
 
-| Resource | Link |
-|----------|------|
-| mask_to_cpu_indices | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
-| parse_cpu_spec | [parse_cpu_spec](parse_cpu_spec.md) |
-| format_cpu_indices | [format_cpu_indices](format_cpu_indices.md) |
-| parse_mask | [parse_mask](parse_mask.md) |
-| config module overview | [README](README.md) |
+| Topic | Link |
+|-------|------|
+| Inverse conversion | [mask_to_cpu_indices](mask_to_cpu_indices.md) |
+| CPU spec parser | [parse_cpu_spec](parse_cpu_spec.md) |
+| Compact display of CPU lists | [format_cpu_indices](format_cpu_indices.md) |
+| Affinity application | [apply_affinity](../apply.rs/apply_affinity.md) |
+| Module overview | [config.rs](README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

@@ -1,6 +1,6 @@
 # log_apply_results function (main.rs)
 
-Formats and emits log output for the changes and errors produced by a single configuration-application pass on one process. Errors are forwarded to the find-log sink, while successfully applied changes are written to the main log with aligned, multi-line formatting.
+Formats and logs the changes and errors collected in an [`ApplyConfigResult`](../apply.rs/ApplyConfigResult.md) after a configuration application pass for a single process. Errors are routed to the find log; changes are written to the main log with right-aligned, multi-line formatting.
 
 ## Syntax
 
@@ -10,11 +10,17 @@ fn log_apply_results(pid: &u32, name: &String, result: ApplyConfigResult)
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `pid` | `&u32` | The Windows process ID that was just configured. Used as part of the log prefix for identification. |
-| `name` | `&String` | The executable name of the process (e.g. `"game.exe"`). Displayed alongside the PID in the log prefix. |
-| `result` | `ApplyConfigResult` | The accumulated result struct from `apply_process_level` and/or `apply_thread_level`, containing vectors of human-readable change descriptions and error strings. Consumed by this function. |
+`pid: &u32`
+
+The process identifier of the target process. Right-padded to 5 characters in the formatted output.
+
+`name: &String`
+
+The process name from the configuration rule that matched this process (e.g., `"game.exe"`). Used as the middle segment of the log line prefix.
+
+`result: ApplyConfigResult`
+
+The [`ApplyConfigResult`](../apply.rs/ApplyConfigResult.md) accumulator containing changes and errors from the current apply cycle. Consumed by this function.
 
 ## Return value
 
@@ -22,31 +28,48 @@ This function does not return a value.
 
 ## Remarks
 
-- The function is a no-op when `result.is_empty()` returns `true` (i.e. no changes and no errors were recorded).
-- All strings in `result.errors` are forwarded to `log_to_find`, which writes them to the `.find.log` file for later analysis by the `-processLogs` mode.
-- The first change string is logged with a formatted prefix of `"{pid}::{name}::{change}"`. Subsequent change strings are indented to align with the first change text, accounting for both the prefix width and the 10-character timestamp prefix (e.g. `[04:55:16]`) that the logging subsystem prepends.
-- The alignment logic computes padding as `prefix_length - first_change_length + 10`, ensuring that multi-line output for a single process reads as a visually grouped block in the log file.
-- This function takes ownership of `result` and drops it after processing.
+The function exits immediately if `result.is_empty()` returns `true`, producing no log output for processes that required no changes and encountered no errors.
+
+### Error logging
+
+All entries in `result.errors` are written to the find log via `log_to_find`. This separates error output from normal change tracking, allowing errors to be reviewed independently (e.g., during `-process_logs` post-processing).
+
+### Change logging
+
+Changes are formatted with an aligned, multi-line layout:
+
+1. The **first** change is logged as a single line in the format:
+
+   `{pid:>5}::{name}::{change}`
+
+   For example: `" 1234::game.exe::Priority: normal -> high"`
+
+2. **Subsequent** changes are logged with a padding prefix calculated to align them directly under the first change's text. The padding accounts for the `[HH:MM:SS]` time prefix (10 characters) that the logging infrastructure prepends.
+
+This alignment ensures that all changes for a single process appear as a visually grouped block in the log file, improving readability when many settings are applied simultaneously.
+
+### Logging infrastructure
+
+- `log_message` writes to the main log file with a timestamp prefix.
+- `log_pure_message` writes to the main log file without adding its own timestamp, relying on the caller-provided padding for alignment.
+- `log_to_find` writes to the `.find.log` file used by find-mode post-processing.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `main.rs` |
-| Callers | [apply_config](apply_config.md), thread-level apply loop in [main](main.md) |
-| Callees | `logging::log_to_find`, `logging::log_message`, `logging::log_pure_message`, `ApplyConfigResult::is_empty` |
-| API | None (internal logging only) |
-| Privileges | None |
+| | |
+|---|---|
+| **Module** | `src/main.rs` |
+| **Callers** | [apply_config](apply_config.md), thread-level-only apply path in [main](main.md) |
+| **Callees** | `log_to_find`, `log_message`, `log_pure_message` |
+| **Win32 API** | None |
+| **Privileges** | None |
 
 ## See Also
 
-| Reference | Link |
-|-----------|------|
-| apply_config | [apply_config](apply_config.md) |
-| apply_process_level | [apply_process_level](apply_process_level.md) |
-| apply_thread_level | [apply_thread_level](apply_thread_level.md) |
-| main | [main](main.md) |
-| logging module | [logging](../logging.rs/README.md) |
+| Topic | Link |
+|-------|------|
+| Result accumulator | [ApplyConfigResult](../apply.rs/ApplyConfigResult.md) |
+| Combined apply entry point | [apply_config](apply_config.md) |
+| Logging infrastructure | [logging.rs](../logging.rs/README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

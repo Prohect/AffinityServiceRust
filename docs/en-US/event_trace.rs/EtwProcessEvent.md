@@ -1,6 +1,6 @@
 # EtwProcessEvent struct (event_trace.rs)
 
-A process event received from ETW (Event Tracing for Windows), representing either a process start or process stop notification. Instances of this struct are produced by the ETW callback function and delivered to consumers through an `mpsc::Receiver<EtwProcessEvent>` channel returned by [`EtwProcessMonitor::start`](EtwProcessMonitor.md).
+Represents a single process lifecycle event received from the ETW (Event Tracing for Windows) real-time trace session. Each instance indicates that a process was either created or terminated, as reported by the Microsoft-Windows-Kernel-Process provider.
 
 ## Syntax
 
@@ -14,51 +14,42 @@ pub struct EtwProcessEvent {
 
 ## Members
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `pid` | `u32` | The process identifier extracted from the ETW event's `UserData` payload (first 4 bytes). This is the PID of the process that was created or terminated. |
-| `is_start` | `bool` | `true` if the event represents a process creation (ETW Event ID `1` — `ProcessStart`). `false` if the event represents a process termination (ETW Event ID `2` — `ProcessStop`). |
+| Member | Type | Description |
+|--------|------|-------------|
+| `pid` | `u32` | The process identifier extracted from the ETW event's `UserData` payload (first 4 bytes). |
+| `is_start` | `bool` | `true` if the event represents a process start (ETW Event ID 1), `false` if it represents a process stop (ETW Event ID 2). |
 
 ## Remarks
 
-- The struct derives `Debug` and `Clone`, allowing it to be printed for diagnostics and copied freely across channel boundaries and collection operations.
+- Instances of this struct are created inside the unsafe `etw_event_callback` function and sent through the global `ETW_SENDER` channel to the consumer on the main service thread.
+- The struct derives `Clone` so that consumers can retain copies of events without lifetime concerns, and `Debug` for diagnostic logging.
+- The `pid` value comes directly from the kernel event payload and is valid at the time the event fires. For process-stop events, the PID may already be recycled by the time the consumer processes the message, though this is rare in practice.
 
-- Instances are constructed inside the `extern "system"` ETW callback function (`etw_event_callback`), which extracts the PID from the raw `EVENT_RECORD.UserData` pointer and determines the event type from `EVENT_RECORD.EventHeader.EventDescriptor.Id`. Only Event IDs `1` (start) and `2` (stop) produce `EtwProcessEvent` values; all other event IDs are silently discarded by the callback.
-
-- Events are sent through the global [`ETW_SENDER`](ETW_SENDER.md) channel. If the sender has been dropped or the channel is full, the event is silently lost (the callback uses `let _ = sender.send(...)` to ignore send errors).
-
-- The consumer (typically the main scheduling loop) receives these events via the `mpsc::Receiver<EtwProcessEvent>` returned by [`EtwProcessMonitor::start`](EtwProcessMonitor.md) and uses them to reactively apply affinity/priority rules when new processes appear, rather than relying solely on polling-based snapshots from the [process module](../process.rs/README.md).
-
-### ETW event ID mapping
+### Event ID mapping
 
 | ETW Event ID | `is_start` value | Meaning |
-|---------------|-------------------|---------|
-| `1` | `true` | `ProcessStart` — a new process was created. |
-| `2` | `false` | `ProcessStop` — an existing process was terminated. |
+|--------------|-------------------|---------|
+| 1 | `true` | ProcessStart — a new process was created |
+| 2 | `false` | ProcessStop — an existing process terminated |
 
-### ETW provider details
-
-Events are sourced from the `Microsoft-Windows-Kernel-Process` provider (GUID `{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}`) with keyword filter `WINEVENT_KEYWORD_PROCESS` (`0x10`), which ensures only process-related events are delivered to the callback.
+All other event IDs from the Microsoft-Windows-Kernel-Process provider are filtered out by the callback and never produce an `EtwProcessEvent`.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `event_trace.rs` |
-| **Produced by** | `etw_event_callback` (module-private `extern "system"` function) |
-| **Consumed by** | Main scheduling loop via `mpsc::Receiver<EtwProcessEvent>` |
-| **Delivered through** | [`ETW_SENDER`](ETW_SENDER.md) global channel |
-| **Platform** | Windows only — requires ETW infrastructure |
+| | |
+|---|---|
+| **Module** | `src/event_trace.rs` |
+| **Created by** | `etw_event_callback` (unsafe extern "system" function) |
+| **Consumed by** | Main service loop via `Receiver<EtwProcessEvent>` returned from [EtwProcessMonitor::start](EtwProcessMonitor.md) |
+| **Dependencies** | None (plain data struct) |
+| **Privileges** | None |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| EtwProcessMonitor struct | [EtwProcessMonitor](EtwProcessMonitor.md) |
-| ETW_SENDER static | [ETW_SENDER](ETW_SENDER.md) |
-| ETW_ACTIVE static | [ETW_ACTIVE](ETW_ACTIVE.md) |
-| process module | [process.rs](../process.rs/README.md) |
-| event_trace module overview | [README](README.md) |
+| Module overview | [event_trace.rs](README.md) |
+| ETW session manager | [EtwProcessMonitor](EtwProcessMonitor.md) |
+| Error deduplication (consumer side) | [is_new_error](../logging.rs/is_new_error.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

@@ -1,6 +1,6 @@
 # process_logs function (main.rs)
 
-Scans `.find.log` files produced by the `-find` mode to discover processes that are not yet covered by any configuration grade or blacklist entry. For each unknown process, the function attempts to locate the executable on disk using [Everything search](https://www.voidtools.com/) (`es.exe`) and writes the aggregated results to a text file for manual review.
+Processes find-mode log files to discover new unmanaged processes. Reads all `.find.log` files from a logs directory, extracts unique process names, filters out processes already present in the configuration or blacklist, and uses [Everything search](https://www.voidtools.com/) (`es.exe`) to locate executable paths on disk. Results are written to a text file for manual review.
 
 ## Syntax
 
@@ -15,72 +15,69 @@ fn process_logs(
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `configs` | `&ConfigResult` | The fully-parsed configuration result. Used to determine which process names are already covered by any process-level or thread-level config grade. |
-| `blacklist` | `&[String]` | Slice of lowercase process names that should be excluded from the results (known-uninteresting processes). |
-| `logs_path` | `Option<&str>` | Directory path to scan for `.find.log` files. Defaults to `"logs"` when `None`. |
-| `output_file` | `Option<&str>` | File path to write the discovery results to. Defaults to `"new_processes_results.txt"` when `None`. |
+`configs: &ConfigResult`
+
+The parsed [ConfigResult](../config.rs/ConfigResult.md) containing all process-level and thread-level configuration maps. Used to determine which processes are already managed.
+
+`blacklist: &[String]`
+
+A list of lowercase process names that should be excluded from the results, in addition to those already in `configs`.
+
+`logs_path: Option<&str>`
+
+Path to the directory containing `.find.log` files. Defaults to `"logs"` when `None`.
+
+`output_file: Option<&str>`
+
+Path to the output text file where results are written. Defaults to `"new_processes_results.txt"` when `None`.
 
 ## Return value
 
-This function does not return a value.
+This function does not return a value. Output is written to the file specified by `output_file`.
 
 ## Remarks
 
-### Log parsing
+The function implements a multi-stage pipeline:
 
-The function reads every file in `logs_path` whose name ends with `.find.log`. For each line it searches for the substring `"find "` and extracts the token immediately following it (up to the next space). Only tokens ending with `.exe` are collected. All names are lowercased before comparison.
+1. **Log scanning** — Iterates all files in `logs_path` whose names end with `.find.log`. For each file, it parses lines looking for the pattern `"find <process_name>"` and extracts process names ending in `.exe`. All names are lowercased and collected into a `HashSet` for deduplication.
 
-### Filtering
+2. **Filtering** — Removes any process name that appears in any grade of `configs.process_level_configs` or `configs.thread_level_configs`, as well as any name present in the `blacklist`.
 
-A discovered process name is **excluded** if any of the following are true:
+3. **Executable location** — For each remaining process name, invokes the Everything command-line interface (`es.exe`) with `-utf8-bom -r ^<escaped_name>$` to perform a regex search for the exact filename. The `.` characters in the process name are escaped to `\.` for correct regex matching.
 
-- It appears as a key in any grade of `configs.process_level_configs`.
-- It appears as a key in any grade of `configs.thread_level_configs`.
-- It is present in the `blacklist` slice.
+4. **Encoding handling** — Detects the console output code page via `GetConsoleOutputCP` and selects the appropriate encoding (GBK for code page 936, otherwise `windows-<codepage>`). The `es.exe` output is decoded from this encoding. A UTF-8 BOM prefix (`0xEF 0xBB 0xBF`) is stripped if present.
 
-### Executable path resolution
-
-For each remaining (new) process, the function shells out to the `es` command-line tool (Everything search) with the arguments `-utf8-bom -r ^<escaped_name>$`. The process name's dots are escaped for the regex. The command's stdout is decoded using the encoding that matches the current console output code page (`GetConsoleOutputCP`); code page 936 is mapped to `"gbk"`, and all others are mapped to `"windows-<cp>"`. A UTF-8 BOM prefix (`0xEF 0xBB 0xBF`) is stripped if present before decoding.
-
-### Output format
-
-Results are written as plain text. Each process entry has the form:
-
-```
-Process: <name>
-Found:
-  <path1>
-  <path2>
----
-```
-
-If `es.exe` returns no output, `"Not found, result empty"` is printed instead. If `es.exe` fails entirely, `"Not found, es failed"` is printed.
+5. **Output formatting** — Each process is written as a block:
+   - `Process: <name>` header
+   - `Found:` section with indented paths, or `Not found, result empty` / `Not found, es failed`
+   - `---` separator
 
 ### Side effects
 
-- Sets the global console-logging flag (`*get_use_console!() = true`) so that any `log!` calls during execution are written to stdout.
-- Writes the output file to disk via `std::fs::write`. Errors are logged but do not cause a panic.
+- Sets the global `use_console` flag to `true` (forces console output mode).
+- Spawns external `es.exe` processes. If Everything search is not installed or `es.exe` is not on `PATH`, all lookups will report failure.
+
+### Encoding edge cases
+
+The function handles the mismatch between `es.exe` output encoding and Rust's UTF-8 strings by using the `encoding_rs` crate. On Chinese-locale systems (code page 936), GBK decoding is used; on other locales, the appropriate Windows code page encoding is selected.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `main.rs` |
-| Callers | [main](main.md) (when `cli.process_logs_mode` is `true`) |
-| Callees | `std::fs::read_dir`, `std::fs::read_to_string`, `std::fs::write`, `std::process::Command` (`es`), `GetConsoleOutputCP`, `encoding_rs::Encoding::for_label_no_replacement` |
-| External tools | `es.exe` (Everything command-line interface) must be on `PATH` |
-| Privileges | None beyond normal file-system access; does not require administrator privileges. |
+| | |
+|---|---|
+| **Module** | `src/main.rs` |
+| **Callers** | [main](main.md) (when `cli.process_logs_mode` is `true`) |
+| **Callees** | `std::fs::read_dir`, `std::fs::read_to_string`, `std::fs::write`, `std::process::Command` (`es.exe`), `GetConsoleOutputCP`, `encoding_rs::Encoding::for_label_no_replacement` |
+| **External tools** | [Everything CLI (`es.exe`)](https://www.voidtools.com/support/everything/command_line_interface/) |
+| **Privileges** | None beyond file system read/write access |
 
 ## See Also
 
-| Reference | Link |
-|-----------|------|
-| process_find | [process_find](process_find.md) |
-| main | [main](main.md) |
-| main module overview | [README](README.md) |
-| config module | [config](../config.rs/README.md) |
+| Topic | Link |
+|-------|------|
+| Find-mode runtime discovery | [process_find](process_find.md) |
+| Configuration types | [ConfigResult](../config.rs/ConfigResult.md) |
+| Entry point and mode dispatch | [main](main.md) |
+| Logging infrastructure | [logging.rs](../logging.rs/README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

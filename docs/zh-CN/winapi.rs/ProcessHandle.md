@@ -1,6 +1,6 @@
 # ProcessHandle 结构体 (winapi.rs)
 
-`ProcessHandle` 结构体是一个 RAII 包装器，持有一组具有不同访问级别的 Windows 进程句柄。它保证在结构体被丢弃（drop）时自动关闭所有包含的句柄。该结构体为每个进程维护最多四个句柄——用于读取（查询）和写入（设置）操作的受限版本和完整版本——允许调用者为每个操作使用适当的访问级别。
+封装多个 Windows `HANDLE` 值的 RAII 包装器，这些句柄以不同的访问级别为单个进程打开。提供受限和完全访问层级的读/写句柄。所有有效的句柄在结构体被析构时都通过 `CloseHandle` 自动关闭。
 
 ## 语法
 
@@ -16,41 +16,79 @@ pub struct ProcessHandle {
 ## 成员
 
 | 成员 | 类型 | 描述 |
-|------|------|------|
-| `r_limited_handle` | `HANDLE` | 以 `PROCESS_QUERY_LIMITED_INFORMATION` 权限打开的进程句柄。在结构体构造时始终有效。 |
-| `r_handle` | `Option<HANDLE>` | 以 `PROCESS_QUERY_INFORMATION` 权限打开的进程句柄。如果更高权限的打开操作失败（例如受保护进程），则可能为 `None`。 |
-| `w_limited_handle` | `HANDLE` | 以 `PROCESS_SET_LIMITED_INFORMATION` 权限打开的进程句柄。在结构体构造时始终有效。 |
-| `w_handle` | `Option<HANDLE>` | 以 `PROCESS_SET_INFORMATION` 权限打开的进程句柄。如果更高权限的打开操作失败，则可能为 `None`。 |
+|--------|------|-------------|
+| `r_limited_handle` | `HANDLE` | 以 `PROCESS_QUERY_LIMITED_INFORMATION` 访问级别打开的进程句柄。当结构体存在时始终有效 — 如果无法获取此句柄，构造将失败。用于轻量级查询，如 `QueryFullProcessImageNameW` 和周期时间查询，这些查询不需要完全查询权限。 |
+| `r_handle` | `Option<HANDLE>` | 以 `PROCESS_QUERY_INFORMATION` 访问级别打开的进程句柄。如果访问权限被拒绝（受保护/系统进程常见），则为 `None`。用于如 `GetProcessAffinityMask` 和 `NtQueryInformationProcess` 等操作。 |
+| `w_limited_handle` | `HANDLE` | 以 `PROCESS_SET_LIMITED_INFORMATION` 访问级别打开的进程句柄。当结构体存在时始终有效。用于通过 `SetProcessDefaultCpuSets` 进行 CPU 集合分配。 |
+| `w_handle` | `Option<HANDLE>` | 以 `PROCESS_SET_INFORMATION` 访问级别打开的进程句柄。如果访问权限被拒绝，则为 `None`。用于如 `SetProcessAffinityMask`、`SetPriorityClass` 和 `NtSetInformationProcess` 等操作。 |
+
+## Drop
+
+```rust
+impl Drop for ProcessHandle {
+    fn drop(&mut self);
+}
+```
+
+通过 `CloseHandle` 关闭所有持有的句柄：
+
+- `r_limited_handle` 和 `w_limited_handle` 始终关闭（它们始终有效）。
+- 仅当 `r_handle` 和 `w_handle` 为 `Some(_)` 时才关闭它们。
+
+每个 `CloseHandle` 调用的结果被有意丢弃（`let _ = CloseHandle(...)`），因为清理期间的句柄关闭失败是不可恢复的，不应引发恐慌。
 
 ## 备注
 
-- **RAII 句柄生命周期。** `Drop` 实现会自动关闭所有有效句柄。`Option<HANDLE>` 变体仅在为 `Some` 时才被关闭。受限句柄（`r_limited_handle`、`w_limited_handle`）始终会被关闭，因为它们在构造时保证有效。
+### 访问级别层级
 
-- **访问级别回退模式。** 该结构体支持两级访问模型。受限句柄（`PROCESS_QUERY_LIMITED_INFORMATION`、`PROCESS_SET_LIMITED_INFORMATION`）对大多数进程都能成功获取，而完整句柄（`PROCESS_QUERY_INFORMATION`、`PROCESS_SET_INFORMATION`）对于受保护或系统进程可能会失败。调用者应在使用 `r_handle` 或 `w_handle` 之前检查其是否为 `Some`，并在失败时回退到受限变体。
+`ProcessHandle` 结构体捕获两个访问层级的四个句柄：
 
-- **构造。** 实例仅通过 [get_process_handle](get_process_handle.md) 创建，该函数打开所有四个句柄，如果任一必需的受限句柄无法获取则返回 `None`。完整句柄是尽力而为的。
+| 层级 | 读 | 写 |
+|------|------|-------|
+| **受限** | `PROCESS_QUERY_LIMITED_INFORMATION` | `PROCESS_SET_LIMITED_INFORMATION` |
+| **完全** | `PROCESS_QUERY_INFORMATION` | `PROCESS_SET_INFORMATION` |
 
-- **线程安全性。** 该结构体未实现 `Send` 或 `Sync`。句柄不应在线程间共享；需要访问的每个线程应获取新的 `ProcessHandle`。
+受限访问句柄对大多数进程成功，包括其他会话中的进程。完全访问句柄可能对受保护进程、系统进程或安全描述符拒绝请求账户的进程失败。[get_process_handle](get_process_handle.md) 工厂函数通过将这些句柄包装在 `Option` 中来优雅地处理这种情况。
 
-- **平台。** 仅限 Windows。依赖 `windows::Win32::Foundation::HANDLE` 和 `CloseHandle`。
+### 调用方中的句柄选择
+
+[get_handles](../apply.rs/get_handles.md) 辅助函数从 `ProcessHandle` 中提取 `(read_handle, write_handle)` 对，优先使用完全访问句柄（如果可用），否则回退到受限访问句柄。这允许应用函数使用最佳可用访问级别，而无需自行检查 `Option`。
+
+### 有效性保证
+
+- **构造：** `ProcessHandle` 仅由 [get_process_handle](get_process_handle.md) 创建，如果任一受限访问句柄打开失败，它返回 `None`。如果结构体存在，则 `r_limited_handle` 和 `w_limited_handle` 保证有效。
+- **生命周期：** 调用方（通常是主轮询循环）拥有 `ProcessHandle`，并在不再跟踪该进程时丢弃它。
+- **线程安全：** `ProcessHandle` 默认不是 `Send` 或 `Sync`，因为原始 `HANDLE` 值。它在主轮询循环的单线程上下文中使用。
+
+### 错误去重
+
+构造期间句柄打开失败时，错误通过 [is_new_error](../logging.rs/is_new_error.md) 记录，以便对相同进程/操作/错误码组合的重复失败在首次出现后被抑制。内部操作代码映射到特定句柄：
+
+| 操作码 | 句柄 |
+|---------|--------|
+| `0` | `r_limited_handle` (`PROCESS_QUERY_LIMITED_INFORMATION`) |
+| `1` | `w_limited_handle` (`PROCESS_SET_LIMITED_INFORMATION`) |
+| `2` | `r_handle` (`PROCESS_QUERY_INFORMATION`) |
+| `3` | `w_handle` (`PROCESS_SET_INFORMATION`) |
 
 ## 要求
 
-| 要求 | 值 |
-|------|------|
-| 模块 | `winapi.rs` |
-| 创建者 | [get_process_handle](get_process_handle.md) |
-| 依赖 | `windows::Win32::Foundation::{CloseHandle, HANDLE}` |
-| 权限 | 建议使用 `SeDebugPrivilege` 以获取受保护进程的完整访问句柄 |
-| 平台 | Windows |
+| | |
+|---|---|
+| **模块** | `src/winapi.rs` |
+| **调用方** | 主轮询循环，[get_handles](../apply.rs/get_handles.md)，所有 `apply_*` 函数 |
+| **工厂** | [get_process_handle](get_process_handle.md) |
+| **Win32 API** | [OpenProcess](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocess), [CloseHandle](https://learn.microsoft.com/zh-cn/windows/win32/api/handleapi/nf-handleapi-closehandle) |
+| **特权** | [SeDebugPrivilege](enable_debug_privilege.md) 扩展对受保护进程的访问 |
 
 ## 另请参阅
 
 | 主题 | 链接 |
-|------|------|
-| get_process_handle | [get_process_handle](get_process_handle.md) |
-| ThreadHandle 结构体 | [ThreadHandle](ThreadHandle.md) |
-| process 模块 | [process.rs](../process.rs/README.md) |
+|-------|------|
+| 模块概述 | [winapi.rs](README.md) |
+| 工厂函数 | [get_process_handle](get_process_handle.md) |
+| 句柄提取辅助函数 | [get_handles](../apply.rs/get_handles.md) |
+| 线程句柄对应项 | [ThreadHandle](ThreadHandle.md) |
+| 错误去重 | [is_new_error](../logging.rs/is_new_error.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*为 Commit 记录：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

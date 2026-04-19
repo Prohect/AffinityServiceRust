@@ -1,6 +1,6 @@
 # get_thread_handle 函数 (winapi.rs)
 
-为给定线程 ID (TID) 打开多个具有不同访问级别的线程句柄，返回一个 [`ThreadHandle`](ThreadHandle.md) RAII 包装器。`r_limited_handle`（受限查询）是必需的；如果无法获取，函数将返回 `None`。其余句柄（`r_handle`、`w_limited_handle`、`w_handle`）会尝试获取，但如果调用者权限不足，则可能是无效的。
+为给定线程 ID 打开多个访问级别的 Windows 线程句柄集。返回一个 [ThreadHandle](ThreadHandle.md) RAII 包装器，在析构时自动关闭所有打开的句柄。函数需要 `THREAD_QUERY_LIMITED_INFORMATION` 作为最低权限；其他访问级别会被尝试但允许优雅地失败。
 
 ## 语法
 
@@ -13,72 +13,71 @@ pub fn get_thread_handle(tid: u32, pid: u32, process_name: &str) -> Option<Threa
 | 参数 | 类型 | 描述 |
 |-----------|------|-------------|
 | `tid` | `u32` | 目标线程的线程标识符。 |
-| `pid` | `u32` | 拥有该线程的进程标识符。用于通过 [`is_new_error`](../logging.rs/is_new_error.md) 进行错误跟踪。 |
-| `process_name` | `&str` | 拥有该线程的进程名称。用于错误跟踪和诊断日志记录。 |
+| `pid` | `u32` | 拥有该线程的进程标识符。仅用于错误日志记录和通过 [is_new_error](../logging.rs/is_new_error.md) 进行去重。 |
+| `process_name` | `&str` | 拥有进程的名称。仅用于错误日志上下文。 |
 
 ## 返回值
 
-如果成功打开了必需的 `THREAD_QUERY_LIMITED_INFORMATION` 句柄，则返回 `Some(ThreadHandle)`。如果无法获取必需的句柄，则返回 `None`。
+`Option<ThreadHandle>` — 如果成功打开了必需的 `r_limited_handle`，返回 `Some(ThreadHandle)`。如果无法获取所需的最小句柄，返回 `None`。
 
-返回的 [`ThreadHandle`](ThreadHandle.md) 包含：
+当返回 `Some` 时，[ThreadHandle](ThreadHandle.md) 包含：
 
-| 字段 | 访问权限 | 是否必需 |
-|-------|-------------|----------|
-| `r_limited_handle` | `THREAD_QUERY_LIMITED_INFORMATION` | **是** — 返回 `Some` 时始终有效。 |
-| `r_handle` | `THREAD_QUERY_INFORMATION` | 否 — 失败时可能为 `HANDLE::default()`（无效）。 |
-| `w_limited_handle` | `THREAD_SET_LIMITED_INFORMATION` | 否 — 失败时可能为 `HANDLE::default()`（无效）。 |
-| `w_handle` | `THREAD_SET_INFORMATION` | 否 — 失败时可能为 `HANDLE::default()`（无效）。 |
+| 句柄字段 | 访问权限 | 必需 | 失败时的行为 |
+|---|---|---|---|
+| `r_limited_handle` | `THREAD_QUERY_LIMITED_INFORMATION` | **是** | 函数返回 `None` |
+| `r_handle` | `THREAD_QUERY_INFORMATION` | 否 | 设置为无效的 `HANDLE` |
+| `w_limited_handle` | `THREAD_SET_LIMITED_INFORMATION` | 否 | 设置为无效的 `HANDLE` |
+| `w_handle` | `THREAD_SET_INFORMATION` | 否 | 设置为无效的 `HANDLE` |
 
-当 `ThreadHandle` 被销毁时，所有有效句柄将自动关闭。
+## 说明
 
-## 备注
+函数遵循分层句柄打开策略：
 
-该函数使用 Windows `OpenThread` API 逐步打开句柄：
+1. **必需句柄** — 首先通过 `OpenThread` 打开 `THREAD_QUERY_LIMITED_INFORMATION`。如果此调用失败或返回无效句柄，错误将被记录（通过 [is_new_error](../logging.rs/is_new_error.md) 对每个唯一的 pid/tid/操作/错误组合仅记录一次），函数立即返回 `None`。
 
-1. **`r_limited_handle`** — 以 `THREAD_QUERY_LIMITED_INFORMATION` 权限打开。这是唯一必需的句柄。如果失败或返回无效句柄，函数将通过 [`log_to_find`](../logging.rs/log_to_find.md)（受 [`is_new_error`](../logging.rs/is_new_error.md) 去重控制）记录失败信息并返回 `None`。
+2. **可选句柄** — 通过 [try_open_thread](try_open_thread.md) 分别尝试打开 `THREAD_QUERY_INFORMATION`、`THREAD_SET_LIMITED_INFORMATION` 和 `THREAD_SET_INFORMATION`。这些句柄的失败会被静默吸收（源代码中的错误日志被注释掉），相应的字段设置为 `HANDLE::default()`（无效句柄）。调用方在使用这些句柄前必须检查 `is_invalid()`。
 
-2. **`r_handle`** — 通过 [`try_open_thread`](try_open_thread.md) 以 `THREAD_QUERY_INFORMATION` 权限打开（internal_op_code `1`）。失败时静默处理；存储无效句柄。
+### 错误码映射
 
-3. **`w_limited_handle`** — 通过 [`try_open_thread`](try_open_thread.md) 以 `THREAD_SET_LIMITED_INFORMATION` 权限打开（internal_op_code `2`）。失败时静默处理；存储无效句柄。
+每个句柄打开尝试被分配一个内部操作码用于错误去重：
 
-4. **`w_handle`** — 通过 [`try_open_thread`](try_open_thread.md) 以 `THREAD_SET_INFORMATION` 权限打开（internal_op_code `3`）。失败时静默处理；存储无效句柄。
+| 代码 | 句柄 | 访问权限 |
+|------|--------|-------------|
+| `0` | `r_limited_handle` | `THREAD_QUERY_LIMITED_INFORMATION` |
+| `1` | `r_handle` | `THREAD_QUERY_INFORMATION` |
+| `2` | `w_limited_handle` | `THREAD_SET_LIMITED_INFORMATION` |
+| `3` | `w_handle` | `THREAD_SET_INFORMATION` |
 
-### is_new_error 的错误代码映射
+### 句柄生命周期
 
-| `internal_op_code` | 含义 |
-|--------------------|---------|
-| `0` | `THREAD_QUERY_LIMITED_INFORMATION` 打开失败或无效句柄 |
-| `1` | `THREAD_QUERY_INFORMATION` |
-| `2` | `THREAD_SET_LIMITED_INFORMATION` |
-| `3` | `THREAD_SET_INFORMATION` |
+所有返回的句柄由 [ThreadHandle](ThreadHandle.md) 结构体拥有。当 `ThreadHandle` 被析构时，它们通过 `CloseHandle` 自动关闭。调用方不应手动关闭这些句柄。
 
-非必需句柄的失败（代码 1–3）在 [`try_open_thread`](try_open_thread.md) 的源代码中目前已被注释掉，不会产生日志输出。
+### 典型用法
 
-### 平台说明
+线程句柄通常只打开一次，并缓存在 [ThreadStats::handle](../scheduler.rs/ThreadStats.md) 中以在各轮询迭代中重用。这避免了每个周期都调用 `OpenThread` 的开销。句柄缓存会在拥有进程退出时清除。
 
-- **仅限 Windows。** 使用 `windows::Win32::System::Threading` 中的 `OpenThread`。
-- 需要调用者具有适当的权限。以管理员身份运行并启用 [`SeDebugPrivilege`](enable_debug_privilege.md) 可最大程度地提高获取全部四个句柄的成功率。
-- 受保护进程和系统线程可能会拒绝甚至 `THREAD_QUERY_LIMITED_INFORMATION` 的访问。
+### 访问被拒绝场景
 
-## 要求
+在没有 [SeDebugPrivilege](enable_debug_privilege.md) 的情况下，属于提升权限或受保护进程的线程可能会拒绝 `THREAD_QUERY_LIMITED_INFORMATION` 请求，返回 `ERROR_ACCESS_DENIED` (5)，导致函数返回 `None`。在启动时启用 SeDebugPrivilege 可以解决大多数进程的这个问题。
 
-| 要求 | 值 |
-|-------------|-------|
-| **模块** | `winapi.rs` |
-| **调用者** | `apply.rs`、`scheduler.rs` |
-| **被调用者** | [`try_open_thread`](try_open_thread.md)、[`is_new_error`](../logging.rs/is_new_error.md)、[`log_to_find`](../logging.rs/log_to_find.md)、[`error_from_code_win32`](../error_codes.rs/error_from_code_win32.md) |
-| **Win32 API** | `OpenThread`、`GetLastError` |
-| **权限** | 建议启用 `SeDebugPrivilege` |
+## 需求
 
-## 另请参阅
+| | |
+|---|---|
+| **模块** | `src/winapi.rs` |
+| **调用方** | [get_handles](../apply.rs/get_handles.md)、[prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md) |
+| **被调用方** | [try_open_thread](try_open_thread.md)、[is_new_error](../logging.rs/is_new_error.md) |
+| **Win32 API** | [OpenThread](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-openthread) |
+| **权限** | 不需要；建议 [SeDebugPrivilege](enable_debug_privilege.md) 以获得完全访问权限 |
+
+## 参见
 
 | 主题 | 链接 |
 |-------|------|
-| ThreadHandle 结构体 | [ThreadHandle](ThreadHandle.md) |
-| try_open_thread 辅助函数 | [try_open_thread](try_open_thread.md) |
-| get_process_handle | [get_process_handle](get_process_handle.md) |
-| Operation 枚举 | [Operation](../logging.rs/Operation.md) |
-| is_new_error | [is_new_error](../logging.rs/is_new_error.md) |
+| 线程句柄 RAII 封装 | [ThreadHandle](ThreadHandle.md) |
+| 低级线程打开辅助函数 | [try_open_thread](try_open_thread.md) |
+| 进程句柄等价物 | [get_process_handle](get_process_handle.md) |
+| 缓存句柄的线程统计 | [ThreadStats](../scheduler.rs/ThreadStats.md) |
+| 模块概述 | [winapi.rs](README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档版本：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

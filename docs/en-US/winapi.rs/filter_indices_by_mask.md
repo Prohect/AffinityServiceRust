@@ -1,6 +1,6 @@
 # filter_indices_by_mask function (winapi.rs)
 
-Filters a slice of logical CPU indices to only those that are permitted by a given affinity bitmask. This is used to ensure that CPU set assignments do not include processors that fall outside the process's current affinity mask.
+Filters a list of logical CPU indices to only those whose corresponding bit is set in the given affinity mask. Used to intersect a configured CPU index list with the actual process affinity, ensuring that prime thread pinning and CPU set operations only target processors the process is allowed to use.
 
 ## Syntax
 
@@ -12,51 +12,58 @@ pub fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> List
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `cpu_indices` | `&[u32]` | A slice of zero-based logical processor indices to filter. |
-| `affinity_mask` | `usize` | A bitmask where each set bit represents an allowed logical processor (bit 0 = CPU 0, bit 1 = CPU 1, etc.). |
+| `cpu_indices` | `&[u32]` | Slice of logical CPU indices (0-based) to filter. Each value represents a logical processor number (e.g., `0`, `1`, `5`, `12`). |
+| `affinity_mask` | `usize` | A bitmask where bit *N* being set indicates that logical processor *N* is permitted. Typically obtained from `GetProcessAffinityMask` or constructed from configuration. |
 
 ## Return value
 
-Returns a `List<[u32; CONSUMER_CPUS]>` (`SmallVec` with inline capacity of 32) containing only those indices from `cpu_indices` whose corresponding bit is set in `affinity_mask`. The order of the input indices is preserved.
+`List<[u32; CONSUMER_CPUS]>` — A stack-allocated list containing only those indices from `cpu_indices` whose corresponding bit is set in `affinity_mask`. The order of elements matches the input order. Returns an empty list if no indices pass the filter.
 
 ## Remarks
 
-- The function performs a straightforward bitwise check: for each index in `cpu_indices`, it verifies that the index is less than 64 and that `(1usize << idx) & affinity_mask` is nonzero. Indices ≥ 64 are silently excluded because `usize` on 64-bit Windows is 64 bits wide.
+The filtering condition for each index is:
 
-- This function operates purely on indices and bitmasks — it does **not** consult the [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) cache or call any Windows API. It is a CPU-local computation with no locking or side effects.
+```
+idx < 64 && ((1usize << idx) & affinity_mask) != 0
+```
 
-- The returned `SmallVec` uses an inline capacity of `CONSUMER_CPUS` (32). If the filtered result exceeds 32 entries, the vector spills to a heap allocation.
+- **64-bit limit:** Indices ≥ 64 are silently excluded because a `usize` on 64-bit Windows can only represent processors 0–63 via bit positions. Systems with more than 64 logical processors use processor groups, which are handled separately by the CPU Sets API.
+- **No deduplication:** If the input `cpu_indices` contains duplicate values, the output will also contain duplicates for any that pass the filter.
+- **No sorting:** The output preserves the original input ordering. If sorted output is needed, the caller must sort the result separately.
+- The function uses iterator chaining (`filter` + `copied` + `collect`) and performs no heap allocation — the result is collected into a stack-backed `List<[u32; CONSUMER_CPUS]>`.
 
-- Typical use case: when a configuration rule specifies desired CPU indices but the target process has a restricted affinity mask (e.g., set by a parent process or job object), this function intersects the two sets so that only valid CPUs are assigned.
+### Typical usage
 
-### Algorithm
+This function is called by [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) to ensure that prime thread CPU indices are restricted to only those processors within the process's current affinity mask. For example, if the configuration specifies prime CPUs `[4, 5, 6, 7]` but the process has an affinity mask of `0x3F` (CPUs 0–5), the function returns `[4, 5]`.
 
-1. Iterate over each `idx` in `cpu_indices`.
-2. For each `idx`, check:
-   - `idx < 64` (fits within the bitmask width), **and**
-   - `(1usize << idx) & affinity_mask != 0` (the corresponding bit is set).
-3. Collect passing indices into the result list via `Iterator::filter` and `Iterator::copied`.
+### Example
+
+| `cpu_indices` | `affinity_mask` | Result |
+|---------------|-----------------|--------|
+| `[0, 2, 4]` | `0x15` (bits 0, 2, 4) | `[0, 2, 4]` |
+| `[0, 2, 4]` | `0x05` (bits 0, 2) | `[0, 2]` |
+| `[0, 1, 2]` | `0x00` | `[]` (empty) |
+| `[64, 65]` | `0xFFFFFFFFFFFFFFFF` | `[]` (indices ≥ 64 excluded) |
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `winapi.rs` |
-| **Callers** | `apply.rs` — used during rule application to restrict CPU indices to the process's allowed affinity mask before converting to CPU Set IDs. |
-| **Callees** | None (pure computation). |
-| **Types** | `List<[u32; CONSUMER_CPUS]>` from [collections](../collections.rs/README.md) |
-| **Platform** | Platform-independent logic, but only meaningful on Windows where affinity masks are used. |
+| | |
+|---|---|
+| **Module** | `src/winapi.rs` |
+| **Callers** | [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md), other apply functions that need to intersect configured indices with process affinity |
+| **Callees** | None (pure computation) |
+| **Win32 API** | None |
+| **Privileges** | None |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| cpusetids_from_indices | [cpusetids_from_indices](cpusetids_from_indices.md) |
-| cpusetids_from_mask | [cpusetids_from_mask](cpusetids_from_mask.md) |
-| indices_from_cpusetids | [indices_from_cpusetids](indices_from_cpusetids.md) |
-| mask_from_cpusetids | [mask_from_cpusetids](mask_from_cpusetids.md) |
-| is_affinity_unset | [is_affinity_unset](is_affinity_unset.md) |
-| CONSUMER_CPUS constant | [CONSUMER_CPUS](../collections.rs/CONSUMER_CPUS.md) |
+| Module overview | [winapi.rs](README.md) |
+| Index → CPU Set ID conversion | [cpusetids_from_indices](cpusetids_from_indices.md) |
+| Mask → CPU Set ID conversion | [cpusetids_from_mask](cpusetids_from_mask.md) |
+| CPU Set ID → index conversion | [indices_from_cpusetids](indices_from_cpusetids.md) |
+| CPU Set ID → mask conversion | [mask_from_cpusetids](mask_from_cpusetids.md) |
+| Prime thread promotion | [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

@@ -1,10 +1,10 @@
-# ThreadLevelConfig type (config.rs)
+# ThreadLevelConfig struct (config.rs)
 
-The `ThreadLevelConfig` struct holds all thread-level scheduling settings for a single process rule. It defines the prime-thread CPU set, module-prefix filters with optional per-prefix CPU overrides and thread priorities, the number of top threads to track, and ideal-processor assignment rules. Thread-level configs are separated from process-level configs so the scheduler can independently manage per-thread CPU placement on each polling iteration.
+Per-process thread-level configuration that controls prime thread scheduling and ideal processor assignment. Unlike [ProcessLevelConfig](ProcessLevelConfig.md) which is applied once when a process is first seen, `ThreadLevelConfig` rules are evaluated every polling iteration to track thread activity and dynamically reassign CPU resources.
 
 ## Syntax
 
-```AffinityServiceRust/src/config.rs#L40-46
+```rust
 #[derive(Debug, Clone)]
 pub struct ThreadLevelConfig {
     pub name: String,
@@ -19,68 +19,81 @@ pub struct ThreadLevelConfig {
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `name` | `String` | The lowercase executable name this rule applies to (e.g., `"game.exe"`). Matches the corresponding [ProcessLevelConfig](ProcessLevelConfig.md) entry when both process-level and thread-level rules exist for the same process. |
-| `prime_threads_cpus` | `List<[u32; CONSUMER_CPUS]>` | The combined set of CPU indices available for prime-thread scheduling. When a process has CPU-intensive threads, the scheduler assigns their affinity to these CPUs. This is the union of all per-segment CPU aliases specified in the `prime_cpus` config field. An empty list means no prime-thread scheduling is active (unless `track_top_x_threads` is negative for tracking-only mode). |
-| `prime_threads_prefixes` | `Vec<PrimePrefix>` | A list of [PrimePrefix](PrimePrefix.md) entries that filter which threads are eligible for prime scheduling based on their start module name. Each prefix can optionally override the CPU set and thread priority for matching threads. When the list contains a single entry with an empty prefix string, all threads are eligible. |
-| `track_top_x_threads` | `i32` | Controls how many top CPU-consuming threads are tracked and optionally scheduled. **Positive values** (`?N`): track the top N threads and apply prime-thread scheduling to them. **Negative values** (`??N`): track the top N threads for monitoring purposes only, without applying prime scheduling. **Zero**: tracking count is derived from the number of CPUs in `prime_threads_cpus`. |
-| `ideal_processor_rules` | `Vec<IdealProcessorRule>` | A list of [IdealProcessorRule](IdealProcessorRule.md) entries that assign ideal processors to threads based on their start module name. The scheduler uses these rules to set the preferred CPU for each qualifying thread, distributing the top N threads (where N = number of CPUs in the rule) across the specified CPUs by total CPU time ranking. |
+| `name` | `String` | Lowercase process name (e.g. `"game.exe"`) used as the lookup key in the thread-level config map. |
+| `prime_threads_cpus` | `List<[u32; CONSUMER_CPUS]>` | Union of all CPU indices eligible for prime thread pinning. This is the combined set across all [PrimePrefix](PrimePrefix.md) entries. When a thread is promoted to prime status, its CPU set is restricted to indices from this list (or from the prefix-specific subset if prefix matching is active). |
+| `prime_threads_prefixes` | `Vec<PrimePrefix>` | List of [PrimePrefix](PrimePrefix.md) rules that control which threads are eligible for prime scheduling and which CPU subset each prefix group receives. An empty prefix string matches all threads. Multiple entries allow routing threads from different modules to different CPU sets. |
+| `track_top_x_threads` | `i32` | Controls how many top threads (by CPU cycle consumption) to track. Positive values enable prime thread scheduling for the top N threads. Negative values enable tracking-only mode (metrics collected but no CPU pinning occurs). Zero disables thread tracking entirely. Parsed from `?N` (positive) or `??N` (negative) prefixes in the prime field. |
+| `ideal_processor_rules` | `Vec<IdealProcessorRule>` | List of [IdealProcessorRule](IdealProcessorRule.md) entries that assign ideal processor hints to threads based on their start module prefix. Evaluated independently from prime thread scheduling. |
 
 ## Remarks
 
-### Relationship to ProcessLevelConfig
+### Relationship with ProcessLevelConfig
 
-A single config line can produce both a [ProcessLevelConfig](ProcessLevelConfig.md) and a `ThreadLevelConfig` for the same process name. The process-level entry is created when any of the process-wide settings (priority, affinity, CPU set, I/O priority, memory priority) are non-default. The thread-level entry is created when any of the thread-specific settings (prime CPUs, tracking count, ideal processor rules) are non-default. The two configs are stored in separate `HashMap` collections keyed by grade within [ConfigResult](ConfigResult.md).
+A single config rule line can produce both a [ProcessLevelConfig](ProcessLevelConfig.md) and a `ThreadLevelConfig` for the same process. The [parse_and_insert_rules](parse_and_insert_rules.md) function determines whether thread-level fields are active (non-zero prime CPUs, non-zero tracking count, or non-empty ideal processor rules) and only creates a `ThreadLevelConfig` when at least one thread-level feature is in use.
 
-### Grade-based scheduling
+### Prime thread scheduling
 
-Thread-level configs are organized by grade (polling frequency). A rule with grade `1` runs every iteration; grade `2` runs every other iteration, and so on. This allows expensive thread-level analysis to be performed less frequently than process-level settings.
+The prime thread system identifies the most CPU-intensive threads in a process and pins them to high-performance cores. The selection uses hysteresis controlled by [ConfigConstants](ConfigConstants.md) to avoid frequent toggling:
 
-### Prime-thread scheduling flow
+1. Each iteration, threads are ranked by CPU cycle delta.
+2. Threads exceeding `entry_threshold` relative share begin accumulating an active streak.
+3. Once a thread's streak reaches `min_active_streak`, it is promoted to prime status and pinned to `prime_threads_cpus`.
+4. A prime thread is demoted only when its share drops below `keep_threshold`.
 
-1. The scheduler identifies the process by matching `name` against running process executables.
-2. It enumerates the process's threads and filters them through `prime_threads_prefixes` by matching each thread's start module name.
-3. Threads are ranked by total CPU time, and the top N are selected (where N is determined by `track_top_x_threads` or the CPU count).
-4. Each selected thread's affinity is set to the appropriate CPU from `prime_threads_cpus` (or the per-prefix CPU override in the matching `PrimePrefix`).
-5. If `ideal_processor_rules` are defined, ideal processor assignment is applied separately using a similar ranking mechanism filtered by the rule's prefixes.
+The `track_top_x_threads` field limits how many threads participate in this ranking. On systems with many threads, this avoids measuring every thread's cycles.
 
-### track_top_x_threads sign convention
+### Tracking-only mode
 
-| Value | Syntax in config | Behavior |
-|-------|-----------------|----------|
-| Positive (`> 0`) | `?Nx*alias` | Track top N threads **and** apply prime scheduling |
-| Negative (`< 0`) | `??N` | Track top N threads for monitoring **only** (no prime scheduling) |
-| Zero (`0`) | (default) | Derive tracking count from `prime_threads_cpus.len()` |
+When `track_top_x_threads` is negative (parsed from `??N` syntax), the scheduler collects thread cycle statistics and logs them but does not perform any CPU set changes. This is useful for profiling thread behavior before committing to a prime configuration.
 
-### Validity check
+### Prefix-based CPU routing
 
-A `ThreadLevelConfig` is only inserted into the result when at least one of the following conditions is true:
-- `prime_threads_cpus` is non-empty
-- `track_top_x_threads` is non-zero
-- `ideal_processor_rules` is non-empty
+The `prime_threads_prefixes` list enables routing different threads to different CPU subsets based on their start module. For example, a game's rendering threads (starting from `d3d11.dll`) could be pinned to P-cores while audio threads (starting from `xaudio2.dll`) go to E-cores. Each [PrimePrefix](PrimePrefix.md) can also carry an optional [ThreadPriority](../priority.rs/ThreadPriority.md) boost.
 
-If none of these conditions hold, no thread-level entry is created, even if the config line was otherwise valid.
+### Ideal processor assignment
+
+The `ideal_processor_rules` field operates independently from prime scheduling. It sets the ideal processor hint on threads matching specific module prefixes, which the Windows scheduler uses as a preference (not a hard constraint). This is a lighter-weight alternative to prime thread pinning.
+
+### Config field format
+
+Thread-level settings are parsed from fields 4 (prime), and 7 (ideal processor) of a config rule line:
+
+```
+process.exe:priority:affinity:cpuset:prime_spec:io:memory:ideal_spec:grade
+                                      ^field4                ^field7
+```
+
+The prime spec supports several forms:
+- `*alias` — pin prime threads to alias CPUs
+- `?8x*alias` — track top 8, pin to alias
+- `??16` — track top 16, no pinning
+- `*p@engine.dll;render.dll*e@audio.dll` — prefix-based routing with per-prefix CPU sets
+
+### Storage structure
+
+`ThreadLevelConfig` instances are stored in `ConfigResult.thread_level_configs`, a `HashMap<u32, HashMap<String, ThreadLevelConfig>>` where the outer key is the grade (polling frequency tier) and the inner key is the lowercase process name.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `config.rs` |
-| Constructed by | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| Stored in | [ConfigResult](ConfigResult.md)`.thread_level_configs` |
-| Consumed by | `scheduler.rs` (prime-thread scheduler), `apply.rs` |
-| Related types | [PrimePrefix](PrimePrefix.md), [IdealProcessorRule](IdealProcessorRule.md) |
+| | |
+|---|---|
+| **Module** | `src/config.rs` |
+| **Constructed by** | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| **Consumed by** | [apply_prime_threads](../apply.rs/apply_prime_threads.md), [apply_ideal_processors](../apply.rs/apply_ideal_processors.md), main polling loop |
+| **Dependencies** | [PrimePrefix](PrimePrefix.md), [IdealProcessorRule](IdealProcessorRule.md), [List](../collections.rs/README.md) |
+| **Privileges** | None (data struct) |
 
 ## See Also
 
-| Resource | Link |
-|----------|------|
-| PrimePrefix | [PrimePrefix](PrimePrefix.md) |
-| IdealProcessorRule | [IdealProcessorRule](IdealProcessorRule.md) |
-| ProcessLevelConfig | [ProcessLevelConfig](ProcessLevelConfig.md) |
-| ConfigResult | [ConfigResult](ConfigResult.md) |
-| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| scheduler module | [scheduler.rs overview](../scheduler.rs/README.md) |
-| config module overview | [README](README.md) |
+| Topic | Link |
+|-------|------|
+| Module overview | [config.rs](README.md) |
+| Process-level counterpart | [ProcessLevelConfig](ProcessLevelConfig.md) |
+| Prime prefix rule | [PrimePrefix](PrimePrefix.md) |
+| Ideal processor rule | [IdealProcessorRule](IdealProcessorRule.md) |
+| Hysteresis constants | [ConfigConstants](ConfigConstants.md) |
+| Prime thread scheduler state | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
+| Rule parser | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| Config file reader | [read_config](read_config.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

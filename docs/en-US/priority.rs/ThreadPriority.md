@@ -1,16 +1,16 @@
 # ThreadPriority enum (priority.rs)
 
-Maps the full set of Windows thread priority levels to strongly-typed Rust enum variants, with bidirectional conversion between human-readable string names, enum variants, and the raw `i32` values expected by the Win32 `SetThreadPriority` API. The enum covers the standard scheduling levels from `Idle` (−15) through `TimeCritical` (15), the special background-mode tokens `ModeBackgroundBegin` / `ModeBackgroundEnd`, the `ErrorReturn` sentinel, and a `None` variant indicating that no priority change is requested. A `boost_one` method supports single-step priority elevation for prime-thread boosting.
+Type-safe representation of Windows thread priority levels. Maps between human-readable string names and Win32 `i32` thread priority constants. Provides an additional `boost_one` method for incrementally raising a thread's priority level, used by the prime thread promotion algorithm.
 
 ## Syntax
 
-```AffinityServiceRust/src/priority.rs#L159-L172
+```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadPriority {
     None,
     ErrorReturn,         // 0x7FFFFFFF
-    ModeBackgroundBegin, // 0x00010000 (use only for current thread)
-    ModeBackgroundEnd,   // 0x00020000 (use only for current thread)
+    ModeBackgroundBegin, // 0x00010000
+    ModeBackgroundEnd,   // 0x00020000
     Idle,                // -15
     Lowest,              // -2
     BelowNormal,         // -1
@@ -23,61 +23,65 @@ pub enum ThreadPriority {
 
 ## Members
 
-| Variant | Win32 value | String key | Description |
-|---------|-------------|------------|-------------|
-| `None` | *(no API call)* | `"none"` | Sentinel indicating no priority change should be applied. The `as_win_const` method returns `None` for this variant. |
-| `ErrorReturn` | `0x7FFFFFFF` | `"error"` | Represents the `THREAD_PRIORITY_ERROR_RETURN` value returned by `GetThreadPriority` on failure. Not normally used as an input to `SetThreadPriority`. |
-| `ModeBackgroundBegin` | `0x00010000` | `"background begin"` | Lowers the thread to background processing mode, reducing its scheduling priority, I/O priority, and memory priority. **Must only be set on the calling thread.** |
-| `ModeBackgroundEnd` | `0x00020000` | `"background end"` | Restores normal processing mode for a thread that previously entered background mode. **Must only be set on the calling thread.** |
-| `Idle` | `-15` | `"idle"` | `THREAD_PRIORITY_IDLE`. The lowest regular scheduling priority. The thread runs only when no other threads are ready. |
-| `Lowest` | `-2` | `"lowest"` | `THREAD_PRIORITY_LOWEST`. Two levels below normal. |
-| `BelowNormal` | `-1` | `"below normal"` | `THREAD_PRIORITY_BELOW_NORMAL`. One level below normal. |
-| `Normal` | `0` | `"normal"` | `THREAD_PRIORITY_NORMAL`. The default priority for most threads. |
-| `AboveNormal` | `1` | `"above normal"` | `THREAD_PRIORITY_ABOVE_NORMAL`. One level above normal. |
-| `Highest` | `2` | `"highest"` | `THREAD_PRIORITY_HIGHEST`. Two levels above normal. |
-| `TimeCritical` | `15` | `"time critical"` | `THREAD_PRIORITY_TIME_CRITICAL`. The highest regular scheduling priority. Use with extreme caution as it can starve other threads. |
+| Variant | String Name | Win32 Value | Description |
+|---------|-------------|-------------|-------------|
+| `None` | `"none"` | *(None)* | No thread priority configured. Sentinel value that produces no Win32 API call. |
+| `ErrorReturn` | `"error"` | `0x7FFFFFFF` | The value returned by `GetThreadPriority` on failure (`THREAD_PRIORITY_ERROR_RETURN`). |
+| `ModeBackgroundBegin` | `"background begin"` | `0x00010000` | Enters background processing mode. Only valid for the calling thread. |
+| `ModeBackgroundEnd` | `"background end"` | `0x00020000` | Exits background processing mode. Only valid for the calling thread. |
+| `Idle` | `"idle"` | `-15` | `THREAD_PRIORITY_IDLE` — base priority 1 for `IDLE_PRIORITY_CLASS`, 16 for `REALTIME_PRIORITY_CLASS`. |
+| `Lowest` | `"lowest"` | `-2` | `THREAD_PRIORITY_LOWEST` — 2 levels below normal. |
+| `BelowNormal` | `"below normal"` | `-1` | `THREAD_PRIORITY_BELOW_NORMAL` — 1 level below normal. |
+| `Normal` | `"normal"` | `0` | `THREAD_PRIORITY_NORMAL` — default thread priority. |
+| `AboveNormal` | `"above normal"` | `1` | `THREAD_PRIORITY_ABOVE_NORMAL` — 1 level above normal. |
+| `Highest` | `"highest"` | `2` | `THREAD_PRIORITY_HIGHEST` — 2 levels above normal. |
+| `TimeCritical` | `"time critical"` | `15` | `THREAD_PRIORITY_TIME_CRITICAL` — base priority 15 for `IDLE_PRIORITY_CLASS`, 31 for `REALTIME_PRIORITY_CLASS`. |
 
 ## Methods
 
-### `as_str`
+### as_str
 
-```AffinityServiceRust/src/priority.rs#L186-L191
+```rust
 pub fn as_str(&self) -> &'static str
 ```
 
-Returns the human-readable string name for this variant (e.g. `"normal"`, `"above normal"`). Returns `"unknown"` if the variant is somehow not found in the internal lookup table (should not happen for valid enum values).
+Returns the human-readable string name for the variant (e.g., `"above normal"`). Returns `"unknown"` if the variant is not found in `TABLE` (should not happen for well-constructed values).
 
-### `as_win_const`
+### as_win_const
 
-```AffinityServiceRust/src/priority.rs#L193-L195
+```rust
 pub fn as_win_const(&self) -> Option<i32>
 ```
 
-Returns the Win32 `i32` constant corresponding to this variant, or `None` for the `ThreadPriority::None` sentinel. The returned value is suitable for passing to `SetThreadPriority` (after wrapping in `THREAD_PRIORITY`).
+Returns the Win32 `i32` thread priority constant, or `None` for `ThreadPriority::None`.
 
-### `from_str`
+### from_str
 
-```AffinityServiceRust/src/priority.rs#L197-L204
+```rust
 pub fn from_str(s: &str) -> Self
 ```
 
-Parses a case-insensitive string (e.g. `"Above Normal"`, `"idle"`) into the corresponding `ThreadPriority` variant. Returns `ThreadPriority::None` if the string does not match any known priority name.
+Parses a case-insensitive string into a `ThreadPriority` variant. Returns `ThreadPriority::None` if the string does not match any known name.
 
-### `from_win_const`
+### from_win_const
 
-```AffinityServiceRust/src/priority.rs#L206-L212
+```rust
 pub fn from_win_const(val: i32) -> Self
 ```
 
-Converts a raw `i32` Win32 thread priority value (e.g. as returned by `GetThreadPriority`) back into the corresponding `ThreadPriority` variant. Returns `ThreadPriority::None` if the value does not match any known constant.
+Converts a Win32 `i32` thread priority value back to a `ThreadPriority` variant. Returns `ThreadPriority::None` if the value does not match any known constant.
 
-### `boost_one`
+**Note:** Unlike [`ProcessPriority::from_win_const`](ProcessPriority.md), [`IOPriority::from_win_const`](IOPriority.md), and [`MemoryPriority::from_win_const`](MemoryPriority.md) which return `&'static str`, this method returns a `ThreadPriority` enum variant directly. This difference exists because thread priorities are used programmatically (e.g., in `boost_one`) rather than only for display.
 
-```AffinityServiceRust/src/priority.rs#L215-L228
+### boost_one
+
+```rust
 pub fn boost_one(&self) -> Self
 ```
 
-Returns the next higher priority level in the standard scheduling ladder. Used by the prime-thread engine to elevate a thread's priority by one step when it is promoted to prime status. The mapping is:
+Returns the next higher priority level in the standard priority ladder. Used by the prime thread promotion algorithm in [`apply_prime_threads_promote`](../apply.rs/apply_prime_threads_promote.md) to incrementally raise a thread's priority.
+
+**Promotion ladder:**
 
 | Input | Output |
 |-------|--------|
@@ -87,51 +91,62 @@ Returns the next higher priority level in the standard scheduling ladder. Used b
 | `Normal` | `AboveNormal` |
 | `AboveNormal` | `Highest` |
 | `Highest` | `Highest` *(capped)* |
-| `TimeCritical` | `TimeCritical` *(capped)* |
-| `None` | `None` |
-| `ErrorReturn` | `ErrorReturn` |
-| `ModeBackgroundBegin` | `ModeBackgroundBegin` |
-| `ModeBackgroundEnd` | `ModeBackgroundEnd` |
+| `TimeCritical` | `TimeCritical` *(unchanged)* |
+| `None` | `None` *(unchanged)* |
+| `ErrorReturn` | `ErrorReturn` *(unchanged)* |
+| `ModeBackgroundBegin` | `ModeBackgroundBegin` *(unchanged)* |
+| `ModeBackgroundEnd` | `ModeBackgroundEnd` *(unchanged)* |
 
-The function caps elevation at `Highest` — it will never promote a thread to `TimeCritical`. The special variants (`None`, `ErrorReturn`, `ModeBackgroundBegin`, `ModeBackgroundEnd`) are returned unchanged.
+The boost is capped at `Highest` — it never promotes to `TimeCritical`, which could cause system instability. Special variants (`None`, `ErrorReturn`, `ModeBackgroundBegin`, `ModeBackgroundEnd`) are returned unchanged.
 
-### `to_thread_priority_struct`
+### to_thread_priority_struct
 
-```AffinityServiceRust/src/priority.rs#L230-L232
+```rust
 pub fn to_thread_priority_struct(self) -> THREAD_PRIORITY
 ```
 
-Converts this enum variant into the `windows::Win32::System::Threading::THREAD_PRIORITY` newtype struct expected by the `windows` crate APIs. Calls `as_win_const()` and wraps the result in `THREAD_PRIORITY(...)`, defaulting to `0` if the variant is `None`.
+Converts the enum to a `windows::Win32::System::Threading::THREAD_PRIORITY` newtype wrapper for direct use in Win32 FFI calls. Falls back to `THREAD_PRIORITY(0)` (normal priority) if `as_win_const()` returns `None`.
 
 ## Remarks
 
-- The internal lookup table `TABLE` is a `&'static` slice of `(Self, &'static str, Option<i32>)` tuples, ensuring that all conversions are zero-allocation, constant-time linear scans over a small fixed-size array (11 entries).
-- The `from_str` method performs a case-insensitive comparison by lowercasing the input before matching. All table entries use lowercase string keys.
-- `ModeBackgroundBegin` and `ModeBackgroundEnd` are special Win32 values that can only be applied to the **current** thread. Attempting to set these on a remote thread via `SetThreadPriority` with an arbitrary thread handle will fail with `ERROR_ACCESS_DENIED`. The AffinityServiceRust service does not use these variants for remote threads.
-- The `original_priority` field in [`ThreadStats`](../scheduler.rs/ThreadStats.md) stores a `Option<ThreadPriority>` so that the service can snapshot and later restore a thread's scheduling priority.
-- `boost_one` is designed to be safe by default — it never escalates into `TimeCritical`, which could cause system instability if applied broadly.
+### TABLE constant
+
+All conversions are driven by a single `TABLE` constant:
+
+```rust
+const TABLE: &'static [(Self, &'static str, Option<i32>)] = &[...];
+```
+
+This array of `(variant, name, win32_value)` tuples is the single source of truth for all bidirectional mappings, following the same DRY pattern as the other priority enums in this module.
+
+### Background mode variants
+
+`ModeBackgroundBegin` and `ModeBackgroundEnd` are special thread priority values that switch the calling thread into or out of background processing mode. In background mode, the system reduces the thread's scheduling priority, IO priority, and memory priority simultaneously. These values are only valid when applied to the **current** thread — using them with `SetThreadPriority` on a remote thread will fail. AffinityServiceRust does not typically set these values on remote threads; they are included for completeness and for `from_win_const` round-tripping.
+
+### Platform notes
+
+- Thread priority values are `i32` signed integers, unlike process priority classes which are `u32` flags.
+- The `THREAD_PRIORITY` newtype in the `windows` crate wraps an `i32`. The `to_thread_priority_struct` method produces this wrapper for callers that need the typed FFI struct.
+- `SetThreadPriority` requires `THREAD_SET_INFORMATION` access on the target thread handle.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `priority.rs` |
-| Callers | Config parser (`config.rs`), apply engine (`apply.rs`), [`ThreadStats`](../scheduler.rs/ThreadStats.md) |
-| Callees | None (pure data type with conversion methods) |
-| Win32 API | Corresponds to values accepted by `SetThreadPriority` and returned by `GetThreadPriority` |
-| Dependencies | `windows::Win32::System::Threading::THREAD_PRIORITY` |
-| Privileges | `SeIncreaseBasePriorityPrivilege` may be required to set `TimeCritical` or to boost above `Normal` depending on process priority class |
+| | |
+|---|---|
+| **Module** | [`src/priority.rs`](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf/src/priority.rs) |
+| **Used by** | [`apply_prime_threads_promote`](../apply.rs/apply_prime_threads_promote.md), [`apply_prime_threads_demote`](../apply.rs/apply_prime_threads_demote.md), [config parsing](../config.rs/README.md) |
+| **Win32 type** | [`THREAD_PRIORITY`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadpriority) |
+| **Privileges** | `THREAD_SET_INFORMATION` (when setting via `SetThreadPriority`) |
 
 ## See Also
 
-| Reference | Link |
-|-----------|------|
-| ProcessPriority | [ProcessPriority](ProcessPriority.md) |
-| IOPriority | [IOPriority](IOPriority.md) |
-| MemoryPriority | [MemoryPriority](MemoryPriority.md) |
-| MemoryPriorityInformation | [MemoryPriorityInformation](MemoryPriorityInformation.md) |
-| ThreadStats | [ThreadStats](../scheduler.rs/ThreadStats.md) |
-| priority module overview | [README](README.md) |
+| Topic | Link |
+|-------|------|
+| Process priority enum | [ProcessPriority](ProcessPriority.md) |
+| IO priority enum | [IOPriority](IOPriority.md) |
+| Memory priority enum | [MemoryPriority](MemoryPriority.md) |
+| Prime thread promotion | [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) |
+| Prime thread demotion | [apply_prime_threads_demote](../apply.rs/apply_prime_threads_demote.md) |
+| Module overview | [priority.rs](README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

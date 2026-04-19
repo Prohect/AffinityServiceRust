@@ -1,6 +1,6 @@
 # request_uac_elevation function (winapi.rs)
 
-Restarts the current process with administrator privileges by launching an elevated copy via PowerShell's `Start-Process -Verb RunAs`, which triggers a Windows UAC (User Account Control) prompt. The current process exits after spawning the elevated child.
+Re-launches the current process with administrator privileges by spawning a PowerShell `Start-Process -Verb RunAs` command, which triggers a Windows UAC consent prompt. After the elevated child process is launched, the current (non-elevated) process exits.
 
 ## Syntax
 
@@ -12,11 +12,11 @@ pub fn request_uac_elevation(console: bool) -> io::Result<()>
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `console` | `bool` | Indicates whether the process is running in console mode. When `true`, a warning is logged that elevated output will not appear in the current console session. |
+| `console` | `bool` | Whether the service was launched with the `console` CLI flag. When `true`, a warning is logged that the elevated process's output will appear in a new console window, not the current one. |
 
 ## Return value
 
-Returns `io::Result<()>`. On success, this function **does not return** — it calls `std::process::exit(0)` after spawning the elevated child process. On failure (e.g., PowerShell could not be launched), returns an `io::Error` describing the spawn failure.
+`io::Result<()>` — On success, this function **does not return** because the current process calls `std::process::exit(0)` after spawning the elevated child. On failure (e.g., PowerShell could not be launched), returns an `io::Error` describing the spawn failure.
 
 ## Remarks
 
@@ -24,53 +24,48 @@ Returns `io::Result<()>`. On success, this function **does not return** — it c
 
 The function constructs a PowerShell command of the form:
 
-```text
-powershell.exe -Command "Start-Process -FilePath '<exe_path>' -Verb RunAs -ArgumentList '<args>'"
+```
+Start-Process -FilePath '<current_exe_path>' -Verb RunAs -ArgumentList '<original_args> -skip_log_before_elevation'
 ```
 
-Where `<exe_path>` is the path of the currently running executable (obtained via `std::env::current_exe()`) and `<args>` are all command-line arguments forwarded from the current invocation.
-
-### Skip-log flag
-
-Before spawning the elevated child, the function appends `-skip_log_before_elevation` to the argument list. This flag prevents the elevated instance from duplicating any startup log messages that the non-elevated instance already wrote.
+- The current executable path is obtained via `std::env::current_exe()`.
+- All original command-line arguments (skipping `argv[0]`) are forwarded to the elevated instance.
+- The flag `-skip_log_before_elevation` is appended to prevent the elevated process from duplicating log initialization that already occurred in the non-elevated instance.
 
 ### Console mode warning
 
-When `console` is `true`, the function logs a warning that the elevated process will run in a new window/session, so subsequent log output will not be visible in the original console. This is an inherent limitation of UAC elevation — the new process gets a new console host.
+When `console` is `true`, the function logs a warning explaining that the elevated process will run in a separate console window. This is inherent to the `runas` verb — Windows creates a new console for the elevated process, and the current console session receives no further output from the service.
 
-### Process lifecycle
+### Process exit
 
-1. The function logs `"Requesting UAC elevation..."`.
-2. It spawns `powershell.exe` as a child process with the constructed command.
-3. On successful spawn, it logs a confirmation message and calls `exit(0)`.
-4. On spawn failure, it logs the error and returns the `io::Error`.
+After a successful `Command::spawn()`, the current process calls `exit(0)` immediately. This ensures there is only one instance of the service running (the newly elevated one). The exit is unconditional — cleanup code after this function call in the caller will not execute.
 
-### Edge cases
+### Error handling
 
-- If `std::env::current_exe()` fails (e.g., the executable was deleted while running), the function returns the resulting `io::Error` before attempting to spawn PowerShell.
-- If the user denies the UAC prompt, the PowerShell `Start-Process` command fails silently from the perspective of the original process (which has already exited).
-- The function does **not** wait for the elevated child to start or confirm success before exiting.
+If `Command::spawn()` fails (e.g., PowerShell is not found, or the user declines the UAC prompt before the process starts), the error is logged and propagated as `io::Result<Err>`. The caller can then decide whether to continue running without elevation or abort.
+
+### UAC prompt behavior
+
+The actual UAC consent dialog is presented by Windows when the elevated PowerShell instance executes the `Start-Process -Verb RunAs` command. If the user clicks **No** or the dialog times out, the `Start-Process` cmdlet fails silently from the perspective of the spawning (non-elevated) process — the `spawn()` call itself succeeds because it only launches PowerShell, not the elevated target. The current process will have already exited by this point.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `winapi.rs` |
-| **Callers** | `main.rs` — startup logic when admin privileges are required but not held |
-| **Callees** | `std::env::current_exe`, `std::env::args`, `std::process::Command::spawn`, `std::process::exit`, [`log_message`](../logging.rs/log_message.md) (via `log!` macro) |
-| **External** | `powershell.exe` must be available on the system PATH |
-| **Platform** | Windows only |
-| **Privileges** | None required to call; triggers UAC prompt for the user to grant admin privileges to the new process |
+| | |
+|---|---|
+| **Module** | `src/winapi.rs` |
+| **Callers** | Main startup logic in `src/main.rs`, guarded by `!is_running_as_admin() && !cli.no_uac` |
+| **Callees** | `std::env::current_exe`, `std::env::args`, `std::process::Command::spawn`, `std::process::exit` |
+| **Win32 API** | None directly; relies on PowerShell's `Start-Process -Verb RunAs` which internally calls [ShellExecuteW](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew) |
+| **Privileges** | None required to invoke; the UAC prompt is what grants elevation to the child process |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| is_running_as_admin | [is_running_as_admin](is_running_as_admin.md) |
-| enable_debug_privilege | [enable_debug_privilege](enable_debug_privilege.md) |
-| enable_inc_base_priority_privilege | [enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md) |
-| terminate_child_processes | [terminate_child_processes](terminate_child_processes.md) |
-| logging module | [logging.rs](../logging.rs/README.md) |
+| Module overview | [winapi.rs](README.md) |
+| Admin check that gates this call | [is_running_as_admin](is_running_as_admin.md) |
+| Debug privilege enabled after elevation | [enable_debug_privilege](enable_debug_privilege.md) |
+| Base priority privilege enabled after elevation | [enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md) |
+| Child process cleanup on startup | [terminate_child_processes](terminate_child_processes.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

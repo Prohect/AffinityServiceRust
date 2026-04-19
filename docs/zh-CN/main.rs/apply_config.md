@@ -1,6 +1,6 @@
 # apply_config 函数 (main.rs)
 
-协调对单个已匹配进程的进程级和线程级配置的完整应用。该函数一次性获取进程的线程映射，应用进程级设置，查找并应用任何对应的线程级设置，记录已应用的 PID，并将日志输出委托给 `log_apply_results`。
+组合入口点，为单个匹配的进程同时应用进程级和线程级配置。创建共享的线程缓存，使得每个进程每次迭代最多只执行一次线程枚举，然后委托给 [apply_process_level](apply_process_level.md) 和 [apply_thread_level](apply_thread_level.md)。跟踪每个级别已处理的 PID 并记录合并后的结果。
 
 ## 语法
 
@@ -9,8 +9,8 @@ fn apply_config(
     cli: &CliArgs,
     configs: &ConfigResult,
     prime_core_scheduler: &mut PrimeThreadScheduler,
-    process_level_applied: &mut smallvec::SmallVec<[u32; PIDS]>,
-    thread_level_applied: &mut smallvec::SmallVec<[u32; PENDING]>,
+    process_level_applied: &mut SmallVec<[u32; PIDS]>,
+    thread_level_applied: &mut SmallVec<[u32; PENDING]>,
     grade: &u32,
     pid: &u32,
     name: &&str,
@@ -21,50 +21,87 @@ fn apply_config(
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `cli` | `&CliArgs` | 已解析的命令行参数。`dry_run` 字段控制是否实际调用 Win32 API。 |
-| `configs` | `&ConfigResult` | 完整加载的配置，包括按等级和进程名称索引的 `process_level_configs` 和 `thread_level_configs`。 |
-| `prime_core_scheduler` | `&mut PrimeThreadScheduler` | 线程调度器实例，在存在线程级规则时用于主线程（prime thread）跟踪。 |
-| `process_level_applied` | `&mut smallvec::SmallVec<[u32; PIDS]>` | 已应用进程级设置的 PID 累积列表。函数返回时，当前 PID 会被推入此列表。 |
-| `thread_level_applied` | `&mut smallvec::SmallVec<[u32; PENDING]>` | 本次迭代中已应用线程级设置的 PID 累积列表。用于防止在循环后续阶段重复应用线程级设置。 |
-| `grade` | `&u32` | 配置等级（轮询间隔倍数）。用于查找同一等级下匹配的线程级配置。 |
-| `pid` | `&u32` | 目标进程的 Windows 进程 ID。 |
-| `name` | `&&str` | 小写的可执行文件名（例如 `"game.exe"`），用作配置查找键。 |
-| `process_level_config` | `&ProcessLevelConfig` | 已为此进程解析好的进程级配置条目。 |
-| `process` | `&ProcessEntry` | 进程快照条目的引用，通过 `get_threads()` 获取线程映射。 |
+`cli: &CliArgs`
+
+已解析的 [命令行参数](../cli.rs/CliArgs.md)。用于读取 `cli.dry_run`，该值会被转发给两个 apply 函数。
+
+`configs: &ConfigResult`
+
+完整的 [ConfigResult](../config.rs/ConfigResult.md)。用于从 `configs.thread_level_configs` 中按 `grade` 和 `name` 查找匹配的 [ThreadLevelConfig](../config.rs/ThreadLevelConfig.md)。
+
+`prime_core_scheduler: &mut PrimeThreadScheduler`
+
+[PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) 实例，传递给 [apply_thread_level](apply_thread_level.md) 用于 Prime 线程跟踪和调度。
+
+`process_level_applied: &mut SmallVec<[u32; PIDS]>`
+
+已应用进程级设置的 PID 运行列表。在 [apply_process_level](apply_process_level.md) 完成后，当前 `pid` 会被无条件追加。在后续迭代中（除非设置了 `-continuous_process_level_apply`），此列表中的 PID 将跳过进程级工作。
+
+`thread_level_applied: &mut SmallVec<[u32; PENDING]>`
+
+在*当前*迭代中已应用线程级设置的 PID 运行列表。仅当存在 [ThreadLevelConfig](../config.rs/ThreadLevelConfig.md) 且调用了 [apply_thread_level](apply_thread_level.md) 时，才会追加当前 `pid`。这可以防止同一进程在单次循环迭代中被处理两次（否则会破坏调度器基于增量的周期时间跟踪）。
+
+`grade: &u32`
+
+找到匹配规则所在的配置等级（轮询频率乘数）。用于在 `configs.thread_level_configs` 中查找对应的线程级配置。
+
+`pid: &u32`
+
+目标进程的进程标识符。
+
+`name: &&str`
+
+目标进程的小写可执行文件名（例如 `"chrome.exe"`）。用作查找线程级配置的键。
+
+`process_level_config: &ProcessLevelConfig`
+
+匹配此进程的 [ProcessLevelConfig](../config.rs/ProcessLevelConfig.md)。转发给 [apply_process_level](apply_process_level.md)。
+
+`process: &ProcessEntry`
+
+来自当前快照的 [ProcessEntry](../process.rs/ProcessEntry.md)，用于通过 `process.get_threads()` 枚举线程。
 
 ## 返回值
 
-此函数不返回值。
+此函数不返回值。所有结果通过 `process_level_applied`、`thread_level_applied` 以及 [log_apply_results](log_apply_results.md) 生成的日志输出进行传递。
 
 ## 备注
 
-- 该函数调用 `process.get_threads()` 一次，并将生成的 `HashMap<u32, SYSTEM_THREAD_INFORMATION>` 同时用于 `apply_process_level` 和 `apply_thread_level`，避免重复的线程枚举。
-- 函数内部创建一个 `ApplyConfigResult` 来收集两个级别产生的变更和错误。两个级别都应用完成后，合并的结果将被转发给 `log_apply_results`。
-- 线程级配置通过相同的 `grade` 和 `name` 在 `configs.thread_level_configs` 中查找。如果不存在该进程的线程级条目，则仅应用进程级设置。
-- 源代码中记录的契约（`assert(grade for process_level_config == grade for thread_level_config)`）意味着调用方必须确保用于查找进程级配置的等级与用于查找线程级配置的等级相同。
-- 无论是否实际进行了任何变更，PID 都会被无条件推入 `process_level_applied`。这可以防止在后续循环迭代中重复应用（除非在主循环中设置了 `cli.continuous_process_level_apply`）。
+### 线程缓存
+
+该函数创建一个 `OnceCell<HashMap<u32, SYSTEM_THREAD_INFORMATION>>`，延迟求值 `process.get_threads()`。此 cell 通过闭包引用在 [apply_process_level](apply_process_level.md) 和 [apply_thread_level](apply_thread_level.md) 之间共享，确保涉及 `NtQuerySystemInformation` 的线程枚举在每次调用中最多只发生一次，无论有多少 apply 函数需要线程数据。
+
+### 两级应用流程
+
+1. 创建一个新的 [ApplyConfigResult](../apply.rs/ApplyConfigResult.md)。
+2. 无条件调用 [apply_process_level](apply_process_level.md)，传入进程级配置。
+3. 然后在 `configs.thread_level_configs[grade][name]` 中查找线程级配置。如果存在，则调用 [apply_thread_level](apply_thread_level.md) 并将 PID 添加到 `thread_level_applied`。
+4. PID 始终会被添加到 `process_level_applied`。
+5. 使用累积的结果调用 [log_apply_results](log_apply_results.md)。
+
+### 等级不变量
+
+该函数按约定断言用于查找进程级配置的等级与用于线程级配置查找的等级相同。这由主循环中的调用方保证，主循环按等级迭代配置。
 
 ## 要求
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `main.rs` |
-| 调用方 | [main](main.md)（主轮询循环，包括等级迭代和 ETW 待处理路径） |
-| 被调用方 | [apply_process_level](apply_process_level.md)、[apply_thread_level](apply_thread_level.md)、[log_apply_results](log_apply_results.md) |
-| API | `ProcessEntry::get_threads`（process 模块） |
-| 权限 | 继承 `apply_process_level` 和 `apply_thread_level` 的权限要求 |
+| | |
+|---|---|
+| **模块** | `src/main.rs` |
+| **调用方** | [main](main.md) 循环 — ETW 挂起路径和完整匹配路径 |
+| **被调用方** | [apply_process_level](apply_process_level.md)、[apply_thread_level](apply_thread_level.md)、[log_apply_results](log_apply_results.md)、`ProcessEntry::get_threads` |
+| **Win32 API** | 无（委托给被调用方） |
+| **权限** | 无（委托给被调用方） |
 
 ## 另请参阅
 
-| 资源 | 链接 |
+| 主题 | 链接 |
 |------|------|
-| apply_process_level | [apply_process_level](apply_process_level.md) |
-| apply_thread_level | [apply_thread_level](apply_thread_level.md) |
-| log_apply_results | [log_apply_results](log_apply_results.md) |
-| main | [main](main.md) |
-| PrimeThreadScheduler | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
+| 进程级应用包装器 | [apply_process_level](apply_process_level.md) |
+| 线程级应用包装器 | [apply_thread_level](apply_thread_level.md) |
+| 结果日志记录 | [log_apply_results](log_apply_results.md) |
+| 结果累加器 | [ApplyConfigResult](../apply.rs/ApplyConfigResult.md) |
+| 配置类型 | [ProcessLevelConfig](../config.rs/ProcessLevelConfig.md)、[ThreadLevelConfig](../config.rs/ThreadLevelConfig.md) |
+| 模块概述 | [main.rs](README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*为提交 [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf) 记录*

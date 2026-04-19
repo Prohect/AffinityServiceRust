@@ -1,6 +1,6 @@
 # enable_debug_privilege 函数 (winapi.rs)
 
-在当前进程令牌上启用 `SeDebugPrivilege` 权限。此权限允许进程打开其他进程（包括系统进程和提升权限的进程）的句柄，否则这些操作将被拒绝。这对于 AffinityServiceRust 管理所有正在运行的进程的 CPU 亲和性和优先级设置至关重要。
+在当前进程令牌上启用 `SeDebugPrivilege` 特权。此特权允许服务打开受保护和系统进程的句柄，否则这些进程会拒绝访问，从而实现对所有运行进程的完全进程/线程检查和修改。
 
 ## 语法
 
@@ -11,71 +11,61 @@ pub fn enable_debug_privilege(no_debug_priv: bool)
 ## 参数
 
 | 参数 | 类型 | 描述 |
-|------|------|------|
-| `no_debug_priv` | `bool` | 如果为 `true`，函数记录一条消息表示该权限已禁用，并立即返回而不修改进程令牌。此标志通常由 `-noDebugPriv` CLI 参数设置。 |
+|-----------|------|-------------|
+| `no_debug_priv` | `bool` | 如果为 `true`，函数将记录消息并立即返回，不尝试启用特权。由 `-noDebugPriv` CLI 标志控制。 |
 
 ## 返回值
 
-此函数不返回值。成功或失败通过 [`log_message`](../logging.rs/log_message.md)（通过 `log!` 宏）报告。
+此函数不返回任何值。成功或失败通过日志消息传达。
 
-## 备注
+## 说明
 
-### 禁用时提前返回
+函数执行以下 Win32 API 调用序列来启用特权：
 
-当 `no_debug_priv` 为 `true` 时，函数记录 `"SeDebugPrivilege disabled by -noDebugPriv flag"` 并立即返回，不执行任何令牌操作。
+1. **OpenProcessToken** — 使用 `TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY` 访问权限打开当前进程令牌（`GetCurrentProcess()`）。
+2. **LookupPrivilegeValueW** — 将 `SE_DEBUG_NAME` 字符串常量解析为标识本地系统上 `SeDebugPrivilege` 的 `LUID`。
+3. **AdjustTokenPrivileges** — 通过传递具有 `SE_PRIVILEGE_ENABLED` 设置为解析后的 LUID 的 `TOKEN_PRIVILEGES` 结构来启用特权。
+4. **CloseHandle** — 无论成功还是失败，在调整完成后关闭令牌句柄。
 
-该函数执行以下步骤：
+### 失败行为
 
-1. **打开进程令牌** — 以 `TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY` 访问权限对当前进程（`GetCurrentProcess()`）调用 `OpenProcessToken`。如果失败，函数记录错误并提前返回。
+每个 API 调用都会单独检查。如果任何调用失败，函数将记录描述性错误消息并提前返回。无论何时成功打开令牌句柄，都会始终关闭它。失败不是致命的——服务继续运行，但能力降低（无法打开某些受保护进程的句柄）。
 
-2. **查找权限 LUID** — 使用 `SE_DEBUG_NAME` 调用 `LookupPrivilegeValueW` 以获取 `SeDebugPrivilege` 的本地唯一标识符 (LUID)。如果查找失败，函数记录错误，关闭令牌句柄并返回。
+### CLI 标志的早期退出
 
-3. **调整令牌权限** — 使用包含单个 `LUID_AND_ATTRIBUTES` 条目（带有 `SE_PRIVILEGE_ENABLED`）的 `TOKEN_PRIVILEGES` 结构体调用 `AdjustTokenPrivileges`。结果以成功或失败的形式记录。
+当 `no_debug_priv` 为 `true`（用户在命令行上传递了 `-noDebugPriv`）时，函数记录 `"SeDebugPrivilege disabled by -noDebugPriv flag"` 并返回，不接触令牌。这允许用户在受限环境中运行服务，以降低特权进行测试，或者在无法授予特权的环境中运行。
 
-4. **关闭令牌句柄** — 无论结果如何，通过 `CloseHandle` 关闭令牌句柄。
+### 何时需要此特权？
 
-### 重要副作用
+没有 `SeDebugPrivilege`，针对由其他用户、系统进程或受保护进程拥有的进程的 `OpenProcess` 和 `OpenThread` 调用将因 `ERROR_ACCESS_DENIED`（5）而失败。启用特权允许服务：
 
-- 此函数**就地修改当前进程令牌**。一旦启用 `SeDebugPrivilege`，它将在进程的整个生命周期内保持启用状态（除非被显式禁用）。
-- 该权限必须已由操作系统**分配**给进程令牌。通常，这意味着进程必须在管理员帐户下运行。启用权限只是将其激活——如果从未被分配，则无法授予。
-- 如果进程未以管理员身份运行，`AdjustTokenPrivileges` 可能会失败，返回 `ERROR_NOT_ALL_ASSIGNED` (1300) 或 `PRIVILEGE_NOT_HELD` (1314)。
+- 打开所有进程的句柄（包括 `csrss.exe`、`lsass.exe`、`System` 等）
+- 查询和修改系统上任何线程的调度参数
+- 在保护进程中枚举模块以进行地址解析
 
-### 平台说明
+### 特权与提升
 
-- **仅限 Windows。** 依赖 Win32 安全 API：`OpenProcessToken`、`LookupPrivilegeValueW` 和 `AdjustTokenPrivileges`。
-- `SE_DEBUG_NAME` 常量解析为字符串 `"SeDebugPrivilege"`。
-- 此函数通常在进程启动时调用一次，在 [is_running_as_admin](is_running_as_admin.md) 确认进程具有管理员权限之后。
+`SeDebugPrivilege` 通常存在于提升的管理员进程的令牌中，但默认情况下被禁用。此函数*启用*已经存在的特权——它不授予令牌没有的特权。以没有令牌中特权的非管理员身份运行将导致 `AdjustTokenPrivileges` 成功，但特权实际上不会被启用（可以通过 `GetLastError() == ERROR_NOT_ALL_ASSIGNED` 检测此条件，但此处未执行此检查）。
 
-### 日志输出
+## 需求
 
-| 条件 | 日志消息 |
-|------|----------|
-| `no_debug_priv` 为 `true` | `SeDebugPrivilege disabled by -noDebugPriv flag` |
-| `OpenProcessToken` 失败 | `enable_debug_privilege: self OpenProcessToken failed` |
-| `LookupPrivilegeValueW` 失败 | `enable_debug_privilege: LookupPrivilegeValueW failed` |
-| `AdjustTokenPrivileges` 失败 | `enable_debug_privilege: AdjustTokenPrivileges failed` |
-| `AdjustTokenPrivileges` 成功 | `enable_debug_privilege: AdjustTokenPrivileges succeeded` |
+| | |
+|---|---|
+| **模块** | `src/winapi.rs` |
+| **调用方** | `src/main.rs` 中的主启动逻辑 |
+| **被调用方** | 无（叶函数） |
+| **Win32 API** | [OpenProcessToken](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocesstoken), [LookupPrivilegeValueW](https://learn.microsoft.com/zh-cn/windows/win32/api/winbase/nf-winbase-lookupprivilegevaluew) (`SE_DEBUG_NAME`), [AdjustTokenPrivileges](https://learn.microsoft.com/zh-cn/windows/win32/api/securitybaseapi/nf-securitybaseapi-adjusttokenprivileges), [GetCurrentProcess](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-getcurrentprocess), [CloseHandle](https://learn.microsoft.com/zh-cn/windows/win32/api/handleapi/nf-handleapi-closehandle) |
+| **特权** | 要求调用进程的令牌已经包含 `SeDebugPrivilege`（提升的管理员令牌的标准配置）。函数启用它；它不能添加它。 |
 
-## 要求
-
-| 要求 | 值 |
-|------|-----|
-| **模块** | `winapi.rs` |
-| **调用者** | `main.rs` — 在启动初始化期间调用 |
-| **被调用者** | `OpenProcessToken`、`LookupPrivilegeValueW`、`AdjustTokenPrivileges`、`CloseHandle`（Win32 API）；`log!` 宏 |
-| **Win32 API** | `OpenProcessToken`、`GetCurrentProcess`、`LookupPrivilegeValueW`、`AdjustTokenPrivileges`、`CloseHandle` |
-| **权限** | 必须以管理员身份运行，权限才会存在于令牌中。 |
-| **平台** | Windows |
-
-## 另请参阅
+## 参见
 
 | 主题 | 链接 |
-|------|------|
-| enable_inc_base_priority_privilege | [enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md) |
-| is_running_as_admin | [is_running_as_admin](is_running_as_admin.md) |
-| request_uac_elevation | [request_uac_elevation](request_uac_elevation.md) |
-| get_process_handle | [get_process_handle](get_process_handle.md) |
-| get_thread_handle | [get_thread_handle](get_thread_handle.md) |
+|-------|------|
+| 模块概述 | [winapi.rs](README.md) |
+| 配套特权启用 | [enable_inc_base_priority_privilege](enable_inc_base_priority_privilege.md) |
+| 提升检查 | [is_running_as_admin](is_running_as_admin.md) |
+| UAC 提升请求 | [request_uac_elevation](request_uac_elevation.md) |
+| 进程句柄打开（从此特权受益） | [get_process_handle](get_process_handle.md) |
+| 线程句柄打开（从此特权受益） | [get_thread_handle](get_thread_handle.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档针对提交：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

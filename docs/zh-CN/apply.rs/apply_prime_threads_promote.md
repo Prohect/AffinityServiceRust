@@ -1,10 +1,10 @@
 # apply_prime_threads_promote 函数 (apply.rs)
 
-`apply_prime_threads_promote` 函数通过 `SetThreadSelectedCpuSets` 将新选定的主线程固定到指定的高性能 CPU 上，并可选择性地提升其线程优先级。对于选择结果中标记为主线程的每个线程，该函数会将线程的起始地址解析为模块名，根据配置的前缀规则匹配以确定应用哪个 CPU 集和优先级，然后发出相应的 Windows API 调用。这是主线程调度算法的提升阶段。
+将通过迟滞选择的线程提升为专用的高性能 CPU，通过 CPU 集合固定并可选择提升线程优先级。此函数是 Prime 线程调度算法的"奖励"阶段——展示了持续高 CPU 使用率的线程可以获得特定处理器内核的优先访问权限，从而改善缓存局部性并减少竞争。
 
 ## 语法
 
-```AffinityServiceRust/src/apply.rs#L810-822
+```AffinityServiceRust/src/apply.rs#L811-819
 pub fn apply_prime_threads_promote(
     pid: u32,
     config: &ThreadLevelConfig,
@@ -17,85 +17,103 @@ pub fn apply_prime_threads_promote(
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `pid` | `u32` | 目标进程的进程 ID。用于线程统计查找、错误去重和日志消息。 |
-| `config` | `&ThreadLevelConfig` | 线程级配置，包含 `prime_threads_cpus`（主线程的默认 CPU 索引集）、`prime_threads_prefixes`（前缀匹配规则列表，可按模块覆盖 CPU 集和线程优先级）以及 `name`（日志消息中使用的配置规则名称）。 |
-| `current_mask` | `&mut usize` | 当前进程亲和性掩码。当非零时，主 CPU 索引会通过 `filter_indices_by_mask` 进行过滤，确保只使用进程亲和性范围内的 CPU。这可以防止将线程分配到进程无法执行的 CPU 上。 |
-| `tid_with_delta_cycles` | `&[(u32, u64, bool)]` | 包含线程 ID、自上次测量以来的增量周期计数以及表示线程是否被选为主线程（`true`）或未选中（`false`）的布尔值的元组切片。本函数仅处理 `is_prime == true` 的条目。 |
-| `prime_core_scheduler` | `&mut PrimeThreadScheduler` | 可变的主线程调度器状态。该函数读取并更新每个线程的统计信息，包括 `handle`、`pinned_cpu_set_ids`、`start_address` 和 `original_priority`。 |
-| `apply_config_result` | `&mut ApplyConfigResult` | 执行过程中产生的变更描述和错误消息的累加器。 |
+`pid: u32`
+
+目标进程的进程标识符。
+
+`config: &ThreadLevelConfig`
+
+线程级别配置，包含：
+- `prime_threads_cpus` —— 用于固定 Prime 线程的默认 CPU 索引集。
+- `prime_threads_prefixes` —— 覆盖默认 CPU 集合和线程优先级的 [`PrimePrefix`](../config.rs/PrimePrefix.md) 规则列表，基于线程入口点的模块名称。
+- `name` —— 用于日志记录的配置规则名称。
+
+`current_mask: &mut usize`
+
+进程的当前亲和性掩码，用于过滤 Prime CPU 索引。如果掩码非零，则仅使用掩码中存在的 CPU 进行固定（通过 `filter_indices_by_mask`）。这可以防止将线程分配给超出进程允许亲和性的 CPU。
+
+`tid_with_delta_cycles: &[(u32, u64, bool)]`
+
+由 [`apply_prime_threads_select`](apply_prime_threads_select.md) 产生的 `(线程 id, delta 周期，is_prime)` 元组列表。此函数仅处理 `is_prime == true` 的条目。
+
+`prime_core_scheduler: &mut PrimeThreadScheduler`
+
+跟踪每线程状态的 [`PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) 实例，包括缓存的句柄、起始地址、固定的 CPU 集合 ID 和原始线程优先级。
+
+`apply_config_result: &mut ApplyConfigResult`
+
+变更消息和错误的累加器。参见 [`ApplyConfigResult`](ApplyConfigResult.md)。
 
 ## 返回值
 
-此函数不返回值。所有结果通过对 `prime_core_scheduler` 的修改和 `apply_config_result` 中追加的条目来传达。
+此函数不返回值。结果累加在 `apply_config_result` 中。
 
 ## 备注
 
-### 算法
+### 每个线程的提升流程
 
-对于 `tid_with_delta_cycles` 中每个 `is_prime` 为 `true` 的 `(tid, delta_cycles, is_prime)` 元组：
+对于每个标记为 Prime 的线程（`is_prime == true`）：
 
-1. **跳过已固定的线程**：如果 `thread_stats.pinned_cpu_set_ids` 非空，说明线程已经被提升，将被跳过。这可以防止在每个应用周期重复应用 CPU 集和优先级提升。
+1. **如果已固定则跳过** —— 如果 `thread_stats.pinned_cpu_set_ids` 非空，则该线程已被提升，无需操作。
 
-2. **句柄解析**：该函数从 `thread_stats.handle` 获取线程的写句柄。优先使用 `w_handle`，其次使用 `w_limited_handle`。如果两者都无效，则通过 [`log_error_if_new`](log_error_if_new.md) 以 `Operation::OpenThread` 记录错误并跳过该线程。
+2. **解析写句柄** —— 从缓存的 `ThreadHandle` 获取可写的线程句柄，优先使用完全访问句柄而非受限句柄。如果没有可用的有效句柄，则跳过该线程并通过 [`log_error_if_new`](log_error_if_new.md) 记录错误。
 
-3. **模块前缀匹配**：通过 `resolve_address_to_module` 将线程的起始地址解析为模块名。如果 `config.prime_threads_prefixes` 非空，则将模块名（不区分大小写）与每个前缀规则的 `prefix` 字段进行比较。第一个匹配的前缀决定：
-   - 使用替代 CPU 集（`prefix.cpus`）代替 `config.prime_threads_cpus`。
-   - 设置特定的线程优先级（`prefix.thread_priority`）代替默认的单级提升。
-   如果没有前缀匹配且 `prime_threads_prefixes` 非空，则完全跳过该线程（只有匹配前缀规则的线程才会被提升）。
+3. **解析起始模块** —— 调用 `resolve_address_to_module`，传入线程缓存的起始地址，以确定线程入口点属于哪个模块（DLL/EXE）。
 
-4. **亲和性过滤**：如果 `*current_mask` 非零，则通过 `filter_indices_by_mask` 将选定的主 CPU 索引与进程亲和性掩码进行过滤。这确保只包含进程被允许使用的 CPU。
+4. **与前缀规则匹配** —— 遍历 `config.prime_threads_prefixes` 并对起始模块名称进行不区分大小写的前缀匹配。第一个匹配的 [`PrimePrefix`](../config.rs/PrimePrefix.md) 规则可以覆盖：
+   - 用于固定的 CPU 集合（通过 `prefix.cpus`）。
+   - 设置的线程优先级（通过 `prefix.thread_priority`）。
+   
+   如果配置了前缀但未匹配到任何前缀，则**完全跳过**该线程（不提升）。如果未配置前缀，则使用默认的 `config.prime_threads_cpus`。
 
-5. **CPU 集应用**：过滤后的 CPU 索引通过 `cpusetids_from_indices` 转换为 CPU 集 ID。如果结果列表非空，则调用 `SetThreadSelectedCpuSets`。成功时，`thread_stats.pinned_cpu_set_ids` 被更新并记录变更消息：
-   `"Thread <tid> -> (promoted, [<cpus>], cycles=<delta>, start=<module>)"`
-   失败时，通过 [`log_error_if_new`](log_error_if_new.md) 以 `Operation::SetThreadSelectedCpuSets` 记录错误。
+5. **通过亲和性掩码过滤 CPU** —— 如果 `current_mask` 非零，则过滤目标 CPU 索引，仅保留进程亲和性掩码允许的 CPU。
 
-6. **优先级提升**：在 CPU 集固定之后（无论成功与否），该函数通过 `GetThreadPriority` 读取当前线程优先级。如果读取成功（返回值不是 `0x7FFFFFFF`）：
-   - 当前优先级保存在 `thread_stats.original_priority` 中，以便在降级时恢复。
-   - 新优先级的确定方式为：(a) 如果前缀规则的 `thread_priority` 已明确设置且不是 `ThreadPriority::None`，则使用该值；或 (b) 使用 `current_priority.boost_one()` 将优先级提升一级。
-   - 如果新优先级与当前不同，则调用 `SetThreadPriority`。成功时记录变更消息：
-     `"Thread <tid> -> (priority set: <old> -> <new>)"` 或 `"Thread <tid> -> (priority boosted: <old> -> <new>)"`。
-   - 失败时，通过 [`log_error_if_new`](log_error_if_new.md) 以 `Operation::SetThreadPriority` 记录错误。
+6. **通过 `SetThreadSelectedCpuSets` 固定** —— 将目标 CPU 索引转换为 CPU 集合 ID 并调用 Windows API 固定线程。成功后，在 `thread_stats.pinned_cpu_set_ids` 中记录固定的 CPU 集合 ID，并记录变更消息，包含线程 ID、提升的 CPU、周期计数和起始模块。
 
-### 边界情况
+7. **提升线程优先级** —— 固定后，通过 `GetThreadPriority` 读取当前线程优先级并将其保存在 `thread_stats.original_priority` 中，以便在降级的后期恢复。新优先级确定如下：
+   - 如果匹配的前缀指定了 `thread_priority`，则直接使用该值（记录为"优先级设置"）。
+   - 否则，通过 `ThreadPriority::boost_one()` 将当前优先级提升一级（记录为"优先级提升"）。
+   
+   仅当新值与当前值不同时才更改优先级。优先级提升适用于 CPU 固定成功或失败的情况。
 
-- 如果 `prime_threads_prefixes` 为空，所有被选为主线程的线程都使用 `config.prime_threads_cpus` 作为 CPU 集并进行单级优先级提升。
-- 如果 `prime_threads_prefixes` 非空但没有前缀匹配给定线程的起始模块，即使该线程被选为主线程也**不会**被提升。这允许对哪些模块接受主线程处理进行细粒度控制。
-- 如果 `current_mask` 为 `0`（例如，从未查询过亲和性），则不进行过滤，使用完整的 `prime_threads_cpus` 列表。
-- 如果 `cpusetids_from_indices` 返回空列表（例如，所有主 CPU 都被亲和性掩码过滤掉了），则不应用 CPU 集，该线程的优先级提升也会被跳过。
-- `GetThreadPriority` 返回值 `0x7FFFFFFF`（`THREAD_PRIORITY_ERROR_RETURN`）表示失败；优先级提升会被静默跳过而不记录错误。
+### 前缀匹配详情
 
-### 与降级的交互
+- 匹配**不区分大小写**——在比较前将模块名称和前缀都转换为小写。
+- 仅使用**第一个**匹配的前缀；不评估后续前缀。
+- 当配置了前缀但线程的模块未匹配任何前缀时，该线程**被排除在提升之外**。这允许针对特定子系统的提升（如渲染线程、音频线程）。
 
-由此函数提升的线程，如果在后续应用周期中退出主线程选择，将随后被 [`apply_prime_threads_demote`](apply_prime_threads_demote.md) 降级。`pinned_cpu_set_ids` 字段充当提升标记：非空表示已提升。`original_priority` 字段用于降级时将线程优先级恢复到提升前的水平。
+### 错误处理
+
+所有 Windows API 错误都通过 [`log_error_if_new`](log_error_if_new.md) 报告，支持去重，防止持久性错误的日志刷屏。跟踪的操作包括：
+- `Operation::OpenThread` —— 无效的线程句柄。
+- `Operation::SetThreadSelectedCpuSets` —— CPU 集合固定失败。
+- `Operation::SetThreadPriority` —— 优先级提升失败。
+
+### 变更消息
+
+提升成功时，可能记录两条变更消息：
+- `"Thread {tid} -> (promoted, [{cpus}], cycles={delta}, start={module})"` —— CPU 集合固定。
+- `"Thread {tid} -> (priority boosted: {old} -> {new})"` 或 `"Thread {tid} -> (priority set: {old} -> {new})"` —— 优先级更改。
 
 ## 要求
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `apply.rs` |
-| Crate | `AffinityServiceRust` |
-| 可见性 | `pub` |
-| Windows API | `SetThreadSelectedCpuSets`、`GetThreadPriority`、`SetThreadPriority`、`GetLastError` |
-| 调用者 | [`apply_prime_threads`](apply_prime_threads.md) |
-| 被调用者 | [`log_error_if_new`](log_error_if_new.md)、`winapi::resolve_address_to_module`、`winapi::filter_indices_by_mask`、`winapi::cpusetids_from_indices`、`winapi::indices_from_cpusetids`、`config::format_cpu_indices`、`error_codes::error_from_code_win32`、`ThreadPriority::from_win_const`、`ThreadPriority::boost_one`、`ThreadPriority::to_thread_priority_struct` |
-| 权限 | 需要具有 `THREAD_SET_INFORMATION` 或 `THREAD_SET_LIMITED_INFORMATION`（写入）和 `THREAD_QUERY_INFORMATION` 或 `THREAD_QUERY_LIMITED_INFORMATION`（读取，用于 `GetThreadPriority`）的线程句柄。 |
+| | |
+|---|---|
+| **模块** | `src/apply.rs` |
+| **调用方** | [`apply_prime_threads`](apply_prime_threads.md) |
+| **被调用方** | [`log_error_if_new`](log_error_if_new.md), `resolve_address_to_module`, `filter_indices_by_mask`, `cpusetids_from_indices`, `indices_from_cpusetids`, `format_cpu_indices` |
+| **Win32 API** | [`SetThreadSelectedCpuSets`](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadselectedcpusets), [`GetThreadPriority`](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-getthreadpriority), [`SetThreadPriority`](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadpriority), [`GetLastError`](https://learn.microsoft.com/zh-cn/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror) |
+| **权限** | 需要在目标线程上具有 `THREAD_SET_INFORMATION` 和 `THREAD_QUERY_INFORMATION`（或受限变体）。 |
 
 ## 另请参阅
 
-| 参考 | 链接 |
-|------|------|
-| apply 模块概述 | [`README`](README.md) |
-| ApplyConfigResult | [`ApplyConfigResult`](ApplyConfigResult.md) |
-| apply_prime_threads | [`apply_prime_threads`](apply_prime_threads.md) |
-| apply_prime_threads_select | [`apply_prime_threads_select`](apply_prime_threads_select.md) |
-| apply_prime_threads_demote | [`apply_prime_threads_demote`](apply_prime_threads_demote.md) |
-| prefetch_all_thread_cycles | [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md) |
-| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
-| ThreadLevelConfig | [`config.rs/ThreadLevelConfig`](../config.rs/ThreadLevelConfig.md) |
-| PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
-| ThreadPriority | [`priority.rs/ThreadPriority`](../priority.rs/ThreadPriority.md) |
+| | |
+|---|---|
+| [`apply_prime_threads`](apply_prime_threads.md) | 调用 select → promote → demote 的编排器。 |
+| [`apply_prime_threads_select`](apply_prime_threads_select.md) | 基于迟滞选择要提升的线程。 |
+| [`apply_prime_threads_demote`](apply_prime_threads_demote.md) | 逆转提升：取消固定 CPU 并恢复优先级。 |
+| [`PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) | 管理每线程调度状态和迟滞逻辑。 |
+| [`ThreadLevelConfig`](../config.rs/ThreadLevelConfig.md) | 包含 Prime 前缀的线程级别设置配置。 |
+| [`PrimePrefix`](../config.rs/PrimePrefix.md) | 可选 CPU 集合和线程优先级覆盖的每模块前缀规则。 |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

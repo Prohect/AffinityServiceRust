@@ -1,6 +1,6 @@
 # cpusetids_from_mask function (winapi.rs)
 
-Converts an affinity bitmask to a list of Windows CPU Set IDs. Each set bit in the mask corresponds to a logical processor index; the function looks up the matching CPU Set ID from the system CPU set information cache.
+Converts a CPU affinity bitmask into a list of Windows CPU Set IDs. Each set bit in the mask corresponds to a logical processor index, which is mapped to its opaque CPU Set ID via the cached system CPU set topology.
 
 ## Syntax
 
@@ -12,48 +12,46 @@ pub fn cpusetids_from_mask(mask: usize) -> List<[u32; CONSUMER_CPUS]>
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `mask` | `usize` | A bitmask where each set bit represents a logical processor index (bit 0 = CPU 0, bit 1 = CPU 1, etc.). Supports up to 64 logical processors. |
+| `mask` | `usize` | A bitmask where bit *N* represents logical processor *N*. For example, `0x15` (binary `10101`) represents processors 0, 2, and 4. Only the lower 64 bits are meaningful; processors with index ≥ 64 are silently skipped. |
 
 ## Return value
 
-Returns a `List<[u32; CONSUMER_CPUS]>` (`SmallVec`) containing the CPU Set IDs corresponding to the set bits in the mask. Returns an empty list if `mask` is `0`.
+`List<[u32; CONSUMER_CPUS]>` — A stack-allocated list of CPU Set IDs corresponding to the logical processors indicated by the set bits in `mask`. Returns an empty list if `mask` is `0`.
 
 ## Remarks
 
-- This function is the bitmask-based counterpart to [cpusetids_from_indices](cpusetids_from_indices.md), which accepts an explicit slice of indices.
-- Windows CPU Set IDs are opaque identifiers that do not correspond directly to logical processor indices. This function bridges the gap by consulting the system CPU set information cache ([CPU_SET_INFORMATION](CPU_SET_INFORMATION.md)).
-- The function acquires a mutex lock on the global `CPU_SET_INFORMATION` static and iterates through all CPU set entries, checking each entry's `logical_processor_index` against the bitmask.
-- Only logical processor indices less than 64 are considered, since `usize` on 64-bit Windows is 64 bits wide.
-- This function is marked `#[allow(dead_code)]`, indicating it may be reserved for future use or used conditionally.
+- The function acquires a lock on the [CPU_SET_INFORMATION](README.md) cache and iterates over all [CpuSetData](CpuSetData.md) entries. For each entry whose `logical_processor_index` corresponds to a set bit in `mask`, the entry's `id` is appended to the result.
+- The bit test is performed as `(1usize << logical_processor_index) & mask != 0`, which limits the function to processors 0–63 within a single processor group. Entries with `logical_processor_index >= 64` are excluded by an explicit bounds check.
+- This function is the mask-based counterpart to [cpusetids_from_indices](cpusetids_from_indices.md), which accepts an explicit list of processor indices instead of a bitmask.
+- Currently marked `#[allow(dead_code)]` — available for use but not called in the current codebase.
 
-### Algorithm
+### Relationship to affinity masks
 
-1. If `mask` is `0`, return an empty list immediately.
-2. Lock the `CPU_SET_INFORMATION` cache.
-3. For each `CpuSetData` entry in the cache:
-   - If the entry's `logical_processor_index` is less than 64 **and** the corresponding bit is set in `mask`, push the entry's `id` into the result list.
-4. Return the collected CPU Set IDs.
+Windows affinity masks (as returned by `GetProcessAffinityMask`) use the same bit-per-processor encoding that this function accepts. This makes `cpusetids_from_mask` the natural bridge between legacy affinity APIs and the newer CPU Sets API.
+
+### Performance
+
+The function performs a single pass over the cached CPU set data (one entry per logical processor), making it O(n) where n is the number of logical processors on the system. The `Mutex` lock is held for the duration of the iteration.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `winapi.rs` |
-| **Dependencies** | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md), [CpuSetData](CpuSetData.md) |
-| **Types** | `List<[u32; CONSUMER_CPUS]>` from [collections](../collections.rs/README.md) |
-| **Platform** | Windows (uses `GetSystemCpuSetInformation` data) |
+| | |
+|---|---|
+| **Module** | `src/winapi.rs` |
+| **Callers** | Currently unused (`#[allow(dead_code)]`) |
+| **Callees** | [get_cpu_set_information](README.md) |
+| **Win32 API** | None directly; consumes cached data from [GetSystemCpuSetInformation](https://learn.microsoft.com/en-us/windows/win32/api/systemcpusetinformation/nf-systemcpusetinformation-getsystemcpusetinformation) |
+| **Privileges** | None |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| cpusetids_from_indices | [cpusetids_from_indices](cpusetids_from_indices.md) |
-| indices_from_cpusetids | [indices_from_cpusetids](indices_from_cpusetids.md) |
-| mask_from_cpusetids | [mask_from_cpusetids](mask_from_cpusetids.md) |
-| filter_indices_by_mask | [filter_indices_by_mask](filter_indices_by_mask.md) |
-| CPU_SET_INFORMATION static | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
-| CpuSetData struct | [CpuSetData](CpuSetData.md) |
-| collections module | [collections.rs](../collections.rs/README.md) |
+| Index-based conversion | [cpusetids_from_indices](cpusetids_from_indices.md) |
+| Reverse: CPU Set IDs → indices | [indices_from_cpusetids](indices_from_cpusetids.md) |
+| Reverse: CPU Set IDs → mask | [mask_from_cpusetids](mask_from_cpusetids.md) |
+| Filter indices by mask | [filter_indices_by_mask](filter_indices_by_mask.md) |
+| CPU set topology cache | [CpuSetData](CpuSetData.md) |
+| Module overview | [winapi.rs](README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

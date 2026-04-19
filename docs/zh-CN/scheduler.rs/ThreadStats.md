@@ -1,6 +1,6 @@
-# ThreadStats 类型 (scheduler.rs)
+# ThreadStats 结构体 (scheduler.rs)
 
-每线程统计信息和状态容器，由 `PrimeThreadScheduler` 使用，用于跟踪 CPU 周期活动、管理线程句柄、记录理想处理器分配，以及支持跨轮询迭代的基于滞后的主线程选择。每个 `ThreadStats` 实例对应于父进程中由其 TID 标识的单个操作系统线程。
+每线程调度状态容器，由 [PrimeThreadScheduler](PrimeThreadScheduler.md) 使用，用于在轮询迭代间跟踪 CPU 周期计数器、时间增量、句柄缓存、CPU 集合固定、活跃连续计数、理想处理器分配和优先级记录。调度器观察到的每个线程在其父级 [ProcessStats](ProcessStats.md) 的 `tid_to_thread_stats` 映射中都有一个 `ThreadStats` 条目。
 
 ## 语法
 
@@ -24,49 +24,117 @@ pub struct ThreadStats {
 ## 成员
 
 | 成员 | 类型 | 描述 |
-|------|------|------|
-| `last_total_time` | `i64` | 此线程最近观测到的总（内核 + 用户）执行时间，以 100 纳秒为间隔。每个轮询迭代更新。 |
-| `cached_total_time` | `i64` | 上一个轮询迭代的 `last_total_time` 值。用于计算每次迭代的时间增量。 |
-| `last_cycles` | `u64` | 此线程最近观测到的 CPU 周期计数，由 `QueryThreadCycleTime` 或等效方法返回。 |
-| `cached_cycles` | `u64` | 上一个轮询迭代的 `last_cycles` 值。差值 `last_cycles - cached_cycles` 给出用于主线程排名的每次迭代增量。 |
-| `handle` | `Option<ThreadHandle>` | 可选的线程句柄容器。`None` 表示句柄尚未打开。当为 `Some` 时，其中的 `r_limited_handle` 始终有效；调用方在使用提升权限的句柄之前应检查 `is_valid_handle()`。`ThreadHandle` 的 `Drop` 实现会自动关闭操作系统句柄。 |
-| `pinned_cpu_set_ids` | `List<[u32; CONSUMER_CPUS]>` | 此线程已被主线程引擎固定到的 CPU 集合 ID 的栈分配列表。当线程未被分配到任何主 CPU 集合时为空。容量受 `CONSUMER_CPUS` 常量限制。 |
-| `active_streak` | `u8` | 此线程的周期增量连续超过进入阈值的轮询迭代次数计数器。由 `PrimeThreadScheduler::update_active_streaks` 使用以实现滞后机制——线程必须维持 `min_active_streak` 次迭代的活动才能被提升为主线程状态。上限为 254 以防止溢出。当周期低于保持阈值时重置为 0。 |
-| `start_address` | `usize` | 线程的起始地址（入口点），用于通过 `resolve_address_to_module` 解析出发起的模块名称。对于基于前缀的线程过滤非常有用（例如，只提升从 `"game.dll"` 启动的线程）。 |
-| `original_priority` | `Option<ThreadPriority>` | 线程首次被观测时其优先级级别的快照。存储此值以便服务能在线程失去主线程状态或进程退出时恢复原始优先级。如果尚未捕获则为 `None`。 |
-| `last_system_thread_info` | `Option<SYSTEM_THREAD_INFORMATION>` | 来自 `NtQuerySystemInformation` 的此线程的最新 `SYSTEM_THREAD_INFORMATION` 快照。当进程退出且 `track_top_x_threads` 非零时，用于诊断报告。包含内核时间、用户时间、创建时间、等待原因、上下文切换次数和调度优先级。 |
-| `ideal_processor` | `IdealProcessorState` | 跟踪此线程的当前和先前理想处理器分配。参见 [IdealProcessorState](IdealProcessorState.md)。 |
-| `process_id` | `u32` | 父进程的 Windows PID。存储在此处以便自定义 `Debug` 实现可以在不需要外部上下文的情况下调用 `resolve_address_to_module`。 |
+|--------|------|-------------|
+| `last_total_time` | `i64` | 在最近一次完成的应用周期结束时记录的总 CPU 时间（内核 + 用户，以 100ns 为单位）。作为下一次迭代中计算时间增量的基线。 |
+| `cached_total_time` | `i64` | 在当前周期中读取的总 CPU 时间，在周期结束时由 [update_thread_stats](../apply.rs/update_thread_stats.md) 提交到 `last_total_time` 之前的暂存值。 |
+| `last_cycles` | `u64` | 上一次迭代的线程 CPU 周期计数快照，用作 [prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md) 中增量计算的基线。 |
+| `cached_cycles` | `u64` | 在当前迭代中读取的线程 CPU 周期计数，在提交到 `last_cycles` 之前的暂存值。 |
+| `handle` | `Option<ThreadHandle>` | 此线程的缓存 [ThreadHandle](../winapi.rs/ThreadHandle.md)。如果句柄尚未打开则为 `None`。当存在时，`r_limited_handle` 保证有效；其他句柄在使用前应通过 `is_invalid()` 检查。当统计条目被移除时，句柄会通过 `ThreadHandle::Drop` 自动关闭。 |
+| `pinned_cpu_set_ids` | `List<[u32; CONSUMER_CPUS]>` | 当前通过 [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) 分配给此线程的 CPU 集合 ID。当线程未固定到专用核心时为空。降级路径使用此列表来确定需要清除哪些 CPU 集合。 |
+| `active_streak` | `u8` | 此线程的增量周期数超过相对于最大值的进入阈值的连续迭代计数。由 [PrimeThreadScheduler::update_active_streaks](PrimeThreadScheduler.md) 递增，由 [PrimeThreadScheduler::select_top_threads_with_hysteresis](PrimeThreadScheduler.md) 消费。上限为 254 以防止溢出。当线程降至保持阈值以下时重置为 0。 |
+| `start_address` | `usize` | 线程的 Win32 起始地址，通过 [get_thread_start_address](../winapi.rs/get_thread_start_address.md) 获取。用于基于模块前缀的理想处理器分配，并在自定义 `Debug` 实现和退出报告中解析为模块名称。 |
+| `original_priority` | `Option<ThreadPriority>` | 服务修改之前的线程优先级。在首次提升时捕获，以便 [apply_prime_threads_demote](../apply.rs/apply_prime_threads_demote.md) 在线程失去 Prime 状态时恢复原始值。如果线程从未被提升则为 `None`。 |
+| `last_system_thread_info` | `Option<SYSTEM_THREAD_INFORMATION>` | 来自进程快照的最新 `SYSTEM_THREAD_INFORMATION`，缓存用于进程退出时由 [PrimeThreadScheduler::drop_process_by_pid](PrimeThreadScheduler.md) 生成的诊断报告。包含内核时间、用户时间、上下文切换次数、等待原因、优先级和其他操作系统报告的线程状态。 |
+| `ideal_processor` | `IdealProcessorState` | 跟踪此线程当前和先前的理想处理器组/编号分配。参见 [IdealProcessorState](IdealProcessorState.md)。 |
+| `process_id` | `u32` | 所属进程的 PID。由自定义 `Debug` 实现使用，以正确的 PID 调用 [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md)。 |
+
+## 方法
+
+### new
+
+```rust
+pub fn new(process_id: u32) -> Self
+```
+
+创建一个新的 `ThreadStats`，所有计数器归零，无句柄，空 CPU 集合列表，零连续计数，以及默认的 [IdealProcessorState](IdealProcessorState.md)。
+
+**参数**
+
+| 参数 | 类型 | 描述 |
+|-----------|------|-------------|
+| `process_id` | `u32` | 拥有此线程的进程的 PID。存储以供 `Debug` 实现使用。 |
+
+**返回值**
+
+`ThreadStats` — 所有字段均为默认/零值的新实例。
+
+### Default
+
+```rust
+impl Default for ThreadStats {
+    fn default() -> Self;
+}
+```
+
+委托给 `ThreadStats::new(0)`。
+
+### Debug
+
+```rust
+impl fmt::Debug for ThreadStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result;
+}
+```
+
+自定义 `Debug` 实现，通过 [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md) 将 `start_address` 解析为模块名称，而不是打印原始数字地址。这使得调试输出可以直接使用——例如显示 `start_address: "game.dll+0x1A40"` 而不是 `start_address: 0x7FF612341A40`。
+
+**包含的字段：** `last_total_time`、`cached_total_time`、`last_cycles`、`cached_cycles`、`pinned_cpu_set_ids`、`active_streak`、`start_address`（已解析）、`original_priority`、`ideal_processor`。
+
+**排除的字段：** `handle`、`last_system_thread_info`、`process_id` — 省略以减少调试输出中的噪音。
 
 ## 备注
 
-- `ThreadStats` 实现了自定义的 `fmt::Debug` 特征，该特征使用 `resolve_address_to_module(process_id, start_address)` 将 `start_address` 解析为模块名称，使调试输出更具可读性。`handle` 和 `last_system_thread_info` 字段有意从调试输出中省略以保持简洁。
-- `new(process_id)` 构造函数将所有数值字段初始化为零，所有 `Option` 字段初始化为 `None`，`pinned_cpu_set_ids` 初始化为空列表，`ideal_processor` 初始化为默认的 `IdealProcessorState`。
-- `Default` 实现调用 `Self::new(0)`，适用于占位上下文，但这意味着 `process_id` 必须显式设置，或者必须通过 `PrimeThreadScheduler::get_thread_stats` 创建条目。
-- `last_cycles` 和 `cached_cycles` 之间的增量是 `PrimeThreadScheduler::select_top_threads_with_hysteresis` 用于排名线程并决定哪些线程接收主 CPU 分配的主要指标。
-- 线程句柄是延迟打开的。`handle` 字段保持为 `None`，直到 apply 引擎首次需要对线程调用 Win32 API（例如 `SetThreadAffinityMask`、`SetThreadIdealProcessorEx`、`SetThreadPriority`）。一旦打开，句柄在 `ThreadStats` 条目的整个生命周期中都会被重用，并在条目被丢弃时自动关闭。
-- `CONSUMER_CPUS` 常量限制了每个线程可以不使用堆分配存储的 CPU 集合 ID 的最大数量，反映了典型消费级硬件的核心数量。
+### 双缓冲模式
+
+`last_*` / `cached_*` 字段对为时间和周期测量实现了双缓冲方案：
+
+1. 在每次轮询迭代开始时，从操作系统读取当前值并存储在 `cached_total_time` / `cached_cycles` 中。
+2. 增量计算为 `cached - last`，以确定自上次迭代以来的活动量。
+3. 在迭代结束时（在 [update_thread_stats](../apply.rs/update_thread_stats.md) 中），缓存值被复制到 `last_*`，建立新的基线。
+
+这种分离确保了增量计算和状态更新发生在轮询循环中定义明确的时间点，即使多个应用函数读取相同的线程统计数据也是如此。
+
+### 句柄缓存
+
+线程句柄在首次使用时延迟打开（通常由 [get_handles](../apply.rs/get_handles.md) 或 [prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md) 触发），并存储在 `handle` 字段中以便跨迭代重用。这避免了每次轮询周期重复调用 `OpenThread` 的开销。句柄在以下情况下关闭：
+
+- 线程的父进程退出（[drop_process_by_pid](PrimeThreadScheduler.md) 丢弃 `ThreadStats`）。
+- 句柄被显式取出并丢弃。
+
+### CPU 集合固定
+
+`pinned_cpu_set_ids` 字段使用栈分配的 `List<[u32; CONSUMER_CPUS]>` 来避免消费级系统（≤64 CPU）常见情况下的堆分配。当线程被提升为 Prime 状态时，其专用 CPU 集合 ID 存储在此处。当被降级时，此列表用于确定需要清除哪些 CPU 集合，然后列表被清空。
+
+### 活跃连续计数生命周期
+
+| 连续计数值 | 含义 |
+|---|---|
+| `0` | 线程处于非活跃状态或最近降至保持阈值以下 |
+| `1` | 线程在本次迭代中刚超过进入阈值 |
+| `2..min_active_streak-1` | 线程正在积累连续计数，尚不具备提升资格 |
+| `≥ min_active_streak` | 线程有资格通过 `select_top_threads_with_hysteresis` 提升 |
+| `254` | 最大连续计数值（硬上限以防止 `u8` 溢出） |
 
 ## 要求
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `scheduler.rs` |
-| 调用方 | [PrimeThreadScheduler](PrimeThreadScheduler.md)、`apply` 模块（线程级 apply 函数） |
-| 依赖 | [ThreadPriority](../priority.rs/ThreadPriority.md)、[IdealProcessorState](IdealProcessorState.md)、`winapi::ThreadHandle`、`winapi::resolve_address_to_module`、`collections::List`、`collections::CONSUMER_CPUS`、`ntapi::ntexapi::SYSTEM_THREAD_INFORMATION` |
-| 平台 | Windows（依赖 NT 线程信息结构和 Win32 线程句柄） |
+| | |
+|---|---|
+| **模块** | `src/scheduler.rs` |
+| **调用方** | [PrimeThreadScheduler](PrimeThreadScheduler.md)（所有方法）、[apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md)、[apply_prime_threads_demote](../apply.rs/apply_prime_threads_demote.md)、[update_thread_stats](../apply.rs/update_thread_stats.md)、[prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md) |
+| **依赖** | [ThreadHandle](../winapi.rs/ThreadHandle.md)、[IdealProcessorState](IdealProcessorState.md)、[ThreadPriority](../priority.rs/ThreadPriority.md)、`SYSTEM_THREAD_INFORMATION` (ntapi)、`List` / `CONSUMER_CPUS` 来自 `crate::collections` |
+| **权限** | 无（仅数据结构；句柄获取需要之前获得的相应权限） |
 
 ## 另请参阅
 
-| 参考 | 链接 |
-|------|------|
-| PrimeThreadScheduler | [PrimeThreadScheduler](PrimeThreadScheduler.md) |
-| ProcessStats | [ProcessStats](ProcessStats.md) |
-| IdealProcessorState | [IdealProcessorState](IdealProcessorState.md) |
-| ThreadPriority | [ThreadPriority](../priority.rs/ThreadPriority.md) |
-| format_100ns | [format_100ns](format_100ns.md) |
-| format_filetime | [format_filetime](format_filetime.md) |
-| scheduler 模块 | [README](README.md) |
+| 主题 | 链接 |
+|-------|------|
+| 模块概述 | [scheduler.rs](README.md) |
+| 父容器 | [ProcessStats](ProcessStats.md) |
+| 理想处理器状态 | [IdealProcessorState](IdealProcessorState.md) |
+| 线程句柄 RAII 包装器 | [ThreadHandle](../winapi.rs/ThreadHandle.md) |
+| 周期预取 | [prefetch_all_thread_cycles](../apply.rs/prefetch_all_thread_cycles.md) |
+| 统计提交步骤 | [update_thread_stats](../apply.rs/update_thread_stats.md) |
+| 模块地址解析 | [resolve_address_to_module](../winapi.rs/resolve_address_to_module.md) |
+| 迟滞选择 | [PrimeThreadScheduler](PrimeThreadScheduler.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

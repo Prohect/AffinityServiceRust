@@ -1,32 +1,29 @@
 # process 模块 (AffinityServiceRust)
 
-`process` 模块通过封装原生 `NtQuerySystemInformation` API，提供高效的进程和线程枚举功能。它捕获系统上所有正在运行的进程及其线程的时间点快照，并将它们存储在可重用的缓冲区和以 PID 为键的查找映射中。快照模型使用 RAII 语义——当 `ProcessSnapshot` 被丢弃时，缓冲区和映射会自动清除，防止过时的数据在调度周期之间残留。
-
-## 函数
-
-此模块不导出独立函数。所有功能都通过 `ProcessSnapshot` 和 `ProcessEntry` 的方法暴露。
-
-## 结构体
-
-| 结构体 | 描述 |
-|--------|------|
-| [ProcessSnapshot](ProcessSnapshot.md) | RAII 封装器，通过 `NtQuerySystemInformation` 捕获所有进程和线程的时间点快照，丢弃时自动清理。 |
-| [ProcessEntry](ProcessEntry.md) | 表示快照中的单个进程，封装 `SYSTEM_PROCESS_INFORMATION` 并提供缓存的进程名称和延迟线程枚举。 |
+\`process\` 模块提供了一个基于 \`NtQuerySystemInformation(SystemProcessInformation)\` 构建的高性能进程快照机制。它将所有正在运行的进程及其线程的时间点视图捕获到可重用的缓冲区中，最大限度地减少了轮询迭代之间的分配开销。该模块公开了一个基于 RAII 的 [ProcessSnapshot](ProcessSnapshot.md) 类型，在 drop 时自动清除共享状态，以及一个 [ProcessEntry](ProcessEntry.md) 结构体，用于包装每个进程的数据，包括从原始内核结构中解析出的线程数组。
 
 ## 静态变量
 
-| 静态变量 | 描述 |
-|----------|------|
-| [SNAPSHOT_BUFFER](SNAPSHOT_BUFFER.md) | `Lazy<Mutex<Vec<u8>>>` — `NtQuerySystemInformation` 结果的共享后备缓冲区。不应直接访问；请改用 `ProcessSnapshot`。 |
-| [PID_TO_PROCESS_MAP](PID_TO_PROCESS_MAP.md) | `Lazy<Mutex<HashMap<u32, ProcessEntry>>>` — 由 `ProcessSnapshot::take` 填充的共享 PID 到进程的查找映射。不应直接访问；请改用 `ProcessSnapshot`。 |
+| 名称 | 类型 | 描述 |
+|------|------|------|
+| \`SNAPSHOT_BUFFER\` | \`Lazy<Mutex<Vec<u8>>>\` | 共享字节缓冲区，由 [ProcessSnapshot::take](ProcessSnapshot.md) 使用，用于接收内核返回的原始 \`SYSTEM_PROCESS_INFORMATION\` 数据。跨迭代重用以避免重复分配；当内核报告 \`STATUS_INFO_LENGTH_MISMATCH\` 时动态增长。**请勿直接访问** —— 请使用 [ProcessSnapshot](ProcessSnapshot.md)。 |
+| \`PID_TO_PROCESS_MAP\` | \`Lazy<Mutex<HashMap<u32, ProcessEntry>>>\` | 共享的 PID → [ProcessEntry](ProcessEntry.md) 映射表，在每次快照期间填充。在 [ProcessSnapshot](ProcessSnapshot.md) drop 时清除。**请勿直接访问** —— 请使用 [ProcessSnapshot](ProcessSnapshot.md)。 |
+
+## 结构体
+
+| 名称 | 描述 |
+|------|------|
+| [ProcessSnapshot](ProcessSnapshot.md) | RAII 守卫，将系统范围的进程快照捕获到共享缓冲区和进程映射表中。在 drop 时清除两者。 |
+| [ProcessEntry](ProcessEntry.md) | 每个进程的数据包装器，包含 \`SYSTEM_PROCESS_INFORMATION\` 记录、指向原始线程数组的指针以及小写的进程名称。 |
 
 ## 另请参阅
 
-| 链接 | 描述 |
+| 主题 | 链接 |
 |------|------|
-| [winapi.rs](../winapi.rs/README.md) | 底层 Windows API 封装，包括句柄管理和 CPU 集合操作。 |
-| [collections.rs](../collections.rs/README.md) | 项目中使用的类型别名（`HashMap`、`HashSet`、`List`）和容量常量。 |
-| [event_trace.rs](../event_trace.rs/README.md) | 基于 ETW 的实时进程监控，作为基于轮询的快照的补充。 |
+| 快照消费者 —— 主循环 | [main.rs](../main.rs/README.md) |
+| 线程调度引擎 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
+| 进程句柄管理 | [ProcessHandle](../winapi.rs/ProcessHandle.md) |
+| 配置应用 | [apply.rs](../apply.rs/README.md) |
+| Windows API 包装器 | [winapi.rs](../winapi.rs/README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档记录自提交：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

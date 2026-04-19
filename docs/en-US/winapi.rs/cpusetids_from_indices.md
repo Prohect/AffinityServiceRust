@@ -1,6 +1,6 @@
 # cpusetids_from_indices function (winapi.rs)
 
-Converts an array of logical CPU indices (0, 1, 2, …) to their corresponding Windows CPU Set IDs. Windows CPU Sets use opaque identifiers that do not necessarily match logical processor numbers; this function performs the translation using the cached system CPU set information.
+Converts an array of logical CPU indices (0-based processor numbers) into their corresponding Windows CPU Set IDs. This translation is necessary because Windows CPU Set APIs operate on opaque system-assigned IDs rather than the user-friendly logical processor indices.
 
 ## Syntax
 
@@ -12,41 +12,56 @@ pub fn cpusetids_from_indices(cpu_indices: &[u32]) -> List<[u32; CONSUMER_CPUS]>
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `cpu_indices` | `&[u32]` | A slice of logical processor indices to convert. Each value corresponds to a zero-based logical processor number as reported by the operating system. |
+| `cpu_indices` | `&[u32]` | Slice of zero-based logical processor indices to convert. Each value represents a logical processor number as seen in Task Manager or `PROCESSOR_NUMBER::Number`. |
 
 ## Return value
 
-Returns a `List<[u32; CONSUMER_CPUS]>` (`SmallVec` with inline capacity of 32) containing the CPU Set IDs that correspond to the given logical indices. If `cpu_indices` is empty, an empty list is returned. Indices that do not match any entry in the system CPU set information are silently skipped.
+`List<[u32; CONSUMER_CPUS]>` — A stack-allocated list of CPU Set IDs corresponding to the input indices. The list may be shorter than the input if some indices do not match any entry in the cached CPU set topology. Returns an empty list if `cpu_indices` is empty.
 
 ## Remarks
 
-- The function acquires a lock on the `CPU_SET_INFORMATION` static to iterate over the cached `CpuSetData` entries. Each entry's `logical_processor_index` is compared against the provided indices using `slice::contains`.
-- Because the lookup is performed via linear scan of both the CPU set cache and the input slice, performance is O(n × m) where n is the number of logical processors on the system and m is the length of `cpu_indices`. This is acceptable for typical CPU counts (≤ 128 cores) and small input slices.
-- The returned `SmallVec` uses an inline capacity of `CONSUMER_CPUS` (32). If more than 32 CPU Set IDs are produced, the vector spills to a heap allocation.
-- This function does **not** validate that the indices fall within the range of available logical processors. Out-of-range indices simply produce no matching output.
-- The CPU set information is queried once at process startup via `GetSystemCpuSetInformation` and cached for the lifetime of the process. Changes to CPU topology at runtime (e.g., hot-added processors) are not reflected.
+- The function acquires a lock on the [CPU_SET_INFORMATION](README.md) static cache and iterates through all cached [CpuSetData](CpuSetData.md) entries. For each entry whose `logical_processor_index` appears in the input slice, the entry's `id` is appended to the result list.
+- The CPU set topology is queried once at process startup via `GetSystemCpuSetInformation` and cached for the lifetime of the service. This function does not call any Windows API directly — it only reads the cache.
+- The output order follows the iteration order of the cached CPU set data, which matches the system enumeration order (typically ascending by logical processor index).
+- The result uses `List<[u32; CONSUMER_CPUS]>`, a stack-allocated fixed-capacity list from `crate::collections`, avoiding heap allocation for systems with up to `CONSUMER_CPUS` logical processors.
+
+### CPU Set ID vs. Logical Index
+
+| Concept | Example | Used by |
+|---------|---------|---------|
+| Logical processor index | `0`, `1`, `2`, ... | Configuration files, affinity masks, `PROCESSOR_NUMBER::Number` |
+| CPU Set ID | `0x100`, `0x101`, ... | `SetProcessDefaultCpuSets`, `SetThreadSelectedCpuSets`, and other CPU Set APIs |
+
+The mapping between indices and IDs is system-specific and determined at boot time. The same physical core may have different CPU Set IDs across reboots.
+
+### Relationship to other conversion functions
+
+| Function | Direction |
+|----------|-----------|
+| **cpusetids_from_indices** | Logical index → CPU Set ID |
+| [cpusetids_from_mask](cpusetids_from_mask.md) | Affinity mask → CPU Set ID |
+| [indices_from_cpusetids](indices_from_cpusetids.md) | CPU Set ID → Logical index |
+| [mask_from_cpusetids](mask_from_cpusetids.md) | CPU Set ID → Affinity mask |
+| [filter_indices_by_mask](filter_indices_by_mask.md) | Logical indices filtered by affinity mask |
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `winapi.rs` |
-| **Callers** | `apply.rs` — rule application logic that converts config-specified CPU indices to CPU Set IDs before calling `SetProcessDefaultCpuSets` or `SetThreadSelectedCpuSets`. |
-| **Callees** | [get_cpu_set_information](get_cpu_set_information.md) (indirectly, via `CPU_SET_INFORMATION` lock) |
-| **Windows API** | None directly; depends on cached results from `GetSystemCpuSetInformation`. |
-| **Privileges** | None required. |
+| | |
+|---|---|
+| **Module** | `src/winapi.rs` |
+| **Callers** | [apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md), [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) |
+| **Callees** | [get_cpu_set_information](README.md) (reads cached CPU set topology) |
+| **Win32 API** | None directly; relies on cached data from [GetSystemCpuSetInformation](https://learn.microsoft.com/en-us/windows/win32/api/systeminformationapi/nf-systeminformationapi-getsystemcpusetinformation) |
+| **Privileges** | None |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| cpusetids_from_mask | [cpusetids_from_mask](cpusetids_from_mask.md) |
-| indices_from_cpusetids | [indices_from_cpusetids](indices_from_cpusetids.md) |
-| mask_from_cpusetids | [mask_from_cpusetids](mask_from_cpusetids.md) |
-| filter_indices_by_mask | [filter_indices_by_mask](filter_indices_by_mask.md) |
-| CpuSetData struct | [CpuSetData](CpuSetData.md) |
-| CPU_SET_INFORMATION static | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
-| CONSUMER_CPUS constant | [CONSUMER_CPUS](../collections.rs/CONSUMER_CPUS.md) |
+| Module overview | [winapi.rs](README.md) |
+| CPU set topology cache | [CpuSetData](CpuSetData.md) |
+| Reverse conversion | [indices_from_cpusetids](indices_from_cpusetids.md) |
+| Mask-based conversion | [cpusetids_from_mask](cpusetids_from_mask.md) |
+| CPU set application | [apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

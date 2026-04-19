@@ -1,10 +1,10 @@
 # collect_group_block function (config.rs)
 
-Collects process-name members from a multi-line `{ … }` group block in the configuration file, scanning forward from a starting line index until the closing brace `}` is found. Returns the collected member names, any rule suffix that appears after the closing brace, and the next line index to resume parsing.
+Collects process names from a multi-line group block definition, reading lines until a closing `}` brace is encountered. Returns the accumulated member list, any rule suffix following the closing brace, and the line index to resume parsing from.
 
 ## Syntax
 
-```AffinityServiceRust/src/config.rs#L390-418
+```rust
 fn collect_group_block(
     lines: &[String],
     start_index: usize,
@@ -14,75 +14,84 @@ fn collect_group_block(
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `lines` | `&[String]` | The full list of lines read from the configuration file. The function reads forward from `start_index` looking for the closing `}`. |
-| `start_index` | `usize` | The 0-based index into `lines` at which to begin scanning for group members and the closing brace. This is typically the line immediately after the one containing the opening `{`. |
-| `first_line_content` | `&str` | Any content that appeared on the same line as the opening `{`, after the brace. If non-empty and not a comment, it is parsed for member names before scanning subsequent lines. |
+`lines: &[String]`
+
+The complete set of lines read from the configuration file. The function reads forward from `start_index` looking for the closing `}` brace.
+
+`start_index: usize`
+
+The zero-based line index to begin scanning from. This should be the line immediately after the one containing the opening `{` brace. The function reads `lines[start_index]`, `lines[start_index + 1]`, and so on until either a `}` is found or the end of the file is reached.
+
+`first_line_content: &str`
+
+Any content that appeared after the opening `{` on the same line. For example, given `group_name { proc1.exe: proc2.exe`, this parameter would be `"proc1.exe: proc2.exe"`. If the opening brace was the last non-whitespace character on its line, this will be an empty string or whitespace. This content is parsed for member names before reading subsequent lines.
 
 ## Return value
 
-Type: `Option<(Vec<String>, Option<String>, usize)>`
+`Option<(Vec<String>, Option<String>, usize)>` — Returns `Some(...)` on success or `None` if the end of the file is reached without finding a closing `}`.
 
-Returns `Some((members, rule_suffix, next_line_index))` when a closing `}` is found, or `None` if the end of the file is reached without encountering a closing brace (unclosed group).
+The tuple elements are:
 
-| Tuple element | Type | Description |
-|---------------|------|-------------|
-| `members` | `Vec<String>` | Lowercase process names collected from within the braces, extracted via [`collect_members`](collect_members.md). |
-| `rule_suffix` | `Option<String>` | The rule string that follows `}:` on the closing-brace line (i.e., everything after the first `:` that follows `}`). `None` if there is no `:` after the closing brace. |
-| `next_line_index` | `usize` | The line index immediately after the line containing the closing brace; the caller should resume parsing from this index. |
+| Index | Type | Description |
+|-------|------|-------------|
+| `.0` | `Vec<String>` | Collected group member names, lowercased and trimmed. Accumulated from `first_line_content` and all subsequent lines up to and including the line containing `}`. |
+| `.1` | `Option<String>` | The rule suffix that follows the closing `}`. If the line containing `}` has `:rule_fields...` after the brace, the text after the first `:` is returned as `Some(rule_fields)`. If there is no `:` after `}`, returns `None`. |
+| `.2` | `usize` | The line index immediately after the line containing `}`. The caller should resume parsing from this index. |
 
 ## Remarks
 
-### Scanning algorithm
+### Parsing algorithm
 
-1. If `first_line_content` is non-empty and does not start with `#`, it is passed to [`collect_members`](collect_members.md) to extract any process names on the same line as the opening brace.
+1. If `first_line_content` is non-empty and does not start with `#`, it is passed to [collect_members](collect_members.md) to extract any process names that appeared on the same line as the opening `{`.
 2. The function then iterates through `lines` starting at `start_index`:
-   - If the line contains a `}`, everything before the brace is collected as members (if non-empty and not a comment), the rule suffix after `}` is extracted, and the function returns.
-   - Otherwise, non-empty, non-comment lines are passed to [`collect_members`](collect_members.md) to accumulate additional member names.
-3. If the loop reaches the end of `lines` without finding `}`, the function returns `None`, indicating an unclosed group block.
+   - If a line contains `}`, the content before `}` is parsed for members, the content after `}` is examined for a rule suffix (text after a leading `:`), and the function returns successfully.
+   - Otherwise, the entire line (if non-empty and not a comment) is parsed for members via [collect_members](collect_members.md).
+3. If the loop exhausts all lines without finding `}`, the function returns `None`, indicating an unclosed group block.
 
 ### Rule suffix extraction
 
-On the closing-brace line, the text after `}` is trimmed and checked for a leading `:`. If found, the colon is stripped and the remainder is returned as `Some(rule_string)`. If no colon is present (e.g., `}` is followed only by whitespace or nothing), `None` is returned for the suffix, which is treated as an error by the caller in [`read_config`](read_config.md).
+The text immediately following the closing `}` determines whether the group has an associated rule. The parser expects the format `}:priority:affinity:...`. The leading `:` is stripped, and the remaining text becomes the rule suffix returned in `.1`. This suffix is later split on `:` by [parse_and_insert_rules](parse_and_insert_rules.md) to create the actual config entries.
+
+If no `:` follows the `}` (e.g., the closing brace is alone on a line), the caller in [read_config](read_config.md) treats this as an error — a group without a rule definition.
 
 ### Comment handling
 
-Lines that start with `#` (after trimming) are treated as comments and skipped entirely. Additionally, within a line, any token produced by [`collect_members`](collect_members.md) that starts with `#` is filtered out — this provides inline comment support.
+Lines starting with `#` inside a group block are silently ignored and do not contribute members. This allows users to comment out individual process names within a group:
 
-### Single-line groups
+```
+my_group {
+    active_game.exe
+    # disabled_game.exe
+    another_game.exe
+}:normal:*ecore:0:0:none:none:0:1
+```
 
-Single-line groups where both `{` and `}` appear on the same line (e.g., `{ a.exe: b.exe }:normal:0-7`) are **not** handled by this function. They are detected and parsed inline within [`read_config`](read_config.md) before `collect_group_block` is called. This function is only invoked when the opening `{` line does not also contain a closing `}`.
+### Single-line vs. multi-line
 
-### Edge cases
+This function is called only for multi-line groups — cases where the opening `{` line does not also contain a closing `}`. Single-line groups (e.g., `group { a: b }:rule`) are handled inline by [read_config](read_config.md) without calling this function.
 
-| Scenario | Behavior |
-|----------|----------|
-| Opening brace immediately followed by `}` on the next line | Returns members collected from `first_line_content` only. |
-| Empty group block (`{ }` spanning multiple lines with only comments/blanks) | Returns an empty `members` vector; the caller emits a warning. |
-| Nested braces | Not supported. A `}` inside the block terminates collection immediately regardless of context. |
-| EOF reached without `}` | Returns `None`. The caller pushes an error about an unclosed group. |
+### Error case
+
+When the function returns `None`, the caller in [read_config](read_config.md) pushes an error into [ConfigResult](ConfigResult.md) in the format `"Line {N}: Unclosed group '{name}' - missing }"` and skips to the next line.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `config.rs` |
-| Visibility | Private (`fn`, not `pub fn`) |
-| Callers | [`read_config`](read_config.md), [`sort_and_group_config`](sort_and_group_config.md) |
-| Callees | [`collect_members`](collect_members.md), `str::find`, `str::trim`, `str::starts_with`, `str::strip_prefix` |
-| API | Standard library only |
-| Privileges | None |
+| | |
+|---|---|
+| **Module** | `src/config.rs` |
+| **Visibility** | Private (`fn`) — internal to the config module |
+| **Callers** | [read_config](read_config.md) (multi-line group parsing), [sort_and_group_config](sort_and_group_config.md) (auto-grouping reader) |
+| **Callees** | [collect_members](collect_members.md) |
+| **Privileges** | None |
 
 ## See Also
 
-| Resource | Link |
-|----------|------|
-| collect_members | [collect_members](collect_members.md) |
-| read_config | [read_config](read_config.md) |
-| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| sort_and_group_config | [sort_and_group_config](sort_and_group_config.md) |
-| config module overview | [README](README.md) |
+| Topic | Link |
+|-------|------|
+| Module overview | [config.rs](README.md) |
+| Member name parser | [collect_members](collect_members.md) |
+| Rule insertion for collected members | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| Main config reader | [read_config](read_config.md) |
+| Config result with error reporting | [ConfigResult](ConfigResult.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

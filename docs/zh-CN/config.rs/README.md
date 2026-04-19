@@ -1,50 +1,80 @@
 # config 模块 (AffinityServiceRust)
 
-`config` 模块是 AffinityServiceRust 的配置引擎。它负责解析、验证和热重载 INI 风格的配置文件，该文件定义了 Windows 进程的 CPU 亲和性、进程优先级、CPU 集合、I/O 优先级、内存优先级、主线程调度以及理想处理器规则。该模块还提供了转换 Process Lasso 配置和自动分组重复规则的实用工具。
-
-## 函数
-
-| 函数 | 描述 |
-|------|------|
-| [parse_cpu_spec](parse_cpu_spec.md) | 将 CPU 规格字符串（范围、十六进制掩码、单独索引）解析为排序后的 CPU 索引列表。 |
-| [mask_to_cpu_indices](mask_to_cpu_indices.md) | 将 64 位位掩码转换为位被设置的 CPU 索引位置列表。 |
-| [cpu_indices_to_mask](cpu_indices_to_mask.md) | 将 CPU 索引切片转换为 `usize` 位掩码（≤64 核）。 |
-| [format_cpu_indices](format_cpu_indices.md) | 将 CPU 索引切片格式化为人类可读的紧凑范围字符串。 |
-| [resolve_cpu_spec](resolve_cpu_spec.md) | 解析可能引用 `*alias` 或字面规格的 CPU 规格，并转换为 CPU 索引。 |
-| [collect_members](collect_members.md) | 将以冒号分隔的进程名称字符串拆分为小写成员名称列表。 |
-| [parse_constant](parse_constant.md) | 解析 `@NAME = value` 常量定义并将其应用到配置结果。 |
-| [parse_alias](parse_alias.md) | 解析并注册 `*name = cpu_spec` 别名定义。 |
-| [parse_ideal_processor_spec](parse_ideal_processor_spec.md) | 解析带有可选模块前缀过滤的理想处理器规格字符串，生成规则列表。 |
-| [collect_group_block](collect_group_block.md) | 从多行 `{ … }` 分组块中收集进程名称，直到遇到右花括号。 |
-| [parse_and_insert_rules](parse_and_insert_rules.md) | 从配置行中解析规则字段，并为所有分组成员插入进程级和线程级配置条目。 |
-| [read_config](read_config.md) | 读取并解析整个配置文件，返回完整填充的 `ConfigResult`。 |
-| [read_bleack_list](read_bleack_list.md) | 读取文本文件，将非空、非注释行作为小写字符串列表返回，并记录加载的条目数。 |
-| [read_utf16le_file](read_utf16le_file.md) | 读取 UTF-16 LE 编码的文件，并将其内容作为 Rust `String` 返回。 |
-| [parse_mask](parse_mask.md) | 便捷函数，解析 CPU 规格字符串并返回对应的 `usize` 位掩码。 |
-| [convert](convert.md) | 将 Process Lasso 配置文件转换为 AffinityServiceRust 的原生格式。 |
-| [sort_and_group_config](sort_and_group_config.md) | 自动将具有相同规则设置的进程分组，以减少配置重复。 |
-| [hotreload_blacklist](hotreload_blacklist.md) | 监视黑名单文件的修改，并在文件变更时重新加载。 |
-| [hotreload_config](hotreload_config.md) | 监视配置文件的修改，并在文件变更时热重载。 |
+`config` 模块负责 AffinityServiceRust 配置文件的解析、验证和管理。它定义了进程级和线程级调度策略的规则结构，并实现了多段 INI 风格的配置解析器，支持 CPU 别名（`*name = spec`）、命名组（`name { members }`）、调优常量（`@NAME = value`）以及复杂的 CPU 规格（范围、十六进制掩码、分号分隔的索引）。该模块还提供了配置和黑名单文件的热重载功能、Process Lasso 格式转换器，以及自动分组实用工具，可将具有相同规则的进程合并。
 
 ## 结构体
 
-| 结构体 | 描述 |
-|--------|------|
-| [PrimePrefix](PrimePrefix.md) | 将线程启动模块前缀与可选的 CPU 亲和性和线程优先级关联，用于主线程调度。 |
-| [IdealProcessorRule](IdealProcessorRule.md) | 将一组 CPU 映射到可选的模块名称前缀，用于理想处理器分配。 |
-| [ProcessLevelConfig](ProcessLevelConfig.md) | 保存单个进程规则的所有进程级设置：优先级、亲和性、CPU 集合、I/O 优先级和内存优先级。 |
-| [ThreadLevelConfig](ThreadLevelConfig.md) | 保存单个进程规则的所有线程级设置：主线程 CPU、前缀、跟踪数量和理想处理器规则。 |
-| [ConfigConstants](ConfigConstants.md) | 控制主线程调度器行为的可调数值常量。 |
-| [ConfigResult](ConfigResult.md) | 配置解析器的聚合输出，包含所有已解析的规则、常量、统计信息、错误和警告。 |
+| 名称 | 描述 |
+|------|-------------|
+| [PrimePrefix](PrimePrefix.md) | 将模块名前缀与 CPU 集合和可选的线程优先级提升关联，用于 Prime 线程匹配。 |
+| [IdealProcessorRule](IdealProcessorRule.md) | 将线程起始模块前缀映射到理想的 CPU 分配。 |
+| [ProcessLevelConfig](ProcessLevelConfig.md) | 每个进程应用一次的规则：优先级、亲和性、CPU 集合、IO 优先级、内存优先级。 |
+| [ThreadLevelConfig](ThreadLevelConfig.md) | 每个进程的线程级规则，每个轮询迭代应用：Prime 线程、理想处理器、跟踪。 |
+| [ConfigConstants](ConfigConstants.md) | Prime 线程选择中的调优常量（streak、阈值）。 |
+| [ConfigResult](ConfigResult.md) | 配置解析的聚合结果：按等级分类的规则映射、计数器、错误和警告。 |
 
-## 另请参阅
+## 函数
 
-| 资源 | 链接 |
-|------|------|
-| cli 模块 | [cli.rs 概述](../cli.rs/README.md) |
-| scheduler 模块 | [scheduler.rs 概述](../scheduler.rs/README.md) |
-| priority 模块 | [priority.rs 概述](../priority.rs/README.md) |
-| apply 模块 | [apply.rs 概述](../apply.rs/README.md) |
+| 名称 | 描述 |
+|------|-------------|
+| [parse_cpu_spec](parse_cpu_spec.md) | 将 CPU 规格字符串（范围、十六进制掩码、分号）解析为排序后的 CPU 索引列表。 |
+| [mask_to_cpu_indices](mask_to_cpu_indices.md) | 将 64 位位掩码转换为排序后的 CPU 索引列表。 |
+| [cpu_indices_to_mask](cpu_indices_to_mask.md) | 将 CPU 索引切片转换为 `usize` 位掩码。 |
+| [format_cpu_indices](format_cpu_indices.md) | 将 CPU 索引切片格式化为紧凑的范围字符串，如 `"0-7,12-19"`。 |
+| [parse_mask](parse_mask.md) | 便利包装器：直接将 CPU 规格字符串解析为位掩码。 |
+| [resolve_cpu_spec](resolve_cpu_spec.md) | 解析可能是 `*alias` 引用或字面量规格的 CPU 规格。 |
+| [collect_members](collect_members.md) | 将冒号分隔的进程名称拆分为成员列表。 |
+| [parse_constant](parse_constant.md) | 解析 `@NAME = value` 常量定义（MIN_ACTIVE_STREAK、KEEP_THRESHOLD、ENTRY_THRESHOLD）。 |
+| [parse_alias](parse_alias.md) | 解析 `*name = cpu_spec` 别名定义。 |
+| [parse_ideal_processor_spec](parse_ideal_processor_spec.md) | 解析理想处理器规格，如 `*alias@prefix1;prefix2`。 |
+| [collect_group_block](collect_group_block.md) | 在 `{` 和 `}` 之间收集多行组块成员。 |
+| [parse_and_insert_rules](parse_and_insert_rules.md) | 主规则解析器：拆分字段、验证、创建配置、按等级插入到 [ConfigResult](ConfigResult.md)。 |
+| [read_config](read_config.md) | 主配置文件读取器。处理常量、别名、组和单行规则。 |
+| [read_bleack_list](read_bleack_list.md) | 读取黑名单文件（每行一个进程名，`#` 注释）。 |
+| [read_utf16le_file](read_utf16le_file.md) | 读取 UTF-16LE 编码的文件并返回为 Rust `String`。 |
+| [convert](convert.md) | 将 Process Lasso 配置格式转换为 AffinityServiceRust 格式。 |
+| [sort_and_group_config](sort_and_group_config.md) | 将具有相同设置的规则自动分组到命名组块中。 |
+| [hotreload_blacklist](hotreload_blacklist.md) | 如果黑名单文件在磁盘上已修改，则热重载黑名单文件。 |
+| [hotreload_config](hotreload_config.md) | 如果配置文件已修改，则热重载配置，成功时重置调度器状态。 |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+## 配置文件格式
+
+配置文件使用行导向格式，包含多个部分类型：
+
+```
+# 注释以 # 开头
+
+# 常量（调优参数）
+@MIN_ACTIVE_STREAK = 3
+@KEEP_THRESHOLD = 0.05
+@ENTRY_THRESHOLD = 0.1
+
+# CPU 别名
+*pcore = 0-7
+*ecore = 8-19
+
+# 单行规则
+process.exe:priority:affinity:cpuset:prime_cpus:io_priority:memory_priority:ideal_processor:grade
+
+# 命名组规则
+group_name { proc1.exe: proc2.exe: proc3.exe }:normal:*ecore:0:0:low:none:0:1
+
+# 多行组
+group_name {
+    proc1.exe: proc2.exe
+    proc3.exe
+}:normal:*ecore:0:0:low:none:0:1
+```
+
+## 参见
+
+| 主题 | 链接 |
+|-------|------|
+| 执行引擎 | [apply.rs](../apply.rs/README.md) |
+| 优先级枚举 | [ProcessPriority](../priority.rs/ProcessPriority.md), [IOPriority](../priority.rs/IOPriority.md), [MemoryPriority](../priority.rs/MemoryPriority.md), [ThreadPriority](../priority.rs/ThreadPriority.md) |
+| Prime 线程调度器 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
+| CLI 参数 | [CliArgs](../cli.rs/CliArgs.md) |
+| 集合类型 | [List / HashMap](../collections.rs/README.md) |
+| 主服务循环 | [main.rs](../main.rs/README.md) |
+
+*文档为 Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

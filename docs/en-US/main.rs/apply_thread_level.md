@@ -1,6 +1,6 @@
 # apply_thread_level function (main.rs)
 
-Applies thread-level settings to a single process on every polling iteration. This includes prime-thread scheduling (selecting the highest-activity threads and pinning them to preferred CPU cores), ideal-processor assignment, and per-thread CPU cycle-time tracking. The function is called repeatedly across iterations so that the scheduler can react to workload changes over time.
+Applies thread-level settings to a single process on every polling iteration. This includes prefetching thread cycle times for delta computation, running the prime thread scheduling algorithm, and assigning ideal processor hints. The function only executes if the process's [ThreadLevelConfig](../config.rs/ThreadLevelConfig.md) contains at least one thread-level setting (prime thread CPUs, prime thread prefixes, ideal processor rules, or top-X thread tracking).
 
 ## Syntax
 
@@ -18,60 +18,78 @@ fn apply_thread_level<'a>(
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `pid` | `u32` | The Windows process identifier of the target process. |
-| `config` | `&ThreadLevelConfig` | The thread-level configuration block for this process, containing prime-thread CPU lists, thread-name prefix filters, ideal-processor rules, and the `track_top_x_threads` debugging setting. |
-| `prime_core_scheduler` | `&mut PrimeThreadScheduler` | Mutable reference to the scheduler that tracks per-thread cycle statistics and manages hysteresis-based prime-thread selection across iterations. |
-| `process` | `&'a ProcessEntry` | A shared reference (with lifetime `'a`) to the process snapshot entry, used when applying prime-thread rules to resolve thread information. |
-| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A lazy closure that returns a reference to the thread map. The closure is backed by a `OnceCell` so the actual `get_threads()` call is deferred until first use and cached thereafter. This allows `apply_process_level` and `apply_thread_level` to share a single thread enumeration when called together via `apply_config`. |
-| `dry_run` | `bool` | When `true`, no Win32 API calls that modify thread state are issued; changes are recorded in `apply_configs` for logging only. |
-| `apply_configs` | `&mut ApplyConfigResult` | Accumulator for change descriptions and error messages produced during the apply operation. |
+`pid: u32`
+
+The process identifier of the target process.
+
+`config: &ThreadLevelConfig`
+
+The [`ThreadLevelConfig`](../config.rs/ThreadLevelConfig.md) for the matched process. Contains prime thread CPU assignments, module-prefix matching rules, ideal processor rules, and the top-X thread tracking count. If all of these fields are empty/zero, the function returns immediately.
+
+`prime_core_scheduler: &mut PrimeThreadScheduler`
+
+The [`PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) that tracks per-thread cycle time deltas, active streaks, and prime/non-prime status across iterations. The scheduler is marked alive for this PID and updated with current cycle data.
+
+`process: &'a ProcessEntry`
+
+The [`ProcessEntry`](../process.rs/ProcessEntry.md) for the target process, used to enumerate threads when the thread cache has not yet been populated.
+
+`threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>`
+
+A lazy-evaluated closure that returns the thread map for the process. Backed by a `OnceCell` so that thread enumeration happens at most once per apply cycle, shared with the process-level apply pass when called from [`apply_config`](apply_config.md).
+
+`dry_run: bool`
+
+When **true**, all sub-functions record what *would* change without calling Windows APIs. When **false**, changes are applied to live threads.
+
+`apply_configs: &mut ApplyConfigResult`
+
+Accumulator for change descriptions and error messages. See [`ApplyConfigResult`](../apply.rs/ApplyConfigResult.md).
 
 ## Return value
 
-This function does not return a value. All results (successes and errors) are recorded in the `apply_configs` accumulator.
+This function does not return a value. Results are communicated through `apply_configs`.
 
 ## Remarks
 
-The function short-circuits immediately if none of the following thread-level features are configured for the process:
+The function performs the following steps in order:
 
-- `prime_threads_cpus` — CPU cores to pin prime threads to.
-- `prime_threads_prefixes` — Thread start-address module prefixes used to filter candidate threads.
-- `ideal_processor_rules` — Rules for setting ideal processors on threads.
-- `track_top_x_threads` — Nonzero value enables diagnostic logging of top threads on process exit.
+1. **Guard check** — Returns immediately if `prime_threads_cpus`, `prime_threads_prefixes`, `ideal_processor_rules` are all empty and `track_top_x_threads` is zero.
+2. **Query affinity mask** — If `prime_threads_cpus` is non-empty, opens a process handle and calls `GetProcessAffinityMask` to determine which CPUs the process is allowed to use. This mask constrains which cores the prime thread scheduler can assign.
+3. **Drop module cache** — Calls [`drop_module_cache`](../winapi.rs/drop_module_cache.md) for the PID so that thread-to-module lookups are refreshed.
+4. **Mark alive** — Calls `prime_core_scheduler.set_alive(pid)` so the scheduler knows this process is still running (dead processes are cleaned up later in the main loop).
+5. **Prefetch cycle times** — Calls [`prefetch_all_thread_cycles`](../apply.rs/prefetch_all_thread_cycles.md) to query current thread cycle counts and compute deltas from the previous iteration, feeding data into the scheduler's ranking algorithm.
+6. **Apply prime threads** — Calls [`apply_prime_threads`](../apply.rs/apply_prime_threads.md) to select, promote, and demote threads based on cycle time rankings and hysteresis thresholds.
+7. **Apply ideal processors** — Calls [`apply_ideal_processors`](../apply.rs/apply_ideal_processors.md) to assign ideal processor hints to threads matching module-prefix rules.
+8. **Update stats** — Calls [`update_thread_stats`](../apply.rs/update_thread_stats.md) to cache current cycle/time measurements as baseline values for the next iteration.
 
-When thread-level features are active, the function performs the following steps in order:
+### Difference from apply_process_level
 
-1. **Affinity mask query** — If `prime_threads_cpus` is non-empty, the current process affinity mask is obtained via `GetProcessAffinityMask` so that prime-thread CPU filtering respects the process-level mask. Unlike the previous implementation, the `affinity_cpus` field is no longer checked in this condition since affinity is now a process-level concern handled exclusively by `apply_process_level`.
-2. **Module cache reset** — `drop_module_cache` is called to ensure thread start-address resolution uses fresh data.
-3. **Scheduler liveness** — `prime_core_scheduler.set_alive(pid)` marks the process as alive in the scheduler so dead-process cleanup skips it.
-4. **Cycle prefetch** — `prefetch_all_thread_cycles` queries per-thread cycle times and populates the scheduler's `ThreadStats` entries. The `threads` closure is passed through so thread enumeration is deferred until actually needed.
-5. **Prime-thread application** — `apply_prime_threads` uses hysteresis-based selection to choose top threads and pin them to the configured CPU set. Both `process` and the `threads` closure are passed to this function.
-6. **Ideal-processor assignment** — `apply_ideal_processors` sets the ideal processor for threads matching the configured rules. This function receives the `threads` closure directly (rather than a `process` reference).
-7. **Stats update** — `update_thread_stats` caches the current cycle counts so that the next iteration can compute deltas.
+[`apply_process_level`](apply_process_level.md) runs once per process (or once per config reload when `continuous_process_level_apply` is not set) and sets process-wide attributes. `apply_thread_level` runs on **every** polling iteration because thread cycle rankings change continuously and prime thread selection must be re-evaluated.
 
-Because this function is invoked every polling iteration (not just once per process), the scheduler accumulates multi-iteration history that feeds into the hysteresis algorithm, preventing thread promotion/demotion thrashing.
+### Thread cache sharing
+
+When called from [`apply_config`](apply_config.md), the `threads` closure shares the same `OnceCell` as the process-level pass, avoiding a redundant `NtQuerySystemInformation` call for thread enumeration.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `main.rs` |
-| Callers | [apply_config](apply_config.md), standalone thread-level apply loop in [main](main.md) |
-| Callees | `apply::prefetch_all_thread_cycles`, `apply::apply_prime_threads`, `apply::apply_ideal_processors`, `apply::update_thread_stats`, `winapi::get_process_handle`, `winapi::drop_module_cache`, [PrimeThreadScheduler::set_alive](../scheduler.rs/PrimeThreadScheduler.md) |
-| Win32 API | `GetProcessAffinityMask` |
-| Privileges | `SeDebugPrivilege` (for opening thread/process handles of other sessions) |
+| | |
+|---|---|
+| **Module** | `src/main.rs` |
+| **Callers** | [`apply_config`](apply_config.md), main loop thread-level pass |
+| **Callees** | [`get_process_handle`](../winapi.rs/get_process_handle.md), [`drop_module_cache`](../winapi.rs/drop_module_cache.md), [`prefetch_all_thread_cycles`](../apply.rs/prefetch_all_thread_cycles.md), [`apply_prime_threads`](../apply.rs/apply_prime_threads.md), [`apply_ideal_processors`](../apply.rs/apply_ideal_processors.md), [`update_thread_stats`](../apply.rs/update_thread_stats.md) |
+| **Win32 API** | [`GetProcessAffinityMask`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask) |
+| **Privileges** | `PROCESS_QUERY_LIMITED_INFORMATION` (affinity query), thread-level access rights delegated to callees |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| apply_process_level | [apply_process_level](apply_process_level.md) |
-| apply_config | [apply_config](apply_config.md) |
-| PrimeThreadScheduler | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
-| ThreadLevelConfig | [config module](../config.rs/README.md) |
-| main | [main](main.md) |
+| Process-level counterpart | [apply_process_level](apply_process_level.md) |
+| Combined orchestrator | [apply_config](apply_config.md) |
+| Thread-level config type | [ThreadLevelConfig](../config.rs/ThreadLevelConfig.md) |
+| Prime thread scheduler | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
+| Apply engine overview | [apply.rs](../apply.rs/README.md) |
+| Result accumulator | [ApplyConfigResult](../apply.rs/ApplyConfigResult.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

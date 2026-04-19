@@ -1,87 +1,67 @@
 # collect_members 函数 (config.rs)
 
-将以冒号分隔的进程名称字符串拆分为单独的小写成员条目，并将它们追加到提供的列表中。这是配置解析器内部使用的辅助函数，用于从内联规则行和 `{ }` 分组块中提取进程名称。
+从文本片段中解析冒号分隔的进程名列表，并将其追加到累加器向量中。内部用于从单行和多行组块定义中提取组成员名称。
 
 ## 语法
 
-```AffinityServiceRust/src/config.rs#L242-249
-fn collect_members(text: &str, members: &mut Vec<String>) {
-    for item in text.split(':') {
-        let item = item.trim().to_lowercase();
-        if !item.is_empty() && !item.starts_with('#') {
-            members.push(item);
-        }
-    }
-}
+```rust
+fn collect_members(text: &str, members: &mut Vec<String>)
 ```
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `text` | `&str` | 包含一个或多个以冒号（`:`）分隔的进程名称的字符串。也可能包含内联注释（以 `#` 开头的标记）和空白字符，两者都会被过滤掉。 |
-| `members` | `&mut Vec<String>` | 可变引用，指向收集到的成员名称将被追加到的向量。调用方负责初始化此向量；`collect_members` 只追加，不会清空它。 |
+`text: &str`
+
+包含冒号分隔进程名的文本片段。通常是组定义中 `{` 和 `}` 之间的内容，或者是多行组块内的单个行。会修剪每个项周围的空格。以 `#` 开头的项被视为注释并被跳过。
+
+`members: &mut Vec<String>`
+
+**\[in, out\]** 用于追加已解析进程名的累加器向量。保留现有条目；新名称被推送到末尾。所有名称都规范化为小写。
 
 ## 返回值
 
-此函数不返回值。结果通过调用方传入的 `members` 向量累积。
+此函数不返回值。结果通过 `members` 输出参数传达。
 
 ## 备注
 
-### 处理步骤
+### 解析规则
 
-1. 输入 `text` 按 `:` 分隔符拆分。
-2. 每个生成的标记去除前后空白并转换为小写。
-3. 去除空白后为空或以 `#` 开头（内联注释）的标记将被丢弃。
-4. 所有剩余的标记被推入 `members` 向量。
+1. 输入 `text` 按 `:`（冒号）字符分割。
+2. 每个生成的片段会修剪首尾空格。
+3. 片段转换为小写，以便下游进行不区分大小写的匹配。
+4. 空片段和以 `#` 开头的片段会被丢弃。
+5. 所有保留的片段被推送到 `members`。
 
-### 去重
+### 分隔符选择
 
-`collect_members` **不**执行去重。如果同一进程名称在 `text` 中多次出现，它将被多次添加到 `members` 中。去重是下游消费者的职责（例如，[`parse_and_insert_rules`](parse_and_insert_rules.md) 会检测并警告重复规则）。
+冒号 `:` 作为分隔符被使用，因为主规则语法已经将 `:` 用作字段分隔符。在组块内（`{` 和 `}` 之间），进程名之间用冒号分隔——而不是逗号或分号——以保持与外部配置行格式的一致性。
 
-### 大小写规范化
+### 无去重
 
-所有成员名称在插入前都被转为小写。这确保了运行时的不区分大小写匹配，因为 Windows 进程名称是不区分大小写的。
+`collect_members` **不**检查重复名称。如果同一进程名在输入中出现多次，或在多次调用中出现，它将出现在 `members` 中多次。如果需要去重，由调用方或后续阶段如 [sort_and_group_config](sort_and_group_config.md) 处理。
 
-### 使用上下文
+### 示例
 
-此函数在以下位置被调用：
+给定输入文本 `"game.exe: helper.exe: # comment: tool.EXE"`，该函数将 `["game.exe", "helper.exe", "tool.exe"]` 追加到 `members`。注释片段被跳过，`tool.EXE` 被转换为小写。
 
-- **[`collect_group_block`](collect_group_block.md)**：从多行 `{ }` 分组块中的每一行以及右花括号之前的内容中收集成员。
-- **[`read_config`](read_config.md)**：从单行分组块（左花括号和右花括号出现在同一行）中收集成员。
-- **[`sort_and_group_config`](sort_and_group_config.md)**：在自动分组遍历期间重新解析分组块时收集成员。
+## 需求
 
-### 边界情况
+| | |
+|---|---|
+| **模块** | `src/config.rs` |
+| **可见性** | 私有 (`fn`) —— 配置模块内部 |
+| **调用方** | [read_config](read_config.md)（内联组解析），[collect_group_block](collect_group_block.md)（多行组解析），[sort_and_group_config](sort_and_group_config.md)（自动分组工具） |
+| **被调用方** | 无（仅使用 `str` 标准库方法） |
+| **权限** | 无 |
 
-| 输入 | 结果 |
-|------|------|
-| `""` （空字符串） | 不追加任何内容 |
-| `"  "` （仅空白） | 不追加任何内容 |
-| `"# comment"` | 不追加任何内容（注释被过滤） |
-| `"game.exe"` | 追加 `["game.exe"]` |
-| `"Game.EXE : app.exe"` | 追加 `["game.exe", "app.exe"]` |
-| `"a.exe: : b.exe"` | 追加 `["a.exe", "b.exe"]`（空标记被跳过） |
+## 参见
 
-## 要求
+| 主题 | 链接 |
+|-------|------|
+| 模块概述 | [config.rs](README.md) |
+| 多行组块收集器 | [collect_group_block](collect_group_block.md) |
+| 消费组成员的规则解析器 | [parse_and_insert_rules](parse_and_insert_rules.md) |
+| 主配置读取器 | [read_config](read_config.md) |
+| 自动分组工具 | [sort_and_group_config](sort_and_group_config.md) |
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `config.rs` |
-| 可见性 | 私有（`fn`，非 `pub fn`） |
-| 调用方 | [`collect_group_block`](collect_group_block.md)、[`read_config`](read_config.md)、[`sort_and_group_config`](sort_and_group_config.md) |
-| 被调用方 | `str::split`、`str::trim`、`str::to_lowercase`、`str::starts_with`、`Vec::push` |
-| API | 仅标准库 |
-| 权限 | 无 |
-
-## 另请参阅
-
-| 资源 | 链接 |
-|------|------|
-| collect_group_block | [collect_group_block](collect_group_block.md) |
-| parse_and_insert_rules | [parse_and_insert_rules](parse_and_insert_rules.md) |
-| read_config | [read_config](read_config.md) |
-| sort_and_group_config | [sort_and_group_config](sort_and_group_config.md) |
-| config 模块概述 | [README](README.md) |
-
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档针对 Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

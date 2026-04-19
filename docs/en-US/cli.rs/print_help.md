@@ -1,10 +1,10 @@
 # print_help function (cli.rs)
 
-Prints a concise help message to the console showing the most common command-line options and operating modes for AffinityServiceRust. This is the default help output displayed when the user passes `-help`, `--help`, `-?`, `/?`, or `?`.
+Prints the basic usage help message for AffinityServiceRust to the console. This is the default help output shown when the user passes `-help`, `--help`, `-?`, `/?`, or `?` on the command line.
 
 ## Syntax
 
-```AffinityServiceRust/src/cli.rs#L131-L157
+```rust
 pub fn print_help()
 ```
 
@@ -18,36 +18,48 @@ This function does not return a value.
 
 ## Remarks
 
-- **Console activation**: `print_help` unconditionally sets the global `use_console` flag to `true` before emitting output, ensuring the help text is written to the console even when the service is configured for file-based logging.
+The function unconditionally sets the global `use_console` flag to `true` before printing, ensuring that help output is directed to the console rather than a log file. This is necessary because the service normally logs to files, but help text must be visible to the interactive user.
 
-- **Output destination**: Text is emitted through the `log!` macro, which respects the `use_console` flag set at the top of the function body.
+The help text is emitted via the `log!` macro as a single multi-line raw string literal.
 
-- **Content sections**: The printed help message is organized into two groups:
-  - **Common Options** — covers `-help`, `-helpall`, `-console`, `-config`, `-find`, `-interval`, `-noUAC`, and `-resolution`.
-  - **Modes** — covers `-validate`, `-processlogs`, `-dryrun`, `-convert`, and `-autogroup`.
+### Sections displayed
 
-- **Relationship to other help functions**: `print_help` provides a brief overview. For the full CLI reference including debug and testing options, see [print_cli_help](print_cli_help.md). For the combined CLI + configuration file reference, see [print_help_all](print_help_all.md).
+| Section | Content |
+|---------|---------|
+| **Header** | One-line description of the service's purpose |
+| **Common Options** | `-help`, `-helpall`, `-console`, `-config`, `-find`, `-interval`, `-noUAC`, `-resolution` |
+| **Modes** | `-validate`, `-processlogs`, `-dryrun`, `-convert`, `-autogroup` |
 
-- This function is invoked when `CliArgs.help_mode` is `true`.
+### Relationship to other help functions
+
+- `print_help` shows a concise subset of options suitable for quick reference.
+- [print_cli_help](print_cli_help.md) shows the full CLI reference, including debug and testing options.
+- [print_config_help](print_config_help.md) shows configuration file format documentation.
+- [print_help_all](print_help_all.md) combines `print_cli_help` and `print_config_help` into one output.
+
+### Console flag side effect
+
+Because `print_help` forces `use_console = true`, any subsequent logging in the same process invocation will also go to the console. This is intentional — when the user asks for help, they are running interactively and do not expect log file output.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `cli.rs` |
-| Callers | `main.rs` (when `-help` / `--help` / `-?` / `/?` / `?` is passed) |
-| Callees | `log!` macro, `get_use_console!` macro |
-| Privileges | None |
+| | |
+|---|---|
+| **Module** | `src/cli.rs` |
+| **Callers** | `main` (when [CliArgs](CliArgs.md)`.help_mode` is `true`) |
+| **Callees** | `log!` macro, `get_use_console!` macro |
+| **Win32 API** | None |
+| **Privileges** | None |
 
 ## See Also
 
-| Resource | Link |
-|----------|------|
-| CliArgs struct | [CliArgs](CliArgs.md) |
-| parse_args function | [parse_args](parse_args.md) |
-| print_cli_help function | [print_cli_help](print_cli_help.md) |
-| print_help_all function | [print_help_all](print_help_all.md) |
-| config module | [config.rs overview](../config.rs/README.md) |
+| Topic | Link |
+|-------|------|
+| CLI argument parser | [parse_args](parse_args.md) |
+| Detailed CLI help | [print_cli_help](print_cli_help.md) |
+| Config format help | [print_config_help](print_config_help.md) |
+| Combined help | [print_help_all](print_help_all.md) |
+| CLI arguments struct | [CliArgs](CliArgs.md) |
+| Module overview | [cli.rs](README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

@@ -1,6 +1,6 @@
 # get_process_handle 函数 (winapi.rs)
 
-为给定的进程 ID 打开多个具有不同访问级别的 Windows 进程句柄。返回一个 [`ProcessHandle`](ProcessHandle.md) RAII 包装器，在被丢弃（drop）时自动关闭所有有效句柄。
+为给定的进程 ID 以多个访问级别打开一组进程句柄。返回 [ProcessHandle](ProcessHandle.md) RAII 包装器，在析构时自动关闭所有句柄。该函数尝试打开四个句柄，具有递增的特权要求；两个受限访问句柄是必需的，而两个完全访问句柄是可选的，会优雅地降级。
 
 ## 语法
 
@@ -13,57 +13,70 @@ pub fn get_process_handle(pid: u32, process_name: &str) -> Option<ProcessHandle>
 | 参数 | 类型 | 描述 |
 |-----------|------|-------------|
 | `pid` | `u32` | 目标进程的进程标识符。 |
-| `process_name` | `&str` | 目标进程的名称，用于错误跟踪和日志消息。 |
+| `process_name` | `&str` | 进程映像名称，仅用于错误日志记录。传递给 [is_new_error](../logging.rs/is_new_error.md) 以进行错误去重。 |
 
 ## 返回值
 
-如果至少成功打开了受限访问句柄（`r_limited_handle` 和 `w_limited_handle`），则返回 `Some(ProcessHandle)`。如果任一受限句柄无法获取，则返回 `None`。
+`Option<ProcessHandle>` — 如果成功打开两个必需的受限访问句柄，则返回 `Some(ProcessHandle)`。如果无法获取 `PROCESS_QUERY_LIMITED_INFORMATION` 或 `PROCESS_SET_LIMITED_INFORMATION`，则返回 `None`。
 
-返回的 [`ProcessHandle`](ProcessHandle.md) 包含：
+当返回 `Some` 时，[ProcessHandle](ProcessHandle.md) 具有以下保证：
 
-| 字段 | 访问权限 | 必需 |
-|-------|-------------|----------|
-| `r_limited_handle` | `PROCESS_QUERY_LIMITED_INFORMATION` | 是 — 失败则返回 `None`。 |
-| `w_limited_handle` | `PROCESS_SET_LIMITED_INFORMATION` | 是 — 失败则返回 `None`。 |
-| `r_handle` | `PROCESS_QUERY_INFORMATION` | 否 — 失败时为 `None`。 |
-| `w_handle` | `PROCESS_SET_INFORMATION` | 否 — 失败时为 `None`。 |
+| 字段 | 保证 |
+|-------|-----------|
+| `r_limited_handle` | 始终有效 (`PROCESS_QUERY_LIMITED_INFORMATION`) |
+| `w_limited_handle` | 始终有效 (`PROCESS_SET_LIMITED_INFORMATION`) |
+| `r_handle` | 如果 `PROCESS_QUERY_INFORMATION` 成功则为 `Some(HANDLE)`，否则为 `None` |
+| `w_handle` | 如果 `PROCESS_SET_INFORMATION` 成功则为 `Some(HANDLE)`，否则为 `None` |
 
-## 备注
+## 说明
 
-该函数尝试打开四个具有逐步提高权限要求的独立句柄。两个受限句柄（`PROCESS_QUERY_LIMITED_INFORMATION` 和 `PROCESS_SET_LIMITED_INFORMATION`）是**必需的**——如果任一失败，函数将记录错误并返回 `None`。两个完整访问句柄（`PROCESS_QUERY_INFORMATION` 和 `PROCESS_SET_INFORMATION`）是**可选的**——失败会被静默容忍，相应字段设置为 `None`。
+### 句柄获取顺序
 
-错误去重通过 [`is_new_error`](../logging.rs/is_new_error.md) 执行，使得相同 PID/进程/操作/错误码组合的重复失败仅记录一次。`is_new_error` 的内部错误码映射为：
+函数按以下顺序打开句柄，如果必需的句柄失败则停止并返回 `None`：
 
-| 代码 | 句柄 |
-|------|--------|
-| `0` | `PROCESS_QUERY_LIMITED_INFORMATION` |
-| `1` | `PROCESS_SET_LIMITED_INFORMATION` |
-| `2` | `PROCESS_QUERY_INFORMATION` |
-| `3` | `PROCESS_SET_INFORMATION` |
+| 步骤 | 访问权限 | 必需 | 内部错误代码 | 失败时 |
+|------|-------------|----------|---------------------|------------|
+| 1 | `PROCESS_QUERY_LIMITED_INFORMATION` | **是** | `0` | 通过 [is_new_error](../logging.rs/is_new_error.md) 记录，返回 `None` |
+| 2 | `PROCESS_SET_LIMITED_INFORMATION` | **是** | `1` | 关闭步骤 1 句柄，记录，返回 `None` |
+| 3 | `PROCESS_QUERY_INFORMATION` | 否 | `2` | 设置 `r_handle = None`，继续 |
+| 4 | `PROCESS_SET_INFORMATION` | 否 | `3` | 设置 `w_handle = None`，继续 |
 
-如果获取的句柄通过 `HANDLE::is_invalid()` 报告为无效，则也会被视为失败，使用 `Operation::InvalidHandle` 变体。
+步骤 3 和 4 需要更高的特权（对于受保护进程通常是 SeDebugPrivilege）。它们的失败对于系统进程是预期的，会被静默吸收 — 这些步骤的错误日志在源代码中被注释掉了。
 
-所有成功打开的句柄归返回的 [`ProcessHandle`](ProcessHandle.md) 所有，并通过其 `Drop` 实现自动关闭。如果函数返回 `None`，任何已部分打开的句柄会在返回前关闭。
+### 错误去重
 
-## 要求
+必需句柄（步骤 1-2）的失败仅在首次看到唯一的 `(pid, error_code)` 组合时记录，通过 [is_new_error](../logging.rs/is_new_error.md)。这防止了当遇到受保护进程时，在轮询迭代之间重复记录日志。
 
-| 要求 | 值 |
-|------|-----|
-| **模块** | `winapi.rs` |
-| **调用者** | `apply.rs` 规则应用逻辑 |
-| **被调用者** | `OpenProcess`（Win32）、[`is_new_error`](../logging.rs/is_new_error.md)、[`log_to_find`](../logging.rs/log_to_find.md)、[`error_from_code_win32`](../error_codes.rs/error_from_code_win32.md) |
-| **API** | Win32 `OpenProcess`、`GetLastError`、`CloseHandle` |
-| **权限** | 建议使用 `SeDebugPrivilege` 以打开受保护/提升的进程。 |
+### 无效句柄检查
 
-## 另请参阅
+每次 `OpenProcess` 调用成功后，使用 `is_invalid()` 检查返回的句柄。无效句柄（尽管 API 返回成功）被视为具有自己 `Operation::InvalidHandle` 错误代码的独立失败情况，确保它与操作系统级错误分开记录。
+
+### 部分失败时的句柄清理
+
+如果步骤 1 成功但步骤 2 失败，则在返回 `None` 之前显式关闭步骤 1 句柄。这防止了提前退出路径上的句柄泄漏。当构造完整的 [ProcessHandle](ProcessHandle.md) 并返回时，其 `Drop` 实现处理清理。
+
+### 调用方的句柄选择
+
+下游函数（如 [get_handles](../apply.rs/get_handles.md)）优先使用完全访问句柄（`r_handle`、`w_handle`），如果不可用则回退到受限句柄。这种分级方法允许服务在受保护进程上以降低的能力运行，而不是完全失败。
+
+## 需求
+
+| | |
+|---|---|
+| **模块** | `src/winapi.rs` |
+| **调用方** | [apply.rs](../apply.rs/README.md)（主应用循环为每个进程打开句柄） |
+| **被调用方** | `OpenProcess` (Win32), [is_new_error](../logging.rs/is_new_error.md), [log_to_find](../logging.rs/log_to_find.md), [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
+| **Win32 API** | [OpenProcess](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocess), [GetLastError](https://learn.microsoft.com/zh-cn/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror), [CloseHandle](https://learn.microsoft.com/zh-cn/windows/win32/api/handleapi/nf-handleapi-closehandle) |
+| **权限** | 受限句柄对大多数进程不需要特殊权限。完全句柄（`PROCESS_QUERY_INFORMATION`、`PROCESS_SET_INFORMATION`）对于受保护/系统进程需要 [SeDebugPrivilege](enable_debug_privilege.md)。 |
+
+## 参见
 
 | 主题 | 链接 |
 |-------|------|
-| ProcessHandle 结构体 | [ProcessHandle](ProcessHandle.md) |
-| get_thread_handle 函数 | [get_thread_handle](get_thread_handle.md) |
-| is_new_error 函数 | [is_new_error](../logging.rs/is_new_error.md) |
-| Operation 枚举 | [Operation](../logging.rs/Operation.md) |
-| error_from_code_win32 | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
+| 此函数返回的 RAII 句柄包装器 | [ProcessHandle](ProcessHandle.md) |
+| 线程句柄等效项 | [get_thread_handle](get_thread_handle.md) |
+| 应用模块中的句柄访问器 | [get_handles](../apply.rs/get_handles.md) |
+| 调试权限启用 | [enable_debug_privilege](enable_debug_privilege.md) |
+| 模块概述 | [winapi.rs](README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档版本：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

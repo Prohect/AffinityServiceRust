@@ -1,6 +1,6 @@
 # set_thread_ideal_processor_ex 函数 (winapi.rs)
 
-设置线程的理想处理器，同时指定处理器组和该组内的处理器编号。理想处理器是向 Windows 内核发出的调度提示，指示该线程倾向于在哪个逻辑处理器上运行。
+Windows `SetThreadIdealProcessorEx` API 的封装，设置线程的理想处理器提示，指定处理器组和组内的逻辑处理器编号。返回之前设置的理想处理器分配。
 
 ## 语法
 
@@ -15,56 +15,52 @@ pub fn set_thread_ideal_processor_ex(
 ## 参数
 
 | 参数 | 类型 | 描述 |
-|------|------|------|
-| `thread_handle` | `HANDLE` | 以 `THREAD_SET_INFORMATION` 访问权限打开的有效线程句柄。通常为 [`ThreadHandle`](ThreadHandle.md) 的 `w_handle` 字段。 |
-| `group` | `u16` | 处理器组编号（从零开始）。在逻辑处理器数量不超过 64 个的系统上，该值始终为 `0`。 |
-| `number` | `u8` | 指定组内的处理器编号（从零开始）。这是相对于该组的逻辑处理器索引。 |
+|-----------|------|-------------|
+| `thread_handle` | `HANDLE` | 有效的线程句柄，具有 `THREAD_SET_INFORMATION` 访问权限。通常来自 [ThreadHandle](ThreadHandle.md)`.w_handle`。调用方必须在调用此函数前验证句柄不是无效的。 |
+| `group` | `u16` | 理想处理器的处理器组号。在单组系统（≤64 个逻辑处理器）上，此值始终为 `0`。 |
+| `number` | `u8` | 在指定的 `group` 中设置为线程理想处理器的逻辑处理器编号。例如，`0` 指向组中的第一个处理器。 |
 
 ## 返回值
 
-成功时，返回 `Ok(PROCESSOR_NUMBER)`，其中包含该线程**先前**的理想处理器设置。返回的 `PROCESSOR_NUMBER` 包括 `Group`、`Number` 和 `Reserved` 字段。
+`Result<PROCESSOR_NUMBER, Error>` — 成功时，返回线程的**之前**理想处理器，作为包含 `Group`、`Number` 和 `Reserved` 字段的 `PROCESSOR_NUMBER` 结构。失败时，返回带有底层 Win32 错误代码的 Windows `Error`。
 
-失败时，返回 `Err(Error)`，其中包含 `SetThreadIdealProcessorEx` 返回的 Windows 错误。
+## 说明
 
-## 备注
+- 函数从 `group` 和 `number` 参数构造 `PROCESSOR_NUMBER` 结构（`Reserved` 设置为 `0`），并将其传递给 `SetThreadIdealProcessorEx`。可变的 `previous` 输出参数捕获 API 返回的先前理想处理器分配。
+- 理想处理器是一个**调度提示**，而不是硬性约束。Windows 调度程序倾向于在指示的处理器上调度线程，但如果理想处理器繁忙，也可能将线程放置在线程亲和性掩码内的任何处理器上。对于硬 CPU 绑定，请使用 `SetThreadSelectedCpuSets` 通过 CPU 集合。
+- 此函数由 [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) 和 [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md) 调用，以引导调度器将延迟敏感线程定向到特定核心。
+- 此函数返回的先前理想处理器由 [IdealProcessorState](../scheduler.rs/IdealProcessorState.md) 用于跨轮询迭代跟踪分配更改。
 
-- 该函数使用提供的 `group` 和 `number` 值（`Reserved` 设为 `0`）构造一个 `PROCESSOR_NUMBER` 结构体，然后调用 Win32 API 中的 `SetThreadIdealProcessorEx`。
+### 错误场景
 
-- 理想处理器是一个**提示**，而非硬性约束。如果理想处理器繁忙，Windows 调度程序仍可能将线程调度到其他处理器上运行。若需硬性亲和约束，请改用 CPU 集合 API（`SetProcessDefaultCpuSets`、`SetThreadSelectedCpuSets`）或亲和掩码。
+| 条件 | 行为 |
+|-----------|----------|
+| 无效的线程句柄 | 返回 `Err(Error)`，带有 `ERROR_INVALID_HANDLE` |
+| 句柄缺少 `THREAD_SET_INFORMATION` 访问权限 | 返回 `Err(Error)`，带有 `ERROR_ACCESS_DENIED` |
+| 无效组或编号（超出系统拓扑） | 返回 `Err(Error)` — 行为取决于操作系统版本 |
 
-- 返回先前的理想处理器设置，以便调用方稍后恢复或记录更改。该值由 Win32 `SetThreadIdealProcessorEx` API 通过其输出参数直接提供。
+### 与 get_thread_ideal_processor_ex 的关系
 
-- 此函数要求线程句柄具有 `THREAD_SET_INFORMATION` 访问权限。如果 [`ThreadHandle`](ThreadHandle.md) 结构体的 `w_handle` 字段无效（打开调用失败），调用方不得将其传递给此函数。调用前请检查 `HANDLE::is_invalid()`。
+此函数是 [get_thread_ideal_processor_ex](get_thread_ideal_processor_ex.md) 的写入对应项。它们一起形成用于管理线程理想处理器提示的读/写对。服务通常会读取当前分配以检测外部工具的更改，然后根据配置指示时写入新的分配。
 
-- 与旧版 `SetThreadIdealProcessor` API 不同，`SetThreadIdealProcessorEx` 支持处理器组，使其适用于逻辑处理器超过 64 个的系统。
+## 需求
 
-### 平台说明
+| | |
+|---|---|
+| **模块** | `src/winapi.rs` |
+| **调用方** | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md)、[apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md)、[reset_thread_ideal_processors](../apply.rs/reset_thread_ideal_processors.md) |
+| **被调用方** | `SetThreadIdealProcessorEx` (Win32) |
+| **Win32 API** | [SetThreadIdealProcessorEx](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadidealprocessorex) |
+| **特权** | 需要线程句柄上的 `THREAD_SET_INFORMATION` 访问权限 |
 
-- **仅限 Windows。** 使用 `windows::Win32::System::Threading` 中的 `SetThreadIdealProcessorEx`。
-- 需要 Windows 7 / Windows Server 2008 R2 或更高版本。
-- 在单组系统（≤ 64 个逻辑处理器）上，`group` 应始终为 `0`。
-
-## 要求
-
-| 要求 | 值 |
-|------|-----|
-| **模块** | `winapi.rs` |
-| **调用方** | `apply.rs` — 用于模块感知线程放置的理想处理器分配逻辑 |
-| **被调用方** | [`SetThreadIdealProcessorEx`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadidealprocessorex)（Win32 API） |
-| **Win32 API** | `kernel32.dll` — `SetThreadIdealProcessorEx` |
-| **权限** | 需要具有 `THREAD_SET_INFORMATION` 访问权限的线程句柄。对于其他用户拥有的线程，可能需要 `SeDebugPrivilege`。 |
-| **平台** | Windows 7+ / Windows Server 2008 R2+ |
-
-## 另请参阅
+## 参见
 
 | 主题 | 链接 |
-|------|------|
-| get_thread_ideal_processor_ex | [get_thread_ideal_processor_ex](get_thread_ideal_processor_ex.md) |
-| get_thread_start_address | [get_thread_start_address](get_thread_start_address.md) |
-| resolve_address_to_module | [resolve_address_to_module](resolve_address_to_module.md) |
-| ThreadHandle 结构体 | [ThreadHandle](ThreadHandle.md) |
-| get_thread_handle | [get_thread_handle](get_thread_handle.md) |
-| winapi 模块概述 | [README](README.md) |
+|-------|------|
+| 模块概述 | [winapi.rs](README.md) |
+| 读取对应项 | [get_thread_ideal_processor_ex](get_thread_ideal_processor_ex.md) |
+| 理想处理器状态跟踪 | [IdealProcessorState](../scheduler.rs/IdealProcessorState.md) |
+| 提供写入访问的线程句柄 | [ThreadHandle](ThreadHandle.md) |
+| 设置理想处理器的应用函数 | [apply_ideal_processors](../apply.rs/apply_ideal_processors.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档版本：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

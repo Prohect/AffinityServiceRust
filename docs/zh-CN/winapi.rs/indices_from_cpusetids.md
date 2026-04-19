@@ -1,6 +1,6 @@
 # indices_from_cpusetids 函数 (winapi.rs)
 
-将 Windows CPU Set ID 数组转换回对应的逻辑处理器索引。此函数是 [cpusetids_from_indices](cpusetids_from_indices.md) 的逆操作，用于从操作系统读取 CPU Set 分配并将其转换为面向用户的处理器编号。
+将一组 CPU 集合 ID 转换回对应的逻辑处理器索引。这是 [cpusetids_from_indices](cpusetids_from_indices.md) 的逆操作，用于读取 CPU 集合分配以显示或与用户配置的 CPU 索引列表进行比较。
 
 ## 语法
 
@@ -11,51 +11,56 @@ pub fn indices_from_cpusetids(cpuids: &[u32]) -> List<[u32; CONSUMER_CPUS]>
 ## 参数
 
 | 参数 | 类型 | 描述 |
-|------|------|------|
-| `cpuids` | `&[u32]` | 需要转换回逻辑处理器索引的 Windows CPU Set ID 切片。这些是由 `GetProcessDefaultCpuSets` 或 `GetThreadSelectedCpuSets` 等 API 返回的不透明标识符。 |
+|-----------|------|-------------|
+| `cpuids` | `&[u32]` | 要转换的 CPU 集合 ID 切片。这些是 Windows CPU 集合 API 或之前调用 [cpusetids_from_indices](cpusetids_from_indices.md) / [cpusetids_from_mask](cpusetids_from_mask.md) 获得的不透明系统分配标识符。 |
 
 ## 返回值
 
-返回一个 `List<[u32; CONSUMER_CPUS]>`（内联容量为 32 的 `SmallVec`），其中包含与给定 CPU Set ID 对应的逻辑处理器索引。返回的列表按**升序排列**。如果 `cpuids` 为空，则返回空列表。不匹配系统 CPU Set 信息缓存中任何条目的 CPU Set ID 将被静默跳过。
+`List<[u32; CONSUMER_CPUS]>` — 与输入 CPU 集合 ID 对应的逻辑处理器索引的栈分配列表，按升序排序。如果 `cpuids` 为空，返回空列表。
 
-## 备注
+## 说明
 
-- 该函数获取 [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) 静态变量的锁，并对所有缓存的 [CpuSetData](CpuSetData.md) 条目执行线性扫描。对于 `id` 出现在输入 `cpuids` 切片中的每个条目，其对应的 `logical_processor_index`（转换为 `u32`）将被推入结果列表。
-- 收集所有匹配的索引后，通过 `indices.sort()` 进行排序，以确保无论 CPU Set 缓存或输入切片的顺序如何，结果都是确定性的升序排列。
-- 查找复杂度为 O(n × m)，其中 n 是系统 CPU Set 的数量，m 是 `cpuids` 的长度。对于典型的 CPU 数量和较小的输入切片，这是可以接受的。
-- 返回的 `SmallVec` 使用 `CONSUMER_CPUS`（32）的内联容量。如果产生的索引超过 32 个，向量将溢出到堆分配。
-- CPU Set 信息在进程启动时通过 `GetSystemCpuSetInformation` 查询一次，并在进程生命周期内缓存。运行时拓扑更改不会被反映。
+函数遍历在启动时通过 `GetSystemCpuSetInformation` 填充的缓存 [CPU_SET_INFORMATION](README.md) 拓扑数据。对于每个 `id` 字段匹配输入切片中值的缓存条目，条目的 `logical_processor_index` 被追加到结果列表。
 
-### 算法
+### 排序顺序
 
-1. 如果 `cpuids` 为空，立即返回空列表。
-2. 锁定 `CPU_SET_INFORMATION` 缓存。
-3. 对于缓存中的每个 `CpuSetData` 条目：
-   - 如果该条目的 `id` 包含在 `cpuids` 中，则将该条目的 `logical_processor_index`（转换为 `u32`）推入结果列表。
-4. 将结果列表按升序排序。
-5. 返回排序后的列表。
+返回的列表在返回前通过 `indices.sort()` 显式按升序排序。这提供了稳定、确定性的顺序，无论 CPU 集合在系统拓扑缓存或输入切片中出现的顺序如何。
 
-## 要求
+### 与其他转换函数的关系
 
-| 要求 | 值 |
-|------|-----|
-| **模块** | `winapi.rs` |
-| **调用者** | `apply.rs` — 读取当前 CPU Set 分配以进行比较和日志记录。 |
-| **被调用者** | [get_cpu_set_information](get_cpu_set_information.md)（间接通过 `CPU_SET_INFORMATION` 锁） |
-| **Windows API** | 无直接调用；依赖于 `GetSystemCpuSetInformation` 的缓存结果。 |
-| **权限** | 无需特殊权限。 |
+| 函数 | 方向 |
+|----------|-----------|
+| [cpusetids_from_indices](cpusetids_from_indices.md) | 索引 → CPU 集合 ID |
+| **indices_from_cpusetids** | CPU 集合 ID → 索引 |
+| [cpusetids_from_mask](cpusetids_from_mask.md) | 亲和性掩码 → CPU 集合 ID |
+| [mask_from_cpusetids](mask_from_cpusetids.md) | CPU 集合 ID → 亲和性掩码 |
 
-## 另请参阅
+### 锁获取
+
+函数在迭代期间获取 `CPU_SET_INFORMATION` 静态变量的 `Mutex` 锁。锁持有时间为 O(N × M)，其中 N 是缓存的 CPU 集合条目数，M 是 `cpuids` 的长度。在消费级系统（≤64 个 CPU）上，这可以忽略不计。
+
+### 未匹配的 ID
+
+`cpuids` 中不匹配缓存拓扑数据中任何条目的 CPU 集合 ID 会被静默忽略。不报告错误。如果拓扑缓存过时或传递了无效 ID，可能会发生这种情况。
+
+## 需求
+
+| | |
+|---|---|
+| **模块** | `src/winapi.rs` |
+| **调用方** | [apply_prime_threads_promote](../apply.rs/apply_prime_threads_promote.md)、[apply_prime_threads_demote](../apply.rs/apply_prime_threads_demote.md)、诊断日志 |
+| **被调用方** | [get_cpu_set_information](README.md) |
+| **Win32 API** | 无直接调用；依赖来自 [GetSystemCpuSetInformation](https://learn.microsoft.com/zh-cn/windows/win32/api/systeminformationapi/nf-systeminformationapi-getsystemcpusetinformation) 的缓存数据 |
+| **特权** | 无 |
+
+## 参见
 
 | 主题 | 链接 |
-|------|------|
-| cpusetids_from_indices | [cpusetids_from_indices](cpusetids_from_indices.md) |
-| cpusetids_from_mask | [cpusetids_from_mask](cpusetids_from_mask.md) |
-| mask_from_cpusetids | [mask_from_cpusetids](mask_from_cpusetids.md) |
-| filter_indices_by_mask | [filter_indices_by_mask](filter_indices_by_mask.md) |
-| CpuSetData 结构体 | [CpuSetData](CpuSetData.md) |
-| CPU_SET_INFORMATION 静态变量 | [CPU_SET_INFORMATION](CPU_SET_INFORMATION.md) |
-| CONSUMER_CPUS 常量 | [CONSUMER_CPUS](../collections.rs/CONSUMER_CPUS.md) |
+|-------|------|
+| 前向转换（索引 → ID） | [cpusetids_from_indices](cpusetids_from_indices.md) |
+| 基于掩码的转换 | [cpusetids_from_mask](cpusetids_from_mask.md)、[mask_from_cpusetids](mask_from_cpusetids.md) |
+| 按掩码过滤索引 | [filter_indices_by_mask](filter_indices_by_mask.md) |
+| CPU 集合拓扑缓存 | [CpuSetData](CpuSetData.md) |
+| 模块概述 | [winapi.rs](README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档版本：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

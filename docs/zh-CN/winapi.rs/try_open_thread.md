@@ -1,10 +1,11 @@
 # try_open_thread 函数 (winapi.rs)
 
-尝试以指定的访问权限打开单个线程句柄。这是一个内部辅助函数，由 [get_thread_handle](get_thread_handle.md) 使用，用于获取可选的线程句柄（完整读取、受限写入、完整写入），而不会因为某个单独的句柄无法获取而导致整个操作失败。
+底层辅助函数，尝试以特定访问级别打开单个线程句柄。成功时返回有效的 `HANDLE`，失败时返回无效的 `HANDLE`，允许调用方在不完全失败的情况下继续句柄获取。
 
 ## 语法
 
 ```rust
+#[inline(always)]
 fn try_open_thread(
     pid: u32,
     tid: u32,
@@ -17,53 +18,65 @@ fn try_open_thread(
 ## 参数
 
 | 参数 | 类型 | 描述 |
-|------|------|------|
-| `pid` | `u32` | 拥有该线程的进程 ID。用于错误跟踪上下文。 |
-| `tid` | `u32` | 要打开的线程 ID。 |
-| `process_name` | `&str` | 所属进程的名称。用于错误跟踪上下文。 |
-| `access` | `THREAD_ACCESS_RIGHTS` | 线程句柄所需的访问权限（例如 `THREAD_QUERY_INFORMATION`、`THREAD_SET_LIMITED_INFORMATION`、`THREAD_SET_INFORMATION`）。 |
-| `internal_op_code` | `u32` | 内部操作代码，用于在错误跟踪中区分哪种类型的句柄获取失败。请参阅下方映射表。 |
-
-### internal_op_code 映射
-
-| 代码 | 句柄类型 |
-|------|----------|
-| `1` | `r_handle`（`THREAD_QUERY_INFORMATION`） |
-| `2` | `w_limited_handle`（`THREAD_SET_LIMITED_INFORMATION`） |
-| `3` | `w_handle`（`THREAD_SET_INFORMATION`） |
+|-----------|------|-------------|
+| `pid` | `u32` | 拥有线程的进程标识符。用于诊断消息中的错误上下文（当前已注释）。 |
+| `tid` | `u32` | 要打开的线程标识符。传递给 `OpenThread`。 |
+| `process_name` | `&str` | 拥有进程的名称。用于诊断消息中的错误上下文（当前已注释）。 |
+| `access` | `THREAD_ACCESS_RIGHTS` | 句柄所需的访问权限。通常是 `THREAD_QUERY_INFORMATION`、`THREAD_SET_LIMITED_INFORMATION` 或 `THREAD_SET_INFORMATION` 之一。 |
+| `internal_op_code` | `u32` | 正在尝试的访问级别的数字标识符，用于将错误映射为 `error_detail` 中的人类可读句柄名称。值：`1` → `"r_handle"`、`2` → `"w_limited_handle"`、`3` → `"w_handle"`。 |
 
 ## 返回值
 
-返回一个 `HANDLE`。成功时，返回一个有效的已打开线程句柄。失败时，返回 `HANDLE::default()`（无效句柄）。调用方在使用前需负责检查句柄的有效性。
+`HANDLE` — 成功时返回有效的线程句柄，失败时返回 `HANDLE::default()`（无效句柄）。调用方在使用返回的句柄前必须检查 `is_invalid()`。
 
-## 备注
+## 说明
 
-- 此函数标记为 `#[inline(always)]` 以消除调用开销，因为它在 [get_thread_handle](get_thread_handle.md) 的热路径中被多次调用。
-- 与 `get_thread_handle` 中必需的 `r_limited_handle` 不同，`try_open_thread` 的失败**不会**导致 `get_thread_handle` 返回 `None`。返回的无效句柄直接存储在 [ThreadHandle](ThreadHandle.md) 结构体中，调用方在使用前必须检查其有效性。
-- 通过 [is_new_error](../logging.rs/is_new_error.md) 进行的错误日志记录目前在实现中已被注释掉，以减少预期失败（例如，拒绝 `THREAD_SET_INFORMATION` 的提升进程）造成的日志噪音。
-- 包含一个内部辅助函数 `error_detail`，将 `internal_op_code` 值映射为人类可读的句柄类型名称，用于诊断目的。
-- 此函数**不是**公开的（`fn` 没有 `pub` 修饰符），仅为 `winapi` 模块内部使用。
-- 通过 `windows` crate 调用 Windows API 的 `OpenThread`。
+此函数是 [get_thread_handle](get_thread_handle.md) 用来打开非必需句柄级别（`r_handle`、`w_limited_handle`、`w_handle`）的构建块。与必需的 `r_limited_handle`（其失败导致 `get_thread_handle` 返回 `None`）不同，`try_open_thread` 中的失败是非致命的 — 返回的无效句柄存储在 [ThreadHandle](ThreadHandle.md) 中，调用方只是避免使用该访问级别。
 
-## 要求
+### 错误处理
 
-| 要求 | 值 |
-|------|-----|
-| **模块** | `winapi.rs` |
-| **可见性** | 私有（模块内部） |
+该函数包含对 `is_new_error` 和 `log_to_find` 的注释调用，用于 `OpenThread` 失败路径和无效句柄路径。这些在生产中被故意禁用，因为在这些非必需访问级别的失败是预期且频繁的（例如，即使有 SeDebugPrivilege，`THREAD_SET_INFORMATION` 也可能因受保护进程而被拒绝）。`error_detail` 内部函数将 `internal_op_code` 映射到人类可读的字符串，以便在启用日志记录代码时用于诊断目的。
+
+### 内部函数：error_detail
+
+```rust
+fn error_detail(internal_op_code: &u32) -> String
+```
+
+将数字 `internal_op_code` 映射到句柄字段名字符串：
+
+| 代码 | 返回 |
+|------|---------|
+| `1` | `"r_handle"` |
+| `2` | `"w_limited_handle"` |
+| `3` | `"w_handle"` |
+| 其他 | `"UNKNOWN_OP_CODE"` |
+
+### 可见性
+
+此函数是模块私有的（`fn`，而非 `pub fn`），仅由 [get_thread_handle](get_thread_handle.md) 调用。它标记为 `#[inline(always)]`，因为每个线程句柄获取时调用三次，且函数体很小。
+
+### 失败语义
+
+失败时，函数返回 `HANDLE::default()`，这是一个零化/无效的句柄。[ThreadHandle](ThreadHandle.md) 结构体的 `Drop` 实现在调用 `CloseHandle` 之前检查 `is_invalid()`，因此存储无效句柄是安全的，不会在清理期间导致双重关闭或错误。
+
+## 需求
+
+| | |
+|---|---|
+| **模块** | `src/winapi.rs` |
 | **调用方** | [get_thread_handle](get_thread_handle.md) |
-| **被调用方** | `OpenThread`（Win32 API） |
-| **API** | [OpenThread](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openthread) |
-| **权限** | 需要对目标线程具有足够的访问权限；对于系统级线程通常需要 `SeDebugPrivilege`。 |
+| **被调用方** | `OpenThread` (Win32) |
+| **Win32 API** | [OpenThread](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-openthread) |
+| **特权** | 取决于 `access` — `THREAD_QUERY_INFORMATION` 需要进程查询权限；`THREAD_SET_INFORMATION` 对于受保护进程需要 [SeDebugPrivilege](enable_debug_privilege.md) |
 
-## 另请参阅
+## 参见
 
 | 主题 | 链接 |
-|------|------|
-| get_thread_handle | [get_thread_handle](get_thread_handle.md) |
-| ThreadHandle 结构体 | [ThreadHandle](ThreadHandle.md) |
-| is_new_error | [is_new_error](../logging.rs/is_new_error.md) |
-| Operation 枚举 | [Operation](../logging.rs/Operation.md) |
+|-------|------|
+| 模块概述 | [winapi.rs](README.md) |
+| 主要调用方 | [get_thread_handle](get_thread_handle.md) |
+| 线程句柄 RAII 封装 | [ThreadHandle](ThreadHandle.md) |
+| 进程句柄等效项 | [get_process_handle](get_process_handle.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档版本：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

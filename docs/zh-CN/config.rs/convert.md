@@ -1,105 +1,96 @@
 # convert 函数 (config.rs)
 
-将 Process Lasso 配置文件（UTF-16 LE 编码的 INI 格式）转换为 AffinityServiceRust 的原生配置格式。该函数从输入文件中读取命名亲和性、默认优先级和默认亲和性，将它们映射为等效的 AffinityServiceRust 规则语法，并将结果写入指定的输出文件，同时在文件头部附加完整的配置参考信息。
+将 Process Lasso 配置文件转换为 AffinityServiceRust 原生格式。读取 UTF-16LE 编码的 Process Lasso INI 风格配置，生成带有 CPU 别名和每进程规则行的 UTF-8 配置文件。
 
 ## 语法
 
-```AffinityServiceRust/src/config.rs#L908-1063
+```rust
 pub fn convert(in_file: Option<String>, out_file: Option<String>)
 ```
 
 ## 参数
 
-| 参数 | 类型 | 描述 |
-|------|------|------|
-| `in_file` | `Option<String>` | 输入 Process Lasso 配置文件的路径。该文件必须为 UTF-16 LE 编码（Process Lasso 使用的默认编码）。如果为 `None`，函数记录错误并立即返回。对应 `-in <file>` CLI 参数。 |
-| `out_file` | `Option<String>` | 转换后的 AffinityServiceRust 配置将写入的输出文件路径。如果为 `None`，函数记录错误并立即返回。对应 `-out <file>` CLI 参数。 |
+`in_file: Option<String>`
+
+输入 Process Lasso 配置文件的路径。文件必须是 UTF-16LE 编码（Process Lasso 使用的默认编码）。如果为 `None`，则函数记录错误并立即返回。
+
+`out_file: Option<String>`
+
+输出 AffinityServiceRust 配置文件的路径。文件将被创建或覆盖为 UTF-8 编码内容。如果为 `None`，则函数记录错误并立即返回。
 
 ## 返回值
 
-此函数不返回值。输出写入 `out_file` 指定的文件。诊断消息通过 `log!` 宏发出。
+此函数不返回值。成功和失败通过日志消息传达。
 
 ## 备注
 
-### 解析的 Process Lasso INI 键
+### Process Lasso 配置格式
 
-该函数逐行扫描输入文件，从三个特定的 INI 键中提取数据：
+转换器识别 Process Lasso 配置文件中的三种 INI 风格键值对：
 
 | 键 | 格式 | 描述 |
-|----|------|------|
-| `NamedAffinities=` | `alias,cpus,alias,cpus,...` | 以逗号分隔的别名和 CPU 规格配对。每对转换为输出中的 `*alias = cpus` 别名定义。 |
-| `DefaultPriorities=` | `process,priority,process,priority,...` | 以逗号分隔的进程名称（小写）和优先级值配对。优先级值可以是字符串名称（`"idle"`、`"normal"` 等）或数字代码（`1`–`6`）。 |
-| `DefaultAffinitiesEx=` | `process,mask,cpuset,process,mask,cpuset,...` | 以逗号分隔的进程名称、旧式位掩码（通常为 `0`，被忽略）和 CPU 集合规格三元组。仅使用 CPU 集合值；CPU 集合为 `"0"` 或为空的条目将被跳过。 |
+|-----|--------|-------------|
+| `NamedAffinities` | `alias,cpus,alias,cpus,...` | 命名 CPU 亲和性别名（逗号分隔的名称和 CPU 规格对） |
+| `DefaultPriorities` | `process,priority,process,priority,...` | 进程优先级分配（逗号分隔的进程名和数字/字符串优先级对） |
+| `DefaultAffinitiesEx` | `process,mask,cpuset,process,mask,cpuset,...` | 进程 CPU 亲和性分配（逗号分隔的进程名、旧掩码和 CPU 范围三元组） |
+
+### 转换流程
+
+1. **读取输入：** 文件通过 [read_utf16le_file](read_utf16le_file.md) 以 UTF-16LE 读取。
+2. **解析部分：** 每个识别的键被解析到中间哈希表（`priorities`、`affinities`）和命名亲和性列表。
+3. **构建别名反向映射：** 构建 `spec_to_alias` 映射，使得当进程的 CPU 规格匹配已知命名亲和性时，输出使用 `*alias` 引用而非原始规格。
+4. **生成头部：** 输出以 `get_config_help_lines()` 的帮助行（来自 cli 模块）和转换注释开始。
+5. **发射 CPU 别名：** 每个 `NamedAffinities` 条目作为 `*name = cpu_spec` 别名行发射。
+6. **发射进程规则：** 所有唯一的进程名（来自 priorities 和 affinities 映射）按字母顺序排序，并以 `name:priority:affinity:0:0:none:none` 格式发射为单行规则。
+7. **写入输出：** 生成的行被写入输出文件。
 
 ### 优先级映射
 
-Process Lasso 数字优先级代码映射到 AffinityServiceRust 的字符串名称：
+Process Lasso 使用字符串和数字优先级标识符。转换器将它们映射到 AffinityServiceRust 优先级名称：
 
-| 数字代码 | 字符串等效 | AffinityServiceRust 值 |
-|---------|-----------|----------------------|
-| `1` | `idle` | `idle` |
-| `2` | `below normal` | `below normal` |
-| `3` | `normal` | `normal` |
-| `4` | `above normal` | `above normal` |
-| `5` | `high` | `high` |
-| `6` | `realtime` / `real time` | `real time` |
-| 其他 | — | `none` |
+| Process Lasso 值 | AffinityServiceRust 值 |
+|------------------|----------------------|
+| `"idle"` 或 `"1"` | `idle` |
+| `"below normal"` 或 `"2"` | `below normal` |
+| `"normal"` 或 `"3"` | `normal` |
+| `"above normal"` 或 `"4"` | `above normal` |
+| `"high"` 或 `"5"` | `high` |
+| `"realtime"`, `"real time"` 或 `"6"` | `real time` |
+| 无法识别 | `none` |
 
-### 输出结构
+### 限制
 
-生成的输出文件按以下顺序包含三个部分：
-
-1. **配置参考头部** — 来自 [`get_config_help_lines`](../cli.rs/get_config_help_lines.md) 的完整配置文件帮助模板，为用户提供语法文档。
-2. **CPU 别名** — 每个 `NamedAffinities` 条目对应一行 `*alias = cpu_spec`，位于标题 `# CPU Aliases (from Process Lasso NamedAffinities)` 下。
-3. **进程规则** — 在 `DefaultPriorities` 和 `DefaultAffinitiesEx` 中找到的每个唯一进程对应一行规则，按字母顺序排列。每行遵循格式：`name:priority:affinity:0:0:none:none`。在可能的情况下，字面 CPU 规格会使用命名亲和性的反向查找替换为 `*alias` 引用。
-
-### 别名到规格的反向查找
-
-该函数构建一个 `spec_to_alias` 映射，将原始 CPU 规格字符串映射回其 `*alias` 名称。写入进程规则时，如果进程的亲和性规格与已知的命名亲和性匹配，则使用 `*alias` 形式代替原始规格。这会生成更清晰、更易读的输出。
-
-### 文件编码
-
-输入文件通过 [`read_utf16le_file`](read_utf16le_file.md) 读取，该函数使用有损转换将 UTF-16 LE 字节对解码为 Rust `String`。输出文件以 UTF-8 编码写入。
+- 转换器仅处理进程级设置（亲和性和优先级）。线程级功能如 Prime 线程调度、理想处理器分配和 IO/内存优先级不存在于 Process Lasso 配置中，在输出中默认为 `0`/`none`。
+- `DefaultAffinitiesEx` 中的 CPU 集合信息放置在亲和性字段中，而非 CPU 集合字段。输出格式使用 `name:priority:affinity:0:0:none:none`，其中第三个字段是亲和性，CPU 集合字段为 `0`（未更改）。
+- `DefaultAffinitiesEx` 三元组中的旧掩码字段被忽略；仅使用 CPU 范围（每个三元组的第三个元素）。
+- 命名亲和性别名匹配基于 CPU 规格的精确字符串比较。如果进程的亲和性规格不与命名亲和性字符串完全匹配，则发射原始规格而非别名引用。
 
 ### 错误处理
 
-| 条件 | 行为 |
-|------|------|
-| `in_file` 为 `None` | 记录 `"Error: -in <file> is required for -convert"` 并返回。 |
-| `out_file` 为 `None` | 记录 `"Error: -out <file> is required for -convert"` 并返回。 |
-| 无法读取输入文件 | 记录 `"Failed to read {path}: {error}"` 并返回。 |
-| 无法创建输出文件 | 记录 `"Failed to create {path}: {error}"` 并返回。 |
-| 输出期间写入失败 | 记录 `"Failed to write to {path}"` 并返回。 |
+- 如果 `in_file` 或 `out_file` 为 `None`，记录错误并返回。
+- 如果输入文件无法读取（通过 [read_utf16le_file](read_utf16le_file.md)），记录错误并返回。
+- 如果输出文件无法创建或写入，记录错误并返回。
+- 成功时，记录摘要行，显示已解析的别名、优先级和亲和性数量。
 
-成功时，函数记录摘要：`"Parsed {n} aliases, {n} priorities, {n} affinities"`，随后 `"Converted {in_path} to {out_path}"`。
+## 需求
 
-### CLI 用法
+| | |
+|---|---|
+| **模块** | [`src/config.rs`](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf/src/config.rs) |
+| **调用方** | CLI 分发（使用 `-convert` 标志时） |
+| **被调用方** | [read_utf16le_file](read_utf16le_file.md), `get_config_help_lines`（来自 [cli.rs](../cli.rs/README.md)） |
+| **依赖项** | [HashMap](../collections.rs/README.md), [HashSet](../collections.rs/README.md) |
+| **权限** | 文件系统读写访问 |
 
-```/dev/null/example.sh#L1
-AffinityServiceRust.exe -convert -in ProcessLassoConfig.ini -out config.ini
-```
+## 参见
 
-## 要求
+| 主题 | 链接 |
+|-------|------|
+| 模块概述 | [config.rs](README.md) |
+| UTF-16LE 文件读取器 | [read_utf16le_file](read_utf16le_file.md) |
+| 自动分组实用工具 | [sort_and_group_config](sort_and_group_config.md) |
+| CPU 规格解析器 | [parse_cpu_spec](parse_cpu_spec.md) |
+| 配置文件读取器 | [read_config](read_config.md) |
+| CLI 参数 | [CliArgs](../cli.rs/CliArgs.md) |
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `config.rs` |
-| 可见性 | `pub` |
-| 调用方 | `main.rs`（当 `cli.convert_mode` 为 `true` 时） |
-| 被调用方 | [`read_utf16le_file`](read_utf16le_file.md)、[`get_config_help_lines`](../cli.rs/get_config_help_lines.md)、`File::create`、`writeln!`、`log!` |
-| 依赖 | [`collections.rs`](../collections.rs/README.md) 中的 `HashMap`、`HashSet`；`std::fs::File`、`std::io::Write` |
-| 权限 | 无（需要文件系统读写访问权限） |
-
-## 另请参阅
-
-| 资源 | 链接 |
-|------|------|
-| sort_and_group_config | [sort_and_group_config](sort_and_group_config.md) |
-| read_utf16le_file | [read_utf16le_file](read_utf16le_file.md) |
-| get_config_help_lines | [get_config_help_lines](../cli.rs/get_config_help_lines.md) |
-| read_config | [read_config](read_config.md) |
-| CliArgs | [CliArgs](../cli.rs/CliArgs.md) |
-| config 模块概述 | [README](README.md) |
-
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档针对 Commit：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

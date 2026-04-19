@@ -1,120 +1,119 @@
 # sort_and_group_config 函数 (config.rs)
 
-自动将共享相同规则设置的进程分组为命名的组块，以减少配置文件中的重复内容。该函数读取现有配置文件，识别规则字段（优先级、亲和性、cpuset 等）完全相同的进程，将它们合并为 `{ }` 组块并生成组名，然后输出一个紧凑、去重的配置文件。
+自动将共享相同规则设置的进程分组到命名组块中，生成具有减少重复的紧凑配置文件。这是通过 `-autogroup` 标志调用的命令行实用工具函数。
 
 ## 语法
 
-```AffinityServiceRust/src/config.rs#L1065-1066
+```rust
 pub fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>)
 ```
 
 ## 参数
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `in_file` | `Option<String>` | 要读取和分析的输入配置文件路径。文件必须是 UTF-8 编码的有效 AffinityServiceRust 配置。如果为 `None`，函数记录错误并立即返回。对应 `-in <file>` CLI 参数。 |
-| `out_file` | `Option<String>` | 分组后的配置将写入的输出文件路径。如果为 `None`，函数记录错误并立即返回。对应 `-out <file>` CLI 参数。 |
+`in_file: Option<String>`
+
+输入配置文件的路径。必须是 `Some`；如果为 `None`，函数记录错误并立即返回。
+
+`out_file: Option<String>`
+
+写入分组配置的输出文件路径。必须是 `Some`；如果为 `None`，函数记录错误并立即返回。
 
 ## 返回值
 
-此函数不返回值。输出写入 `out_file` 指定的文件。诊断消息和汇总统计通过 `log!` 宏发出。
+此函数不返回值。结果写入输出文件，诊断消息被记录。
 
 ## 备注
 
-### 算法概述
+### 算法
 
-1. **读取并划分行** — 逐行读取输入文件并划分为两个部分：
-   - **前言区**：注释行（`#` 前缀）、空行、常量定义（`@` 前缀）和别名定义（`*` 前缀）。这些内容在输出中原样保留。
-   - **规则区**：其余所有内容 — 单独的进程规则行和 `{ }` 组块。
+该函数执行多阶段转换：
 
-2. **提取规则键** — 对于每条进程规则（无论是独立的还是位于组块内），将进程名称与规则字符串（第一个 `:` 之后的全部内容）分离。规则字符串成为分组键。
+1. **前言提取：** 文件顶部的行，如果是注释 (`#`)、空行、常量 (`@`) 或别名 (`*`)，被收集到保留不变地输出到输出的前言部分。
 
-3. **按规则分组** — 使用 `HashMap<String, Vec<String>>` 将每个唯一规则字符串映射到共享该规则的进程名称列表。另有一个 `rule_order` 向量保留插入顺序，确保输出按首次出现的顺序保持稳定排列。
+2. **规则收集：** 每条规则行和组块分解为其成员进程名和规则字符串（单行规则中第一个冒号之后的所有内容，或组块中闭合 `}:` 之后的内容）。规则字符串作为分组键。
 
-4. **生成分组输出** — 对于每个唯一规则字符串（按插入顺序）：
-   - 如果只有**一个**进程使用该规则，则输出为单行规则：`name:rule_string`。
-   - 如果**多个**进程共享该规则，则输出为命名组块。组名自动生成为 `grp_0`、`grp_1` 等。
+3. **合并：** 具有相同规则字符串的规则将其成员列表连接起来。这合并了具有相同设置的单个规则和现有组块。
 
-5. **格式化组** — 对于多进程组：
-   - 如果单行表示（`grp_N { a: b: c }:rule`）短于 128 个字符，则在一行内输出。
-   - 否则使用多行格式，4 空格缩进，128 字符处换行：
-     ```/dev/null/example.ini#L1-4
-     grp_0 {
-         process1.exe: process2.exe: process3.exe
-         process4.exe: process5.exe
-     }:priority:affinity:cpuset:prime:io:mem:ideal:grade
-     ```
+4. **去重和排序：** 在每个合并的组内，成员名称按字母顺序排序并去重。
 
-6. **去重** — 在每个组内，成员名称在输出前通过 `sort()` 和 `dedup()` 进行字母排序和去重。
+5. **输出生成：** 对于每个唯一的规则字符串：
+   - 如果只有一个进程具有该规则，它被发射为单行规则：`process.exe:rule_string`
+   - 如果多个进程共享该规则，它们被发射为命名组块。组被顺序命名为 `grp_0`、`grp_1` 等。
 
-### 前言区保留
+### 组格式
 
-所有非规则行（注释、空行、常量、别名）被收集到前言区中，在所有规则之前写入输出。前言区末尾的多余空行被修剪为单个分隔行。这确保别名定义对规则区中的 `*alias` 引用仍然可用。
+组以两种样式之一格式化，取决于长度：
 
-### 组块重新解析
+- **内联样式**（当整行低于 128 个字符时）：
+  ```
+  grp_0 { proc1.exe: proc2.exe: proc3.exe }:normal:*ecore:0:0:low:none:0:1
+  ```
 
-当输入文件已包含 `{ }` 组块时，函数使用 [`collect_group_block`](collect_group_block.md) 和 [`collect_members`](collect_members.md) 重新解析它们，提取成员名称和规则后缀。现有组名被丢弃 — 输出中所有组均接收全新自动生成的名称（`grp_0`、`grp_1`、…）。
+- **多行样式**（当内联表示超过 128 个字符时）：
+  ```
+  grp_1 {
+      proc1.exe: proc2.exe: proc3.exe
+      proc4.exe: proc5.exe
+  }:normal:*pcore:0:0:none:none:0:1
+  ```
 
-### 行长度阈值
+  在多行模式下，成员被打包到 128 字符宽的行中，使用 4 空格缩进（`const INDENT: &str = "    "`）。行内的成员用冒号分隔。
 
-常量 `128` 用作单行组输出的最大行长度。超过此阈值的组将格式化为多行块，使用 `const INDENT: &str = "    "`（4 个空格）以提高可读性。
+### 前言保留
 
-### 输出统计
+常量（`@MIN_ACTIVE_STREAK = 3`）、别名（`*pcore = 0-7`）和前导注释以其原始顺序和形式保留。只有规则行和组块被重新组织。前言中的尾随空行被修剪为单个分隔行。
 
-完成后，函数记录一条汇总消息：
+### 规则顺序稳定性
 
-```/dev/null/example.txt#L1-2
-Auto-grouped: {total} total process rules → {single} individual + {grouped} processes merged into {groups} groups
-Written to {out_path}
+唯一的规则字符串按它们在输入文件中首次遇到的顺序发射。这保留了原始配置的一般组织，同时合并重复项。
+
+### 典型用法
+
+```
+AffinityServiceRust.exe -autogroup -in config.txt -out config_grouped.txt
 ```
 
-其中：
-- `total` = `single_count + grouped_member_count`
-- `single` = 具有唯一规则（无需分组）的进程数
-- `grouped` = 被合并到组中的进程总数
-- `groups` = 创建的组块数量
+这是一个一次性转换工具——输出文件不会被服务自动使用。用户应检查输出并手动替换原始配置文件。
+
+### 日志记录
+
+完成后，函数记录摘要：
+
+```
+Auto-grouped: 42 total process rules → 10 individual + 32 processes merged into 8 groups
+Written to config_grouped.txt
+```
 
 ### 错误处理
 
-| 条件 | 行为 |
-|------|------|
-| `in_file` 为 `None` | 记录 `"Error: -in <file> is required for -autogroup"` 并返回。 |
-| `out_file` 为 `None` | 记录 `"Error: -out <file> is required for -autogroup"` 并返回。 |
-| 无法读取输入文件 | 记录 `"Failed to read {path}: {error}"` 并返回。 |
-| 无法创建输出文件 | 记录 `"Failed to create {path}: {error}"` 并返回。 |
-| 写入过程中失败 | 记录 `"Failed to write to {path}"` 并返回。 |
+- 如果缺少 `-in` 或 `-out`，记录错误消息并返回。
+- 如果输入文件无法读取，记录错误并返回。
+- 如果输出文件无法创建或写入，记录错误并返回。
+- 输入中的未闭合组块被静默跳过。
 
-### CLI 用法
+### 与配置解析器的交互
 
-```/dev/null/example.sh#L1
-AffinityServiceRust.exe -autogroup -in config.ini -out config_grouped.ini
-```
+该函数重新使用 [collect_members](collect_members.md) 和 [collect_group_block](collect_group_block.md) 来解析输入，确保对组语法和成员名称的一致处理。它**不**调用 [parse_and_insert_rules](parse_and_insert_rules.md) 或验证规则字段——输出按其在输入中出现的原样保留规则字符串。
 
-### 幂等性
+## 需求
 
-对自身输出再次运行 `sort_and_group_config` 会产生等效文件（组名和格式可能不同），因为函数会重新解析所有现有组。但每次运行时组名都会从 `grp_0` 重新编号。
+| | |
+|---|---|
+| **模块** | [`src/config.rs`](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf/src/config.rs) |
+| **调用方** | `main.rs` 中的 CLI 分发（由 `-autogroup` 标志调用） |
+| **被调用方** | [collect_members](collect_members.md), [collect_group_block](collect_group_block.md), `std::fs::read_to_string`, `std::fs::File::create`, `std::io::Write` |
+| **依赖项** | [HashMap](../collections.rs/README.md) |
+| **权限** | 输入和输出路径的文件系统读写访问 |
 
-## 要求
+## 参见
 
-| 要求 | 值 |
-|------|-----|
-| 模块 | `config.rs` |
-| 可见性 | `pub` |
-| 调用者 | `main.rs`（当 `cli.autogroup_mode` 为 `true` 时） |
-| 被调用者 | [`collect_group_block`](collect_group_block.md)、[`collect_members`](collect_members.md)、`std::fs::read_to_string`、`File::create`、`writeln!`、`log!` |
-| 依赖 | [`collections.rs`](../collections.rs/README.md) 中的 `HashMap`；`std::fs::File`、`std::io::Write` |
-| 权限 | 对指定路径的文件系统读写访问权限 |
+| 主题 | 链接 |
+|-------|------|
+| 模块概述 | [config.rs](README.md) |
+| Process Lasso 转换器（相关实用工具） | [convert](convert.md) |
+| 组块解析器 | [collect_group_block](collect_group_block.md) |
+| 成员收集器 | [collect_members](collect_members.md) |
+| 配置文件读取器 | [read_config](read_config.md) |
+| CLI 参数 | [CliArgs](../cli.rs/CliArgs.md) |
 
-## 另请参阅
-
-| 资源 | 链接 |
-|------|------|
-| convert | [convert](convert.md) |
-| read_config | [read_config](read_config.md) |
-| collect_group_block | [collect_group_block](collect_group_block.md) |
-| collect_members | [collect_members](collect_members.md) |
-| CliArgs | [CliArgs](../cli.rs/CliArgs.md) |
-| config 模块概述 | [README](README.md) |
-
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*文档针对 Commit：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

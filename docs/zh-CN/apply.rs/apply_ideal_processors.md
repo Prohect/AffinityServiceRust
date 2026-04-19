@@ -1,10 +1,10 @@
 # apply_ideal_processors 函数 (apply.rs)
 
-`apply_ideal_processors` 函数根据配置中定义的模块前缀匹配规则，为线程分配理想处理器。对于每条规则，该函数识别其启动模块与指定前缀匹配的线程，按周期计数增量选出前 N 个线程（其中 N 等于规则中 CPU 的数量），并通过 `SetThreadIdealProcessorEx` 将每个选中线程分配到一个专用 CPU。当线程在后续应用周期中不再处于前 N 名时，其理想处理器将恢复为之前的值。该函数使用与主线程管道相同的基于滞后的选择机制，以防止快速振荡。
+根据可配置的 [`IdealProcessorRule`](../config.rs/IdealProcessorRule.md) 条目为线程分配理想处理器提示。每条规则指定一组 CPU 和可选的模块名前缀；该函数通过起始地址的模块名称匹配线程，使用迟滞机制选择前 *N* 个线程（其中 *N* = 规则中的 CPU 数量），并通过轮转方式将每个选定的线程分配到一个专用的理想 CPU。未进入前 *N* 名的线程会将其理想处理器恢复到分配前观察到的值。
 
 ## 语法
 
-```AffinityServiceRust/src/apply.rs#L1047-1058
+```AffinityServiceRust/src/apply.rs#L1048-1057
 pub fn apply_ideal_processors<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
@@ -19,90 +19,78 @@ pub fn apply_ideal_processors<'a>(
 
 | 参数 | 类型 | 描述 |
 |-----------|------|-------------|
-| `pid` | `u32` | 目标进程的进程 ID。用于调度器查找、错误去重和日志消息。 |
-| `config` | `&ThreadLevelConfig` | 线程级配置，包含 `ideal_processor_rules`——一个规则列表，每条规则指定一组 CPU 索引（`cpus`）和可选的模块前缀（`prefixes`）。如果 `ideal_processor_rules` 为空，函数将立即返回。 |
-| `dry_run` | `bool` | 当为 `true` 时，记录描述将执行哪些理想处理器分配的合成变更消息，而不调用任何 Windows API。当为 `false` 时，执行实际的分配和恢复操作。 |
-| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | 一个惰性闭包，返回线程 ID 到其 `SYSTEM_THREAD_INFORMATION` 快照的映射引用，数据来自最近一次系统进程信息查询。闭包按需调用以枚举候选线程，将线程枚举的开销推迟到实际需要时。 |
-| `prime_scheduler` | `&mut PrimeThreadScheduler` | 可变的主线程调度器状态，跨应用周期跟踪每个线程的统计信息，包括缓存的周期数、启动地址、线程句柄和理想处理器分配状态。 |
-| `apply_config_result` | `&mut ApplyConfigResult` | 用于累积执行期间产生的变更描述和错误消息。 |
+| `pid` | `u32` | 目标进程的进程 ID。 |
+| `config` | `&ThreadLevelConfig` | 包含 `ideal_processor_rules` 的线程级别配置。 |
+| `dry_run` | `bool` | 当为 `true` 时，记录将会进行的更改，但不调用任何 Windows API。 |
+| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | 用于获取进程线程映射的延迟访问器。 |
+| `prime_scheduler` | `&mut PrimeThreadScheduler` | 拥有线程统计信息（周期缓存、理想处理器跟踪状态）的调度器。 |
+| `apply_config_result` | `&mut ApplyConfigResult` | 用于累积更改和错误信息的容器。 |
 
 ## 返回值
 
-此函数不返回值。所有结果通过对 `prime_scheduler` 线程统计信息的修改和 `apply_config_result` 中追加的条目来传达。
+此函数不返回任何值。所有结果都记录在 `apply_config_result` 中。
 
-## 备注
+## 说明
 
-### 提前退出
+### 算法
 
-如果 `config.ideal_processor_rules` 为空，函数将立即返回，不执行任何操作。
+对于 `config.ideal_processor_rules` 中的每条 [`IdealProcessorRule`](../config.rs/IdealProcessorRule.md)：
 
-### 试运行模式
+1. **模块匹配** — 起始地址模块与规则的前缀列表之一匹配（不区分大小写）的每个线程都被视为候选者。如果 `prefixes` 为空，则所有线程都是候选者。
 
-在试运行模式下，对每条规则会记录如下格式的变更消息：
-`"Ideal Processor: CPUs [<cpu_list>] for top <N> threads from [<prefixes>]"`
-其中 `<N>` 是规则中 CPU 的数量，`<prefixes>` 是模块前缀的连接列表，如果未指定前缀则为 `"all modules"`。
+2. **迟滞选择** — 候选者被送入 [`PrimeThreadScheduler::select_top_threads_with_hysteresis`](../scheduler.rs/PrimeThreadScheduler.md)，槽数量等于 `rule.cpus.len()`。`is_currently_assigned` 谓词检查 `thread_stats.ideal_processor.is_assigned`，这稳定了轮询间隔之间的线程选择。
 
-### 算法（非试运行）
+3. **保留现有分配** — 从前一次迭代中已经分配了理想 CPU 的线程，如果仍被选中，则保留其 CPU 槽位。其 CPU 会被添加到 `claimed` 集合中以避免重复分配。
 
-1. **解析模块名称**：对于所有 `cached_cycles > 0` 的线程，函数通过 `resolve_address_to_module` 将每个线程的启动地址解析为模块名称。模块名称收集到共享的 `Vec<String>` 中并建立索引，以避免重复解析。每个线程表示为 `(tid, delta_cycles, start_address, name_index)` 元组。
+4. **新分配** — 新选中的尚未分配的线程通过轮转方式从空闲池（不在 `claimed` 中的规则 CPU）获得 CPU。通过处理器组 0 和目标 CPU 编号调用 API `SetThreadIdealProcessorEx`。
 
-2. **逐规则处理**：对于 `config.ideal_processor_rules` 中的每条规则：
+5. **恢复** — 之前被分配但不再被选中的线程，其理想处理器会恢复到第一次分配之前捕获的值（`previous_group`，`previous_number`）。`is_assigned` 标志被清除。
 
-   a. **按前缀过滤**：如果规则有前缀，则仅包含启动模块（小写化后）以其中一个前缀开头的线程。如果规则没有前缀，则所有线程都是候选者。
+### 理想处理器状态跟踪
 
-   b. **基于滞后的选择**：函数调用 `PrimeThreadScheduler::select_top_threads_with_hysteresis`，以 `rule.cpus.len()` 作为目标数量，以 `|ts| ts.ideal_processor.is_assigned` 作为"当前是否被选中"的谓词。已分配理想处理器的线程享有更宽松的保留阈值；新候选线程必须超过更严格的进入阈值并满足最低活跃连续周期要求。
+每个线程的理想处理器状态在 `ThreadStats.ideal_processor` 中跟踪：
 
-   c. **认领现有分配**：对于被选为主线程且已有 `ideal_processor.is_assigned == true` 的线程，其当前 CPU 编号被添加到 `claimed` 集合中。对于新选中的线程，调用 `GetThreadIdealProcessorEx` 以捕获线程当前的理想处理器作为 `previous_group`/`previous_number` 基线。如果线程当前的理想处理器恰好已经是规则指定的 CPU 之一，则立即标记为已分配并认领。
+| 字段 | 用途 |
+|-------|---------|
+| `is_assigned` | 此函数是否当前拥有该线程的理想处理器。 |
+| `previous_group` / `previous_number` | 第一次分配之前的理想处理器，用于恢复。 |
+| `current_group` / `current_number` | 此函数最近设置的理想处理器。 |
 
-   d. **从空闲池分配**：规则中不在 `claimed` 集合中的 CPU 构成空闲池。每个尚未被分配的新选中线程通过 `set_thread_ideal_processor_ex`（组 0，目标 CPU）从空闲池获得下一个可用 CPU。成功后，线程的 `ideal_processor.current_group` 和 `current_number` 被更新，`is_assigned` 设为 `true`，并记录变更消息：
-      `"Thread <tid> -> ideal CPU <cpu> (group 0) start=<module>"`
+在首次选中时，调用 `GetThreadIdealProcessorEx` 来捕获基线。如果线程的当前理想处理器已经在 `rule.cpus` 范围内，则无需冗余 `Set` 调用即可保留。
 
-   e. **恢复未选中线程**：具有 `ideal_processor.is_assigned == true` 但不再在选中集合中的线程，通过 `set_thread_ideal_processor_ex` 恢复到其 `previous_group`/`previous_number`。成功后，线程的 `current_group`/`current_number` 更新为之前的值，`is_assigned` 清除为 `false`。记录变更消息：
-      `"Thread <tid> -> restored ideal CPU <prev_number> (group <prev_group>) start=<module>"`
+### 试运行行为
 
-### 边界情况
+当 `dry_run` 为 `true` 时，函数记录每条规则的一个摘要更改，指示 CPU 集合和前缀过滤器，然后返回而不打开任何线程句柄或调用 Windows API。
 
-- 如果规则的 `cpus` 列表为空，该规则将被完全跳过。
-- 如果规则没有前缀，所有具有缓存周期数的线程都是该规则的合格候选者。
-- 如果在认领阶段 `GetThreadIdealProcessorEx` 失败，错误通过 [`log_error_if_new`](log_error_if_new.md) 以 `Operation::GetThreadIdealProcessorEx` 记录，且该线程不会被分配。
-- 如果在分配或恢复期间 `set_thread_ideal_processor_ex` 失败，错误通过 [`log_error_if_new`](log_error_if_new.md) 以 `Operation::SetThreadIdealProcessorEx` 记录。分配失败时线程的 `is_assigned` 状态保持不变，但恢复失败时会清除该状态以避免无限重试。
-- `cached_cycles == 0` 的线程（即周期数未成功预取的线程）将被排除在所有规则处理之外。
-- 线程句柄验证遵循与其他函数相同的模式：优先使用 `w_handle`，回退到 `w_limited_handle`。如果两者都无效，记录错误并跳过该线程。
-- 恢复理想处理器时，仅在先前值与当前值不同时（`prev_group != cur_group || prev_number != cur_number`）才执行恢复，避免对已在目标 CPU 上的线程进行不必要的 API 调用。
+### 错误处理
 
-### 每线程理想处理器状态
+`GetThreadIdealProcessorEx` 和 `SetThreadIdealProcessorEx` 的错误通过 [`log_error_if_new`](log_error_if_new.md) 报告，后者通过 `(pid, tid, operation, error_code)` 进行去重。无效的线程句柄会被记录一次并跳过该线程。
 
-`ThreadStats` 中的 `ideal_processor` 字段跟踪三部分信息：
-- **`previous_group` / `previous_number`**：线程首次被选中时的理想处理器。这是降级时将恢复的值。
-- **`current_group` / `current_number`**：线程当前分配的理想处理器。每次成功调用 `set_thread_ideal_processor_ex` 后更新。
-- **`is_assigned`**：一个布尔值，指示此函数是否对该线程有活跃的理想处理器分配。
+### 平台说明
+
+- 理想处理器是向 Windows 调度器发出的*提示*，而非硬性约束。操作系统仍可能在其他 CPU 上调度该线程。
+- 仅支持处理器组 0 进行分配。如果线程的基线理想处理器在组 0 且位于 `rule.cpus` 内，则无需 `Set` 调用即可占用。
 
 ## 要求
 
-| 要求 | 值 |
-|-------------|-------|
-| 模块 | `apply.rs` |
-| Crate | `AffinityServiceRust` |
-| 可见性 | `pub` |
-| Windows API | `SetThreadIdealProcessorEx`（通过 `winapi::set_thread_ideal_processor_ex`）、`GetThreadIdealProcessorEx`（通过 `winapi::get_thread_ideal_processor_ex`）、`GetLastError` |
-| 调用方 | `scheduler.rs` / `main.rs` 中遍历匹配进程的编排代码 |
-| 被调用方 | [`log_error_if_new`](log_error_if_new.md)、`winapi::resolve_address_to_module`、`winapi::get_thread_ideal_processor_ex`、`winapi::set_thread_ideal_processor_ex`、`config::format_cpu_indices`、`error_codes::error_from_code_win32`、`PrimeThreadScheduler::get_thread_stats`、`PrimeThreadScheduler::select_top_threads_with_hysteresis` |
-| 权限 | 需要具有 `THREAD_SET_INFORMATION` 或 `THREAD_SET_LIMITED_INFORMATION`（写入）以及 `THREAD_QUERY_INFORMATION` 或 `THREAD_QUERY_LIMITED_INFORMATION`（读取，用于 `GetThreadIdealProcessorEx`）权限的线程句柄。 |
+| | |
+|---|---|
+| **模块** | `apply` (`src/apply.rs`) |
+| **调用方** | 服务轮询循环（通过顶层 apply 编排器） |
+| **被调用方** | [`PrimeThreadScheduler::select_top_threads_with_hysteresis`](../scheduler.rs/PrimeThreadScheduler.md), `resolve_address_to_module` (`winapi`), `get_thread_ideal_processor_ex` / `set_thread_ideal_processor_ex` (`winapi`), [`log_error_if_new`](log_error_if_new.md) |
+| **Win32 API** | `SetThreadIdealProcessorEx`, `GetThreadIdealProcessorEx`（通过 `winapi` 封装） |
+| **权限** | `THREAD_SET_INFORMATION`（写入句柄）, `THREAD_QUERY_INFORMATION` 或 `THREAD_QUERY_LIMITED_INFORMATION`（读取句柄） |
 
-## 另请参阅
+## 参见
 
-| 参考 | 链接 |
-|-----------|------|
-| apply 模块概述 | [`README`](README.md) |
-| ApplyConfigResult | [`ApplyConfigResult`](ApplyConfigResult.md) |
-| reset_thread_ideal_processors | [`reset_thread_ideal_processors`](reset_thread_ideal_processors.md) |
-| apply_prime_threads | [`apply_prime_threads`](apply_prime_threads.md) |
-| apply_prime_threads_select | [`apply_prime_threads_select`](apply_prime_threads_select.md) |
-| prefetch_all_thread_cycles | [`prefetch_all_thread_cycles`](prefetch_all_thread_cycles.md) |
-| update_thread_stats | [`update_thread_stats`](update_thread_stats.md) |
-| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
-| ThreadLevelConfig | [`config.rs/ThreadLevelConfig`](../config.rs/ThreadLevelConfig.md) |
-| PrimeThreadScheduler | [`scheduler.rs/PrimeThreadScheduler`](../scheduler.rs/PrimeThreadScheduler.md) |
+| 主题 | 链接 |
+|-------|------|
+| 结果累加器 | [ApplyConfigResult](ApplyConfigResult.md) |
+| 线程级别配置 | [ThreadLevelConfig](../config.rs/ThreadLevelConfig.md) |
+| 理想处理器规则定义 | [IdealProcessorRule](../config.rs/IdealProcessorRule.md) |
+| Prime 线程调度器 | [PrimeThreadScheduler](../scheduler.rs/PrimeThreadScheduler.md) |
+| 周期预取（前置条件） | [prefetch_all_thread_cycles](prefetch_all_thread_cycles.md) |
+| 线程统计快照 | [update_thread_stats](update_thread_stats.md) |
+| 模块概览 | [apply.rs](README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

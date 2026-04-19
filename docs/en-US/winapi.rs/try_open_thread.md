@@ -1,10 +1,11 @@
 # try_open_thread function (winapi.rs)
 
-Attempts to open a single thread handle with the specified access rights. This is an internal helper used by [get_thread_handle](get_thread_handle.md) to obtain optional thread handles (read-full, write-limited, write-full) without failing the entire operation if any individual handle cannot be acquired.
+Lower-level helper that attempts to open a single thread handle with a specific access level. Returns a valid `HANDLE` on success or an invalid `HANDLE` on failure, allowing the caller to continue without aborting the entire handle acquisition.
 
 ## Syntax
 
 ```rust
+#[inline(always)]
 fn try_open_thread(
     pid: u32,
     tid: u32,
@@ -18,52 +19,64 @@ fn try_open_thread(
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `pid` | `u32` | The process ID that owns the thread. Used for error tracking context. |
-| `tid` | `u32` | The thread ID to open. |
-| `process_name` | `&str` | The name of the owning process. Used for error tracking context. |
-| `access` | `THREAD_ACCESS_RIGHTS` | The desired access rights for the thread handle (e.g., `THREAD_QUERY_INFORMATION`, `THREAD_SET_LIMITED_INFORMATION`, `THREAD_SET_INFORMATION`). |
-| `internal_op_code` | `u32` | An internal operation code used to differentiate which handle type failed in error tracking. See the mapping table below. |
-
-### internal_op_code mapping
-
-| Code | Handle Type |
-|------|-------------|
-| `1` | `r_handle` (`THREAD_QUERY_INFORMATION`) |
-| `2` | `w_limited_handle` (`THREAD_SET_LIMITED_INFORMATION`) |
-| `3` | `w_handle` (`THREAD_SET_INFORMATION`) |
+| `pid` | `u32` | Process identifier that owns the thread. Used for error context in diagnostic messages (currently commented out). |
+| `tid` | `u32` | Thread identifier to open. Passed to `OpenThread`. |
+| `process_name` | `&str` | Display name of the owning process. Used for error context in diagnostic messages (currently commented out). |
+| `access` | `THREAD_ACCESS_RIGHTS` | The desired access rights for the handle. Typically one of `THREAD_QUERY_INFORMATION`, `THREAD_SET_LIMITED_INFORMATION`, or `THREAD_SET_INFORMATION`. |
+| `internal_op_code` | `u32` | Numeric identifier for the access level being attempted, used to map errors to a human-readable handle name in `error_detail`. Values: `1` → `"r_handle"`, `2` → `"w_limited_handle"`, `3` → `"w_handle"`. |
 
 ## Return value
 
-Returns a `HANDLE`. On success, this is a valid open thread handle. On failure, returns `HANDLE::default()` (an invalid handle). The caller is responsible for checking handle validity before use.
+`HANDLE` — A valid thread handle on success, or `HANDLE::default()` (an invalid handle) on failure. The caller must check `is_invalid()` before using the returned handle.
 
 ## Remarks
 
-- This function is marked `#[inline(always)]` to eliminate call overhead, as it is invoked multiple times per thread in the hot path of [get_thread_handle](get_thread_handle.md).
-- Unlike the required `r_limited_handle` in `get_thread_handle`, failure from `try_open_thread` does **not** cause `get_thread_handle` to return `None`. The returned invalid handle is stored directly in the [ThreadHandle](ThreadHandle.md) struct, and callers must check validity before using it.
-- Error logging through [is_new_error](../logging.rs/is_new_error.md) is currently commented out in the implementation to reduce log noise for expected failures (e.g., elevated processes that deny `THREAD_SET_INFORMATION`).
-- Contains an inner helper function `error_detail` that maps `internal_op_code` values to human-readable handle-type names for diagnostic purposes.
-- This function is **not** public (`fn` without `pub`), making it internal to the `winapi` module.
-- Calls `OpenThread` from the Windows API via the `windows` crate.
+This function is the building block used by [get_thread_handle](get_thread_handle.md) to open the non-required handle levels (`r_handle`, `w_limited_handle`, `w_handle`). Unlike the required `r_limited_handle` (whose failure causes `get_thread_handle` to return `None`), failure in `try_open_thread` is non-fatal — the returned invalid handle is stored in [ThreadHandle](ThreadHandle.md) and the caller simply avoids using that access level.
+
+### Error handling
+
+The function contains commented-out calls to `is_new_error` and `log_to_find` for both the `OpenThread` failure path and the invalid handle path. These are intentionally disabled in production because failures at these non-required access levels are expected and frequent (e.g., `THREAD_SET_INFORMATION` may be denied for protected processes even with SeDebugPrivilege). The `error_detail` inner function maps `internal_op_code` to a human-readable string for diagnostic purposes when the logging code is enabled.
+
+### Inner function: error_detail
+
+```rust
+fn error_detail(internal_op_code: &u32) -> String
+```
+
+Maps the numeric `internal_op_code` to a handle field name string:
+
+| Code | Returns |
+|------|---------|
+| `1` | `"r_handle"` |
+| `2` | `"w_limited_handle"` |
+| `3` | `"w_handle"` |
+| other | `"UNKNOWN_OP_CODE"` |
+
+### Visibility
+
+This function is module-private (`fn`, not `pub fn`) and is only called by [get_thread_handle](get_thread_handle.md). It is marked `#[inline(always)]` because it is called three times per thread handle acquisition and the function body is small.
+
+### Failure semantics
+
+On failure, the function returns `HANDLE::default()`, which is a zeroed/invalid handle. The [ThreadHandle](ThreadHandle.md) struct's `Drop` implementation checks `is_invalid()` before calling `CloseHandle`, so storing an invalid handle is safe and will not cause a double-close or an error on cleanup.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `winapi.rs` |
-| **Visibility** | Private (module-internal) |
+| | |
+|---|---|
+| **Module** | `src/winapi.rs` |
 | **Callers** | [get_thread_handle](get_thread_handle.md) |
-| **Callees** | `OpenThread` (Win32 API) |
-| **API** | [OpenThread](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openthread) |
-| **Privileges** | Requires sufficient access rights on the target thread; typically needs `SeDebugPrivilege` for system-level threads. |
+| **Callees** | `OpenThread` (Win32) |
+| **Win32 API** | [OpenThread](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openthread) |
+| **Privileges** | Depends on `access` — `THREAD_QUERY_INFORMATION` requires process query rights; `THREAD_SET_INFORMATION` requires [SeDebugPrivilege](enable_debug_privilege.md) for protected processes |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| get_thread_handle | [get_thread_handle](get_thread_handle.md) |
-| ThreadHandle struct | [ThreadHandle](ThreadHandle.md) |
-| is_new_error | [is_new_error](../logging.rs/is_new_error.md) |
-| Operation enum | [Operation](../logging.rs/Operation.md) |
+| Module overview | [winapi.rs](README.md) |
+| Primary caller | [get_thread_handle](get_thread_handle.md) |
+| Thread handle RAII wrapper | [ThreadHandle](ThreadHandle.md) |
+| Process handle equivalent | [get_process_handle](get_process_handle.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

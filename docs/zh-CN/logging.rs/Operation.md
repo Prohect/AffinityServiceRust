@@ -1,6 +1,6 @@
 # Operation 枚举 (logging.rs)
 
-枚举由 [`is_new_error`](is_new_error.md) 去重系统跟踪其失败情况的 Windows API 操作。每个变体对应一个特定的 Win32 或 NT 原生 API 调用，当 AffinityServiceRust 尝试管理进程/线程的亲和性、优先级或 I/O 设置时，这些调用可能会失败。该枚举作为 [`ApplyFailEntry`](ApplyFailEntry.md) 中复合键的一部分使用，以确保同一进程/线程的不同操作失败被独立跟踪。
+列出 AffinityServiceRust 可能对目标进程或线程调用的每个 Windows API 操作。用作 [ApplyFailEntry](ApplyFailEntry.md) 去重键的组成部分，以便独立跟踪同一进程上的不同失败。
 
 ## 语法
 
@@ -33,71 +33,50 @@ pub enum Operation {
 ## 成员
 
 | 变体 | 描述 |
-|------|------|
-| `OpenProcess2processQueryLimitedInformation` | 以 `PROCESS_QUERY_LIMITED_INFORMATION` 访问权限调用 `OpenProcess`。 |
-| `OpenProcess2processSetLimitedInformation` | 以 `PROCESS_SET_LIMITED_INFORMATION` 访问权限调用 `OpenProcess`。 |
-| `OpenProcess2processQueryInformation` | 以 `PROCESS_QUERY_INFORMATION` 访问权限调用 `OpenProcess`。 |
-| `OpenProcess2processSetInformation` | 以 `PROCESS_SET_INFORMATION` 访问权限调用 `OpenProcess`。 |
-| `OpenThread` | 以任意线程访问权限调用 `OpenThread`。 |
-| `SetPriorityClass` | `SetPriorityClass` — 设置进程优先级类。 |
-| `GetProcessAffinityMask` | `GetProcessAffinityMask` — 查询进程亲和性位掩码。 |
-| `SetProcessAffinityMask` | `SetProcessAffinityMask` — 设置进程亲和性位掩码。 |
-| `GetProcessDefaultCpuSets` | `GetProcessDefaultCpuSets` — 查询进程的默认 CPU 集合 ID。 |
-| `SetProcessDefaultCpuSets` | `SetProcessDefaultCpuSets` — 为进程分配默认 CPU 集合 ID。 |
-| `QueryThreadCycleTime` | `QueryThreadCycleTime` — 读取线程的累计周期计数。 |
-| `SetThreadSelectedCpuSets` | `SetThreadSelectedCpuSets` — 为特定线程分配 CPU 集合 ID。 |
-| `SetThreadPriority` | `SetThreadPriority` — 设置线程的调度优先级。 |
-| `NtQueryInformationProcess2ProcessInformationIOPriority` | 使用 `ProcessIoPriority` 信息类调用 `NtQueryInformationProcess`。 |
-| `NtSetInformationProcess2ProcessInformationIOPriority` | 使用 `ProcessIoPriority` 信息类调用 `NtSetInformationProcess`。 |
-| `GetProcessInformation2ProcessMemoryPriority` | 使用 `ProcessMemoryPriority` 类调用 `GetProcessInformation`。 |
-| `SetProcessInformation2ProcessMemoryPriority` | 使用 `ProcessMemoryPriority` 类调用 `SetProcessInformation`。 |
-| `SetThreadIdealProcessorEx` | `SetThreadIdealProcessorEx` — 设置线程的理想处理器提示。 |
-| `GetThreadIdealProcessorEx` | `GetThreadIdealProcessorEx` — 查询线程的理想处理器。 |
-| `InvalidHandle` | 哨兵变体，表示已获取句柄但发现其无效的操作。由 [`get_process_handle`](../winapi.rs/get_process_handle.md) 和 [`get_thread_handle`](../winapi.rs/get_thread_handle.md) 用于内部错误代码区分。 |
+|---------|-------------|
+| `OpenProcess2processQueryLimitedInformation` | 使用 `PROCESS_QUERY_LIMITED_INFORMATION` 访问权限调用 `OpenProcess`。 |
+| `OpenProcess2processSetLimitedInformation` | 使用 `PROCESS_SET_LIMITED_INFORMATION` 访问权限调用 `OpenProcess`。 |
+| `OpenProcess2processQueryInformation` | 使用 `PROCESS_QUERY_INFORMATION` 访问权限调用 `OpenProcess`。 |
+| `OpenProcess2processSetInformation` | 使用 `PROCESS_SET_INFORMATION` 访问权限调用 `OpenProcess`。 |
+| `OpenThread` | 用于线程级别操作的 `OpenThread`。 |
+| `SetPriorityClass` | [SetPriorityClass](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-setpriorityclass) — 设置进程优先级类。 |
+| `GetProcessAffinityMask` | [GetProcessAffinityMask](https://learn.microsoft.com/zh-cn/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask) — 查询进程 CPU 亲和性。 |
+| `SetProcessAffinityMask` | [SetProcessAffinityMask](https://learn.microsoft.com/zh-cn/windows/win32/api/winbase/nf-winbase-setprocessaffinitymask) — 设置进程 CPU 亲和性。 |
+| `GetProcessDefaultCpuSets` | [GetProcessDefaultCpuSets](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocessdefaultcpusets) — 查询进程默认 CPU 集合。 |
+| `SetProcessDefaultCpuSets` | [SetProcessDefaultCpuSets](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessdefaultcpusets) — 设置进程默认 CPU 集合。 |
+| `QueryThreadCycleTime` | [QueryThreadCycleTime](https://learn.microsoft.com/zh-cn/windows/win32/api/realtimeapiset/nf-realtimeapiset-querythreadcycletime) — 读取线程周期计数器以选择 Prime 线程。 |
+| `SetThreadSelectedCpuSets` | [SetThreadSelectedCpuSets](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadselectedcpusets) — 将线程绑定到特定的 CPU 集合。 |
+| `SetThreadPriority` | [SetThreadPriority](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadpriority) — 设置线程优先级级别。 |
+| `NtQueryInformationProcess2ProcessInformationIOPriority` | `NtQueryInformationProcess` 带 `ProcessIoPriority` 信息类 — 读取 IO 优先级。 |
+| `NtSetInformationProcess2ProcessInformationIOPriority` | `NtSetInformationProcess` 带 `ProcessIoPriority` 信息类 — 设置 IO 优先级。 |
+| `GetProcessInformation2ProcessMemoryPriority` | [GetProcessInformation](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocessinformation) 带 `ProcessMemoryPriority` 类。 |
+| `SetProcessInformation2ProcessMemoryPriority` | [SetProcessInformation](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessinformation) 带 `ProcessMemoryPriority` 类。 |
+| `SetThreadIdealProcessorEx` | [SetThreadIdealProcessorEx](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadidealprocessorex) — 为线程设置理想处理器提示。 |
+| `GetThreadIdealProcessorEx` | [GetThreadIdealProcessorEx](https://learn.microsoft.com/zh-cn/windows/win32/api/processthreadsapi/nf-processthreadsapi-getthreadidealprocessorex) — 查询线程的理想处理器提示。 |
+| `InvalidHandle` | 指示所需句柄不可用的哨兵值。 |
 
 ## 备注
 
-- 该枚举派生了 `PartialEq`、`Eq` 和 `Hash`，使其适合用作 `HashMap` 和 `HashSet` 集合中的键组件。具体来说，它是 [`is_new_error`](is_new_error.md) 使用的 [`ApplyFailEntry`](ApplyFailEntry.md) 复合键的一部分。
+- 命名约定 `Verb2context`（例如，`OpenProcess2processQueryLimitedInformation`）编码了 Win32 函数名以及请求的访问权限或信息类。这允许单个枚举区分使用不同参数调用同一 API 的情况。
+- 该枚举派生 `PartialEq`、`Eq` 和 `Hash`，以便可以在 [ApplyFailEntry](ApplyFailEntry.md) 内部用作键，并存储在 `HashMap`/`HashSet` 集合中。
+- `InvalidHandle` 用于在 API 调用之前就发生失败的情况 — 例如，当 [ProcessHandle](../winapi.rs/ProcessHandle.md) 不携带所需的访问级别时。
 
-- 变体命名约定遵循 `ApiName` 或 `ApiName2ParameterDescription` 的模式，其中 `2` 分隔符表示底层 Win32 API 的特定重载或参数组合。例如，`OpenProcess2processQueryLimitedInformation` 表示"以 `PROCESS_QUERY_LIMITED_INFORMATION` 访问标志调用 `OpenProcess`"。
+## 需求
 
-- 该枚举在源代码中标记为 `#[allow(dead_code)]`，表示并非所有变体当前在代码库中被引用。部分变体保留供将来使用，或仅在被注释掉的错误报告路径中使用。
-
-- `InvalidHandle` 变体是一个特殊情况——它不对应特定的 API 调用，而是对应 API 调用成功但返回无效句柄值的场景。它与辅助 `error_code` 判别值（0、1、2、3）配合使用，以区分多句柄打开操作中哪个特定句柄无效。
-
-### 按类别分组
-
-| 类别 | 变体 |
-|------|------|
-| **进程句柄获取** | `OpenProcess2processQueryLimitedInformation`、`OpenProcess2processSetLimitedInformation`、`OpenProcess2processQueryInformation`、`OpenProcess2processSetInformation` |
-| **线程句柄获取** | `OpenThread` |
-| **亲和性 / CPU 集合** | `GetProcessAffinityMask`、`SetProcessAffinityMask`、`GetProcessDefaultCpuSets`、`SetProcessDefaultCpuSets`、`SetThreadSelectedCpuSets` |
-| **优先级** | `SetPriorityClass`、`SetThreadPriority` |
-| **I/O 优先级** | `NtQueryInformationProcess2ProcessInformationIOPriority`、`NtSetInformationProcess2ProcessInformationIOPriority` |
-| **内存优先级** | `GetProcessInformation2ProcessMemoryPriority`、`SetProcessInformation2ProcessMemoryPriority` |
-| **理想处理器** | `SetThreadIdealProcessorEx`、`GetThreadIdealProcessorEx` |
-| **诊断** | `QueryThreadCycleTime` |
-| **哨兵** | `InvalidHandle` |
-
-## 要求
-
-| 要求 | 值 |
-|------|-----|
-| **模块** | `logging.rs` |
-| **使用者** | [`is_new_error`](is_new_error.md)、[`ApplyFailEntry`](ApplyFailEntry.md)、[`get_process_handle`](../winapi.rs/get_process_handle.md)、[`get_thread_handle`](../winapi.rs/get_thread_handle.md)、`apply.rs` |
-| **Trait** | `PartialEq`、`Eq`、`Hash` |
-| **平台** | 枚举本身与平台无关；其命名的操作是 Windows 特定的。 |
+| | |
+|---|---|
+| **模块** | `src/logging.rs` |
+| **调用方** | [log_error_if_new](../apply.rs/log_error_if_new.md)，[apply.rs](../apply.rs/README.md) 中的所有 `apply_*` 函数 |
+| **依赖项** | 无（无字段枚举） |
+| **权限** | 无 |
 
 ## 另请参阅
 
 | 主题 | 链接 |
-|------|------|
-| ApplyFailEntry 结构体 | [ApplyFailEntry](ApplyFailEntry.md) |
-| is_new_error 函数 | [is_new_error](is_new_error.md) |
-| purge_fail_map 函数 | [purge_fail_map](purge_fail_map.md) |
-| get_process_handle 函数 | [get_process_handle](../winapi.rs/get_process_handle.md) |
-| get_thread_handle 函数 | [get_thread_handle](../winapi.rs/get_thread_handle.md) |
-| logging 模块概述 | [README](README.md) |
+|-------|------|
+| 模块概览 | [logging.rs](README.md) |
+| 错误去重键 | [ApplyFailEntry](ApplyFailEntry.md) |
+| 首次出现检查 | [is_new_error](is_new_error.md) |
+| Apply 模块 | [apply.rs](../apply.rs/README.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*记录于提交：[facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

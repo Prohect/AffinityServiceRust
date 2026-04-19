@@ -1,10 +1,10 @@
 # reset_thread_ideal_processors function (apply.rs)
 
-Redistributes thread ideal processors across a specified set of CPUs after an affinity mask or CPU-set change. The function sorts all threads by their accumulated CPU time (kernel + user) in descending order and assigns each thread an ideal processor from the target CPU list using round-robin distribution with a random starting offset. This prevents Windows from concentrating all threads onto the same CPU after a process-wide affinity or CPU-set change.
+Resets ideal processor assignments for all threads in a process after an affinity or CPU set change. Distributes threads across the new set of CPUs by sorting threads by CPU time (descending) and assigning ideal processors in round-robin order with a random offset to avoid deterministic clustering.
 
 ## Syntax
 
-```AffinityServiceRust/src/apply.rs#L219-231
+```AffinityServiceRust/src/apply.rs#L219-226
 pub fn reset_thread_ideal_processors<'a>(
     pid: u32,
     config: &ProcessLevelConfig,
@@ -17,67 +17,81 @@ pub fn reset_thread_ideal_processors<'a>(
 
 ## Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `pid` | `u32` | The process ID of the target process. Used for error deduplication in log messages. |
-| `config` | `&ProcessLevelConfig` | The process-level configuration. The `name` field is used in error log messages and passed to `get_thread_handle` for handle acquisition. |
-| `dry_run` | `bool` | When `true`, a synthetic change message is recorded describing how many threads would be redistributed, without opening any thread handles or calling `SetThreadIdealProcessorEx`. When `false`, the actual reassignment is performed. |
-| `cpus` | `&[u32]` | The set of CPU indices to distribute thread ideal processors across. Callers pass `&config.affinity_cpus` after an affinity mask change, or `&config.cpu_set_cpus` after a CPU-set change (when `cpu_set_reset_ideal` is enabled). If empty, the function returns immediately. |
-| `threads` | `&impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>` | A lazy closure that returns a reference to a map of thread IDs to their `SYSTEM_THREAD_INFORMATION` snapshots from the most recent system process information query. The closure is invoked only when the function proceeds past early-exit checks. The `KernelTime` and `UserTime` fields are summed to determine each thread's total CPU time for sorting. |
-| `apply_config_result` | `&mut ApplyConfigResult` | Accumulator for change descriptions and error messages produced during execution. |
+`pid: u32`
+
+The process identifier of the target process.
+
+`config: &ProcessLevelConfig`
+
+The [ProcessLevelConfig](../config.rs/ProcessLevelConfig.md) for the matched process. Used for the `name` field in log messages and to open thread handles.
+
+`dry_run: bool`
+
+When `true`, records what would be changed into `apply_config_result` without calling any Windows APIs.
+
+`cpus: &[u32]`
+
+The set of CPU indices to distribute thread ideal processors across. Callers pass `&config.affinity_cpus` after an affinity change, or `&config.cpu_set_cpus` after a CPU set change (when `cpu_set_reset_ideal` is set).
+
+`threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>`
+
+Lazy accessor returning the map of thread IDs to `SYSTEM_THREAD_INFORMATION` for the process.
+
+`apply_config_result: &mut ApplyConfigResult`
+
+Accumulator for recording changes and errors. See [ApplyConfigResult](ApplyConfigResult.md).
 
 ## Return value
 
-This function does not return a value. All outcomes are communicated through the `apply_config_result` parameter.
+This function does not return a value. Results are accumulated in `apply_config_result`.
 
 ## Remarks
 
+When Windows changes a process's affinity mask, thread ideal processor assignments may become stale — a thread could retain an ideal processor hint pointing at a CPU no longer in the affinity set. This function corrects that by reassigning ideal processors across the new CPU set.
+
 ### Algorithm
 
-1. **Early exit**: If `cpus` is empty, the function returns immediately. If `dry_run` is `true`, a change message is recorded and the function returns without performing any API calls.
-2. **Collect CPU times**: The `threads` closure is invoked to obtain the thread map. For each thread in the returned map, the total CPU time is computed as `KernelTime + UserTime` (both in 100-nanosecond units). The results are collected into a fixed-capacity list (`List<[(u32, i64); TIDS_FULL]>`).
-3. **Sort**: The thread list is sorted in descending order of total CPU time using `sort_unstable_by_key` with `Reverse`. This ensures the most CPU-active threads are assigned ideal processors first.
-4. **Random offset**: A random `u8` value is generated via `rand::random::<u8>()` and used as a starting offset into the CPU array. This avoids always assigning the first thread to the first CPU in the list, providing a degree of load balancing across apply cycles.
-5. **Round-robin assignment**: Each thread is assigned an ideal processor by cycling through the `cpus` array: `target_cpu = cpus[(success_count + random_shift) % cpus.len()]`. The function calls `set_thread_ideal_processor_ex` with group `0` and the computed CPU index.
-6. **Handle resolution**: For each thread, a handle is obtained via `get_thread_handle`. The function prefers `w_handle` over `w_limited_handle` (falling back to `w_limited_handle` only when `w_handle` is invalid). Threads for which a handle cannot be obtained are silently skipped.
-7. **Immediate handle release**: After each thread is processed, the thread handle is explicitly dropped immediately after use to release OS resources promptly, rather than deferring cleanup to the end of the iteration.
-8. **Result recording**: On completion, a change message of the form `"reset ideal processor for N threads"` is appended, where N is the count of threads that were successfully reassigned.
+1. **Early exit** — If `cpus` is empty, returns immediately. In dry-run mode, records a summary change message and returns.
+2. **Collect thread times** — Iterates all threads and pairs each TID with its total CPU time (`KernelTime + UserTime`).
+3. **Sort descending** — Sorts threads by total CPU time in descending order so the busiest threads are assigned first.
+4. **Random offset** — Generates a random `u8` shift value to randomize the starting position in the CPU list. This prevents the same CPUs from always receiving the highest-activity threads across successive calls.
+5. **Round-robin assignment** — For each thread (in sorted order):
+   - Opens a thread handle via [`get_thread_handle`](../winapi.rs/get_thread_handle.md).
+   - Selects a write handle, preferring `w_handle` over `w_limited_handle`.
+   - Computes the target CPU as `cpus[(success_count + random_shift) % cpu_count]`.
+   - Calls `SetThreadIdealProcessorEx` with processor group 0 and the target CPU number.
+   - On failure, logs via [`log_error_if_new`](log_error_if_new.md). On success, increments the success counter.
+6. **Summary** — Records a single change entry: `"reset ideal processor for {N} threads"`.
+
+### Platform notes
+
+- `SetThreadIdealProcessorEx` is a hint to the Windows scheduler, not a hard constraint. The OS may still schedule the thread on other CPUs.
+- All assignments use processor group 0. Systems with more than 64 logical processors spanning multiple groups are not fully handled.
+- Thread handles opened by this function are dropped immediately after use (not cached in `PrimeThreadScheduler`).
 
 ### Edge cases
 
-- If all `set_thread_ideal_processor_ex` calls fail, the success counter remains zero and the change message reports `"reset ideal processor for 0 threads"`.
-- Threads that have exited between the snapshot and the handle-open attempt are silently skipped; `get_thread_handle` returns `None` and the function continues with the next thread.
-- The `random_shift` is a `u8` cast to `usize`, so values wrap modulo 256 which is fine because the modulus is always `cpus.len()`.
-
-### Callers
-
-This function is called from two sites:
-- [`apply_affinity`](apply_affinity.md) — immediately after a successful `SetProcessAffinityMask`, passing `&config.affinity_cpus`.
-- [`apply_process_default_cpuset`](apply_process_default_cpuset.md) — immediately before `SetProcessDefaultCpuSets` when `config.cpu_set_reset_ideal` is `true`, passing `&config.cpu_set_cpus`.
+- If no threads can be opened (e.g., all handles fail), the summary message reports `"reset ideal processor for 0 threads"`.
+- The random shift wraps via modulo arithmetic, so it is safe for any value of `random::<u8>()`.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| Module | `apply.rs` |
-| Crate | `AffinityServiceRust` |
-| Visibility | `pub` |
-| Windows APIs | `SetThreadIdealProcessorEx` (via `winapi::set_thread_ideal_processor_ex`), `GetLastError` |
-| Callers | [`apply_affinity`](apply_affinity.md), [`apply_process_default_cpuset`](apply_process_default_cpuset.md) |
-| Callees | [`log_error_if_new`](log_error_if_new.md), `winapi::get_thread_handle`, `winapi::set_thread_ideal_processor_ex`, `error_codes::error_from_code_win32`, `rand::random` |
-| Privileges | Requires thread handles with `THREAD_SET_INFORMATION` or `THREAD_SET_LIMITED_INFORMATION` access rights. |
+| | |
+|---|---|
+| **Module** | `src/apply.rs` |
+| **Called by** | [apply_affinity](apply_affinity.md) (after successful `SetProcessAffinityMask`), [apply_process_default_cpuset](apply_process_default_cpuset.md) (when `cpu_set_reset_ideal` is `true`) |
+| **Calls** | [`get_thread_handle`](../winapi.rs/get_thread_handle.md), [`set_thread_ideal_processor_ex`](../winapi.rs/set_thread_ideal_processor_ex.md), [`log_error_if_new`](log_error_if_new.md) |
+| **Win32 API** | [SetThreadIdealProcessorEx](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setthreadidealprocessorex) |
+| **Privileges** | `THREAD_SET_INFORMATION` (or `THREAD_SET_LIMITED_INFORMATION`) on each thread |
 
 ## See Also
 
-| Reference | Link |
-|-----------|------|
-| apply module overview | [`README`](README.md) |
-| ApplyConfigResult | [`ApplyConfigResult`](ApplyConfigResult.md) |
-| apply_affinity | [`apply_affinity`](apply_affinity.md) |
-| apply_process_default_cpuset | [`apply_process_default_cpuset`](apply_process_default_cpuset.md) |
-| apply_ideal_processors | [`apply_ideal_processors`](apply_ideal_processors.md) |
-| log_error_if_new | [`log_error_if_new`](log_error_if_new.md) |
-| ProcessLevelConfig | [`config.rs/ProcessLevelConfig`](../config.rs/ProcessLevelConfig.md) |
+| | |
+|---|---|
+| [apply_affinity](apply_affinity.md) | Sets process affinity mask; calls this function on success |
+| [apply_process_default_cpuset](apply_process_default_cpuset.md) | Sets process default CPU sets; optionally calls this function |
+| [apply_ideal_processors](apply_ideal_processors.md) | Rule-based ideal processor assignment for thread-level config |
+| [ApplyConfigResult](ApplyConfigResult.md) | Accumulator for changes and errors |
+| [ProcessLevelConfig](../config.rs/ProcessLevelConfig.md) | Process-level configuration struct |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

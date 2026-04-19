@@ -307,7 +307,7 @@ fn process_find(cli: &CliArgs, configs: &ConfigResult, blacklist: &[String]) -> 
 fn main() -> windows::core::Result<()> {
     let args: Vec<String> = env::args().collect();
     let mut cli = CliArgs::new();
-    parse_args(&args, &mut cli)?;
+    parse_args(&args, &mut cli)?; // typical cli args: -config config.ini -interval 16000 -resolution 5110
     if cli.help_mode {
         print_help();
         return Ok(());

@@ -1,6 +1,6 @@
 # is_affinity_unset function (winapi.rs)
 
-Checks whether a process has its default (all-CPU) affinity mask — that is, whether the process affinity mask equals the system affinity mask. This is used by `-find` mode to identify processes whose CPU affinity has not been explicitly configured.
+Checks whether a process's CPU affinity mask equals the full system affinity mask, indicating that no custom affinity restriction has been applied. Used by the `-find` mode to identify processes that have not yet been configured with a specific CPU affinity.
 
 ## Syntax
 
@@ -12,61 +12,64 @@ pub fn is_affinity_unset(pid: u32, process_name: &str) -> bool
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `pid` | `u32` | The process identifier of the target process. |
-| `process_name` | `&str` | The name of the target process, used for diagnostic logging and for populating the find-fail set on access-denied errors. |
+| `pid` | `u32` | The process identifier to query. |
+| `process_name` | `&str` | The process image name, used for error logging and for recording in the `-find` failure set when access is denied. |
 
 ## Return value
 
-Returns `true` if the process's current affinity mask is equal to the system affinity mask, meaning no custom affinity has been applied. Returns `false` in all other cases, including:
-
-- The process handle could not be opened.
-- The handle was opened but is invalid.
-- `GetProcessAffinityMask` failed.
-- The process has a custom affinity mask that differs from the system mask.
+`bool` — `true` if the process's current affinity mask equals the system-wide affinity mask (meaning no affinity restriction is in effect). `false` if the process has a custom affinity mask, or if any API call fails during the check.
 
 ## Remarks
 
 ### Algorithm
 
-1. Opens the target process with `PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION` access via `OpenProcess`.
-2. If the open fails, logs the error to the find log via [`log_to_find`](../logging.rs/log_to_find.md). If the error code is `5` (`ACCESS_DENIED`), the process name is added to the `FINDS_FAIL_SET` so it is excluded from future find iterations.
-3. If the returned handle is invalid, logs a diagnostic and returns `false`.
-4. Calls `GetProcessAffinityMask` to retrieve both the process affinity mask (`current_mask`) and the system affinity mask (`system_mask`).
-5. Compares the two masks. Returns `true` only if they are equal.
-6. Closes the process handle before returning.
+The function performs the following steps:
 
-### Access-denied handling
+1. **Open process** — Calls `OpenProcess` with `PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION` access rights.
+2. **Query affinity** — Calls `GetProcessAffinityMask` to obtain both the process's `current_mask` and the system-wide `system_mask`.
+3. **Compare** — Returns `true` if `current_mask == system_mask`.
+4. **Close handle** — The process handle is closed via `CloseHandle` before returning.
 
-When `OpenProcess` or `GetProcessAffinityMask` returns error code `5` (`ACCESS_DENIED`), the process name is inserted into the `FINDS_FAIL_SET` global. This set is used by the find-mode logic to skip processes that are known to be inaccessible (e.g., protected processes, anti-cheat services), avoiding repeated failed attempts and log noise.
+### Error handling
 
-### Handle lifetime
+| Failure point | Behavior |
+|---------------|----------|
+| `OpenProcess` fails | Logs via `log_to_find`; if the Win32 error code is `5` (`ERROR_ACCESS_DENIED`), inserts `process_name` into the global fail-find set. Returns `false`. |
+| `OpenProcess` returns an invalid handle | Logs via `log_to_find`. Returns `false`. |
+| `GetProcessAffinityMask` fails | Logs via `log_to_find`; if `ERROR_ACCESS_DENIED`, inserts into the fail-find set. Returns `false`. |
 
-The function opens and closes the process handle within its own scope. It does **not** use the [`ProcessHandle`](ProcessHandle.md) RAII wrapper because it only needs a single handle with specific combined access rights (`PROCESS_SET_INFORMATION | PROCESS_QUERY_INFORMATION`).
+The conservative `false` return on failure means that processes which cannot be queried are treated as "already configured," preventing them from appearing in `-find` mode output.
 
-### Platform notes
+### Fail-find set
 
-- **Windows only.** Uses `OpenProcess`, `GetProcessAffinityMask`, `GetLastError`, and `CloseHandle` from the Win32 API.
-- The system affinity mask represents all logical processors available to the process's processor group. On systems with more than 64 logical processors, this function only considers the primary processor group.
+When an `ERROR_ACCESS_DENIED` (code 5) is encountered during either the `OpenProcess` or `GetProcessAffinityMask` calls, the process name is inserted into the global fail-find set (accessed via the `get_fail_find_set!()` macro). This set is used by the `-find` mode to track processes that the service cannot inspect due to insufficient privileges, allowing them to be reported separately.
+
+### Handle management
+
+This function opens and closes its own temporary process handle rather than reusing handles from [ProcessHandle](ProcessHandle.md). This is because `-find` mode operates as a one-shot scan rather than a persistent polling loop, so there is no benefit to caching the handle.
+
+### System affinity mask
+
+The `system_mask` output of `GetProcessAffinityMask` represents all logical processors available on the system (within the current processor group). On a system with 8 logical processors, this would be `0xFF`. A process whose `current_mask` equals `system_mask` has the default "use all CPUs" configuration.
 
 ## Requirements
 
-| Requirement | Value |
-|-------------|-------|
-| **Module** | `winapi.rs` |
-| **Callers** | Find-mode logic in `apply.rs` / `scheduler.rs` |
-| **Callees** | `OpenProcess`, `GetProcessAffinityMask`, `GetLastError`, `CloseHandle` (Win32), [`log_to_find`](../logging.rs/log_to_find.md), [`error_from_code_win32`](../error_codes.rs/error_from_code_win32.md) |
-| **Win32 API** | [OpenProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocess), [GetProcessAffinityMask](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask) |
-| **Privileges** | `SeDebugPrivilege` recommended for querying protected/elevated processes. |
+| | |
+|---|---|
+| **Module** | `src/winapi.rs` |
+| **Callers** | `-find` mode in `src/main.rs` |
+| **Callees** | `OpenProcess` (Win32), `GetProcessAffinityMask` (Win32), `CloseHandle` (Win32), `GetLastError`, [error_from_code_win32](../error_codes.rs/error_from_code_win32.md), [log_to_find](../logging.rs/log_to_find.md) |
+| **Win32 API** | [OpenProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocess) (`PROCESS_SET_INFORMATION \| PROCESS_QUERY_INFORMATION`), [GetProcessAffinityMask](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getprocessaffinitymask) |
+| **Privileges** | Requires `PROCESS_QUERY_INFORMATION` access; [SeDebugPrivilege](enable_debug_privilege.md) extends access to protected processes |
 
 ## See Also
 
 | Topic | Link |
 |-------|------|
-| get_process_handle | [get_process_handle](get_process_handle.md) |
-| log_to_find | [log_to_find](../logging.rs/log_to_find.md) |
-| error_from_code_win32 | [error_from_code_win32](../error_codes.rs/error_from_code_win32.md) |
-| FINDS_FAIL_SET static | [statics](../logging.rs/statics.md#finds_fail_set) |
-| logging module | [logging.rs](../logging.rs/README.md) |
+| Module overview | [winapi.rs](README.md) |
+| Affinity application function | [apply_affinity](../apply.rs/apply_affinity.md) |
+| CPU set alternative to affinity | [apply_process_default_cpuset](../apply.rs/apply_process_default_cpuset.md) |
+| CPU Set ID ↔ mask conversions | [cpusetids_from_mask](cpusetids_from_mask.md), [mask_from_cpusetids](mask_from_cpusetids.md) |
+| Debug privilege enablement | [enable_debug_privilege](enable_debug_privilege.md) |
 
----
-*Documented for Commit: [29c0140](https://github.com/Prohect/AffinityServiceRust/tree/29c0140cfc5ad80a5ee53fea0ce61fedb90783aa)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

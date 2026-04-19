@@ -391,7 +391,6 @@ fn main() -> windows::core::Result<()> {
         (None, None)
     };
 
-    let mut prime_core_scheduler = PrimeThreadScheduler::new(configs.constants.clone());
     let mut current_loop = 0u32;
     let mut should_continue = true;
     // always do a full rule match on the first loop, or on config reload
@@ -402,6 +401,7 @@ fn main() -> windows::core::Result<()> {
     let mut thread_level_applied: List<[u32; PENDING]> = List::new();
     // both-level apply exists to reduce get_threads' enumeration and merge logs for a same process
     let mut process_level_pending: List<[u32; PENDING]> = List::new();
+    let mut prime_core_scheduler = PrimeThreadScheduler::new(configs.constants.clone());
 
     while should_continue {
         if cli.log_loop {

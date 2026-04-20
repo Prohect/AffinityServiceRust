@@ -407,7 +407,11 @@ fn main() -> windows::core::Result<()> {
         if cli.log_loop {
             log!("Loop {} started", current_loop + 1);
         }
-        match ProcessSnapshot::take(&mut SNAPSHOT_BUFFER.lock().unwrap(), &mut PID_TO_PROCESS_MAP.lock().unwrap()) {
+        let buffer = &mut SNAPSHOT_BUFFER.lock().unwrap();
+        let pid_to_process = &mut PID_TO_PROCESS_MAP.lock().unwrap();
+        buffer.clear();
+        pid_to_process.clear();
+        match ProcessSnapshot::take(buffer, pid_to_process) {
             Err(err) => {
                 log!("Failed to take process snapshot: {}", err);
             }
@@ -524,8 +528,6 @@ fn main() -> windows::core::Result<()> {
                 if cli.dry_run {
                     should_continue = false;
                 }
-                drop(pids_and_names);
-                drop(processes);
             }
         };
         process_find(&cli, &configs, &blacklist)?;

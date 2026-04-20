@@ -361,7 +361,7 @@
 - [L158:172]fn log_apply_results(pid: &u32, name: &String, result: ApplyConfigResult) 
 - [L174:266]fn process_logs(configs: &ConfigResult, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
 - [L268:305]fn process_find(cli: &CliArgs, configs: &ConfigResult, blacklist: &[String]) -> Result<(), windows::core::Error> 
-- [L307:611]fn main() -> windows::core::Result<()> 
+- [L307:613]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
 - [L8:16]enum ProcessPriority {
@@ -428,26 +428,24 @@
 ## src/process.rs
 - [L8:8]static SNAPSHOT_BUFFER: Lazy<Mutex<Vec<u8>>> = Lazy::new(|| Mutex::new(vec![0u8; 32]));
 - [L10:10]static PID_TO_PROCESS_MAP: Lazy<Mutex<HashMap<u32, ProcessEntry>>> = Lazy::new(|| Mutex::new(HashMap::default()));
-- [L7:15]struct ProcessSnapshot<'a> {
+- [L7:16]struct ProcessSnapshot<'a> {
     buffer: &'a mut Vec<u8>,
     pub pid_to_process: &'a mut HashMap<u32, ProcessEntry>,
 }
-- [L17]impl<'a> Drop for ProcessSnapshot<'a>
-  - [L18:21]fn drop(&mut self) 
-- [L24]impl<'a> ProcessSnapshot<'a>
-  - [L25:73]fn take(buffer: &'a mut Vec<u8>, pid_to_process: &'a mut HashMap<u32, ProcessEntry>) -> Result<Self, i32> 
-- [L77:81]struct ProcessEntry {
+- [L18]impl<'a> ProcessSnapshot<'a>
+  - [L19:67]fn take(buffer: &'a mut Vec<u8>, pid_to_process: &'a mut HashMap<u32, ProcessEntry>) -> Result<Self, i32> 
+- [L71:75]struct ProcessEntry {
     pub process: SYSTEM_PROCESS_INFORMATION,
     threads_base_ptr: usize,
     name: String,
 }
-- [L88]impl ProcessEntry
-  - [L89:104]fn new(process: SYSTEM_PROCESS_INFORMATION, threads_base_ptr: *const SYSTEM_THREAD_INFORMATION) -> Self 
-  - [L106:123]fn get_threads(&self) -> HashMap<u32, SYSTEM_THREAD_INFORMATION> 
-  - [L126:128]fn get_name(&self) -> &str 
-  - [L132:142]fn get_name_original_case(&self) -> String 
-  - [L145:147]fn pid(&self) -> u32 
-  - [L150:152]fn thread_count(&self) -> u32 
+- [L82]impl ProcessEntry
+  - [L83:98]fn new(process: SYSTEM_PROCESS_INFORMATION, threads_base_ptr: *const SYSTEM_THREAD_INFORMATION) -> Self 
+  - [L100:115]fn get_threads(&self) -> HashMap<u32, SYSTEM_THREAD_INFORMATION> 
+  - [L118:120]fn get_name(&self) -> &str 
+  - [L124:134]fn get_name_original_case(&self) -> String 
+  - [L137:139]fn pid(&self) -> u32 
+  - [L142:144]fn thread_count(&self) -> u32 
 
 ## src/scheduler.rs
 - [L14:17]struct PrimeThreadScheduler {

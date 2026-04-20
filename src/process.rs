@@ -10,15 +10,9 @@ pub static SNAPSHOT_BUFFER: Lazy<Mutex<Vec<u8>>> = Lazy::new(|| Mutex::new(vec![
 pub static PID_TO_PROCESS_MAP: Lazy<Mutex<HashMap<u32, ProcessEntry>>> = Lazy::new(|| Mutex::new(HashMap::default()));
 
 pub struct ProcessSnapshot<'a> {
-    buffer: &'a mut Vec<u8>,
+    #[allow(dead_code)]
+    buffer: &'a mut Vec<u8>, // SAFETY: pointers into buffer used in unsafe block in ProcessEntry's threads enumeration
     pub pid_to_process: &'a mut HashMap<u32, ProcessEntry>,
-}
-
-impl<'a> Drop for ProcessSnapshot<'a> {
-    fn drop(&mut self) {
-        self.pid_to_process.clear();
-        self.buffer.clear();
-    }
 }
 
 impl<'a> ProcessSnapshot<'a> {
@@ -103,10 +97,8 @@ impl ProcessEntry {
         }
     }
 
-    /// Returns thread information map, lazily populating from raw pointer on first call.
-    ///
     /// The raw thread array from SYSTEM_PROCESS_INFORMATION is parsed into a HashMap
-    /// for efficient TID-based lookup. Cached on first access per process entry.
+    /// for efficient TID-based lookup. Callers should cache results on first access per process entry.
     pub fn get_threads(&self) -> HashMap<u32, SYSTEM_THREAD_INFORMATION> {
         let mut result: HashMap<u32, SYSTEM_THREAD_INFORMATION> = HashMap::default();
         unsafe {

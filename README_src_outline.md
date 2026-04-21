@@ -89,7 +89,7 @@
     tid_with_delta_cycles: &mut [(u32, u64, bool)],
     prime_core_scheduler: &mut PrimeThreadScheduler,
 ) 
-- [L805:947]fn apply_prime_threads_promote(
+- [L805:950]fn apply_prime_threads_promote(
     pid: u32,
     config: &ThreadLevelConfig,
     current_mask: &mut usize,
@@ -97,7 +97,7 @@
     prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L949:1040]fn apply_prime_threads_demote<'a>(
+- [L952:1046]fn apply_prime_threads_demote<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
     threads: &impl Fn() -> &'a HashMap<u32, SYSTEM_THREAD_INFORMATION>,
@@ -105,7 +105,7 @@
     prime_core_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L1042:1310]fn apply_ideal_processors<'a>(
+- [L1048:1325]fn apply_ideal_processors<'a>(
     pid: u32,
     config: &ThreadLevelConfig,
     dry_run: bool,
@@ -113,7 +113,7 @@
     prime_scheduler: &mut PrimeThreadScheduler,
     apply_config_result: &mut ApplyConfigResult,
 ) 
-- [L1312:1325]fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler) 
+- [L1327:1340]fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler) 
 
 ## src/cli.rs
 - [L5:28]struct CliArgs {

@@ -829,8 +829,11 @@ pub fn apply_prime_threads_promote(
                     true => {
                         log_error_if_new(pid, tid, &config.name, Operation::OpenThread, 0, apply_config_result, || {
                             format!(
-                                "apply_prime_threads_promote: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}",
-                                pid, tid, &config.name
+                                "apply_prime_threads_promote: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}-{}",
+                                pid,
+                                tid,
+                                &config.name,
+                                resolve_address_to_module(pid, thread_stats.start_address)
                             )
                         });
                         continue;
@@ -976,8 +979,11 @@ pub fn apply_prime_threads_demote<'a>(
                     true => {
                         log_error_if_new(pid, tid, &config.name, Operation::OpenThread, 0, apply_config_result, || {
                             format!(
-                                "apply_prime_threads_demote: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}",
-                                pid, tid, &config.name
+                                "apply_prime_threads_demote: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}-{}",
+                                pid,
+                                tid,
+                                &config.name,
+                                resolve_address_to_module(pid, thread_stats.start_address)
                             )
                         });
                         continue;
@@ -1124,8 +1130,11 @@ pub fn apply_ideal_processors<'a>(
                                 true => {
                                     log_error_if_new(pid, tid, &config.name, Operation::OpenThread, 0, apply_config_result, || {
                                         format!(
-                                            "apply_ideal_processors: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}",
-                                            pid, tid, &config.name
+                                            "apply_ideal_processors: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}-{}",
+                                            pid,
+                                            tid,
+                                            &config.name,
+                                            resolve_address_to_module(pid, thread_stats.start_address)
                                         )
                                     });
                                     continue;
@@ -1188,8 +1197,11 @@ pub fn apply_ideal_processors<'a>(
                     true => {
                         log_error_if_new(pid, *tid, &config.name, Operation::OpenThread, 0, apply_config_result, || {
                             format!(
-                                "apply_ideal_processors: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}",
-                                pid, tid, &config.name
+                                "apply_ideal_processors: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}-{}",
+                                pid,
+                                tid,
+                                &config.name,
+                                resolve_address_to_module(pid, thread_stats.start_address)
                             )
                         });
                         continue;
@@ -1260,8 +1272,11 @@ pub fn apply_ideal_processors<'a>(
                             true => {
                                 log_error_if_new(pid, tid, &config.name, Operation::OpenThread, 0, apply_config_result, || {
                                     format!(
-                                        "apply_ideal_processors: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}",
-                                        pid, tid, &config.name
+                                        "apply_ideal_processors: [GET_THREAD_HANDLE] Invalid handle {:>5}-{:>5}-{}-{}",
+                                        pid,
+                                        tid,
+                                        &config.name,
+                                        resolve_address_to_module(pid, thread_stats.start_address)
                                     )
                                 });
                                 continue;

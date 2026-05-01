@@ -1,7 +1,7 @@
 # Src Outline, **READ this by MULTIPLE calls if it's too large being outlined by first call**
 
 ## src/apply.rs
-- [L32:35]struct ApplyConfigResult {
+- [L31:35]struct ApplyConfigResult {
     pub changes: Vec<String>,
     pub errors: Vec<String>,
 }
@@ -116,7 +116,7 @@
 - [L1327:1340]fn update_thread_stats(pid: u32, prime_scheduler: &mut PrimeThreadScheduler) 
 
 ## src/cli.rs
-- [L5:28]struct CliArgs {
+- [L4:28]struct CliArgs {
     pub interval_ms: u32,
     pub help_mode: bool,
     pub help_all_mode: bool,
@@ -160,16 +160,16 @@
 - [L13:13]const PENDING: usize = 16;
 
 ## src/config.rs
-- [L17:21]struct PrimePrefix {
+- [L16:21]struct PrimePrefix {
     pub prefix: String,
     pub cpus: Option<List<[u32; CONSUMER_CPUS]>>,
     pub thread_priority: ThreadPriority,
 }
-- [L24:27]struct IdealProcessorRule {
+- [L23:27]struct IdealProcessorRule {
     pub cpus: List<[u32; CONSUMER_CPUS]>,
     pub prefixes: Vec<String>,
 }
-- [L30:38]struct ProcessLevelConfig {
+- [L29:38]struct ProcessLevelConfig {
     pub name: String,
     pub priority: ProcessPriority,
     pub affinity_cpus: List<[u32; CONSUMER_CPUS]>,
@@ -178,14 +178,14 @@
     pub io_priority: IOPriority,
     pub memory_priority: MemoryPriority,
 }
-- [L40:46]struct ThreadLevelConfig {
+- [L39:46]struct ThreadLevelConfig {
     pub name: String,
     pub prime_threads_cpus: List<[u32; CONSUMER_CPUS]>,
     pub prime_threads_prefixes: Vec<PrimePrefix>,
     pub track_top_x_threads: i32,
     pub ideal_processor_rules: Vec<IdealProcessorRule>,
 }
-- [L49:53]struct ConfigConstants {
+- [L48:53]struct ConfigConstants {
     pub min_active_streak: u8,
     pub keep_threshold: f64,
     pub entry_threshold: f64,
@@ -196,7 +196,7 @@
 - [L115:117]fn mask_to_cpu_indices(mask: u64) -> List<[u32; CONSUMER_CPUS]> 
 - [L119:127]fn cpu_indices_to_mask(cpus: &[u32]) -> usize 
 - [L129:159]fn format_cpu_indices(cpus: &[u32]) -> String 
-- [L162:175]struct ConfigResult {
+- [L161:175]struct ConfigResult {
     pub process_level_configs: HashMap<u32, HashMap<String, ProcessLevelConfig>>,
     pub thread_level_configs: HashMap<u32, HashMap<String, ThreadLevelConfig>>,
     pub constants: ConfigConstants,
@@ -247,7 +247,7 @@
 - [L743:829]fn read_config<P: AsRef<Path>>(path: P) -> ConfigResult 
 - [L877:888]fn read_bleack_list<P: AsRef<Path>>(path: P) -> Result<Vec<String>> 
 - [L890:894]fn read_utf16le_file(path: &str) -> Result<String> 
-- [L897:900]fn parse_mask(s: &str) -> usize 
+- [L896:900]fn parse_mask(s: &str) -> usize 
 - [L902:1065]fn convert(in_file: Option<String>, out_file: Option<String>) 
 - [L1067:1279]fn sort_and_group_config(in_file: Option<String>, out_file: Option<String>) 
 - [L1281:1303]fn hotreload_blacklist(cli: &CliArgs, blacklist: &mut Vec<String>, last_blacklist_mod_time: &mut Option<std::time::SystemTime>) 
@@ -293,7 +293,7 @@
 - [L68:68]static FIND_LOG_FILE: Lazy<Mutex<File>> =
 - [L70:70]static FINDS_FAIL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::default()));
 - [L71:71]static PID_MAP_FAIL_ENTRY_SET: Lazy<Mutex<HashMap<u32, HashMap<ApplyFailEntry, bool>>>> = Lazy::new(|| Mutex::new(HashMap::default()));
-- [L75:96]enum Operation {
+- [L73:96]enum Operation {
     OpenProcess2processQueryLimitedInformation,
     OpenProcess2processSetLimitedInformation,
     OpenProcess2processQueryInformation,
@@ -315,7 +315,7 @@
     GetThreadIdealProcessorEx,
     InvalidHandle,
 }
-- [L98:103]struct ApplyFailEntry {
+- [L97:103]struct ApplyFailEntry {
     tid: u32,
     process_name: String,
     operation: Operation,
@@ -361,10 +361,10 @@
 - [L158:172]fn log_apply_results(pid: &u32, name: &String, result: ApplyConfigResult) 
 - [L174:266]fn process_logs(configs: &ConfigResult, blacklist: &[String], logs_path: Option<&str>, output_file: Option<&str>) 
 - [L268:305]fn process_find(cli: &CliArgs, configs: &ConfigResult, blacklist: &[String]) -> Result<(), windows::core::Error> 
-- [L307:613]fn main() -> windows::core::Result<()> 
+- [L307:612]fn main() -> windows::core::Result<()> 
 
 ## src/priority.rs
-- [L8:16]enum ProcessPriority {
+- [L7:16]enum ProcessPriority {
     None,
     Idle,
     BelowNormal,
@@ -378,7 +378,7 @@
   - [L37:39]fn as_win_const(&self) -> Option<PROCESS_CREATION_FLAGS> 
   - [L41:48]fn from_str(s: &str) -> Self 
   - [L50:56]fn from_win_const(val: u32) -> &'static str 
-- [L60:66]enum IOPriority {
+- [L59:66]enum IOPriority {
     None,
     VeryLow,
     Low,
@@ -390,8 +390,8 @@
   - [L85:87]fn as_win_const(&self) -> Option<u32> 
   - [L89:96]fn from_str(s: &str) -> Self 
   - [L98:104]fn from_win_const(val: u32) -> &'static str 
-- [L109:109]struct MemoryPriorityInformation(pub u32);
-- [L112:119]enum MemoryPriority {
+- [L107:109]struct MemoryPriorityInformation(pub u32);
+- [L111:119]enum MemoryPriority {
     None,
     VeryLow,
     Low,
@@ -404,7 +404,7 @@
   - [L139:141]fn as_win_const(&self) -> Option<MEMORY_PRIORITY> 
   - [L143:150]fn from_str(s: &str) -> Self 
   - [L152:158]fn from_win_const(val: u32) -> &'static str 
-- [L162:174]enum ThreadPriority {
+- [L161:174]enum ThreadPriority {
     None,
     ErrorReturn,
     ModeBackgroundBegin,
@@ -434,7 +434,7 @@
 }
 - [L18]impl<'a> ProcessSnapshot<'a>
   - [L19:67]fn take(buffer: &'a mut Vec<u8>, pid_to_process: &'a mut HashMap<u32, ProcessEntry>) -> Result<Self, i32> 
-- [L71:75]struct ProcessEntry {
+- [L70:75]struct ProcessEntry {
     pub process: SYSTEM_PROCESS_INFORMATION,
     threads_base_ptr: usize,
     name: String,
@@ -442,13 +442,13 @@
 - [L82]impl ProcessEntry
   - [L83:98]fn new(process: SYSTEM_PROCESS_INFORMATION, threads_base_ptr: *const SYSTEM_THREAD_INFORMATION) -> Self 
   - [L100:115]fn get_threads(&self) -> HashMap<u32, SYSTEM_THREAD_INFORMATION> 
-  - [L118:120]fn get_name(&self) -> &str 
-  - [L124:134]fn get_name_original_case(&self) -> String 
-  - [L137:139]fn pid(&self) -> u32 
-  - [L142:144]fn thread_count(&self) -> u32 
+  - [L117:120]fn get_name(&self) -> &str 
+  - [L122:134]fn get_name_original_case(&self) -> String 
+  - [L136:139]fn pid(&self) -> u32 
+  - [L141:144]fn thread_count(&self) -> u32 
 
 ## src/scheduler.rs
-- [L14:17]struct PrimeThreadScheduler {
+- [L13:17]struct PrimeThreadScheduler {
     pub pid_to_process_stats: HashMap<u32, ProcessStats>,
     pub constants: ConfigConstants,
 }
@@ -457,7 +457,7 @@
   - [L27:29]fn reset_alive(&mut self) 
   - [L31:33]fn set_alive(&mut self, pid: u32) 
   - [L35:39]fn set_tracking_info(&mut self, pid: u32, track_top_x_threads: i32, process_name: String) 
-  - [L42:49]fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats 
+  - [L41:49]fn get_thread_stats(&mut self, pid: u32, tid: u32) -> &mut ThreadStats 
   - [L51:80]fn update_active_streaks(&mut self, pid: u32, tid_with_delta_cycles: &[(u32, u64)]) 
   - [L82:129]fn select_top_threads_with_hysteresis(
         &mut self,
@@ -467,7 +467,7 @@
         is_currently_assigned: fn(&ThreadStats) -> bool,
     ) 
   - [L131:185]fn drop_process_by_pid(&mut self, pid: &u32) 
-- [L189:196]struct ProcessStats {
+- [L188:196]struct ProcessStats {
     pub alive: bool,
     pub tid_to_thread_stats: HashMap<u32, ThreadStats>,
     pub track_top_x_threads: i32,
@@ -478,7 +478,7 @@
   - [L199:207]fn new(process_id: u32) -> Self 
 - [L210]impl Default for ProcessStats
   - [L211:213]fn default() -> Self 
-- [L217:227]struct IdealProcessorState {
+- [L216:227]struct IdealProcessorState {
     pub current_group: u16,
     pub current_number: u8,
     pub previous_group: u16,
@@ -513,7 +513,7 @@
 - [L320:327]fn format_filetime(time: i64) -> String 
 
 ## src/winapi.rs
-- [L65:68]struct CpuSetData {
+- [L64:68]struct CpuSetData {
     id: u32,
     logical_processor_index: u8,
 }
@@ -539,9 +539,9 @@
 - [L314:314]static CPU_SET_INFORMATION: Lazy<Mutex<Vec<CpuSetData>>> = Lazy::new(|| {
 - [L355:357]fn get_cpu_set_information() -> &'static Mutex<Vec<CpuSetData>> 
 - [L359:376]fn cpusetids_from_indices(cpu_indices: &[u32]) -> List<[u32; CONSUMER_CPUS]> 
-- [L379:392]fn cpusetids_from_mask(mask: usize) -> List<[u32; CONSUMER_CPUS]> 
+- [L378:392]fn cpusetids_from_mask(mask: usize) -> List<[u32; CONSUMER_CPUS]> 
 - [L394:410]fn indices_from_cpusetids(cpuids: &[u32]) -> List<[u32; CONSUMER_CPUS]> 
-- [L413:428]fn mask_from_cpusetids(cpuids: &[u32]) -> usize 
+- [L412:428]fn mask_from_cpusetids(cpuids: &[u32]) -> usize 
 - [L430:437]fn filter_indices_by_mask(cpu_indices: &[u32], affinity_mask: usize) -> List<[u32; CONSUMER_CPUS]> 
 - [L439:468]fn is_running_as_admin() -> bool 
 - [L470:503]fn request_uac_elevation(console: bool) -> io::Result<()> 

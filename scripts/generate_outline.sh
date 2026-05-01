@@ -239,8 +239,8 @@ for file in $files; do
             sub(/^pub /, "", $0)
             print "- [L" NR ":" NR "]" $0
             doc_start = 0
-        } else if ($0 ~ /^[ \t]*\/\/\//) {
-            # Doc comment (top-level or indented in impl)
+        } else if ($0 ~ /^[ \t]*\/\/\// || $0 ~ /^[ \t]*#\[/) {
+            # Doc comment or outer attribute — potential start of item
             if (doc_start == 0) doc_start = NR
         } else if ($0 !~ /^[ \t]*$/ && $0 !~ /^[ \t]*\/\// && $0 !~ /^[ \t]*#/) {
             doc_start = 0

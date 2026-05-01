@@ -109,8 +109,8 @@ for file in $files; do
                     brace_count = 0
                 }
             }
-        } else if (/^pub fn |^fn /) {
-            # Top-level function
+        } else if (/^pub fn |^fn |^async fn |^pub async fn /) {
+            # Top-level function (including async variants)
             in_decl = 1
             start_line = doc_start ? doc_start : NR
             decl = $0
@@ -192,7 +192,7 @@ for file in $files; do
                 decl = $0
                 brace_count = 0
             }
-        } else if (in_impl && ($0 ~ /^    pub fn / || $0 ~ /^    fn /)) {
+        } else if (in_impl && ($0 ~ /^    pub fn / || $0 ~ /^    fn / || $0 ~ /^    async fn / || $0 ~ /^    pub async fn /)) {
             # Function inside impl block
             in_decl = 1
             start_line = doc_start ? doc_start : NR
@@ -234,9 +234,11 @@ for file in $files; do
         } else if (/^static/) {
             sub(/^pub /, "", $0)
             print "- [L" NR ":" NR "]" $0
+            doc_start = 0
         } else if (/^pub / && !/^pub (struct|enum|fn|use)/) {
             sub(/^pub /, "", $0)
             print "- [L" NR ":" NR "]" $0
+            doc_start = 0
         } else if ($0 ~ /^[ \t]*\/\/\//) {
             # Doc comment (top-level or indented in impl)
             if (doc_start == 0) doc_start = NR

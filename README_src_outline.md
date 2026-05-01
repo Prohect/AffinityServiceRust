@@ -428,7 +428,7 @@
 ## src/process.rs
 - [L8:8]static SNAPSHOT_BUFFER: Lazy<Mutex<Vec<u8>>> = Lazy::new(|| Mutex::new(vec![0u8; 32]));
 - [L10:10]static PID_TO_PROCESS_MAP: Lazy<Mutex<HashMap<u32, ProcessEntry>>> = Lazy::new(|| Mutex::new(HashMap::default()));
-- [L7:16]struct ProcessSnapshot<'a> {
+- [L12:16]struct ProcessSnapshot<'a> {
     buffer: &'a mut Vec<u8>,
     pub pid_to_process: &'a mut HashMap<u32, ProcessEntry>,
 }

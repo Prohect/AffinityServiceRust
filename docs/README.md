@@ -48,6 +48,7 @@ naming follows clippy. Funcs of structs or enums have a doc file name like Camel
 Do not read docs until you needs to update them, prefer read source to understand the implements.
 Know enough about this project before documenting.
 The docs should only contain the information of the project, no history needs to be documented.
+Report any code issue to the leader/caller if the issue is essential.
 Update en-US first, do not considering update for all locales at same time.
 Cross check terms between docs to make sure they use same terms after batch documenting.
 Translate to other locales after documenting to en-US done. 
@@ -57,4 +58,4 @@ Translate to other locales after documenting to en-US done.
 Always leave a git commit SHA as a clickable link at the bottom of every doc file.
 
 ## Current commit
-*Documented for Commit: [facc6e1](https://github.com/Prohect/AffinityServiceRust/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*
+*Documented for Commit: [facc6e1](https://github.com/Prohect/cs2UtilityEndPositionCacheServer/tree/facc6e145992bd6a24dc7f5f21525085e10a7caf)*

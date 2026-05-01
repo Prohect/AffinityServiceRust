@@ -348,12 +348,11 @@ fn main() -> windows::core::Result<()> {
         .and_then(|bf| metadata(bf).and_then(|m| m.modified()).ok());
     let is_config_empty = configs.process_level_configs.is_empty() && configs.thread_level_configs.is_empty();
     let is_blacklist_empty = blacklist.is_empty();
-    if is_config_empty && is_blacklist_empty {
-        if !cli.find_mode {
+    if is_config_empty && is_blacklist_empty
+        && !cli.find_mode {
             log!("not config, find mode not enabled, exiting");
             return Ok(());
         }
-    }
 
     enable_debug_privilege(cli.no_debug_priv);
     enable_inc_base_priority_privilege(cli.no_inc_base_priority);

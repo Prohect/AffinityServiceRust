@@ -45,6 +45,7 @@ naming follows clippy. Funcs of structs or enums have a doc file name like Camel
 
 ## CONTRIBUTING
 
+Do not read docs until you needs to update them, prefer read source to understand the implements.
 Know enough about this project before documenting.
 The docs should only contain the information of the project, no history needs to be documented.
 Update en-US first, do not considering update for all locales at same time.
